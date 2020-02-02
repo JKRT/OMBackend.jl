@@ -4,7 +4,6 @@
 * ExportAll.jl
 * MetaModelica.jl
 
-
 # Installation
 Install dependencies
 ```julia
