@@ -32,8 +32,6 @@
 module BackendDAE
 
 using MetaModelica
-
-#= ExportAll is not good practice but it makes it so that we do not have to write export after each function :( =#
 using ExportAll
 
 import DAE
@@ -75,4 +73,5 @@ end
 end
 
 @exportAll()
+
 end
