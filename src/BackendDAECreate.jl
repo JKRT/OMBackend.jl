@@ -38,6 +38,7 @@ using ExportAll
 
 function lower(lst::DAE.DAElist)
   local outBackendDAE::BackendDAE.BackendDAE
+  local eqSystems::List{BackendDAE.EqSystem} = nil
   local variableArray::Array{BackendDAE.Var, 1}
   local equationArray::Array{BackendDAE.Equation, 1}
 
@@ -52,6 +53,10 @@ function lower(lst::DAE.DAElist)
       end
     end
   end
+
+  eqSystems = BackendDAE.EQSYSTEM(orderedVars = variableArray, orderedEqs = equationArray) <| eqSystems;
+
+  outBackendDAE = BackendDAE.BACKENDDAE(eqs = eqSystems)
 end
 
 function sortElements(elementLst::DAE.DAElist)
