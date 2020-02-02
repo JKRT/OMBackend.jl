@@ -37,6 +37,7 @@ using MetaModelica
 using ExportAll
 
 import DAE
+import ComponentReference
 import BackendDAE
 import BackendDAEUtil
 
@@ -52,7 +53,7 @@ function detectStatesEqSystem(syst::BackendDAE.EqSystem)
       local stateCrefs::List{DAE.ComponentRef} = nil
       BackendDAE.EQSYSTEM(orderedVars = vars, orderedEqs = eqs) => begin #= qualified access possible? =#
         for eq in eqs
-          stateCrefs = BackendDAEUtil.traveseEquationExpressions(eq, detectStatesExpression, stateCrefs)
+          stateCrefs = BackendDAEUtil.traveseEquationExpressions(eq, detectStateExpression, stateCrefs)
         end
         #= Do replacements for stateCrefs =#
         (syst)
@@ -61,17 +62,44 @@ function detectStatesEqSystem(syst::BackendDAE.EqSystem)
   end
 end
 
-function detectStatesExpression(exp::DAE.Exp, stateCrefs::List{DAE.ComponentRef})
+function detectStateExpression(exp::DAE.Exp, stateCrefs::List{DAE.ComponentRef})
   stateCrefs = begin
     local state::DAE.ComponentRef
-    @match exp
-    DAE.CALL(path = Absyn.IDENT("der"), list(DAE.CREF(componentRef = state))) => begin
-      (state <| stateCrefs)
+    @match exp begin
+      DAE.CALL(path = Absyn.IDENT("der"), list(DAE.CREF(componentRef = state))) => begin
+        (state <| stateCrefs)
+      end
+    end
+  end
+end
+
+function updateStates(vars::Array{BackendDAE.Var,1}, stateCrefs::List{DAE.ComponentRef})
+  vars = begin
+    local state::DAE.ComponentRef
+    local rest::List{DAE.ComponentRef}
+    @match stateCrefs begin
+      state <| rest => begin
+        for i in arrayLength(vars)
+          vars[i] = begin
+            local cref::DAE.ComponentRef
+            @match vars[i] begin
+              BackendDAE.VAR(cref = cref) where (ComponentReference.crefEqual(cref, state)) => begin
+                #= !set vars[i].varKind = BackendDAE.STATE(0, NONE(), true) =#
+                (BackendDAE.VAR(cref, DAE.STATE()))
+              end
+            end
+          end
+        end
+      end
+    end
+    nil => begin
+      (vars)
     end
   end
 end
 
 function daeMode(dae::BackendDAE.BackendDAE)
+  
 end
 
 
