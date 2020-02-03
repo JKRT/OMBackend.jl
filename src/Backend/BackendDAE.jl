@@ -82,7 +82,6 @@ using ExportAll
 @UniontypeDecl BackendDAEModeData
 
 import Absyn
-import AvlSetPath
 import DAE
 import DoubleEnded
 import SCode
@@ -1144,7 +1143,7 @@ LinearIntegerJacobian = Tuple
   end
 end
 
-const emptyInputData = DIFFINPUTDATA(NONE(), NONE(), NONE(), NONE(), nil, nil, NONE(), AvlSetPath.EMPTY())::DifferentiateInputData
+const emptyInputData = DIFFINPUTDATA(NONE(), NONE(), NONE(), NONE(), nil, nil, NONE(), nothing #=TODO: Fixme=#)::DifferentiateInputData
 
 DifferentiateInputArguments = Tuple
 
