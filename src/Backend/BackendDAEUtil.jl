@@ -35,42 +35,43 @@ using MetaModelica
 
 #= ExportAll is not good practice but it makes it so that we do not have to write export after each function :( =#
 using ExportAll
+using Setfield
 
 import DAE
-import Expression
+#import Expression Steal this from OMCompiler.jl
 import BackendDAE
 import BackendEquation
 
 mapFunc = Function
 
 function createEqSystem(vars::BackendDAE.Variables, eqs::BackendDAE.EquationArray)
-  (BackendDAE.EQSYSTEM(vars, eqs, NONE(), NONE(), NONE(), BackendDAE.NO_MATCHING(), nil, BackendDAE.UNKNOWN_PARTITION(), BackendEqation.emptyEqns()))
+#  (BackendDAE.EQSYSTEM(vars, eqs, NONE(), NONE(), NONE(), BackendDAE.NO_MATCHING(), nil, BackendDAE.UNKNOWN_PARTITION(), BackendEqation.emptyEqns()))
 end
 
-function mapEqSystems(dae::BackendDAE.BackendDAE, mapFunc::mapFunc)
-  dae = begin
-    local eqs::List{BackendDAE.EqSystem}
-    local acc::List{BackendDAE.EqSystem} = nil
-    @match dae
-      BackendDAE.BACKENDDAE(eqs = eqs) => begin #= qualified access possible? =#
-        for syst in eqs
-          acc = mapFunc(syst) <| acc
-        end
-        BackendDAE.BACKENDDAE(eqs = listReverse(eqs))
-      end
-    end
-  end
+function mapEqSystems(dae::BackendDAE.BackendDAEStructure, mapFunc::mapFunc)
+  # dae = begin
+  #   local eqs::List{BackendDAE.EqSystem}
+  #   local acc::List{BackendDAE.EqSystem} = nil
+  #   @match dae
+  #     BackendDAE.BACKENDDAE(eqs = eqs) => begin #= qualified access possible? =#
+  #       for syst in eqs
+  #         acc = mapFunc(syst) <| acc
+  #       end
+  #       BackendDAE.BACKENDDAE(eqs = listReverse(eqs))
+  #     end
+  #   end
+  # end
 end
 
-function mapEqSystemEquations(syst::BackendDAE.EqSyst, mapFunc::mapFunc)
+function mapEqSystemEquations(syst::BackendDAE.EqSystem, mapFunc::mapFunc)
   syst = begin
+    local eqs::Array{BackendDAE.Equation,1}
     @match syst begin
-      local eqs::Array{BackendDAE.Eqation,1}
       BackendDAE.EQSYSTEM(orderedEqs = eqs) => begin
         for i in 1:arrayLength(eqs)
           eqs[i] = mapFunc(eqs[i])
         end
-        !set syst.orderedEqs = eqs
+        @set syst.orderedEqs = eqs
       end
     end
   end
@@ -78,26 +79,26 @@ function mapEqSystemEquations(syst::BackendDAE.EqSyst, mapFunc::mapFunc)
 end
 
 function traveseEquationExpressions(eq::BackendDAE.Equation, mapFunc::mapFunc, extArg::T) where{T}
-  (eq, extArg) = begin
-    @match eq begin
-      local lhs::DAE.Exp
-      local rhs::DAE.Exp
-      local cref::DAE.ComponentRef
-      BackendDAE.EQUATION(lhs = lhs, rhs = rhs) => begin
-        (lhs, extArg) = Expression.traverseExpTopDown(lhs, mapFunc, extArg)
-        (rhs, extArg) = Expression.traverseExpTopDown(rhs, mapFunc, extArg)
-        (BackendDAE.EQUATION(lhs = lhs, rhs = rhs), extArg)
-      end
-      BackendDAE.SOLVED_EQUATION(cref = cref, rhs = rhs) => begin
-        (rhs, extArg) = Expression.traverseExpTopDown(rhs, mapFunc, extArg)
-        (BackendDAE.SOLVED_EQUATION(cref = cref, rhs = rhs), extArg)
-      end
-      BackendDAE.RESIDUAL_EQUATION(exp = rhs) => begin
-        (rhs, extArg) = Expression.traverseExpTopDown(rhs, mapFunc, extArg)
-        (BackendDAE.SOLVED_EQUATION(exp = rhs), extArg)
-      end
-    end
-  end
+  # (eq, extArg) = begin
+  #   @match eq begin
+  #     local lhs::DAE.Exp
+  #     local rhs::DAE.Exp
+  #     local cref::DAE.ComponentRef
+  #     BackendDAE.EQUATION(lhs = lhs, rhs = rhs) => begin
+  #       (lhs, extArg) = Expression.traverseExpTopDown(lhs, mapFunc, extArg)
+  #       (rhs, extArg) = Expression.traverseExpTopDown(rhs, mapFunc, extArg)
+  #       (BackendDAE.EQUATION(lhs = lhs, rhs = rhs), extArg)
+  #     end
+  #     BackendDAE.SOLVED_EQUATION(cref = cref, rhs = rhs) => begin
+  #       (rhs, extArg) = Expression.traverseExpTopDown(rhs, mapFunc, extArg)
+  #       (BackendDAE.SOLVED_EQUATION(cref = cref, rhs = rhs), extArg)
+  #     end
+  #     BackendDAE.RESIDUAL_EQUATION(exp = rhs) => begin
+  #       (rhs, extArg) = Expression.traverseExpTopDown(rhs, mapFunc, extArg)
+  #       (BackendDAE.SOLVED_EQUATION(exp = rhs), extArg)
+  #     end
+  #   end
+  # end
 end
 
 @exportAll()

@@ -36,22 +36,21 @@ using MetaModelica
 #= ExportAll is not good practice but it makes it so that we do not have to write export after each function :( =#
 using ExportAll
 
-import DAE
-import ComponentReference
+  import DAE
 import BackendDAE
 import BackendDAEUtil
 
-function detectStates(dae::BackendDAE.BackendDAE)
-  dae = BackendDAEUtil.mapEqSystems(dae, detectStatesEqSystem)
+function detectStates(dae::BackendDAE.BackendDAEStructure)
+  BackendDAEUtil.mapEqSystems(dae, detectStatesEqSystem)
 end
 
 function detectStatesEqSystem(syst::BackendDAE.EqSystem)
   syst = begin
+    local vars::Array{BackendDAE.Var,1}
+    local eqs::Array{BackendDAE.Equation,1}
+    local stateCrefs::List{DAE.ComponentRef} = nil
     @match syst begin
-      local vars::Array{BackendDAE.Var,1}
-      local eqs::Array{BackendDAE.Equation,1}
-      local stateCrefs::List{DAE.ComponentRef} = nil
-      BackendDAE.EQSYSTEM(orderedVars = vars, orderedEqs = eqs) => begin #= qualified access possible? =#
+      BackendDAE.EQSYSTEM(vars, eqs) => begin #= qualified access possible? =#
         for eq in eqs
           stateCrefs = BackendDAEUtil.traveseEquationExpressions(eq, detectStateExpression, stateCrefs)
         end
@@ -66,7 +65,7 @@ function detectStateExpression(exp::DAE.Exp, stateCrefs::List{DAE.ComponentRef})
   stateCrefs = begin
     local state::DAE.ComponentRef
     @match exp begin
-      DAE.CALL(path = Absyn.IDENT("der"), list(DAE.CREF(componentRef = state))) => begin
+      DAE.CALL(Absyn.IDENT("der"), list(DAE.CREF(state))) => begin
         (state <| stateCrefs)
       end
     end
@@ -74,30 +73,30 @@ function detectStateExpression(exp::DAE.Exp, stateCrefs::List{DAE.ComponentRef})
 end
 
 function updateStates(vars::Array{BackendDAE.Var,1}, stateCrefs::List{DAE.ComponentRef})
-  vars = begin
-    local state::DAE.ComponentRef
-    local rest::List{DAE.ComponentRef}
-    @match stateCrefs begin
-      state <| rest => begin
-        for i in arrayLength(vars)
-          vars[i] = begin
-            local cref::DAE.ComponentRef
-            @match vars[i] begin
-              BackendDAE.VAR(cref = cref) where (ComponentReference.crefEqual(cref, state)) => begin
-                !set vars[i].varKind = BackendDAE.STATE(0, NONE(), true)
-              end
-            end
-          end
-        end
-      end
-    end
-    nil => begin
-      (vars)
-    end
-  end
+  # vars = begin
+  #   local state::DAE.ComponentRef
+  #   local rest::List{DAE.ComponentRef}
+  #   @match stateCrefs begin
+  #     state <| rest => begin
+  #       for i in arrayLength(vars)
+  #         vars[i] = begin
+  #           local cref::DAE.ComponentRef
+  #           @match vars[i] begin
+  #             BackendDAE.VAR(cref = cref) where (ComponentReference.crefEqual(cref, state)) => begin
+  #               @set vars[i].varKind = BackendDAE.STATE(0, NONE(), true)
+  #             end
+  #           end
+  #         end
+  #       end
+  #     end
+  #   end
+  #   nil => begin
+  #     (vars)
+  #   end
+  # end
 end
 
-function daeMode(dae::BackendDAE.BackendDAE)
+function daeMode(dae::BackendDAE.BackendDAEStructure)
   dae = BackendDAEUtil.mapEqSystems(dae, makeResidualEquations)
 end
 

@@ -33,7 +33,6 @@ module BackendDAE
 
 using MetaModelica
 using ExportAll
-using OMCompiler.jl
 
 #= Predeclaration of mutable recursive types =#
 @UniontypeDecl BackendDAEStructure
@@ -89,7 +88,88 @@ import SCode
 
 const EquationArray = Array #= Let's use the Julia array instead ExpandableArray =#
 
-Type = DAE.Type
+const Type = DAE.Type
+const EqSystems = Array
+
+
+#=  AdjacencyMatrixes =#
+
+AdjacencyMatrixElementEntry = Integer
+AdjacencyMatrixElement = List
+AdjacencyMatrix = Array  #= array<list<Integer>> =#
+AdjacencyMatrixT = AdjacencyMatrix  #= a list of equation indices (1..n), one for each variable. Equations that -only-
+contain the state variable and not the derivative have a negative index. =#
+AdjacencyMatrixMapping = Tuple  #= a mapping for adjacency matrices that contains:
+array<list<Integer>>: array index -> scalar index list
+array<Integer>      : scalar index -> array index (not unique)
+IndexType           : the occurence condition type for the current adjacency matrix
+Boolean             : true if scalar
+Boolean             : true if analytical to structural singularity processing has already been done =#
+AdjacencyMatrixElementEnhancedEntry = Tuple
+AdjacencyMatrixElementEnhanced = List
+AdjacencyMatrixEnhanced = Array
+AdjacencyMatrixTEnhanced = AdjacencyMatrixEnhanced
+ExternalObjectClasses = List  #= classes of external objects stored in list =#
+StateSets = List  #= List of StateSets =#
+StrongComponents = List  #= Order of the equations the have to be solved =#
+
+SymbolicJacobians = List
+
+SymbolicJacobian = Tuple
+#=  symbolic equation system
+=#
+#=  Matrix name
+=#
+#=  diff vars (independent vars)
+=#
+#=  diffed vars (residual vars)
+=#
+#=  all diffed vars (residual vars + dependent vars)
+=#
+#=  original dependent variables
+=#
+SparsePatternCref = Tuple
+SparsePatternCrefs = List
+
+SparsePattern = Tuple
+#=  column-wise sparse pattern
+=#
+#=  row-wise sparse pattern
+=#
+#=  diff vars (independent vars) of associated jacobian
+=#
+#=  diffed vars (residual vars) of associated jacobian
+=#
+#=  nonZeroElements
+=#
+
+const emptySparsePattern = (nil, nil, (nil, nil), 0)::SparsePattern
+
+SparseColoring = List
+#=  colouring
+=#
+#= /*
+Type only for transformation from analytical to structural singularity.
+*/ =#
+LinearIntegerJacobianRow = List
+#=  Actual jacobian entries sparse, <column, value>
+=#
+LinearIntegerJacobianRhs = Array
+#=  RHS-Exp for full pivot algorithm. Replacement for eliminated equation.
+=#
+LinearIntegerJacobianIndices = Array
+#=  Index tuple <array, scalar> for equations
+=#
+#= /*
+The full linear integer matrix
+- additional boolean array to track which rows have been changed
+- additional boolean array to track which variables are matched to the equations
+*/ =#
+LinearIntegerJacobian = Tuple
+
+InnerEquations = List
+
+Constraints = List  #= Constraints on the solvability of the (casual) tearing set; needed for proper Dynamic Tearing =#
 
 #= THE LOWERED DAE consist of variables and equations. The variables are split into
 two lists, one for unknown variables states and algebraic and one for known variables
@@ -97,14 +177,11 @@ constants and parameters.
 The equations are also split into two lists, one with simple equations, a=b, a-b=0, etc., that
 are removed from  the set of equations to speed up calculations. =#
 @Uniontype BackendDAEStructure begin
-  @Record DAE begin
-
+  @Record BACKEND_DAE begin
     eqs::EqSystems
     shared::Shared
   end
 end
-
-EqSystems = List
 
 #= An independent system of equations (and their corresponding variables) =#
 @Uniontype EqSystem begin
@@ -662,8 +739,6 @@ end
   end
 end
 
-ExternalObjectClasses = List  #= classes of external objects stored in list =#
-
 #= class of external objects =#
 @Uniontype ExternalObjectClass begin
   @Record EXTOBJCLASS begin
@@ -731,8 +806,6 @@ ConstraintEquations = Array
   end
 end
 
-StrongComponents = List  #= Order of the equations the have to be solved =#
-
 @Uniontype StrongComponent begin
   @Record SINGLEEQUATION begin
 
@@ -798,8 +871,6 @@ end
   end
 end
 
-InnerEquations = List
-
 @Uniontype InnerEquation begin
   @Record INNEREQUATION begin
 
@@ -814,8 +885,6 @@ InnerEquations = List
     cons::Constraints
   end
 end
-
-StateSets = List  #= List of StateSets =#
 
 @Uniontype StateSet begin
   @Record STATESET begin
@@ -861,7 +930,7 @@ end
 
     timeEvents #= stores all information related to time events =#::List{TimeEvent}
     zeroCrossings #= list of zero crossing conditions =# #=TODO: Use something else..=#
-    relations #= list of zero crossing function as before =#::DoubleEnded.MutableList{ZeroCrossing}
+    relations #= list of zero crossing function as before =#::DoubleEnded.MutableList
     samples #= [deprecated] list of sample as before, only used by cpp runtime (TODO: REMOVE ME) =#  #=TODO: Use something else=#
     numberMathEvents #= stores the number of math function that trigger events e.g. floor, ceil, integer, ... =#::Integer
   end
@@ -869,9 +938,8 @@ end
 
 @Uniontype ZeroCrossingSet begin
   @Record ZERO_CROSSING_SET begin
-
-    zc::DoubleEnded.MutableList{ZeroCrossing}
-    tree::Array{ZeroCrossings.Tree}
+    zc::DoubleEnded.MutableList
+    tree::Array
   end
 end
 
@@ -896,29 +964,6 @@ end
   end
 end
 
-#=
-=#
-#=  AdjacencyMatrixes
-=#
-#=
-=#
-
-AdjacencyMatrixElementEntry = Integer
-AdjacencyMatrixElement = List
-AdjacencyMatrix = Array  #= array<list<Integer>> =#
-AdjacencyMatrixT = AdjacencyMatrix  #= a list of equation indices (1..n), one for each variable. Equations that -only-
-contain the state variable and not the derivative have a negative index. =#
-AdjacencyMatrixMapping = Tuple  #= a mapping for adjacency matrices that contains:
-array<list<Integer>>: array index -> scalar index list
-array<Integer>      : scalar index -> array index (not unique)
-IndexType           : the occurence condition type for the current adjacency matrix
-Boolean             : true if scalar
-Boolean             : true if analytical to structural singularity processing has already been done =#
-
-AdjacencyMatrixElementEnhancedEntry = Tuple
-AdjacencyMatrixElementEnhanced = List
-AdjacencyMatrixEnhanced = Array
-AdjacencyMatrixTEnhanced = AdjacencyMatrixEnhanced
 
 @Uniontype Solvability begin
   @Record SOLVABILITY_SOLVED begin
@@ -957,7 +1002,6 @@ AdjacencyMatrixTEnhanced = AdjacencyMatrixEnhanced
   end
 end
 
-Constraints = List  #= Constraints on the solvability of the (casual) tearing set; needed for proper Dynamic Tearing =#
 
 @Uniontype IndexType begin
   @Record ABSOLUTE begin
@@ -1057,60 +1101,6 @@ FullJacobian = Option
   end
 end
 
-SymbolicJacobians = List
-
-SymbolicJacobian = Tuple
-#=  symbolic equation system
-=#
-#=  Matrix name
-=#
-#=  diff vars (independent vars)
-=#
-#=  diffed vars (residual vars)
-=#
-#=  all diffed vars (residual vars + dependent vars)
-=#
-#=  original dependent variables
-=#
-SparsePatternCref = Tuple
-SparsePatternCrefs = List
-
-SparsePattern = Tuple
-#=  column-wise sparse pattern
-=#
-#=  row-wise sparse pattern
-=#
-#=  diff vars (independent vars) of associated jacobian
-=#
-#=  diffed vars (residual vars) of associated jacobian
-=#
-#=  nonZeroElements
-=#
-
-const emptySparsePattern = (nil, nil, (nil, nil), 0)::SparsePattern
-
-SparseColoring = List
-#=  colouring
-=#
-#= /*
-Type only for transformation from analytical to structural singularity.
-*/ =#
-LinearIntegerJacobianRow = List
-#=  Actual jacobian entries sparse, <column, value>
-=#
-LinearIntegerJacobianRhs = Array
-#=  RHS-Exp for full pivot algorithm. Replacement for eliminated equation.
-=#
-LinearIntegerJacobianIndices = Array
-#=  Index tuple <array, scalar> for equations
-=#
-#= /*
-The full linear integer matrix
-- additional boolean array to track which rows have been changed
-- additional boolean array to track which variables are matched to the equations
-*/ =#
-LinearIntegerJacobian = Tuple
-
 @Uniontype DifferentiateInputData begin
   @Record DIFFINPUTDATA begin
 
@@ -1196,7 +1186,7 @@ end
     comp::StrongComponent
     allOperations::CompInfo
     size::Integer
-    density::Float
+    density::Real
   end
 
   @Record TORN_ANALYSE begin

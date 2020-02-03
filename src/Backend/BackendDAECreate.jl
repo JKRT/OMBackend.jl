@@ -1,3 +1,4 @@
+
 #= /*
 * This file is part of OpenModelica.
 *
@@ -35,7 +36,8 @@ using MetaModelica
 
 #= ExportAll is not good practice but it makes it so that we do not have to write export after each function :( =#
 using ExportAll
-
+import DAE
+  
 function lower(lst::DAE.DAElist)
   local outBackendDAE::BackendDAE.BackendDAE
   local eqSystems::List{BackendDAE.EqSystem} = nil

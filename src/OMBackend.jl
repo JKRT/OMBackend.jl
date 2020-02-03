@@ -29,8 +29,16 @@
 *
 */ =#
 
+const CURRENT_DIRECTORY = "."
+const BACKEND_DIRECTORY = "./Backend"
+if ! (CURRENT_DIRECTORY in LOAD_PATH)
+  push!(LOAD_PATH, CURRENT_DIRECTORY, BACKEND_DIRECTORY)
+end
+
+println(LOAD_PATH)
+
 module OMBackend
 
-include("./Main/all.jl")
+include("./Main/Main.jl")
 
 end #=OMBackend=#

@@ -45,15 +45,15 @@ function emptyEqns()
 end
 
 function makeResidualEquation(eqn::BackendDAE.Equation)
-  eqn = begin
-    @match eqn begin
-      local lhs::DAE.Exp
-      local rhs::DAE.Exp
-      BackendDAE.EQUATION(lhs = lhs, rhs = rhs) => begin
-        BackendDAE.RESIDUAL_EQUATION(exp = DAE.BINARY(exp1 = lhs, operator = DAE.SUB(DAE.T_REAL_DEFAULT), exp2 = rhs))
-      end
-    end
-  end
+  # eqn = begin
+  #   @match eqn begin
+  #     local lhs::DAE.Exp
+  #     local rhs::DAE.Exp
+  #     BackendDAE.EQUATION(lhs, rhs) => begin
+  #       BackendDAE.RESIDUAL_EQUATION(exp = DAE.BINARY(exp1 = lhs, operator = DAE.SUB(DAE.T_REAL_DEFAULT), exp2 = rhs))
+  #     end
+  #   end
+  # end
 end
 
 
