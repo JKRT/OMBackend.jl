@@ -8,6 +8,8 @@
 Install dependencies
 ```julia
 (v1.3) pkg> add ExportAll
+(v1.3) pkg> add Sundials
+(v1.3) pkg> add DifferentialEquations
 (v1.3) pkg> dev https://github.com/OpenModelica/MetaModelica.jl.git
 ```
 
