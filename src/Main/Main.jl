@@ -31,11 +31,16 @@
 
 using MetaModelica
 using ExportAll
+using Absyn
 
-import DAE
 import BackendDAE
 import BackendDAECreate
 import Causalize
+import DAE
+import Prefix
+import SCode
+
+include("../ExampleDAE/helloWorld.jl")
 
 function translate()
   lst::DAE.DAElist #= read this thing from somewhere =#
@@ -48,5 +53,8 @@ function translate()
   dae = Causalize.daeMode(dae)
   #= create simCode -> target code =#
 end
+
+#=Test some crap=#
+@show HelloWorld_DAE
 
 @exportAll()

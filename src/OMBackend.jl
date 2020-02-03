@@ -31,14 +31,12 @@
 
 const CURRENT_DIRECTORY = "."
 const BACKEND_DIRECTORY = "./Backend"
+const EXAMPLE_DAE = "./ExampleDAE"
 if ! (CURRENT_DIRECTORY in LOAD_PATH)
+  println("Adding things to the load path")
   push!(LOAD_PATH, CURRENT_DIRECTORY, BACKEND_DIRECTORY)
 end
-
 println(LOAD_PATH)
-
 module OMBackend
-
 include("./Main/Main.jl")
-
 end #=OMBackend=#
