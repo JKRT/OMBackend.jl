@@ -29,58 +29,33 @@
 *
 =#
 
-module BackendDAECreate
+module BackendEquation
 
 using MetaModelica
 
 #= ExportAll is not good practice but it makes it so that we do not have to write export after each function :( =#
 using ExportAll
 
-function lower(lst::DAE.DAElist)
-  local outBackendDAE::BackendDAE.BackendDAE
-  local eqSystems::List{BackendDAE.EqSystem} = nil
-  local variableArray::Array{BackendDAE.Var, 1}
-  local equationArray::Array{BackendDAE.Equation, 1}
+import DAE
+import BackendDAE
 
-  (variableArray, equationArray) = begin
-    local elementLst::List{DAE.Element}
-    local variableLst::List{BackendDAE.Var} #= init empty ? =#
-    local equationLst::List{BackendDAE.Equation}
-    @match lst begin
-      DAE.DAE_LIST(elementLst) => begin
-        (variableLst, equationLst) = sortElements(elementLst)
-        (listArray(variableLst), listArray(equationLst))
-      end
-    end
-  end
-
-  eqSystems = BackendDAEUtil.createEqSystem(variableArray, equationArray) <| eqSystems;
-
-  outBackendDAE = BackendDAE.DAE(eqs = eqSystems)
+function emptyEqns()
+  eqns::BackendDAE.EquationArray = []
+  (eqns)
 end
 
-function sortElements(elementLst::DAE.DAElist)
-  local variableLst::List{BackendDAE.Var} = nil
-  local equationLst::List{BackendDAE.Equation} = nil
-
-  for elem in elementLst
-    _ = begin
-      local cref::DAE.ComponentRef
-      local kind::DAE.VarKind
+function makeResidualEquation(eqn::BackendDAE.Equation)
+  eqn = begin
+    @match eqn begin
       local lhs::DAE.Exp
       local rhs::DAE.Exp
-      @match elem begin
-        DAE.VAR(componentRef = cref, kind = kind) => begin
-          variableLst = BackendDAE.VAR(cref = cref, kind = kind) <| variableLst
-        end
-
-        DAE.EQUATION(exp = lhs, scalar = rhs) => begin
-          equationLst = BackendDAE.EQUATION(lhs = lhs, rhs = rhs) <| equationLst
-        end
+      BackendDAE.EQUATION(lhs = lhs, rhs = rhs) => begin
+        BackendDAE.RESIDUAL_EQUATION(exp = DAE.BINARY(exp1 = lhs, operator = DAE.SUB(DAE.T_REAL_DEFAULT), exp2 = rhs))
       end
     end
   end
 end
+
 
 @exportAll()
 end

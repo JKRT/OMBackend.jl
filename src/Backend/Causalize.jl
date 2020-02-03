@@ -84,8 +84,7 @@ function updateStates(vars::Array{BackendDAE.Var,1}, stateCrefs::List{DAE.Compon
             local cref::DAE.ComponentRef
             @match vars[i] begin
               BackendDAE.VAR(cref = cref) where (ComponentReference.crefEqual(cref, state)) => begin
-                #= !set vars[i].varKind = BackendDAE.STATE(0, NONE(), true) =#
-                (BackendDAE.VAR(cref, DAE.STATE()))
+                !set vars[i].varKind = BackendDAE.STATE(0, NONE(), true)
               end
             end
           end
@@ -99,7 +98,11 @@ function updateStates(vars::Array{BackendDAE.Var,1}, stateCrefs::List{DAE.Compon
 end
 
 function daeMode(dae::BackendDAE.BackendDAE)
-  
+  dae = BackendDAEUtil.mapEqSystems(dae, makeResidualEquations)
+end
+
+function makeResidualEquations(syst::BackendDAE.EqSystem)
+  syst = BackendDAEUtil.mapEqSystemEquations(syst, BackendEquation.makeResidualEquation)
 end
 
 

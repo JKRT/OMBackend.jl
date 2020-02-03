@@ -39,8 +39,13 @@ using ExportAll
 import DAE
 import Expression
 import BackendDAE
+import BackendEquation
 
 mapFunc = Function
+
+function createEqSystem(vars::BackendDAE.Variables, eqs::BackendDAE.EquationArray)
+  (BackendDAE.EQSYSTEM(vars, eqs, NONE(), NONE(), NONE(), BackendDAE.NO_MATCHING(), nil, BackendDAE.UNKNOWN_PARTITION(), BackendEqation.emptyEqns()))
+end
 
 function mapEqSystems(dae::BackendDAE.BackendDAE, mapFunc::mapFunc)
   dae = begin
@@ -55,6 +60,21 @@ function mapEqSystems(dae::BackendDAE.BackendDAE, mapFunc::mapFunc)
       end
     end
   end
+end
+
+function mapEqSystemEquations(syst::BackendDAE.EqSyst, mapFunc::mapFunc)
+  syst = begin
+    @match syst begin
+      local eqs::Array{BackendDAE.Eqation,1}
+      BackendDAE.EQSYSTEM(orderedEqs = eqs) => begin
+        for i in 1:arrayLength(eqs)
+          eqs[i] = mapFunc(eqs[i])
+        end
+        !set syst.orderedEqs = eqs
+      end
+    end
+  end
+
 end
 
 function traveseEquationExpressions(eq::BackendDAE.Equation, mapFunc::mapFunc, extArg::T) where{T}
