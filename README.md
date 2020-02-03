@@ -3,6 +3,7 @@
 # Dependencies
 * ExportAll.jl
 * MetaModelica.jl
+* OMCompiler.jl
 
 # Installation
 Install dependencies
