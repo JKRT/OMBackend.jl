@@ -35,7 +35,7 @@ using MetaModelica
 using ExportAll
 
 #= Predeclaration of mutable recursive types =#
-@UniontypeDecl BackendDAE
+@UniontypeDecl BackendDAEStructure
 @UniontypeDecl EqSystem
 @UniontypeDecl SubClock
 @UniontypeDecl BaseClockPartitionKind
@@ -81,6 +81,7 @@ using ExportAll
 @UniontypeDecl CompInfo
 @UniontypeDecl BackendDAEModeData
 
+using OMCompiler.jl
 import Absyn
 import DAE
 import DoubleEnded
@@ -88,16 +89,14 @@ import SCode
 
 const EquationArray = Array #= Let's use the Julia array instead ExpandableArray =#
 
-Type = .DAE.Type  #= Once we are in BackendDAE, the Type can be only basic types or enumeration.
-We cannot do this in DAE because functions may contain many more types.
-adrpo: yes we can, we just simplify the DAE.Type, see Types.simplifyType =#
+Type = DAE.Type
 
 #= THE LOWERED DAE consist of variables and equations. The variables are split into
 two lists, one for unknown variables states and algebraic and one for known variables
 constants and parameters.
 The equations are also split into two lists, one with simple equations, a=b, a-b=0, etc., that
 are removed from  the set of equations to speed up calculations. =#
-@Uniontype BackendDAE begin
+@Uniontype BackendDAEStructure begin
   @Record DAE begin
 
     eqs::EqSystems
@@ -169,8 +168,8 @@ end
     pointer to their values (trajectories). =#::Variables
     initialEqs #= Initial equations =#::EquationArray
     removedEqs #= these are equations that cannot solve for a variable. for example assertions, external function calls, algorithm sections without effect =#::EquationArray
-    constraints #= constraints (Optimica extension) =#::List{.DAE.Constraint}
-    classAttrs #= class attributes (Optimica extension) =#::List{.DAE.ClassAttributes}
+    constraints #= constraints (Optimica extension) =#::List{DAE.Constraint}
+    classAttrs #= class attributes (Optimica extension) =#::List{DAE.ClassAttributes}
     cache #=TODO: Use the Julia cache here=#
     graph #=TODO use something else then the FCore crap=#
     functionTree #= functions for Backend =# #=Let's skip this part people=#
@@ -196,7 +195,7 @@ end
 @Uniontype BasePartition begin
   @Record BASE_PARTITION begin
 
-    clock::.DAE.ClockKind
+    clock::DAE.ClockKind
     nSubClocks::Integer
   end
 end
@@ -206,7 +205,7 @@ end
 
     clock::SubClock
     holdEvents::Bool
-    prevVars::List{.DAE.ComponentRef}
+    prevVars::List{DAE.ComponentRef}
   end
 end
 
@@ -295,7 +294,7 @@ end
 @Uniontype CrefIndex begin
   @Record CREFINDEX begin
 
-    cref::.DAE.ComponentRef
+    cref::DAE.ComponentRef
     index::Integer
   end
 end
@@ -315,21 +314,21 @@ end
 @Uniontype Var begin
   @Record VAR begin
 
-    varName #= variable name =#::.DAE.ComponentRef
+    varName #= variable name =#::DAE.ComponentRef
     varKind #= kind of variable =#::VarKind
-    varDirection #= input, output or bidirectional =#::.DAE.VarDirection
-    varParallelism #= parallelism of the variable. parglobal, parlocal or non-parallel =#::.DAE.VarParallelism
+    varDirection #= input, output or bidirectional =#::DAE.VarDirection
+    varParallelism #= parallelism of the variable. parglobal, parlocal or non-parallel =#::DAE.VarParallelism
     varType #= built-in type or enumeration =#::Type
-    bindExp #= Binding expression e.g. for parameters =#::Option{.DAE.Exp}
-    tplExp #= Variable is part of a tuple. Needed for the globalKnownVars and localKnownVars =#::Option{.DAE.Exp}
-    arryDim #= array dimensions of non-expanded var =#::.DAE.InstDims
-    source #= origin of variable =#::.DAE.ElementSource
-    values #= values on built-in attributes =#::Option{.DAE.VariableAttributes}
+    bindExp #= Binding expression e.g. for parameters =#::Option{DAE.Exp}
+    tplExp #= Variable is part of a tuple. Needed for the globalKnownVars and localKnownVars =#::Option{DAE.Exp}
+    arryDim #= array dimensions of non-expanded var =#::DAE.InstDims
+    source #= origin of variable =#::DAE.ElementSource
+    values #= values on built-in attributes =#::Option{DAE.VariableAttributes}
     tearingSelectOption #= value for TearingSelect =#::Option{TearingSelect}
-    hideResult #= expression from the hideResult annotation =#::.DAE.Exp
+    hideResult #= expression from the hideResult annotation =#::DAE.Exp
     comment #= this contains the comment and annotation from Absyn =#::Option{SCode.Comment}
-    connectorType #= flow, stream, unspecified or not connector. =#::.DAE.ConnectorType
-    innerOuter #= inner, outer, inner outer or unspecified =#::.DAE.VarInnerOuter
+    connectorType #= flow, stream, unspecified or not connector. =#::DAE.ConnectorType
+    innerOuter #= inner, outer, inner outer or unspecified =#::DAE.VarInnerOuter
     unreplaceable #= indicates if it is allowed to replace this variable =#::Bool
   end
 end
@@ -343,7 +342,7 @@ end
   @Record STATE begin
 
     index #= how often this states was differentiated =#::Integer
-    derName #= the name of the derivative =#::Option{.DAE.ComponentRef}
+    derName #= the name of the derivative =#::Option{DAE.ComponentRef}
     natural #= false if it was forced by StateSelect.always or StateSelect.prefer or generated by index reduction =#::Bool
   end
 
@@ -361,7 +360,7 @@ end
 
   @Record CLOCKED_STATE begin
 
-    previousName #= the name of the previous variable =#::.DAE.ComponentRef
+    previousName #= the name of the previous variable =#::DAE.ComponentRef
     isStartFixed #= is fixed at first clock tick =#::Bool
   end
 
@@ -416,7 +415,7 @@ end
 
   @Record OPT_LOOP_INPUT begin
 
-    replaceExp::.DAE.ComponentRef
+    replaceExp::DAE.ComponentRef
   end
 
   @Record ALG_STATE begin
@@ -537,43 +536,43 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
 @Uniontype Equation begin
   @Record EQUATION begin
 
-    exp::.DAE.Exp
-    scalar::.DAE.Exp
-    source #= origin of equation =#::.DAE.ElementSource
+    exp::DAE.Exp
+    scalar::DAE.Exp
+    source #= origin of equation =#::DAE.ElementSource
     attr::EquationAttributes
   end
 
   @Record ARRAY_EQUATION begin
 
     dimSize #= dimension sizes =#::List{Integer}
-    left #= lhs =#::.DAE.Exp
-    right #= rhs =#::.DAE.Exp
-    source #= origin of equation =#::.DAE.ElementSource
+    left #= lhs =#::DAE.Exp
+    right #= rhs =#::DAE.Exp
+    source #= origin of equation =#::DAE.ElementSource
     attr::EquationAttributes
     recordSize #= NONE() if not a record =#::Option{Integer}
   end
 
   @Record SOLVED_EQUATION begin
 
-    componentRef::.DAE.ComponentRef
-    exp::.DAE.Exp
-    source #= origin of equation =#::.DAE.ElementSource
+    componentRef::DAE.ComponentRef
+    exp::DAE.Exp
+    source #= origin of equation =#::DAE.ElementSource
     attr::EquationAttributes
   end
 
   @Record RESIDUAL_EQUATION begin
 
-    exp #= not present from FrontEnd =#::.DAE.Exp
-    source #= origin of equation =#::.DAE.ElementSource
+    exp #= not present from FrontEnd =#::DAE.Exp
+    source #= origin of equation =#::DAE.ElementSource
     attr::EquationAttributes
   end
 
   @Record ALGORITHM begin
 
     size #= size of equation =#::Integer
-    alg::.DAE.Algorithm
-    source #= origin of algorithm =#::.DAE.ElementSource
-    expand #= this algorithm was translated from an equation. we should not expand array crefs! =#::.DAE.Expand
+    alg::DAE.Algorithm
+    source #= origin of algorithm =#::DAE.ElementSource
+    expand #= this algorithm was translated from an equation. we should not expand array crefs! =#::DAE.Expand
     attr::EquationAttributes
   end
 
@@ -581,35 +580,35 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
 
     size #= size of equation =#::Integer
     whenEquation::WhenEquation
-    source #= origin of equation =#::.DAE.ElementSource
+    source #= origin of equation =#::DAE.ElementSource
     attr::EquationAttributes
   end
 
   @Record COMPLEX_EQUATION begin
 
     size #= size of equation =#::Integer
-    left #= lhs =#::.DAE.Exp
-    right #= rhs =#::.DAE.Exp
-    source #= origin of equation =#::.DAE.ElementSource
+    left #= lhs =#::DAE.Exp
+    right #= rhs =#::DAE.Exp
+    source #= origin of equation =#::DAE.ElementSource
     attr::EquationAttributes
   end
 
   @Record IF_EQUATION begin
 
-    conditions #= Condition =#::List{.DAE.Exp}
+    conditions #= Condition =#::List{DAE.Exp}
     eqnstrue #= Equations of true branch =#::List{List{Equation}}
     eqnsfalse #= Equations of false branch =#::List{Equation}
-    source #= origin of equation =#::.DAE.ElementSource
+    source #= origin of equation =#::DAE.ElementSource
     attr::EquationAttributes
   end
 
   @Record FOR_EQUATION begin
 
-    iter #= the iterator variable =#::.DAE.Exp
-    start #= start of iteration =#::.DAE.Exp
-    stop #= end of iteration =#::.DAE.Exp
+    iter #= the iterator variable =#::DAE.Exp
+    start #= start of iteration =#::DAE.Exp
+    stop #= end of iteration =#::DAE.Exp
     body #= iterated equation =#::Equation
-    source #= origin of equation =#::.DAE.ElementSource
+    source #= origin of equation =#::DAE.ElementSource
     attr::EquationAttributes
   end
 
@@ -621,7 +620,7 @@ end
 @Uniontype WhenEquation begin
   @Record WHEN_STMTS begin
 
-    condition #= the when-condition =#::.DAE.Exp
+    condition #= the when-condition =#::DAE.Exp
     whenStmtLst::List{WhenOperator}
     elsewhenPart #= elsewhen equation with the same cref on the left hand side. =#::Option{WhenEquation}
   end
@@ -630,36 +629,36 @@ end
 @Uniontype WhenOperator begin
   @Record ASSIGN begin
 
-    left #= left hand side of equation =#::.DAE.Exp
-    right #= right hand side of equation =#::.DAE.Exp
-    source #= origin of equation =#::.DAE.ElementSource
+    left #= left hand side of equation =#::DAE.Exp
+    right #= right hand side of equation =#::DAE.Exp
+    source #= origin of equation =#::DAE.ElementSource
   end
 
   @Record REINIT begin
 
-    stateVar #= State variable to reinit =#::.DAE.ComponentRef
-    value #= Value after reinit =#::.DAE.Exp
-    source #= origin of equation =#::.DAE.ElementSource
+    stateVar #= State variable to reinit =#::DAE.ComponentRef
+    value #= Value after reinit =#::DAE.Exp
+    source #= origin of equation =#::DAE.ElementSource
   end
 
   @Record ASSERT begin
 
-    condition::.DAE.Exp
-    message::.DAE.Exp
-    level::.DAE.Exp
-    source #= the origin of the component/equation/algorithm =#::.DAE.ElementSource
+    condition::DAE.Exp
+    message::DAE.Exp
+    level::DAE.Exp
+    source #= the origin of the component/equation/algorithm =#::DAE.ElementSource
   end
 
   @Record TERMINATE begin
 
-    message::.DAE.Exp
-    source #= the origin of the component/equation/algorithm =#::.DAE.ElementSource
+    message::DAE.Exp
+    source #= the origin of the component/equation/algorithm =#::DAE.ElementSource
   end
 
   @Record NORETCALL begin
 
-    exp::.DAE.Exp
-    source #= the origin of the component/equation/algorithm =#::.DAE.ElementSource
+    exp::DAE.Exp
+    source #= the origin of the component/equation/algorithm =#::DAE.ElementSource
   end
 end
 
@@ -670,7 +669,7 @@ ExternalObjectClasses = List  #= classes of external objects stored in list =#
   @Record EXTOBJCLASS begin
 
     path #= className of external object =#::Absyn.Path
-    source #= origin of equation =#::.DAE.ElementSource
+    source #= origin of equation =#::DAE.ElementSource
   end
 end
 
@@ -825,8 +824,8 @@ StateSets = List  #= List of StateSets =#
     rang::Integer
     #=  how many states are needed?
     =#
-    state::List{.DAE.ComponentRef}
-    crA #= set.x=A*states =#::.DAE.ComponentRef
+    state::List{DAE.ComponentRef}
+    crA #= set.x=A*states =#::DAE.ComponentRef
     varA::List{Var}
     #= the jacobian matrix entries
     =#
@@ -842,7 +841,7 @@ StateSets = List  #= List of StateSets =#
     oeqns::List{Equation}
     #= other equations to solve the eqns
     =#
-    crJ::.DAE.ComponentRef
+    crJ::DAE.ComponentRef
     #=  the jac vector
     =#
     varJ::List{Var}
@@ -879,7 +878,7 @@ end
 @Uniontype ZeroCrossing begin
   @Record ZERO_CROSSING begin
 
-    relation_ #= function =#::.DAE.Exp
+    relation_ #= function =#::DAE.Exp
     occurEquLst #= list of equations where the function occurs =#::List{Integer}
   end
 end
@@ -892,8 +891,8 @@ end
   @Record SAMPLE_TIME_EVENT begin
 
     index #= unique sample index =#::Integer
-    startExp::.DAE.Exp
-    intervalExp::.DAE.Exp
+    startExp::DAE.Exp
+    intervalExp::DAE.Exp
   end
 end
 
@@ -1130,7 +1129,7 @@ LinearIntegerJacobian = Tuple
     controlVars::List{Var}
     #=  variables to save control vars of for algorithm
     =#
-    diffCrefs::List{.DAE.ComponentRef}
+    diffCrefs::List{DAE.ComponentRef}
     #=  all crefs to differentiate, needed for generic gradient
     =#
     matrixName::Option{String}
