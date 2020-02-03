@@ -33,6 +33,7 @@ module BackendDAE
 
 using MetaModelica
 using ExportAll
+using OMCompiler.jl
 
 #= Predeclaration of mutable recursive types =#
 @UniontypeDecl BackendDAEStructure
@@ -81,7 +82,6 @@ using ExportAll
 @UniontypeDecl CompInfo
 @UniontypeDecl BackendDAEModeData
 
-using OMCompiler.jl
 import Absyn
 import DAE
 import DoubleEnded

@@ -29,11 +29,7 @@
 *
 =#
 
-module Main
-
 using MetaModelica
-
-#= ExportAll is not good practice but it makes it so that we do not have to write export after each function :( =#
 using ExportAll
 
 import DAE
@@ -44,20 +40,13 @@ import Causalize
 function translate()
   lst::DAE.DAElist #= read this thing from somewhere =#
   dae::BackendDAE.BackendDAE
-
   #= create Backend structure from Frontend structure =#
   dae = BackendDAECreate.lower(lst)
-
   #= detect state variables =#
   dae = Causalize.detectStates(dae)
-
   #= causalize system, for now DAEMode =#
   dae = Causalize.daeMode(dae)
-
   #= create simCode -> target code =#
-
 end
-
 
 @exportAll()
-end

@@ -1,5 +1,6 @@
 
 
+
 # Dependencies
 * ExportAll.jl
 * MetaModelica.jl
@@ -18,3 +19,7 @@ Install dependencies
 1. Do crazy stuff
 2. ?
 3. Profit
+
+# Package structure
+
+* The main interface should be governed via the file all.jl in ./src/Main
