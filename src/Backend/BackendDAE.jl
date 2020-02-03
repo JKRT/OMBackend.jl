@@ -85,7 +85,6 @@ import Absyn
 import DAE
 import DoubleEnded
 import SCode
-import ZeroCrossings
 
 const EquationArray = Array #= Let's use the Julia array instead ExpandableArray =#
 
@@ -862,9 +861,9 @@ end
   @Record EVENT_INFO begin
 
     timeEvents #= stores all information related to time events =#::List{TimeEvent}
-    zeroCrossings #= list of zero crossing conditions =#::ZeroCrossingSet
+    zeroCrossings #= list of zero crossing conditions =# #=TODO: Use something else..=#
     relations #= list of zero crossing function as before =#::DoubleEnded.MutableList{ZeroCrossing}
-    samples #= [deprecated] list of sample as before, only used by cpp runtime (TODO: REMOVE ME) =#::ZeroCrossingSet
+    samples #= [deprecated] list of sample as before, only used by cpp runtime (TODO: REMOVE ME) =#  #=TODO: Use something else=#
     numberMathEvents #= stores the number of math function that trigger events e.g. floor, ceil, integer, ... =#::Integer
   end
 end
