@@ -1,5 +1,4 @@
-
-#= /*
+#= 
 * This file is part of OpenModelica.
 *
 * Copyright (c) 1998-CurrentYear, Open Source Modelica Consortium (OSMC),
@@ -86,13 +85,10 @@ import Absyn
 import AvlSetPath
 import DAE
 import DoubleEnded
-import ExpandableArray
-import FCore
-import HashTable3
-import HashTableCG
-import MMath
 import SCode
 import ZeroCrossings
+
+const EquationArray = Array #= Let's use the Julia array instead ExpandableArray =#
 
 Type = .DAE.Type  #= Once we are in BackendDAE, the Type can be only basic types or enumeration.
 We cannot do this in DAE because functions may contain many more types.
@@ -130,20 +126,16 @@ EqSystems = List
   end
 end
 
+#=Clock removed for now=#
 @Uniontype SubClock begin
   @Record SUBCLOCK begin
-
-    factor::MMath.Rational
-    shift::MMath.Rational
-    solver::Option{String}
   end
 
   @Record INFERED_SUBCLOCK begin
-
   end
 end
 
-const DEFAULT_SUBCLOCK = SUBCLOCK(MMath.RAT1, MMath.RAT0, NONE())::SubClock
+const DEFAULT_SUBCLOCK = "TODO. NOT SUPPORTED"
 
 @Uniontype BaseClockPartitionKind begin
   @Record UNKNOWN_PARTITION begin
@@ -181,9 +173,9 @@ end
     removedEqs #= these are equations that cannot solve for a variable. for example assertions, external function calls, algorithm sections without effect =#::EquationArray
     constraints #= constraints (Optimica extension) =#::List{.DAE.Constraint}
     classAttrs #= class attributes (Optimica extension) =#::List{.DAE.ClassAttributes}
-    cache::FCore.Cache
-    graph::FCore.Graph
-    functionTree #= functions for Backend =#::.DAE.FunctionTree
+    cache #=TODO: Use the Julia cache here=#
+    graph #=TODO use something else then the FCore crap=#
+    functionTree #= functions for Backend =# #=Let's skip this part people=#
     eventInfo #= eventInfo =#::EventInfo
     extObjClasses #= classes of external objects, contains constructor & destructor =#::ExternalObjectClasses
     backendDAEType #= indicate for what the BackendDAE is used =#::BackendDAEType
@@ -320,7 +312,6 @@ equations in a more efficient manner =#
   end
 end
 
-EquationArray = ExpandableArray
 
 #= variables =#
 @Uniontype Var begin
@@ -734,8 +725,8 @@ ConstraintEquations = Array
 @Uniontype StateOrder begin
   @Record STATEORDER begin
 
-    hashTable #= x -> dx =#::HashTableCG.HashTable
-    invHashTable #= dx -> {x,y,z} =#::HashTable3.HashTable
+    hashTable #= x -> dx =#
+    invHashTable #= dx -> {x,y,z} =#
   end
 
   @Record NOSTATEORDER begin
@@ -1147,7 +1138,7 @@ LinearIntegerJacobian = Tuple
     matrixName::Option{String}
     #=  name to create temporary vars, needed for generic gradient
     =#
-    diffedFunctions::AvlSetPath.Tree
+    diffedFunctions #=TODO: Use something sane here=#
     #=  current functions, to prevent recursive differentiation
     =#
   end
