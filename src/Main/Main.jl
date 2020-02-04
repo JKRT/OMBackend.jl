@@ -39,8 +39,7 @@ import Causalize
 import DAE
 import Prefix
 import SCode
-
-include("../ExampleDAE/helloWorld.jl")
+import ExampleDAEs
 
 function translate()
   lst::DAE.DAElist #= read this thing from somewhere =#
@@ -53,8 +52,5 @@ function translate()
   dae = Causalize.daeMode(dae)
   #= create simCode -> target code =#
 end
-
-#=Test some crap=#
-@show HelloWorld_DAE
 
 @exportAll()

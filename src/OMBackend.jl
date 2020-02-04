@@ -29,14 +29,16 @@
 *
 */ =#
 
-const CURRENT_DIRECTORY = "."
-const BACKEND_DIRECTORY = "./Backend"
-const EXAMPLE_DAE = "./ExampleDAE"
+#= Setup to support multiple modules by adding them to the load path=#
+const CURRENT_DIRECTORY = @__DIR__
+const BACKEND_DIRECTORY = CURRENT_DIRECTORY * "/Backend"
+const EXAMPLE_DAE = CURRENT_DIRECTORY * "/ExampleDAE"
 if ! (CURRENT_DIRECTORY in LOAD_PATH)
-  println("Adding things to the load path")
-  push!(LOAD_PATH, CURRENT_DIRECTORY, BACKEND_DIRECTORY)
+  @info("Setting up loadpath..")
+  push!(LOAD_PATH, CURRENT_DIRECTORY, BACKEND_DIRECTORY, EXAMPLE_DAE)
+  @info("Done setting up loadpath: $LOAD_PATH")
 end
-println(LOAD_PATH)
+@info("initialize the backend API")
 module OMBackend
 include("./Main/Main.jl")
 end #=OMBackend=#
