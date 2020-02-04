@@ -19,9 +19,7 @@ Install dependencies
 ```
 
 # Test
-1. Do crazy stuff
-2. ?
-3. Profit
+TODO describe how to navigate to the directory. do dev and then execute test with fancy markdown
 
 # Package structure
 
