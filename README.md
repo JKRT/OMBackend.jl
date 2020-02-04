@@ -19,7 +19,11 @@ Install dependencies
 ```
 
 # Test
-TODO describe how to navigate to the directory. do dev and then execute test with fancy markdown
+Assuming that you are developing the OMBackend package
+```julia
+(v1.3) pkg> test OMBackend
+```
+
 
 # Package structure
 
