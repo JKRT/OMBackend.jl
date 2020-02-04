@@ -12,6 +12,7 @@ Install dependencies
 (v1.3) pkg> add ExportAll
 (v1.3) pkg> add Sundials
 (v1.3) pkg> add DifferentialEquations
+(v1.3) pkg> add https://github.com/OpenModelica/ImmutableList.jl.git
 (v1.3) pkg> add https://github.com/OpenModelica/MetaModelica.jl.git
 (v1.3) pkg> add https://github.com/OpenModelica/Absyn.jl.git
 (v1.3) pkg> add https://github.com/OpenModelica/SCode.jl.git
