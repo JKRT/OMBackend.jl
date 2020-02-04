@@ -5,5 +5,7 @@ version = "0.1.0"
 
 [deps]
 Absyn = "ce2f92e2-a952-11e9-0543-8b443f216f1d"
+DoubleEnded = "1bc4e7c2-c1e1-11e9-03fe-315bbef43fde"
 ExportAll = "ad2082ca-a69e-11e9-38fa-e96309a31fe4"
 MetaModelica = "9d7f2a79-07b5-5542-8b19-c0100dda6b06"
+Setfield = "efcf1570-3423-57d1-acb7-fd33fddbac46"
