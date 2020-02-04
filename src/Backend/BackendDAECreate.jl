@@ -32,39 +32,51 @@
 
 module BackendDAECreate
 
+const Backend_DAE_Map = Dict()
+
 using MetaModelica
 
 #= ExportAll is not good practice but it makes it so that we do not have to write export after each function :( =#
 using ExportAll
 import DAE
-  
-function lower(lst::DAE.DAElist)
+
+"""
+  This function translates a DAE, which is the result from instantiating a
+  class, into a more precise form, called BackendDAE.BackendDAE defined in this module.
+  The BackendDAE.BackendDAE representation splits the DAE into equations and variables
+  and further divides variables into known and unknown variables and the
+  equations into simple and nonsimple equations.
+  The variables are inserted into a dictonary, Backend_DAE_Map. 
+  The equations are put in an expandable array. 
+  Where adding a new equation can be done in O(1) time if space is available.
+  inputs:  lst: DAE.DAElist, inCache: FCore.Cache, inEnv: FCore.Graph
+  outputs: BackendDAE.BackendDAE"""
+function lower(lst::DAE.DAElist)::List{BackendDAE.BackendDAEStructure}
   local outBackendDAE::BackendDAE.BackendDAE
-  local eqSystems::List{BackendDAE.EqSystem} = nil
+  local eqSystems::Array{BackendDAE.EqSystem}
   local variableArray::Array{BackendDAE.Var, 1}
   local equationArray::Array{BackendDAE.Equation, 1}
-
   (variableArray, equationArray) = begin
     local elementLst::List{DAE.Element}
     local variableLst::List{BackendDAE.Var} #= init empty ? =#
     local equationLst::List{BackendDAE.Equation}
     @match lst begin
       DAE.DAE_LIST(elementLst) => begin
-        (variableLst, equationLst) = sortElements(elementLst)
+        (variableLst, equationLst) = splitEquationsAndVars(elementLst)
         (listArray(variableLst), listArray(equationLst))
       end
     end
   end
-
-  eqSystems = BackendDAEUtil.createEqSystem(variableArray, equationArray) <| eqSystems;
-
-  outBackendDAE = BackendDAE.DAE(eqs = eqSystems)
+  eqSystems = BackendDAEUtil.createEqSystem(variableArray, equationArray) <| eqSystems; #Why a cons here?
+  outBackendDAE = BackendDAE.DAE(eqSystems)
 end
 
-function sortElements(elementLst::DAE.DAElist)
+"""
+  Splits a given DAE.DAEList into equations and variables
+"""
+function splitEquationsAndVars(elementLst::DAE.DAElist)::Tuple(List, List) #I did some renaming
   local variableLst::List{BackendDAE.Var} = nil
   local equationLst::List{BackendDAE.Equation} = nil
-
   for elem in elementLst
     _ = begin
       local cref::DAE.ComponentRef
@@ -75,7 +87,6 @@ function sortElements(elementLst::DAE.DAElist)
         DAE.VAR(componentRef = cref, kind = kind) => begin
           variableLst = BackendDAE.VAR(cref = cref, kind = kind) <| variableLst
         end
-
         DAE.EQUATION(exp = lhs, scalar = rhs) => begin
           equationLst = BackendDAE.EQUATION(lhs = lhs, rhs = rhs) <| equationLst
         end
