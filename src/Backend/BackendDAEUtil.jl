@@ -33,7 +33,6 @@ module BackendDAEUtil
 
 using MetaModelica
 
-#= ExportAll is not good practice but it makes it so that we do not have to write export after each function :( =#
 using ExportAll
 using Setfield
 
@@ -44,11 +43,23 @@ import BackendEquation
 
 mapFunc = Function
 
+"""
+This function converts an array of variables to the BackendDAE variable structure
+TODO: Map equations something something?
+"""
+function convertVarArrayToBackendDAE_Variables(vars::Array{BackendDAE.Var},
+                                            eqs::Array{BackendDAE.Equation})::BackendDAE.Variables
+  local variables::BackendDAE.Variables = begin
+    BackendDAE.VARIABLES([i for i in vars])
+  end
+  return variables
+end
+
 function createEqSystem(vars::BackendDAE.Variables, eqs::BackendDAE.EquationArray)
   (BackendDAE.EQSYSTEM(vars, eqs, NONE(), NONE(), NONE(),
                        BackendDAE.NO_MATCHING(), nil,
                        BackendDAE.UNKNOWN_PARTITION(),
-                       BackendEqation.emptyEqns()))
+                       BackendEquation.emptyEqns()))
 end
 
 function mapEqSystems(dae::BackendDAE.BackendDAEStructure, mapFunc::mapFunc)

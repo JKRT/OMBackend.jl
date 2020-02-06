@@ -30,8 +30,8 @@
 *
 =#
 """
-This module contain the various functions that are related to the lowering 
-of the DAE IR into Backend DAE IR (BDAE IR). BDAE IR is the representation we use 
+This module contain the various functions that are related to the lowering
+of the DAE IR into Backend DAE IR (BDAE IR). BDAE IR is the representation we use
 before code generation.
 """
 module BackendDAECreate
@@ -41,6 +41,7 @@ using ExportAll
 
 import DAE
 import BackendDAE
+import BackendDAEUtil
 
 """
   This function translates a DAE, which is the result from instantiating a
@@ -48,19 +49,19 @@ import BackendDAE
   The BackendDAE.BackendDAE representation splits the DAE into equations and variables
   and further divides variables into known and unknown variables and the
   equations into simple and nonsimple equations.
-  The variables are inserted into a dictonary, Backend_DAE_Map. 
-  The equations are put in an expandable array. 
+  The variables are inserted into a dictonary, Backend_DAE_Map.
+  The equations are put in an expandable array.
   Where adding a new equation can be done in O(1) time if space is available.
   inputs:  lst: DAE.DAElist, inCache: FCore.Cache, inEnv: FCore.Graph
   outputs: BackendDAE.BackendDAE"""
-function lower(lst::DAE.DAElist)::List{BackendDAE.BackendDAEStructure}
+function lower(lst::DAE.DAElist)::BackendDAE.BackendDAEStructure
   local outBackendDAE::BackendDAE.BackendDAEStructure
   local eqSystems::Array{BackendDAE.EqSystem}
-  local varArray::Array{BackendDAE.Var, 1}
-  local eqArray::Array{BackendDAE.Equation, 1}
+  local varArray::Array{BackendDAE.Var}
+  local eqArray::Array{BackendDAE.Equation}
   (varArray, eqArray) = begin
     local elementLst::List{DAE.Element}
-    local variableLst::List{BackendDAE.Var} #= init empty ? =#
+    local variableLst::List{BackendDAE.Var}
     local equationLst::List{BackendDAE.Equation}
     @match lst begin
       DAE.DAE_LIST(elementLst) => begin
@@ -69,14 +70,17 @@ function lower(lst::DAE.DAElist)::List{BackendDAE.BackendDAEStructure}
       end
     end
   end
-  eqSystems = BackendDAEUtil.createEqSystem(variableArray, equationArray)
-  outBackendDAE = BackendDAE.DAE(eqSystems, SHARED_DUMMY())
+  local variables = BackendDAEUtil.convertVarArrayToBackendDAE_Variables(varArray,
+                                                                         eqArray)
+  #= We start with an array of one system =#
+  eqSystems = [BackendDAEUtil.createEqSystem(variables, eqArray)]
+  outBackendDAE = BackendDAE.BACKEND_DAE(eqSystems, BackendDAE.SHARED_DUMMY())
 end
 
 """
   Splits a given DAE.DAEList into equations and variables
 """
-function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple(List, List)
+function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple
   local variableLst::List{BackendDAE.Var} = nil
   local equationLst::List{BackendDAE.Equation} = nil
   for elem in elementLst
@@ -92,9 +96,13 @@ function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple(List, List)
         DAE.EQUATION(exp = lhs, scalar = rhs) => begin
           equationLst = BackendDAE.EQUATION(lhs = lhs, rhs = rhs) <| equationLst
         end
+        _ => begin
+          continue
+        end
       end
     end
   end
+  return (variableLst, equationLst)
 end
 
 @exportAll()

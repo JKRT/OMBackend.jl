@@ -1,4 +1,4 @@
-#= 
+#=
 * This file is part of OpenModelica.
 *
 * Copyright (c) 1998-CurrentYear, Open Source Modelica Consortium (OSMC),
@@ -58,16 +58,22 @@ import ExampleDAEs
 
 function translate()
   local lst::DAE.DAElist = ExampleDAEs.HelloWorld_DAE
-  local dae::BackendDAE.BackendDAEStructure
-  #= create Backend structure from Frontend structure =#
-  dae = BackendDAECreate.lower(lst)
-  dae = Causalize.detectStates(dae)
-  #= causalize system, for now DAEMode =#
-  dae = Causalize.daeMode(dae)
-  #= create simCode -> target code =#
+  execute_translation_steps(lst)
 end
 
-function translate(DAE_IR::DAE.DAElist)
+function translate(lst_DAE_IR::DAE.DAElist)
+  execute_translation_steps(lst_DAE_IR)
+end
+
+function execute_translation_steps(lst::DAE.DAElist)
+  local bDAE::BackendDAE.BackendDAEStructure
+  #= create Backend structure from Frontend structure =#
+  dae = BackendDAECreate.lower(lst)
+  println(dae)
+  #dae = Causalize.detectStates(dae)
+  #= causalize system, for now DAEMode =#
+  #dae = Causalize.daeMode(dae)
+  #= create simCode -> target code =#
 end
 
 end #=OMBackend=#

@@ -1,4 +1,4 @@
-#= 
+#=
 * This file is part of OpenModelica.
 *
 * Copyright (c) 1998-CurrentYear, Open Source Modelica Consortium (OSMC),
@@ -29,6 +29,13 @@
 *
 */ =#
 
+#= Author: John Tinnerholm, partially automatically translated =#
+
+"""THE LOWERED DAE consist of variables and equations. The variables are split into
+  two lists, one for unknown variables states and algebraic and one for known variables
+  constants and parameters.
+  The equations are also split into two lists, one with simple equations, a=b, a-b=0, etc., that
+  are removed from  the set of equations to speed up calculations."""
 module BackendDAE
 
 using MetaModelica
@@ -228,10 +235,10 @@ end
 #= Data shared for all equation-systems =#
 @Uniontype Shared begin
   @Record SHARED begin
-    #= variables only depending on parameters and constants 
+    #= variables only depending on parameters and constants
        [TODO: move stuff (like inputs) to localKnownVars] =#
     globalKnownVars::Variables
-    #= variables only depending on locally constant variables in the simulation step, 
+    #= variables only depending on locally constant variables in the simulation step,
        i.e. states, input variables =#
     localKnownVars::Variables
     externalObjects #= External object variables =#::Variables
@@ -260,7 +267,7 @@ end
 
   @Record SHARED_DUMMY begin
   end
-  
+
 end
 
 @Uniontype InlineData begin
@@ -347,10 +354,8 @@ end
 
 @Uniontype Variables begin
   @Record VARIABLES begin
-    crefIndices #= HashTB, cref->indx =#::Array{List{CrefIndex}}
-    varArr #= Array of variables =#::VariableArray
-    bucketSize #= bucket size =#::Integer
-    numberOfVars #= no. of vars =#::Integer
+    varArr #= Array of variables =#::Array{Var} #=Note not the original type=#
+    #=Some auxiliary data structure as well?=#
   end
 end
 
