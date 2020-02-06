@@ -36,10 +36,16 @@ using MetaModelica
 #= ExportAll is not good practice but it makes it so that we do not have to write export after each function :( =#
 using ExportAll
 
-  import DAE
+import DAE
 import BackendDAE
 import BackendDAEUtil
 
+"""
+    Variable can be: Variable, Discrete, Constant and Parameters
+    From this create Algebraic and State Variables (Known variable)
+    Traverse all equations and locate the variables that are derived.
+    These we mark as states
+"""
 function detectStates(dae::BackendDAE.BackendDAEStructure)
   BackendDAEUtil.mapEqSystems(dae, detectStatesEqSystem)
 end
@@ -72,7 +78,7 @@ function detectStateExpression(exp::DAE.Exp, stateCrefs::List{DAE.ComponentRef})
   end
 end
 
-function updateStates(vars::Array{BackendDAE.Var,1}, stateCrefs::List{DAE.ComponentRef})
+function updateStates(vars::Array{BackendDAE.Var}, stateCrefs::List{DAE.ComponentRef})
   # vars = begin
   #   local state::DAE.ComponentRef
   #   local rest::List{DAE.ComponentRef}

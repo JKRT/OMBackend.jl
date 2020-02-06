@@ -41,7 +41,7 @@ import DAE
 import BackendDAE
 import BackendEquation
 
-mapFunc = Function
+const mapFunc = Function
 
 """
 This function converts an array of variables to the BackendDAE variable structure
@@ -99,16 +99,16 @@ function traveseEquationExpressions(eq::BackendDAE.Equation, mapFunc::mapFunc, e
   #     local rhs::DAE.Exp
   #     local cref::DAE.ComponentRef
   #     BackendDAE.EQUATION(lhs = lhs, rhs = rhs) => begin
-  #       (lhs, extArg) = Expression.traverseExpTopDown(lhs, mapFunc, extArg)
-  #       (rhs, extArg) = Expression.traverseExpTopDown(rhs, mapFunc, extArg)
+  #       (lhs, extArg) = traverseExpTopDown(lhs, mapFunc, extArg)
+  #       (rhs, extArg) = traverseExpTopDown(rhs, mapFunc, extArg)
   #       (BackendDAE.EQUATION(lhs = lhs, rhs = rhs), extArg)
   #     end
   #     BackendDAE.SOLVED_EQUATION(cref = cref, rhs = rhs) => begin
-  #       (rhs, extArg) = Expression.traverseExpTopDown(rhs, mapFunc, extArg)
+  #       (rhs, extArg) = traverseExpTopDown(rhs, mapFunc, extArg)
   #       (BackendDAE.SOLVED_EQUATION(cref = cref, rhs = rhs), extArg)
   #     end
   #     BackendDAE.RESIDUAL_EQUATION(exp = rhs) => begin
-  #       (rhs, extArg) = Expression.traverseExpTopDown(rhs, mapFunc, extArg)
+  #       (rhs, extArg) = traverseExpTopDown(rhs, mapFunc, extArg)
   #       (BackendDAE.SOLVED_EQUATION(exp = rhs), extArg)
   #     end
   #   end

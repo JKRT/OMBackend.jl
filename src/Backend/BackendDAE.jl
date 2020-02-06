@@ -216,7 +216,7 @@ end
   end
 end
 
-const DEFAULT_SUBCLOCK = "TODO. NOT SUPPORTED"
+ const DEFAULT_SUBCLOCK = "TODO. NOT SUPPORTED"
 
 @Uniontype BaseClockPartitionKind begin
   @Record UNKNOWN_PARTITION begin
@@ -381,7 +381,6 @@ end
 #= variables =#
 @Uniontype Var begin
   @Record VAR begin
-
     varName #= variable name =#::DAE.ComponentRef
     varKind #= kind of variable =#::VarKind
     varDirection #= input, output or bidirectional =#::DAE.VarDirection

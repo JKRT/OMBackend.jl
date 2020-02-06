@@ -67,10 +67,10 @@ end
 
 function execute_translation_steps(lst::DAE.DAElist)
   local bDAE::BackendDAE.BackendDAEStructure
-  #= create Backend structure from Frontend structure =#
+  #= Create Backend structure from Frontend structure =#
   dae = BackendDAECreate.lower(lst)
   println(dae)
-  #dae = Causalize.detectStates(dae)
+  dae = Causalize.detectStates(dae)
   #= causalize system, for now DAEMode =#
   #dae = Causalize.daeMode(dae)
   #= create simCode -> target code =#

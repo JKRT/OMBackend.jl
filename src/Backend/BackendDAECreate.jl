@@ -1,4 +1,3 @@
-
 #= /*
 * This file is part of OpenModelica.
 *
@@ -70,8 +69,7 @@ function lower(lst::DAE.DAElist)::BackendDAE.BackendDAEStructure
       end
     end
   end
-  local variables = BackendDAEUtil.convertVarArrayToBackendDAE_Variables(varArray,
-                                                                         eqArray)
+  local variables = BackendDAEUtil.convertVarArrayToBackendDAE_Variables(varArray, eqArray)
   #= We start with an array of one system =#
   eqSystems = [BackendDAEUtil.createEqSystem(variables, eqArray)]
   outBackendDAE = BackendDAE.BACKEND_DAE(eqSystems, BackendDAE.SHARED_DUMMY())
@@ -84,18 +82,20 @@ function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple
   local variableLst::List{BackendDAE.Var} = nil
   local equationLst::List{BackendDAE.Equation} = nil
   for elem in elementLst
+    @info(elem)
     _ = begin
-      local cref::DAE.ComponentRef
-      local kind::DAE.VarKind
-      local lhs::DAE.Exp
-      local rhs::DAE.Exp
+      local backendDAE_Var
+      local backendDAE_Equation
       @match elem begin
-        DAE.VAR(componentRef = cref, kind = kind) => begin
-          variableLst = BackendDAE.VAR(cref = cref, kind = kind) <| variableLst
-        end
-        DAE.EQUATION(exp = lhs, scalar = rhs) => begin
-          equationLst = BackendDAE.EQUATION(lhs = lhs, rhs = rhs) <| equationLst
-        end
+        # DAE.VAR(__) => begin
+        #   variableLst = BackendDAE.VAR(__) <| variableLst
+        # end
+        # DAE.EQUATION(__) => begin
+        #   equationLst = BackendDAE.EQUATION(__) <| equationLst
+        # end
+        # DAE.COMP(__) => begin
+        #   variableLst,equationLst = splitEquationsAndVars(elem.dAElist)
+        # end
         _ => begin
           continue
         end

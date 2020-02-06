@@ -2017,7 +2017,6 @@ const emptySet = SETS(SET_TRIE_NODE("", WILD(), nil, 0), 0, nil, nil)::Sets
 
 @Uniontype Element begin
   @Record VAR begin
-
     componentRef #=  The variable name =#::ComponentRef
     kind #= varible kind: variable, constant, parameter, discrete etc. =#::VarKind
     direction #= input, output or bidir =#::VarDirection
