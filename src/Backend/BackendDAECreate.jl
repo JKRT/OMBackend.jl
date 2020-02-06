@@ -29,16 +29,18 @@
 * See the full OSMC Public License conditions for more details.
 *
 =#
-
+"""
+This module contain the various functions that are related to the lowering 
+of the DAE IR into Backend DAE IR (BDAE IR). BDAE IR is the representation we use 
+before code generation.
+"""
 module BackendDAECreate
 
-const Backend_DAE_Map = Dict()
-
 using MetaModelica
-
-#= ExportAll is not good practice but it makes it so that we do not have to write export after each function :( =#
 using ExportAll
+
 import DAE
+import BackendDAE
 
 """
   This function translates a DAE, which is the result from instantiating a
@@ -52,11 +54,11 @@ import DAE
   inputs:  lst: DAE.DAElist, inCache: FCore.Cache, inEnv: FCore.Graph
   outputs: BackendDAE.BackendDAE"""
 function lower(lst::DAE.DAElist)::List{BackendDAE.BackendDAEStructure}
-  local outBackendDAE::BackendDAE.BackendDAE
+  local outBackendDAE::BackendDAE.BackendDAEStructure
   local eqSystems::Array{BackendDAE.EqSystem}
-  local variableArray::Array{BackendDAE.Var, 1}
-  local equationArray::Array{BackendDAE.Equation, 1}
-  (variableArray, equationArray) = begin
+  local varArray::Array{BackendDAE.Var, 1}
+  local eqArray::Array{BackendDAE.Equation, 1}
+  (varArray, eqArray) = begin
     local elementLst::List{DAE.Element}
     local variableLst::List{BackendDAE.Var} #= init empty ? =#
     local equationLst::List{BackendDAE.Equation}
@@ -67,14 +69,14 @@ function lower(lst::DAE.DAElist)::List{BackendDAE.BackendDAEStructure}
       end
     end
   end
-  eqSystems = BackendDAEUtil.createEqSystem(variableArray, equationArray) <| eqSystems; #Why a cons here?
-  outBackendDAE = BackendDAE.DAE(eqSystems)
+  eqSystems = BackendDAEUtil.createEqSystem(variableArray, equationArray)
+  outBackendDAE = BackendDAE.DAE(eqSystems, SHARED_DUMMY())
 end
 
 """
   Splits a given DAE.DAEList into equations and variables
 """
-function splitEquationsAndVars(elementLst::DAE.DAElist)::Tuple(List, List) #I did some renaming
+function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple(List, List)
   local variableLst::List{BackendDAE.Var} = nil
   local equationLst::List{BackendDAE.Equation} = nil
   for elem in elementLst

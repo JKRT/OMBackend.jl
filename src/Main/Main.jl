@@ -42,15 +42,12 @@ import SCode
 import ExampleDAEs
 
 function translate()
-  lst::DAE.DAElist #= read this thing from somewhere =#
-  dae::BackendDAE.BackendDAE
+  local lst::DAE.DAElist = ExampleDAEs.HelloWorld_DAE
+  local dae::BackendDAE.BackendDAEStructure
   #= create Backend structure from Frontend structure =#
   dae = BackendDAECreate.lower(lst)
-  #= detect state variables =#
   dae = Causalize.detectStates(dae)
   #= causalize system, for now DAEMode =#
   dae = Causalize.daeMode(dae)
   #= create simCode -> target code =#
 end
-
-@exportAll()

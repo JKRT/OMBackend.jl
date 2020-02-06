@@ -145,19 +145,19 @@ SparsePattern = Tuple
 
 const emptySparsePattern = (nil, nil, (nil, nil), 0)::SparsePattern
 
-SparseColoring = List
+const SparseColoring = List
 #=  colouring
 =#
 #= /*
 Type only for transformation from analytical to structural singularity.
 */ =#
-LinearIntegerJacobianRow = List
+const LinearIntegerJacobianRow = List
 #=  Actual jacobian entries sparse, <column, value>
 =#
-LinearIntegerJacobianRhs = Array
+const LinearIntegerJacobianRhs = Array
 #=  RHS-Exp for full pivot algorithm. Replacement for eliminated equation.
 =#
-LinearIntegerJacobianIndices = Array
+const LinearIntegerJacobianIndices = Array
 #=  Index tuple <array, scalar> for equations
 =#
 #= /*
@@ -165,7 +165,7 @@ The full linear integer matrix
 - additional boolean array to track which rows have been changed
 - additional boolean array to track which variables are matched to the equations
 */ =#
-LinearIntegerJacobian = Tuple
+const LinearIntegerJacobian = Tuple
 
 InnerEquations = List
 
@@ -213,29 +213,27 @@ const DEFAULT_SUBCLOCK = "TODO. NOT SUPPORTED"
 
 @Uniontype BaseClockPartitionKind begin
   @Record UNKNOWN_PARTITION begin
-
   end
 
   @Record CLOCKED_PARTITION begin
-
     subPartIdx::Integer
   end
 
   @Record CONTINUOUS_TIME_PARTITION begin
-
   end
-
   @Record UNSPECIFIED_PARTITION begin
-
   end
 end
 
 #= Data shared for all equation-systems =#
 @Uniontype Shared begin
   @Record SHARED begin
-
-    globalKnownVars #= variables only depending on parameters and constants [TODO: move stuff (like inputs) to localKnownVars] =#::Variables
-    localKnownVars #= variables only depending on locally constant variables in the simulation step, i.e. states, input variables =#::Variables
+    #= variables only depending on parameters and constants 
+       [TODO: move stuff (like inputs) to localKnownVars] =#
+    globalKnownVars::Variables
+    #= variables only depending on locally constant variables in the simulation step, 
+       i.e. states, input variables =#
+    localKnownVars::Variables
     externalObjects #= External object variables =#::Variables
     aliasVars #= Data originating from removed simple equations needed to build
     variables' lookup table (in C output).
@@ -259,11 +257,14 @@ end
     daeModeData #= DAEMode Data =#::BackendDAEModeData
     dataReconciliationData::Option{DataReconciliationData}
   end
+
+  @Record SHARED_DUMMY begin
+  end
+  
 end
 
 @Uniontype InlineData begin
   @Record INLINE_DATA begin
-
     inlineSystems::EqSystems
     knownVariables::Variables
   end
@@ -271,7 +272,6 @@ end
 
 @Uniontype BasePartition begin
   @Record BASE_PARTITION begin
-
     clock::DAE.ClockKind
     nSubClocks::Integer
   end
@@ -279,7 +279,6 @@ end
 
 @Uniontype SubPartition begin
   @Record SUB_PARTITION begin
-
     clock::SubClock
     holdEvents::Bool
     prevVars::List{DAE.ComponentRef}
@@ -288,7 +287,6 @@ end
 
 @Uniontype PartitionsInfo begin
   @Record PARTITIONS_INFO begin
-
     basePartitions::Array{BasePartition}
     subPartitions::Array{SubPartition}
   end
@@ -297,7 +295,6 @@ end
 #= extra information that we should send around with the DAE =#
 @Uniontype ExtraInfo begin
   @Record EXTRA_INFO begin
-
     description #= the model description string =#::String
     fileNamePrefix #= the model name to be used in the dumps =#::String
   end
@@ -307,41 +304,32 @@ end
 For example for simulation, initialization, Jacobian, algebraic loops etc. =#
 @Uniontype BackendDAEType begin
   @Record SIMULATION begin
-
   end
 
   @Record JACOBIAN begin
-
   end
 
   @Record ALGEQSYSTEM begin
-
   end
 
   @Record ARRAYSYSTEM begin
-
   end
 
   @Record PARAMETERSYSTEM begin
-
   end
 
   @Record INITIALSYSTEM begin
-
   end
 
   @Record INLINESYSTEM begin
-
   end
 
   @Record DAEMODESYSTEM begin
-
   end
 end
 
 @Uniontype DataReconciliationData begin
   @Record DATA_RECON begin
-
     symbolicJacobian #= SET_S w.r.t ... =#::Jacobian
     setcVars #= setc solved vars =#::Variables
     datareconinputs::Variables
@@ -359,7 +347,6 @@ end
 
 @Uniontype Variables begin
   @Record VARIABLES begin
-
     crefIndices #= HashTB, cref->indx =#::Array{List{CrefIndex}}
     varArr #= Array of variables =#::VariableArray
     bucketSize #= bucket size =#::Integer
@@ -370,7 +357,6 @@ end
 #= Component Reference Index =#
 @Uniontype CrefIndex begin
   @Record CREFINDEX begin
-
     cref::DAE.ComponentRef
     index::Integer
   end

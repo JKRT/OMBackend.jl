@@ -33,12 +33,41 @@
 const CURRENT_DIRECTORY = @__DIR__
 const BACKEND_DIRECTORY = CURRENT_DIRECTORY * "/Backend"
 const EXAMPLE_DAE = CURRENT_DIRECTORY * "/ExampleDAE"
+
 if ! (CURRENT_DIRECTORY in LOAD_PATH)
   @info("Setting up loadpath..")
   push!(LOAD_PATH, CURRENT_DIRECTORY, BACKEND_DIRECTORY, EXAMPLE_DAE)
   @info("Done setting up loadpath: $LOAD_PATH")
 end
+
 @info("initialize the backend API")
+
 module OMBackend
-include("./Main/Main.jl")
+
+using MetaModelica
+using ExportAll
+using Absyn
+
+import BackendDAE
+import BackendDAECreate
+import Causalize
+import DAE
+import Prefix
+import SCode
+import ExampleDAEs
+
+function translate()
+  local lst::DAE.DAElist = ExampleDAEs.HelloWorld_DAE
+  local dae::BackendDAE.BackendDAEStructure
+  #= create Backend structure from Frontend structure =#
+  dae = BackendDAECreate.lower(lst)
+  dae = Causalize.detectStates(dae)
+  #= causalize system, for now DAEMode =#
+  dae = Causalize.daeMode(dae)
+  #= create simCode -> target code =#
+end
+
+function translate(DAE_IR::DAE.DAElist)
+end
+
 end #=OMBackend=#

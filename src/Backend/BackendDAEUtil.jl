@@ -45,7 +45,10 @@ import BackendEquation
 mapFunc = Function
 
 function createEqSystem(vars::BackendDAE.Variables, eqs::BackendDAE.EquationArray)
-#  (BackendDAE.EQSYSTEM(vars, eqs, NONE(), NONE(), NONE(), BackendDAE.NO_MATCHING(), nil, BackendDAE.UNKNOWN_PARTITION(), BackendEqation.emptyEqns()))
+  (BackendDAE.EQSYSTEM(vars, eqs, NONE(), NONE(), NONE(),
+                       BackendDAE.NO_MATCHING(), nil,
+                       BackendDAE.UNKNOWN_PARTITION(),
+                       BackendEqation.emptyEqns()))
 end
 
 function mapEqSystems(dae::BackendDAE.BackendDAEStructure, mapFunc::mapFunc)

@@ -2346,5 +2346,5 @@ const crefTimeState = CREF_IDENT("time", T_REAL_DEFAULT, nil)::ComponentRef
 const emptyCref = CREF_IDENT("", T_UNKNOWN_DEFAULT, nil)::ComponentRef
 
 @exportAll()
-export FunctionTree
+
 end
