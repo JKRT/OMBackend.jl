@@ -26,5 +26,5 @@ Assuming that you are developing the OMBackend package
 
 
 # Package structure
-
 * The main interface should be governed via the file all.jl in ./src/Main
+* Utility functions for DAE traversal can be found in the Util package and used by executing import Util
