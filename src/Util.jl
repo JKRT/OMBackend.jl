@@ -1,6 +1,8 @@
 module Util
 
 import DAE
+import DoubleEnded
+
 using MetaModelica
 
 const Type_a = Any
