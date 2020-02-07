@@ -2,8 +2,8 @@
 * This file is part of OpenModelica.
 *
 * Copyright (c) 1998-CurrentYear, Open Source Modelica Consortium (OSMC),
-* c/o Linköpings universitet, Department of Computer and Information Science,
-* SE-58183 Linköping, Sweden.
+* c/o Linkï¿½pings universitet, Department of Computer and Information Science,
+* SE-58183 Linkï¿½ping, Sweden.
 *
 * All rights reserved.
 *
@@ -368,7 +368,6 @@ equations in a more efficient manner =#
   end
 end
 
-
 #= variables =#
 @Uniontype Var begin
   @Record VAR begin
@@ -584,8 +583,8 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
 
 @Uniontype Equation begin
   @Record EQUATION begin
-    exp::DAE.Exp
-    scalar::DAE.Exp
+    lhs::DAE.Exp
+    rhs::DAE.Exp
     source #= origin of equation =#::DAE.ElementSource
     attr::EquationAttributes
   end

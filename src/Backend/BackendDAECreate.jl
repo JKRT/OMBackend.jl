@@ -69,7 +69,7 @@ function lower(lst::DAE.DAElist)::BackendDAE.BackendDAEStructure
       end
     end
   end
-  local variables = BackendDAEUtil.convertVarArrayToBackendDAE_Variables(varArray, eqArray)
+  local variables = BackendDAEUtil.convertVarArrayToBackendDAE_Variables(varArray)
   #= We start with an array of one system =#
   eqSystems = [BackendDAEUtil.createEqSystem(variables, eqArray)]
   outBackendDAE = BackendDAE.BACKEND_DAE(eqSystems, BackendDAE.SHARED_DUMMY())

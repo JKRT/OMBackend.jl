@@ -21,12 +21,15 @@ Install dependencies:
 (v1.3) pkg> add https://github.com/OpenModelica/Absyn.jl.git
 (v1.3) pkg> add https://github.com/OpenModelica/SCode.jl.git
 (v1.3) pkg> add https://github.com/OpenModelica/DoubleEnded.jl.git
+(v1.3) pkg> add https://github.com/JKRT/OMBackend.jl
 ```
 
 # Test
 Assuming that you are developing the OMBackend package
 ```julia
-(v1.3) pkg> test OMBackend
+julia> dev .
+julia> using OMBackend
+julia> BackendDAE.translate()
 ```
 
 # Package structure

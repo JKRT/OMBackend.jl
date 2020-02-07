@@ -37,15 +37,15 @@ using ExportAll
 using Setfield
 
 import DAE
+import Util
+
 import BackendDAE
 import BackendEquation
 
 """
 This function converts an array of variables to the BackendDAE variable structure
-TODO: Map equations something something?
 """
-function convertVarArrayToBackendDAE_Variables(vars::Array{BackendDAE.Var},
-                                            eqs::Array{BackendDAE.Equation})::BackendDAE.Variables
+function convertVarArrayToBackendDAE_Variables(vars::Array{BackendDAE.Var})::BackendDAE.Variables
   local variables::BackendDAE.Variables = begin
     BackendDAE.VARIABLES([i for i in vars])
   end
@@ -60,18 +60,21 @@ function createEqSystem(vars::BackendDAE.Variables, eqs::BackendDAE.EquationArra
 end
 
 function mapEqSystems(dae::BackendDAE.BackendDAEStructure, traversalOperation::Function)
-  # dae = begin
-  #   local eqs::List{BackendDAE.EqSystem}
-  #   local acc::List{BackendDAE.EqSystem} = nil
-  #   @match dae
-  #     BackendDAE.BACKENDDAE(eqs = eqs) => begin #= qualified access possible? =#
-  #       for syst in eqs
-  #         acc = mapFunc(syst) <| acc
-  #       end
-  #       BackendDAE.BACKENDDAE(eqs = listReverse(eqs))
-  #     end
-  #   end
-  # end
+   dae = begin
+     local eqs::Array{BackendDAE.EqSystem, 1}
+     @match dae begin
+       BackendDAE.BACKEND_DAE(eqs = eqs) => begin
+         for i in 1:arrayLength(eqs)
+           eqs[i] = traversalOperation(eqs[i])
+         end
+         @set dae.eqs = eqs
+         (dae)
+       end
+       _ => begin
+         (dae)
+       end
+     end
+   end
 end
 
 function mapEqSystemEquations(syst::BackendDAE.EqSystem, traversalOperation::Function)
@@ -80,36 +83,69 @@ function mapEqSystemEquations(syst::BackendDAE.EqSystem, traversalOperation::Fun
     @match syst begin
       BackendDAE.EQSYSTEM(orderedEqs = eqs) => begin
         for i in 1:arrayLength(eqs)
-          eqs[i] = mapFunc(eqs[i])
+          eqs[i] = traversalOperation(eqs[i])
         end
         @set syst.orderedEqs = eqs
+        (syst)
       end
     end
   end
-
 end
 
-function traveseEquationExpressions(eq::BackendDAE.Equation, traversalOperation::Function, extArg)
-  # (eq, extArg) = begin
-  #   @match eq begin
-  #     local lhs::DAE.Exp
-  #     local rhs::DAE.Exp
-  #     local cref::DAE.ComponentRef
-  #     BackendDAE.EQUATION(lhs = lhs, rhs = rhs) => begin
-  #       (lhs, extArg) = traverseExpTopDown(lhs, mapFunc, extArg)
-  #       (rhs, extArg) = traverseExpTopDown(rhs, mapFunc, extArg)
-  #       (BackendDAE.EQUATION(lhs = lhs, rhs = rhs), extArg)
-  #     end
-  #     BackendDAE.SOLVED_EQUATION(cref = cref, rhs = rhs) => begin
-  #       (rhs, extArg) = traverseExpTopDown(rhs, mapFunc, extArg)
-  #       (BackendDAE.SOLVED_EQUATION(cref = cref, rhs = rhs), extArg)
-  #     end
-  #     BackendDAE.RESIDUAL_EQUATION(exp = rhs) => begin
-  #       (rhs, extArg) = traverseExpTopDown(rhs, mapFunc, extArg)
-  #       (BackendDAE.SOLVED_EQUATION(exp = rhs), extArg)
-  #     end
-  #   end
-  # end
+
+function mapEqSystemEquationsNoUpdate(syst::BackendDAE.EqSystem, traversalOperation::Function, extArg)
+  extArg = begin
+    local eqs::Array{BackendDAE.Equation,1}
+    @match syst begin
+      BackendDAE.EQSYSTEM(orderedEqs = eqs) => begin
+        for i in 1:arrayLength(eqs)
+          extArg = traversalOperation(eqs[i], extArg)
+        end
+        (extArg)
+      end
+    end
+  end
+end
+
+function mapEqSystemVariablesNoUpdate(syst::BackendDAE.EqSystem, traversalOperation::Function, extArg)
+  extArg = begin
+    local varArr::Array{BackendDAE.Var,1}
+    @match syst begin
+      BackendDAE.EQSYSTEM(orderedVars = BackendDAE.VARIABLES(varArr = varArr)) => begin
+        for i in 1:arrayLength(varArr)
+          extArg = traversalOperation(varArr[i], extArg)
+        end
+        (extArg)
+      end
+    end
+  end
+end
+
+function traverseEquationExpressions(eq::BackendDAE.Equation, traversalOperation::Function, extArg::T)::Tuple{BackendDAE.Equation,T} where{T}
+   (eq, extArg) = begin
+     local lhs::DAE.Exp
+     local rhs::DAE.Exp
+     local cref::DAE.ComponentRef
+     @match eq begin
+       BackendDAE.EQUATION(lhs = lhs, rhs = rhs) => begin
+         (lhs, extArg) = Util.traverseExpTopDown(lhs, traversalOperation, extArg)
+         (rhs, extArg) = Util.traverseExpTopDown(rhs, traversalOperation, extArg)
+         @set eq.lhs = lhs
+         @set eq.rhs = rhs
+         (eq, extArg)
+       end
+       BackendDAE.SOLVED_EQUATION(componentRef = cref, exp = rhs) => begin
+         (rhs, extArg) = Util.traverseExpTopDown(rhs, traversalOperation, extArg)
+         @set eq.rhs = rhs;
+         (eq, extArg)
+       end
+       BackendDAE.RESIDUAL_EQUATION(exp = rhs) => begin
+         (rhs, extArg) = Util.traverseExpTopDown(rhs, traversalOperation, extArg)
+         @set eq.rhs = rhs;
+         (eq, extArg)
+       end
+     end
+   end
 end
 
 function DAE_VarKind_to_BDAE_VarKind(kind::DAE.VarKind)::BackendDAE.VarKind

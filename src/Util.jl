@@ -61,8 +61,8 @@ function traverseExpTopDown1(continueTraversal::Bool, inExp::DAE.Exp, func::Func
   (outExp, outArg) = begin
     local aliases::List{List{String}}
     local attr::DAE.CallAttributes
-    local cr::ComponentRef
-    local cr_1::ComponentRef
+    local cr::DAE.ComponentRef
+    local cr_1::DAE.ComponentRef
     local dim::ModelicaInteger
     local e1::DAE.Exp
     local e1_1::DAE.Exp
@@ -334,14 +334,21 @@ function traverseExpTopDown1(continueTraversal::Bool, inExp::DAE.Exp, func::Func
   (outExp, outArg)
 end
 
+function traverseExpListTopDown(expLst::List{DAE.Exp}, func::Function, inArg::Type_a)
+  outArg::Type_a = inArg
+  for e in expLst
+    (_, outArg) = traverseExpTopDown1(true, e, func, outArg)
+  end
+  return (expLst, outArg)
+end
 
-function traverseExpTopDownCrefHelpera(inCref::DAE.ComponentRef, rel::Function, iarg::Argument) ::Tuple{DAE.ComponentRef, Argument}
+function traverseExpTopDownCrefHelper(inCref::DAE.ComponentRef, rel::Function, iarg::Argument) ::Tuple{DAE.ComponentRef, Argument}
   local outArg::Argument
   local outCref::DAE.ComponentRef
   (outCref, outArg) = begin
     local arg::Argument
-    local cr::ComponentRef
-    local cr_1::ComponentRef
+    local cr::DAE.ComponentRef
+    local cr_1::DAE.ComponentRef
     local name::String
     local subs::List{DAE.Subscript}
     local subs_1::List{DAE.Subscript}

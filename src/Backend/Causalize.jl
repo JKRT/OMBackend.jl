@@ -32,13 +32,17 @@
 module Causalize
 
 using MetaModelica
+using Setfield
 
 #= ExportAll is not good practice but it makes it so that we do not have to write export after each function :( =#
 using ExportAll
 
+import Absyn
 import DAE
+
 import BackendDAE
 import BackendDAEUtil
+import BackendEquation
 
 """
     Variable can be: Variable, Discrete, Constant and Parameters
@@ -50,62 +54,100 @@ function detectStates(dae::BackendDAE.BackendDAEStructure)
   BackendDAEUtil.mapEqSystems(dae, detectStatesEqSystem)
 end
 
+"""
+    kabdelhak:
+    Detects all states in the system by looking for component references in
+    der() calls. Updates all variables with those component references to
+    varKind BackendDAE.STATE()
+"""
 function detectStatesEqSystem(syst::BackendDAE.EqSystem)
   syst = begin
-    local vars::Array{BackendDAE.Var,1}
-    local eqs::Array{BackendDAE.Equation,1}
-    local stateCrefs::List{DAE.ComponentRef} = nil
+    local vars::BackendDAE.Variables
+    local eqs::BackendDAE.EquationArray
+    local stateCrefs = Dict{DAE.ComponentRef, Bool}()
     @match syst begin
       BackendDAE.EQSYSTEM(vars, eqs) => begin #= qualified access possible? =#
         for eq in eqs
-          stateCrefs = BackendDAEUtil.traveseEquationExpressions(eq, detectStateExpression, stateCrefs)
+          (_, stateCrefs) = BackendDAEUtil.traverseEquationExpressions(eq, detectStateExpression, stateCrefs)
         end
         #= Do replacements for stateCrefs =#
+        @set syst.orderedVars = updateStates(vars, stateCrefs)
         (syst)
       end
     end
   end
+  return syst
 end
 
-function detectStateExpression(exp::DAE.Exp, stateCrefs::List{DAE.ComponentRef})
-  stateCrefs = begin
+"""
+    kabdelhak:
+    Detects if a given expression is a der() call and adds the corresponding
+    cref to a hashmap
+"""
+function detectStateExpression(exp::DAE.Exp, stateCrefs::Dict{DAE.ComponentRef, Bool})
+  local cont::Bool
+  local outCrefs = stateCrefs
+  (outCrefs, cont) = begin
     local state::DAE.ComponentRef
     @match exp begin
-      DAE.CALL(Absyn.IDENT("der"), list(DAE.CREF(state))) => begin
-        (state <| stateCrefs)
+      DAE.CALL(Absyn.IDENT("der"), DAE.CREF(state) <| _ ) => begin
+        #= add state with boolean value that does not matter, it is later onlBackendDAE.BACKEND_DAE(eqs = eqs)y checked if it exists at all =#
+        outCrefs[state] = true
+        (outCrefs, true)
+      end
+      _ => begin
+        (outCrefs, true)
+      end
+    end
+  end
+  return (exp, cont, outCrefs)
+end
+
+"""
+    kabdelhak:
+    Traverses all variables and uses a hashmap to determine if a variable needs
+    to be updated to be a BackendDAE.STATE()
+"""
+function updateStates(vars::BackendDAE.Variables, stateCrefs::Dict{DAE.ComponentRef, Bool})
+  vars = begin
+    local varArr::Array{BackendDAE.Var, 1}
+    @match vars begin
+      BackendDAE.VARIABLES(varArr = varArr) => begin
+        for i in 1:arrayLength(varArr)
+          varArr[i] = begin
+            local cref::DAE.ComponentRef
+            local var::BackendDAE.Var
+            @match varArr[i] begin
+              var && BackendDAE.VAR(varName = cref) where (haskey(stateCrefs, cref)) => begin
+                var = @set var.varKind = BackendDAE.STATE(0, NONE(), true)
+                (var)
+              end
+              _ => begin
+                (varArr[i])
+              end
+            end
+          end
+        end
+        @set vars.varArr = varArr
+        (vars)
       end
     end
   end
 end
 
-function updateStates(vars::Array{BackendDAE.Var}, stateCrefs::List{DAE.ComponentRef})
-  # vars = begin
-  #   local state::DAE.ComponentRef
-  #   local rest::List{DAE.ComponentRef}
-  #   @match stateCrefs begin
-  #     state <| rest => begin
-  #       for i in arrayLength(vars)
-  #         vars[i] = begin
-  #           local cref::DAE.ComponentRef
-  #           @match vars[i] begin
-  #             BackendDAE.VAR(cref = cref) where (ComponentReference.crefEqual(cref, state)) => begin
-  #               @set vars[i].varKind = BackendDAE.STATE(0, NONE(), true)
-  #             end
-  #           end
-  #         end
-  #       end
-  #     end
-  #   end
-  #   nil => begin
-  #     (vars)
-  #   end
-  # end
-end
-
+"""
+    kabdelhak:
+    Residualize every equation in each system of the dae by subtracting the rhs
+    from the lhs.
+"""
 function daeMode(dae::BackendDAE.BackendDAEStructure)
   dae = BackendDAEUtil.mapEqSystems(dae, makeResidualEquations)
 end
 
+"""
+    kabdelhak:
+    Traverser for daeMode() to map all equations of an equation system
+"""
 function makeResidualEquations(syst::BackendDAE.EqSystem)
   syst = BackendDAEUtil.mapEqSystemEquations(syst, BackendEquation.makeResidualEquation)
 end

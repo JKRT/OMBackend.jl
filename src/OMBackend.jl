@@ -2,8 +2,8 @@
 * This file is part of OpenModelica.
 *
 * Copyright (c) 1998-CurrentYear, Open Source Modelica Consortium (OSMC),
-* c/o Linköpings universitet, Department of Computer and Information Science,
-* SE-58183 Linköping, Sweden.
+* c/o Linkï¿½pings universitet, Department of Computer and Information Science,
+* SE-58183 Linkï¿½ping, Sweden.
 *
 * All rights reserved.
 *
@@ -50,6 +50,7 @@ using Absyn
 
 import BackendDAE
 import BackendDAECreate
+import BackendDump
 import Causalize
 import DAE
 import Prefix
@@ -69,10 +70,16 @@ function execute_translation_steps(lst::DAE.DAElist)
   local bDAE::BackendDAE.BackendDAEStructure
   #= Create Backend structure from Frontend structure =#
   dae = BackendDAECreate.lower(lst)
-  println(dae)
+  BackendDump.dumpBackendDAEStructure(dae, "translated");
+
+  #= detect state variables =#
   dae = Causalize.detectStates(dae)
+  BackendDump.dumpBackendDAEStructure(dae, "states marked");
+
   #= causalize system, for now DAEMode =#
-  #dae = Causalize.daeMode(dae)
+  dae = Causalize.daeMode(dae)
+  BackendDump.dumpBackendDAEStructure(dae, "residuals");
+
   #= create simCode -> target code =#
 end
 

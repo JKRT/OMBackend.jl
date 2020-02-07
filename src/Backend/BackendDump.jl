@@ -29,47 +29,78 @@
 *
 =#
 
-module BackendEquation
+
+module BackendDump
 
 using MetaModelica
 
 #= ExportAll is not good practice but it makes it so that we do not have to write export after each function :( =#
 using ExportAll
 
-import DAE
 import BackendDAE
+import BackendDAEUtil
 
-"""
-    kabdelhak:
-    Create an empty equation array
-"""
-function emptyEqns()
-  eqns::BackendDAE.EquationArray = []
-  (eqns)
+const DOUBLE_LINE = "============================================"::String
+const LINE = "---------------------------------------------"::String
+
+
+function dumpBackendDAEStructure(dae::BackendDAE.BackendDAEStructure, heading::String)
+  print(DOUBLE_LINE + "\n")
+  print("BackendDAE: " + heading + "\n")
+  print(DOUBLE_LINE + "\n")
+
+  for eq in dae.eqs
+    print("\nEqs:\n")
+    print(LINE + "\n")
+    BackendDAEUtil.mapEqSystemEquationsNoUpdate(eq, printEqTraverse, 0)
+    print("\nVars:\n")
+    print(LINE + "\n")
+    BackendDAEUtil.mapEqSystemVariablesNoUpdate(eq, printVarTraverse, 0)
+  end
 end
 
-"""
-    kabdelhak:
-    Transform a single equation to residual form by subtracting the rhs from
-    the lhs
-"""
-function makeResidualEquation(eqn::BackendDAE.Equation)
-  eqn = begin
+function printAnyTraverse(any, extArg)
+  print(any)
+  print("\n")
+  (extArg)
+end
+
+function printVarTraverse(var::BackendDAE.Var, extArg)
+  print(var.varName.ident)
+  print(" | ")
+  print(var.varKind)
+  print("\n")
+  (extArg)
+end
+
+# kabdelhak: Very ugly, this needs improvement!
+# We need a reasonable printExp() function
+function printEqTraverse(eq::BackendDAE.Equation, extArg)
+  _ = begin
     local lhs::DAE.Exp
     local rhs::DAE.Exp
-    local source::DAE.ElementSource
-    local attr::EquationAttributes
-    @match eqn begin
-      BackendDAE.EQUATION(lhs, rhs, source, attr) => begin
-        (BackendDAE.RESIDUAL_EQUATION(DAE.BINARY(lhs, DAE.SUB(DAE.T_REAL_DEFAULT), rhs), source, attr))
+    local cref::DAE.ComponentRef
+    @match eq begin
+      BackendDAE.EQUATION(lhs = lhs, rhs = rhs) => begin
+        print(lhs)
+        print(" = ")
+        print(rhs)
+        print("\n")
       end
-      _ => begin
-        (eqn)
+      BackendDAE.SOLVED_EQUATION(componentRef = cref, exp = rhs) => begin
+      print(cref)
+      print(" = ")
+      print(rhs)
+      print("\n")
+      end
+      BackendDAE.RESIDUAL_EQUATION(exp = rhs) => begin
+      print("0 = ")
+      print(rhs)
+      print("\n")
       end
     end
   end
 end
-
 
 @exportAll()
 end
