@@ -2,7 +2,7 @@
 
 
 # Dependencies
-* Julia 1.2 or 1.3
+* Julia 1.1, 1.2 or 1.3
 * ExportAll.jl
 * MetaModelica.jl
 * Setfield.jl

@@ -148,7 +148,7 @@ function traverseExpTopDown1(continueTraversal::Bool, inExp::DAE.Exp, func::Func
          end, ext_arg_2)
       end
 
-      (_, DAE.LUNARY(operator = op, exp = e1), rel, ext_arg)  => begin
+      (DAE.LUNARY(operator = op, exp = e1), rel, ext_arg)  => begin
         (e1_1, ext_arg_1) = traverseExpTopDown(e1, rel, ext_arg)
         (if referenceEq(e1, e1_1)
          inExp
