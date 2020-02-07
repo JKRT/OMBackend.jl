@@ -1,6 +1,10 @@
 module Util
 
 import DAE
+using MetaModelica
+
+const Type_a = Any
+const Argument = Any
 
 function traverseExpTopDown(inExp::DAE.Exp, func::Function, ext_arg::Type_a) ::Tuple{DAE.Exp, Type_a}
   local outArg::Type_a
