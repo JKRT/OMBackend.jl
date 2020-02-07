@@ -37,11 +37,8 @@ using ExportAll
 using Setfield
 
 import DAE
-#import Expression Steal this from OMCompiler.jl
 import BackendDAE
 import BackendEquation
-
-const mapFunc = Function
 
 """
 This function converts an array of variables to the BackendDAE variable structure
@@ -62,7 +59,7 @@ function createEqSystem(vars::BackendDAE.Variables, eqs::BackendDAE.EquationArra
                        BackendEquation.emptyEqns()))
 end
 
-function mapEqSystems(dae::BackendDAE.BackendDAEStructure, mapFunc::mapFunc)
+function mapEqSystems(dae::BackendDAE.BackendDAEStructure, traversalOperation::Function)
   # dae = begin
   #   local eqs::List{BackendDAE.EqSystem}
   #   local acc::List{BackendDAE.EqSystem} = nil
@@ -77,7 +74,7 @@ function mapEqSystems(dae::BackendDAE.BackendDAEStructure, mapFunc::mapFunc)
   # end
 end
 
-function mapEqSystemEquations(syst::BackendDAE.EqSystem, mapFunc::mapFunc)
+function mapEqSystemEquations(syst::BackendDAE.EqSystem, traversalOperation::Function)
   syst = begin
     local eqs::Array{BackendDAE.Equation,1}
     @match syst begin
@@ -92,7 +89,7 @@ function mapEqSystemEquations(syst::BackendDAE.EqSystem, mapFunc::mapFunc)
 
 end
 
-function traveseEquationExpressions(eq::BackendDAE.Equation, mapFunc::mapFunc, extArg::T) where{T}
+function traveseEquationExpressions(eq::BackendDAE.Equation, traversalOperation::Function, extArg)
   # (eq, extArg) = begin
   #   @match eq begin
   #     local lhs::DAE.Exp
@@ -113,6 +110,15 @@ function traveseEquationExpressions(eq::BackendDAE.Equation, mapFunc::mapFunc, e
   #     end
   #   end
   # end
+end
+
+function DAE_VarKind_to_BDAE_VarKind(kind::DAE.VarKind)::BackendDAE.VarKind
+  @match kind begin
+    DAE.VARIABLE(__) => BackendDAE.VARIABLE()
+    DAE.DISCRETE(__) => BackendDAE.DISCRETE()
+    DAE.PARAM(__) => BackendDAE.PARAM()
+    DAE.CONST(__) => BackendDAE.CONST()
+  end
 end
 
 @exportAll()

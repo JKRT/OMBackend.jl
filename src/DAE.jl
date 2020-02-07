@@ -140,26 +140,21 @@ end
 
 @Uniontype VarInnerOuter begin
   @Record INNER begin
-
   end
 
   @Record OUTER begin
-
   end
 
   @Record INNER_OUTER begin
-
   end
 
   @Record NOT_INNER_OUTER begin
-
   end
 end
 
 #= gives information about the origin of the element =#
 @Uniontype ElementSource begin
   @Record SOURCE begin
-
     info #= the line and column numbers of the equations and algorithms this element came from =#::SourceInfo
     partOfLst #= the model(s) this element came from =#::List{Absyn.Within}
     instance #= the instance(s) this element is part of =# # TODO ::Prefix.ComponentPrefix
@@ -2047,7 +2042,6 @@ const emptySet = SETS(SET_TRIE_NODE("", WILD(), nil, 0), 0, nil, nil)::Sets
   end
 
   @Record EQUATION begin
-
     exp::Exp
     scalar::Exp
     source #= the origin of the component/equation/algorithm =#::ElementSource

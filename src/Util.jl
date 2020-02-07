@@ -6,14 +6,13 @@ function traverseExpTopDown(inExp::DAE.Exp, func::FuncExpType, ext_arg::Type_a) 
   local outArg::Type_a
   local outExp::DAE.Exp
   local cont::Bool
-
   (outExp, cont, outArg) = func(inExp, ext_arg)
   (outExp, outArg) = traverseExpTopDown1(cont, outExp, func, outArg)
   (outExp, outArg)
 end
 
 
-function traverseExpTopDown1(cont::Bool, inExp::DAE.Exp, func::FuncExpType, inArg::Type_a) ::Tuple{DAE.Exp, Type_a}
+function traverseExpTopDown1(continueTraversal::Bool, inExp::DAE.Exp, func::FuncExpType, inArg::Type_a) ::Tuple{DAE.Exp, Type_a}
   local outArg::Type_a
   local outExp::DAE.Exp
   (outExp, outArg) = begin
@@ -52,7 +51,8 @@ function traverseExpTopDown1(cont::Bool, inExp::DAE.Exp, func::FuncExpType, inAr
     local scalar::Bool
     local t::Type
     local tp::Type
-    if !cont
+
+    if !continueTraversal
       return (inExp, inArg)
     end
 
@@ -281,11 +281,13 @@ function traverseExpTopDown1(cont::Bool, inExp::DAE.Exp, func::FuncExpType, inAr
      (DAE.SHARED_LITERAL(__), _, ext_arg)  => begin
       (inExp, ext_arg)
      end
+
      _  => begin
-       throw("Error! TopDown failed")
+       throw("Error: traverseExpTopDown1 failed")
      end
+
    end
-end
+  end
   (outExp, outArg)
 end
 
@@ -329,17 +331,14 @@ function traverseExpTopDownCrefHelpera(inCref::DAE.ComponentRef, rel::FuncType, 
   (outCref, outArg)
 end
 
-
-
 function traverseExpTopDownSubs(inSubscript::List{<:DAE.Subscript}, rel::FuncType, iarg::Argument) ::Tuple{List{DAE.Subscript}, Argument}
-  local arg::Argument = iarg
-  local outSubscript::List{DAE.Subscript}
-
-  local exp::DAE.Exp
-  local nsub::DAE.Subscript
   local allEq::Bool = true
+  local arg::Argument = iarg
   local delst::DoubleEnded.MutableList{DAE.Subscript}
+  local exp::DAE.Exp
   local nEq::ModelicaInteger = 0
+  local nsub::DAE.Subscript
+  local outSubscript::List{DAE.Subscript}
 
   for sub in inSubscript
     nsub = begin
@@ -397,8 +396,7 @@ function traverseExpTopDownSubs(inSubscript::List{<:DAE.Subscript}, rel::FuncTyp
       DoubleEnded.push_back(delst, nsub)
     end
   end
-  #=  Preserve reference equality without any allocation if nothing changed
-  =#
+  #=  Preserve reference equality without any allocation if nothing changed =#
   outSubscript = if allEq
     inSubscript
   else

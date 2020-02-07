@@ -82,20 +82,34 @@ function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple
   local variableLst::List{BackendDAE.Var} = nil
   local equationLst::List{BackendDAE.Equation} = nil
   for elem in elementLst
-    @info(elem)
     _ = begin
       local backendDAE_Var
       local backendDAE_Equation
       @match elem begin
-        # DAE.VAR(__) => begin
-        #   variableLst = BackendDAE.VAR(__) <| variableLst
-        # end
-        # DAE.EQUATION(__) => begin
-        #   equationLst = BackendDAE.EQUATION(__) <| equationLst
-        # end
-        # DAE.COMP(__) => begin
-        #   variableLst,equationLst = splitEquationsAndVars(elem.dAElist)
-        # end
+        DAE.VAR(__) => begin
+          variableLst = BackendDAE.VAR(elem.componentRef,
+                                       BackendDAEUtil.DAE_VarKind_to_BDAE_VarKind(elem.kind),
+                                       elem.direction,
+                                       elem.ty,
+                                       elem.binding,
+                                       elem.dims,
+                                       elem.source,
+                                       elem.variableAttributesOption,
+                                       NONE(), #=Tearing=#
+                                       elem.connectorType,
+                                       false #=We do not know if we can replace or not yet=#
+                                       ) <| variableLst
+        end
+        DAE.EQUATION(__) => begin
+          equationLst = BackendDAE.EQUATION(elem.exp,
+                                            elem.scalar,
+                                            elem.source,
+                                            #=Below might need to be changed =#
+                                            BackendDAE.EQ_ATTR_DEFAULT_UNKNOWN) <| equationLst
+        end
+        DAE.COMP(__) => begin
+          variableLst,equationLst = splitEquationsAndVars(elem.dAElist)
+        end
         _ => begin
           continue
         end

@@ -94,8 +94,6 @@ import DoubleEnded
 import SCode
 
 const EquationArray = Array #= Let's use the Julia array instead ExpandableArray =#
-
-const Type = DAE.Type
 const EqSystems = Array
 
 
@@ -345,13 +343,6 @@ end
   end
 end
 
-#=
-=#
-#=   variables and equations definition
-=#
-#=
-=#
-
 @Uniontype Variables begin
   @Record VARIABLES begin
     varArr #= Array of variables =#::Array{Var} #=Note not the original type=#
@@ -384,18 +375,14 @@ end
     varName #= variable name =#::DAE.ComponentRef
     varKind #= kind of variable =#::VarKind
     varDirection #= input, output or bidirectional =#::DAE.VarDirection
-    varParallelism #= parallelism of the variable. parglobal, parlocal or non-parallel =#::DAE.VarParallelism
-    varType #= built-in type or enumeration =#::Type
+    varType #= built-in type or enumeration =#::DAE.Type
     bindExp #= Binding expression e.g. for parameters =#::Option{DAE.Exp}
-    tplExp #= Variable is part of a tuple. Needed for the globalKnownVars and localKnownVars =#::Option{DAE.Exp}
     arryDim #= array dimensions of non-expanded var =#::DAE.InstDims
     source #= origin of variable =#::DAE.ElementSource
     values #= values on built-in attributes =#::Option{DAE.VariableAttributes}
     tearingSelectOption #= value for TearingSelect =#::Option{TearingSelect}
-    hideResult #= expression from the hideResult annotation =#::DAE.Exp
-    comment #= this contains the comment and annotation from Absyn =#::Option{SCode.Comment}
+#    hideResult #= expression from the hideResult annotation =#::DAE.Exp
     connectorType #= flow, stream, unspecified or not connector. =#::DAE.ConnectorType
-    innerOuter #= inner, outer, inner outer or unspecified =#::DAE.VarInnerOuter
     unreplaceable #= indicates if it is allowed to replace this variable =#::Bool
   end
 end
@@ -589,20 +576,14 @@ const defaultEvalStages = EVALUATION_STAGES(false, false, false, false)::Evaluat
 end
 
 const EQ_ATTR_DEFAULT_DYNAMIC = EQUATION_ATTRIBUTES(false, DYNAMIC_EQUATION(), defaultEvalStages)::EquationAttributes
-
 const EQ_ATTR_DEFAULT_BINDING = EQUATION_ATTRIBUTES(false, BINDING_EQUATION(), defaultEvalStages)::EquationAttributes
-
 const EQ_ATTR_DEFAULT_INITIAL = EQUATION_ATTRIBUTES(false, INITIAL_EQUATION(), defaultEvalStages)::EquationAttributes
-
 const EQ_ATTR_DEFAULT_DISCRETE = EQUATION_ATTRIBUTES(false, DISCRETE_EQUATION(), defaultEvalStages)::EquationAttributes
-
 const EQ_ATTR_DEFAULT_AUX = EQUATION_ATTRIBUTES(false, AUX_EQUATION(), defaultEvalStages)::EquationAttributes
-
 const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND(), defaultEvalStages)::EquationAttributes
 
 @Uniontype Equation begin
   @Record EQUATION begin
-
     exp::DAE.Exp
     scalar::DAE.Exp
     source #= origin of equation =#::DAE.ElementSource
@@ -1170,9 +1151,6 @@ end
   end
 
   @Record SYSTEM begin
-
-    #= linear system of equations
-    =#
     comp::StrongComponent
     allOperations::CompInfo
     size::Integer
@@ -1180,9 +1158,6 @@ end
   end
 
   @Record TORN_ANALYSE begin
-
-    #= torn system of equations
-    =#
     comp::StrongComponent
     tornEqs::CompInfo
     otherEqs::CompInfo
@@ -1190,27 +1165,19 @@ end
   end
 
   @Record NO_COMP begin
-
-    #=  assert...
-    =#
     numAdds::Integer
     numMul::Integer
     numDiv::Integer
     numTrig::Integer
     numRelations::Integer
     numLog::Integer
-    #=  logical operations
-    =#
     numOth::Integer
-    #=  pow,...
-    =#
     funcCalls::Integer
   end
 end
 
 @Uniontype BackendDAEModeData begin
   @Record BDAE_MODE_DATA begin
-
     stateVars::List{Var}
     algStateVars::List{Var}
     numResVars::Integer
