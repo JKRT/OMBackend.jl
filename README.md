@@ -10,7 +10,7 @@
 * DifferentialEquations.jl
 
 # Installation
-Install dependencies
+Install dependencies:
 ```julia
 (v1.3) pkg> add ExportAll
 (v1.3) pkg> add Sundials
