@@ -2,7 +2,7 @@ module Util
 
 import DAE
 
-function traverseExpTopDown(inExp::DAE.Exp, func::FuncExpType, ext_arg::Type_a) ::Tuple{DAE.Exp, Type_a}
+function traverseExpTopDown(inExp::DAE.Exp, func::Function, ext_arg::Type_a) ::Tuple{DAE.Exp, Type_a}
   local outArg::Type_a
   local outExp::DAE.Exp
   local cont::Bool
@@ -12,7 +12,7 @@ function traverseExpTopDown(inExp::DAE.Exp, func::FuncExpType, ext_arg::Type_a) 
 end
 
 
-function traverseExpTopDown1(continueTraversal::Bool, inExp::DAE.Exp, func::FuncExpType, inArg::Type_a) ::Tuple{DAE.Exp, Type_a}
+function traverseExpTopDown1(continueTraversal::Bool, inExp::DAE.Exp, func::Function, inArg::Type_a) ::Tuple{DAE.Exp, Type_a}
   local outArg::Type_a
   local outExp::DAE.Exp
   (outExp, outArg) = begin
@@ -46,7 +46,7 @@ function traverseExpTopDown1(continueTraversal::Bool, inExp::DAE.Exp, func::Func
     local lstexpl_1::List{List{DAE.Exp}}
     local op::Operator
     local reductionInfo::DAE.ReductionInfo
-    local rel::FuncExpType
+    local rel::Function
     local riters::DAE.ReductionIterators
     local scalar::Bool
     local t::Type
@@ -292,7 +292,7 @@ function traverseExpTopDown1(continueTraversal::Bool, inExp::DAE.Exp, func::Func
 end
 
 
-function traverseExpTopDownCrefHelpera(inCref::DAE.ComponentRef, rel::FuncType, iarg::Argument) ::Tuple{DAE.ComponentRef, Argument}
+function traverseExpTopDownCrefHelpera(inCref::DAE.ComponentRef, rel::Function, iarg::Argument) ::Tuple{DAE.ComponentRef, Argument}
   local outArg::Argument
   local outCref::DAE.ComponentRef
   (outCref, outArg) = begin
@@ -331,7 +331,7 @@ function traverseExpTopDownCrefHelpera(inCref::DAE.ComponentRef, rel::FuncType, 
   (outCref, outArg)
 end
 
-function traverseExpTopDownSubs(inSubscript::List{<:DAE.Subscript}, rel::FuncType, iarg::Argument) ::Tuple{List{DAE.Subscript}, Argument}
+function traverseExpTopDownSubs(inSubscript::List{<:DAE.Subscript}, rel::Function, iarg::Argument) ::Tuple{List{DAE.Subscript}, Argument}
   local allEq::Bool = true
   local arg::Argument = iarg
   local delst::DoubleEnded.MutableList{DAE.Subscript}
