@@ -2,9 +2,12 @@
 
 
 # Dependencies
+* Julia 1.2 or 1.3
 * ExportAll.jl
 * MetaModelica.jl
+* Setfield.jl
 * OMCompiler.jl
+* DifferentialEquations.jl
 
 # Installation
 Install dependencies
@@ -25,7 +28,6 @@ Assuming that you are developing the OMBackend package
 ```julia
 (v1.3) pkg> test OMBackend
 ```
-
 
 # Package structure
 * The main interface should be governed via the file all.jl in ./src/Main
