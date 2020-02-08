@@ -29,12 +29,14 @@
 *
 =#
 
-include("CodeGenerationUtil.jl")
-#include("BackendDAE.jl")
+module CodeGeneration
 
+using BackendDAE
+using SimulationCode
 
+include("codeGenerationUtil.jl")
 
-function generateSingleResidualEquation(equation#=::Equation=#)
+function generateSingleResidualEquation(file::IOStream, equation::BackendDAE.Equation)
 
 
 end
@@ -43,39 +45,51 @@ end
 """
 Write function modelName_DAE_equations() to file.
 """
-function generateDAEFunction(file::IOStream, backendDAE, modelName::String)
+function generateDAEFunction(file::IOStream, backendDAE::BackendDAE.BackendDAEStructure, modelName::String)
 
   write(file, "function $(modelName)_DAE_equations(res, dx, x, p, t)\n")
 
   equationSystems = backendDAE.eqs::EqSystem
   index = 1
+#=
   for eqSystem in equationSystems   # Loop over equation Systems
     for equation in eqSystem.orderedEqs # Loop over equations
       @match(equation)
-      @case(eq as RESIDUAL_EQUATION(__)) then
-        write(file, string("  res[$index] = ", exp, "\n"))  # TODO: Add DAE.Exp to string() function
-        index += 1
+      @case(eq & RESIDUAL_EQUATION(__))
+        variablesHashTable = generateSingleResidualEquation(file, eq, variablesHashTable)
+        #write(file, string("  res[$index] = ", exp, "\n"))  # TODO: Add DAE.Exp to string() function
     end
   end
+=#
 
   write(file, "end\n")
+end
+
+function transformToSimCode(backendDAE::BackendDAE.BackendDAEStructure)::SIM_CODE
 end
 
 ```
 
 Generate a julia file containing functions to simulate the DAE
 ```
-function generateCode(backendDAE#=::BackendDAE=#, path::Strings, modelName::String)
+function generateCode(simCode::SIM_CODE)
+  generateCode(simCode, "", "")
+end
 
+```
+
+Generate a julia file containing functions to simulate the DAE
+```
+function generateCode(backendDAE::BackendDAE.BackendDAEStructure, path::String, modelName::String)
   # Create file
   filename = string(modelName, ".jl")
   file = open(joinpath(path,filename), "w")
   write(file, copyRightString())
-
   # Write DAEFunction
   generateDAEFunction(file, backendDAE, modelName)
-
   # Finished code generation
   close(file)
   println("Generated file succesfull")
 end
+
+end #= End CodeGeneration=#
