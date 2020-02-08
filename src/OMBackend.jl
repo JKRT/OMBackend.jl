@@ -32,11 +32,11 @@
 #= Setup to support multiple modules by adding them to the load path=#
 const CURRENT_DIRECTORY = @__DIR__
 const BACKEND_DIRECTORY = CURRENT_DIRECTORY * "/Backend"
-const EXAMPLE_DAE = CURRENT_DIRECTORY * "/ExampleDAE"
-
+const EXAMPLE_DAE_DIRECTORY = CURRENT_DIRECTORY * "/ExampleDAE"
+const CODE_GENERATION_DIRECTORY = CURRENT_DIRECTORY * "/CodeGeneration"
 if ! (CURRENT_DIRECTORY in LOAD_PATH)
   @info("Setting up loadpath..")
-  push!(LOAD_PATH, CURRENT_DIRECTORY, BACKEND_DIRECTORY, EXAMPLE_DAE)
+  push!(LOAD_PATH, CURRENT_DIRECTORY, BACKEND_DIRECTORY, EXAMPLE_DAE_DIRECTORY, CODE_GENERATION_DIRECTORY)
   @info("Done setting up loadpath: $LOAD_PATH")
 end
 
@@ -56,6 +56,8 @@ import DAE
 import Prefix
 import SCode
 import ExampleDAEs
+import SimulationCode
+import CodeGeneration
 
 function translate()
   local lst::DAE.DAElist = ExampleDAEs.HelloWorld_DAE
@@ -68,6 +70,7 @@ end
 
 function execute_translation_steps(lst::DAE.DAElist)
   local bDAE::BackendDAE.BackendDAEStructure
+  local simCode::SIM_CODE
   #= Create Backend structure from Frontend structure =#
   dae = BackendDAECreate.lower(lst)
   BackendDump.dumpBackendDAEStructure(dae, "translated");
@@ -81,6 +84,10 @@ function execute_translation_steps(lst::DAE.DAElist)
   BackendDump.dumpBackendDAEStructure(dae, "residuals");
 
   #= create simCode -> target code =#
+  simCode = CodeGeneration.transformToSimCode(bDAE)
+  #= Target code =#
+  fileName = CodeGeneration.generateCode(simCode)
+  include(fileName)
 end
 
 end #=OMBackend=#
