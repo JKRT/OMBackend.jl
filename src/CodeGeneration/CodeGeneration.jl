@@ -34,7 +34,7 @@ module CodeGeneration
 using BackendDAE
 using SimulationCode
 
-include("codeGenerationUtil.jl")
+include("CodeGenerationUtil.jl")
 
 function generateSingleResidualEquation(file::IOStream, equation::BackendDAE.Equation)
 end
