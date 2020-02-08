@@ -17,44 +17,6 @@ function traverseExpTopDown(inExp::DAE.Exp, func::Function, ext_arg::Type_a) ::T
   (outExp, outArg)
 end
 
-function traverseExpList(inExpl::List{DAE.Exp}, rel::Function, iext_arg::Argument)
-  local ext_arg::ArgT = iext_arg
-  local expl::List{DAE.Exp}
-  local e1::DAE.Exp
-  local allEq::Bool = true
-  local delst::DoubleEnded.MutableList{DAE.Exp}
-  local nEq::ModelicaInteger = 0
-  for e in inExpl
-    (e1, ext_arg) = traverseExpTopDown(e, rel, ext_arg)
-    if if allEq
-      ! referenceEq(e, e1)
-    else
-      false
-    end
-      allEq = false
-      delst = DoubleEnded.empty(e1)
-      for elt in inExpl
-        if nEq < 1
-          break
-        end
-        DoubleEnded.push_back(delst, elt)
-        nEq = nEq - 1
-      end
-    end
-    if allEq
-      nEq = nEq + 1
-    else
-      DoubleEnded.push_back(delst, e1)
-    end
-  end
-  expl = if allEq
-    inExpl
-  else
-    DoubleEnded.toListAndClear(delst)
-  end
-  (expl, ext_arg)
-end
-
 function traverseExpTopDown1(continueTraversal::Bool, inExp::DAE.Exp, func::Function, inArg::Type_a) ::Tuple{DAE.Exp, Type_a}
   local outArg::Type_a
   local outExp::DAE.Exp

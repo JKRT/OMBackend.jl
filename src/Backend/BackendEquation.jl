@@ -38,6 +38,7 @@ using ExportAll
 
 import DAE
 import BackendDAE
+import BackendDump
 
 """
     kabdelhak:
@@ -61,7 +62,7 @@ function makeResidualEquation(eqn::BackendDAE.Equation)
     local attr::EquationAttributes
     @match eqn begin
       BackendDAE.EQUATION(lhs, rhs, source, attr) => begin
-        (BackendDAE.RESIDUAL_EQUATION(DAE.BINARY(lhs, DAE.SUB(DAE.T_REAL_DEFAULT), rhs), source, attr))
+        BackendDAE.RESIDUAL_EQUATION(DAE.BINARY(lhs, DAE.SUB(DAE.T_REAL_DEFAULT), rhs), source, attr)
       end
       _ => begin
         (eqn)
