@@ -302,11 +302,11 @@ function expStringify(exp::DAE.Exp)::String
       end
 
       DAE.LBINARY(exp1 = e1, operator = op, exp2 = e2) => begin
-        (expStringify(e1) + " " + opStr(op) + " " + expStringify(e1))
+        (expStringify(e1) + " " + opStr(op) + " " + expStringify(e2))
       end
 
       DAE.RELATION(exp1 = e1, operator = op, exp2 = e2) => begin
-        (expStringify(e1) + " " + opStr(op) + " " + expStringify(e1))
+        (expStringify(e1) + " " + opStr(op) + " " + expStringify(e2))
       end
 
       DAE.IFEXP(expCond = e1, expThen = e2, expElse = e3) => begin
