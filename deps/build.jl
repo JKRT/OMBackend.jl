@@ -1,5 +1,3 @@
-
-
 @info("OMBackend: Starting build script")
 
 push!(LOAD_PATH, "@v#.#", "@stdlib")
