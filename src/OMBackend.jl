@@ -57,10 +57,10 @@ import Prefix
 import SCode
 import ExampleDAEs
 import SimulationCode
-import CodeGeneration
+#import CodeGeneration
 
 function translate()
-  local lst::DAE.DAElist = ExampleDAEs.HelloWorld_DAE
+  local lst::DAE.DAElist = ExampleDAEs.dae
   execute_translation_steps(lst)
 end
 
@@ -84,9 +84,9 @@ function execute_translation_steps(lst::DAE.DAElist)
   BackendDump.dumpBackendDAEStructure(dae, "residuals");
 
   #= create simCode -> target code =#
-  simCode = CodeGeneration.transformToSimCode(dae)
+  #simCode = CodeGeneration.transformToSimCode(bDAE)
   #= Target code =#
-  #fileName = CodeGeneration.generateCode(dae)
+  #fileName = CodeGeneration.generateCode(simCode)
   #include(fileName)
 end
 

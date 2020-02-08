@@ -107,6 +107,9 @@ function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple
                                             #=Below might need to be changed =#
                                             BackendDAE.EQ_ATTR_DEFAULT_UNKNOWN) <| equationLst
         end
+        DAE.WHEN_EQUATION(__) => begin
+          equationLst = lowerWhenEquation(elem) <| equationLst
+        end
         DAE.COMP(__) => begin
           variableLst,equationLst = splitEquationsAndVars(elem.dAElist)
         end
@@ -117,6 +120,63 @@ function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple
     end
   end
   return (variableLst, equationLst)
+end
+function lowerWhenEquation(eq::DAE.Element)::BackendDAE.Equation
+
+  local whenOperatorLst::List{BackendDAE.WhenOperator} = nil
+  local whenEquation::BackendDAE.WhenEquation
+  local elseOption::Option{BackendDAE.WhenEquation} = NONE()
+  local elseEq::BackendDAE.Element
+
+  whenOperatorLst = createWhenOperators(eq.equations, whenOperatorLst)
+  if isSome(eq.elsewhen_)
+    SOME(elseEq) = eq.elsewhen_
+    elseOption = SOME(lowerWhenEquation(elseEq))
+  end
+
+  whenEquation = BackendDAE.WHEN_STMTS(eq.condition, whenOperatorLst, elseOption)
+  return BackendDAE.WHEN_EQUATION(1, whenEquation, eq.source, BackendDAE.EQ_ATTR_DEFAULT_UNKNOWN)
+end
+
+function createWhenOperators(elementLst::List{DAE.Element},lst::List{BackendDAE.WhenOperator})::List{BackendDAE.WhenOperator}
+  lst = begin
+    local rest::List{DAE.Element}
+    local acc::List{BackendDAE.WhenOperator}
+    local cref::DAE.ComponentRef
+    local e1::DAE.Exp
+    local e2::DAE.Exp
+    local e3::DAE.Exp
+    local source::DAE.ElementSource
+    @match elementLst begin
+      (DAE.EQUATION(exp = e1, scalar = e2, source = source) <| rest) => begin
+        acc = BackendDAE.ASSIGN(e1, e2, source) <| lst
+        createWhenOperators(rest, acc)
+      end
+      (DAE.ASSERT(condition = e1, message = e2, level = e3, source = source) <| rest) => begin
+        acc = BackendDAE.ASSERT(e1, e2, e3, source) <| lst
+        createWhenOperators(rest, acc)
+      end
+      (DAE.TERMINATE(message = e1, source = source) <| rest) => begin
+      acc = BackendDAE.TERMINATE(e1, source) <| lst
+      createWhenOperators(rest, acc)
+      end
+      (DAE.REINIT(componentRef = cref, exp = e1, source = source) <| rest) => begin
+        acc = BackendDAE.REINIT(cref, e1, source) <| lst
+        createWhenOperators(rest, acc)
+      end
+      (DAE.NORETCALL(exp = e1, source = source) <| rest) => begin
+        acc = BackendDAE.NORETCALL(e1, source) <| lst
+        createWhenOperators(rest, acc)
+      end
+      #= MAYBE MORE CASES NEEDED =#
+      nil => begin
+        (lst)
+      end
+      (_ <| rest) => begin
+        createWhenOperators(rest, lst)
+      end
+    end
+  end
 end
 
 @exportAll()

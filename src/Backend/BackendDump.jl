@@ -81,6 +81,7 @@ function printEqTraverse(eq::BackendDAE.Equation, extArg)
     local lhs::DAE.Exp
     local rhs::DAE.Exp
     local cref::DAE.ComponentRef
+    local whenEquation::BackendDAE.WhenEquation
     @match eq begin
       BackendDAE.EQUATION(lhs = lhs, rhs = rhs) => begin
         print(expStringify(lhs) + " = " + expStringify(rhs) + "\n")
@@ -92,6 +93,51 @@ function printEqTraverse(eq::BackendDAE.Equation, extArg)
 
       BackendDAE.RESIDUAL_EQUATION(exp = rhs) => begin
         print("0 = " + expStringify(rhs) + "\n")
+      end
+
+      BackendDAE.WHEN_EQUATION(whenEquation = whenEquation) => begin
+        printWhenEquation(whenEquation)
+      end
+    end
+  end
+end
+
+function printWhenEquation(whenEq::BackendDAE.WhenEquation)
+  local elseWhen::BackendDAE.WhenEquation
+  print("when " + expStringify(whenEq.condition) + " then\n")
+
+  for op in whenEq.whenStmtLst
+    print("  " + whenOperatorStr(op) + "\n")
+  end
+
+  if isSome(whenEq.elsewhenPart)
+    SOME(elseWhen) = whenEq.elseWhenPart
+    print("else \n")
+    printWhenEquation(elseWhen)
+  end
+  print("end;\n")
+end
+
+function whenOperatorStr(whenOp::BackendDAE.WhenOperator)::String
+  str = begin
+    local e1::DAE.Exp
+    local e2::DAE.Exp
+    local cref::DAE.ComponentRef
+    @match whenOp begin
+      BackendDAE.ASSIGN(left = e1, right = e2) => begin
+        (expStringify(e1) + " := " + expStringify(e2))
+      end
+      BackendDAE.REINIT(stateVar = cref, value = e1) => begin
+        ("reinit(" + crefStr(cref) + ", " + expStringify(e1) + ")")
+      end
+      BackendDAE.ASSERT(condition = e1, message = e2) => begin
+        ("assert(" + expStringify(e1) + ", " + expStringify(e2) + ")")
+      end
+      BackendDAE.TERMINATE(message = e1) => begin
+        ("[TERMINATE]" + expStringify(e1))
+      end
+      BackendDAE.NORETCALL(exp = e1) => begin
+        ("[NORET]" + expStringify(e1))
       end
     end
   end
@@ -324,8 +370,8 @@ function expStringify(exp::DAE.Exp)::String
         tmpStr = tmpStr + "[PARTEVAL](" + expLstStringify(expl, ", ") + ")"
       end
 
-      DAE.ARRAY(scalar = e1)  => begin
-        "[ARR]" + expStringify(e1)
+      DAE.ARRAY(array = expl)  => begin
+        "[ARR]" + expLstStringify(expl, ", ")
       end
 
       DAE.MATRIX(matrix = lstexpl)  => begin

@@ -9,7 +9,7 @@ import DAE
 import Prefix
 import SCode
 
-include("helloWorld.jl")
+include("bouncingBall.jl")
 #include("helloWorld_causalized.jl")
 
 end #= ExampleDAE =#

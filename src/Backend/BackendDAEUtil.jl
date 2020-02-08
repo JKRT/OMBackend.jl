@@ -144,6 +144,9 @@ function traverseEquationExpressions(eq::BackendDAE.Equation, traversalOperation
          @set eq.rhs = rhs;
          (eq, extArg)
        end
+       _ => begin
+         (eq, extArg)
+       end
      end
    end
 end
