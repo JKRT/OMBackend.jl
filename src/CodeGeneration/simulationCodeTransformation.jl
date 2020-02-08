@@ -32,7 +32,7 @@
 using MetaModelica
 
 using SimulationCode
-using BackenDAE
+using BackendDAE
 
 
 """

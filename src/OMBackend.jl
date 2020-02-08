@@ -84,7 +84,7 @@ function execute_translation_steps(lst::DAE.DAElist)
   BackendDump.dumpBackendDAEStructure(dae, "residuals");
 
   #= create simCode -> target code =#
-  #simCode = CodeGeneration.transformToSimCode(dae)
+  simCode = CodeGeneration.transformToSimCode(dae)
   #= Target code =#
   #fileName = CodeGeneration.generateCode(dae)
   #include(fileName)

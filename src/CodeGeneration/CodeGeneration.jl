@@ -35,6 +35,7 @@ using BackendDAE
 using SimulationCode
 
 include("CodeGenerationUtil.jl")
+include("simulationCodeTransformation.jl")
 
 function generateSingleResidualEquation(file::IOStream, equation::BackendDAE.Equation)
 end
@@ -44,7 +45,6 @@ end
 Write function modelName_DAE_equations() to file.
 """
 function generateDAEFunction(file::IOStream, backendDAE::BackendDAE.BackendDAEStructure, modelName::String)
-
   write(file, "function $(modelName)_DAE_equations(res, dx, x, p, t)\n")
 
   equationSystems = backendDAE.eqs::EqSystem
