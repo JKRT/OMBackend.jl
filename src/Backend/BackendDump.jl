@@ -53,12 +53,12 @@ function dumpBackendDAEStructure(dae::BackendDAE.BackendDAEStructure, heading::S
   print(DOUBLE_LINE + "\n")
 
   for eq in dae.eqs
-    print("\nEqs:\n")
-    print(LINE + "\n")
-    BackendDAEUtil.mapEqSystemEquationsNoUpdate(eq, printEqTraverse, 0)
     print("\nVars:\n")
     print(LINE + "\n")
     BackendDAEUtil.mapEqSystemVariablesNoUpdate(eq, printVarTraverse, 0)
+    print("\nEqs:\n")
+    print(LINE + "\n")
+    BackendDAEUtil.mapEqSystemEquationsNoUpdate(eq, printEqTraverse, 0)
   end
 end
 
@@ -76,8 +76,6 @@ function printVarTraverse(var::BackendDAE.Var, extArg)
   (extArg)
 end
 
-# kabdelhak: Very ugly, this needs improvement!
-# We need a reasonable printExp() function
 function printEqTraverse(eq::BackendDAE.Equation, extArg)
   _ = begin
     local lhs::DAE.Exp
@@ -264,6 +262,7 @@ function expStringify(exp::DAE.Exp)::String
     local e2::DAE.Exp
     local e3::DAE.Exp
     local expl::List{DAE.Exp}
+    local lstexpl::List{List{DAE.Exp}}
     @match exp begin
       DAE.ICONST(int) => begin
         string(int)
@@ -318,139 +317,85 @@ function expStringify(exp::DAE.Exp)::String
       end
 
       DAE.RECORD(path = Absyn.IDENT(tmpStr), exps = expl)  => begin
-        tmpStr = tmpStr + "(" + expLstStringify(expl, ", ") + ")"
+        tmpStr = tmpStr + "[REC(" + expLstStringify(expl, ", ") + ")"
       end
 
       DAE.PARTEVALFUNCTION(path = Absyn.IDENT(tmpStr), expList = expl)  => begin
-        tmpStr = tmpStr + "(" + expLstStringify(expl, ", ") + ")"
+        tmpStr = tmpStr + "[PARTEVAL](" + expLstStringify(expl, ", ") + ")"
       end
 
       DAE.ARRAY(scalar = e1)  => begin
-        expStringify(eq)
+        "[ARR]" + expStringify(e1)
       end
 
-      _ => begin
-        str = ""
+      DAE.MATRIX(matrix = lstexpl)  => begin
+        str = "[MAT]"
+        for lst in lstexp
+          str = str + "{" + expLstStringify(lst, ", ") + "}"
+        end
+        (str)
       end
 
-"""
-      (DAE.MATRIX(ty = tp, integer = dim, matrix = lstexpl), rel, ext_arg)  => begin
-        (lstexpl_1, ext_arg_1) = traverseExpMatrixTopDown(lstexpl, rel, ext_arg)
-        (DAE.MATRIX(tp, dim, lstexpl_1), ext_arg_1)
+      DAE.RANGE(start = e1, step = NONE(), stop = e2)  => begin
+         expStringify(e1) + ":" + expStringify(e2)
       end
 
-      (DAE.RANGE(ty = tp, start = e1, step = NONE(), stop = e2), rel, ext_arg)  => begin
-        (e1_1, ext_arg_1) = traverseExpTopDown(e1, rel, ext_arg)
-        (e2_1, ext_arg_2) = traverseExpTopDown(e2, rel, ext_arg_1)
-        (if referenceEq(e1, e1_1) && referenceEq(e2, e2_1)
-         inExp
-         else
-         DAE.RANGE(tp, e1_1, NONE(), e2_1)
-         end, ext_arg_2)
+      DAE.RANGE(start = e1, step = SOME(e2), stop = e3)  => begin
+         expStringify(e1) + ":" + expStringify(e2) + ":" + expStringify(e3)
       end
 
-      (DAE.RANGE(ty = tp, start = e1, step = SOME(e2), stop = e3), rel, ext_arg)  => begin
-        (e1_1, ext_arg_1) = traverseExpTopDown(e1, rel, ext_arg)
-        (e2_1, ext_arg_2) = traverseExpTopDown(e2, rel, ext_arg_1)
-        (e3_1, ext_arg_3) = traverseExpTopDown(e3, rel, ext_arg_2)
-        (if referenceEq(e1, e1_1) && referenceEq(e2, e2_1) && referenceEq(e3, e3_1)
-         inExp
-         else
-         DAE.RANGE(tp, e1_1, SOME(e2_1), e3_1)
-         end, ext_arg_3)
+      DAE.TUPLE(PR = expl) => begin
+         "[TPL](" + expLstStringify(expl, ", ") + ")"
       end
 
-      (DAE.TUPLE(PR = expl), rel, ext_arg)  => begin
-        (expl_1, ext_arg_1) = traverseExpListTopDown(expl, rel, ext_arg)
-        (DAE.TUPLE(expl_1), ext_arg_1)
+      DAE.CAST(exp = e1)  => begin
+         "[CAST]" + expStringify(e1)
       end
 
-      (DAE.CAST(ty = tp, exp = e1), rel, ext_arg)  => begin
-        (e1_1, ext_arg_1) = traverseExpTopDown(e1, rel, ext_arg)
-        (DAE.CAST(tp, e1_1), ext_arg_1)
+      DAE.ASUB(exp = e1, sub = expl)  => begin
+         "[ASUB]" + expStringify(e1) + "{" + expLstStringify(expl, ", ") + "}"
       end
 
-      (DAE.ASUB(exp = e1, sub = expl_1), rel, ext_arg)  => begin
-        (e1_1, ext_arg_1) = traverseExpTopDown(e1, rel, ext_arg)
-        (expl_1, ext_arg_2) = traverseExpListTopDown(expl_1, rel, ext_arg_1)
-        (makeASUB(e1_1, expl_1), ext_arg_2)
+      DAE.TSUB(exp = e1, ix = int) => begin
+         "[TSUB]" + expStringify(e1) + "(" + string(int) + ")"
       end
 
-      (DAE.TSUB(e1, i, tp), rel, ext_arg)  => begin
-        (e1_1, ext_arg_1) = traverseExpTopDown(e1, rel, ext_arg)
-        (DAE.TSUB(e1_1, i, tp), ext_arg_1)
+      DAE.RSUB(exp = e1)  => begin
+        "[RSUB]" + expStringify(e1)
       end
 
-     (e1 && DAE.RSUB(__), rel, ext_arg)  => begin
-       (e1_1, ext_arg_1) = traverseExpTopDown(e1.exp, rel, ext_arg)
-       if ! referenceEq(e1.exp, e1_1)
-         e1.exp = e1_1
-       end
-     (e1, ext_arg_1)
+      DAE.SIZE(exp = e1, sz = NONE())  => begin
+        "[SIZE]" + expStringify(e1)
+      end
+
+      DAE.SIZE(exp = e1, sz = SOME(e2))  => begin
+         "[SIZE]" + expStringify(e1) + "(" + expStringify(e2) + ")"
+      end
+
+     DAE.CODE(__) => begin
+       "[CODE]"
+     end
+
+     DAE.REDUCTION(expr = e1) => begin
+       "[REDUCTION]" + expStringify(e1)
+     end
+
+     DAE.EMPTY(__)  => begin
+       "[EMPTY]"
+     end
+
+     DAE.CONS(e1, e2)  => begin
+       "[CONS]" + "{" + expStringify(e1) + ", " + expStringify(e2) + "}"
+     end
+
+     DAE.LIST(expl)  => begin
+       "[LST]" + "{" + expLstStringify(expl, ", ") + " }"
+     end
+
+    _ => begin
+      str = ""
     end
 
-     (DAE.SIZE(exp = e1, sz = NONE()), rel, ext_arg)  => begin
-       (e1_1, ext_arg_1) = traverseExpTopDown(e1, rel, ext_arg)
-       (DAE.SIZE(e1_1, NONE()), ext_arg_1)
-     end
-
-     (DAE.SIZE(exp = e1, sz = SOME(e2)), rel, ext_arg)  => begin
-       (e1_1, ext_arg_1) = traverseExpTopDown(e1, rel, ext_arg)
-       (e2_1, ext_arg_2) = traverseExpTopDown(e2, rel, ext_arg_1)
-       (if referenceEq(e1, e1_1) && referenceEq(e2, e2_1)
-         inExp
-        else
-          DAE.SIZE(e1_1, SOME(e2_1))
-       end, ext_arg_2)
-     end
-
-     (DAE.CODE(__), _, ext_arg)  => begin
-       (inExp, ext_arg)
-     end
-
-     (DAE.REDUCTION(reductionInfo = reductionInfo, expr = e1, iterators = riters), rel, ext_arg)  => begin
-       (e1, ext_arg) = traverseExpTopDown(e1, rel, ext_arg)
-       (riters, ext_arg) = traverseReductionIteratorsTopDown(riters, rel, ext_arg)
-       (DAE.REDUCTION(reductionInfo, e1, riters), ext_arg)
-     end
-
-     (DAE.EMPTY(__), _, _)  => begin
-       (inExp, inArg)
-     end
-
-     (DAE.CONS(e1, e2), rel, ext_arg)  => begin
-       (e1_1, ext_arg_1) = traverseExpTopDown(e1, rel, ext_arg)
-       (e2_1, ext_arg_2) = traverseExpTopDown(e2, rel, ext_arg_1)
-       (if referenceEq(e1, e1_1) && referenceEq(e2, e2_1)
-          inExp
-        else
-         DAE.CONS(e1_1, e2_1)
-        end, ext_arg_2)
-     end
-
-     (DAE.LIST(expl), rel, ext_arg)  => begin
-       (expl_1, ext_arg_1) = traverseExpListTopDown(expl, rel, ext_arg)
-       (DAE.LIST(expl_1), ext_arg_1)
-     end
-
-     (DAE.UNBOX(e1, tp), rel, ext_arg)  => begin
-       (e1_1, ext_arg_1) = traverseExpTopDown(e1, rel, ext_arg)
-       (DAE.UNBOX(e1_1, tp), ext_arg_1)
-     end
-
-     (DAE.BOX(e1), rel, ext_arg)  => begin
-       (e1_1, ext_arg_1) = traverseExpTopDown(e1, rel, ext_arg)
-       (DAE.BOX(e1_1), ext_arg_1)
-     end
-
-     (DAE.PATTERN(__), _, ext_arg)  => begin
-       (inExp, ext_arg)
-     end
-
-     (DAE.SHARED_LITERAL(__), _, ext_arg)  => begin
-      (inExp, ext_arg)
-     end
-     """
     end
   end
 end
