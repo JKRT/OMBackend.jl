@@ -1,7 +1,7 @@
 #= /*
 * This file is part of OpenModelica.
 *
-* Copyright (c) 1998-CurrentYear, Open Source Modelica Consortium (OSMC),
+* Copyright (c) 1998-2020, Open Source Modelica Consortium (OSMC),
 * c/o Linköpings universitet, Department of Computer and Information Science,
 * SE-58183 Linköping, Sweden.
 *
@@ -37,8 +37,6 @@ using SimulationCode
 include("codeGenerationUtil.jl")
 
 function generateSingleResidualEquation(file::IOStream, equation::BackendDAE.Equation)
-
-
 end
 
 
@@ -65,21 +63,18 @@ function generateDAEFunction(file::IOStream, backendDAE::BackendDAE.BackendDAESt
   write(file, "end\n")
 end
 
-function transformToSimCode(backendDAE::BackendDAE.BackendDAEStructure)::SIM_CODE
-end
 
-```
-
+"""
 Generate a julia file containing functions to simulate the DAE
-```
-function generateCode(simCode::SIM_CODE)
+"""
+function generateCode(simCode::SimulationCode.SIM_CODE)
   generateCode(simCode, "", "")
 end
 
-```
 
+"""
 Generate a julia file containing functions to simulate the DAE
-```
+"""
 function generateCode(backendDAE::BackendDAE.BackendDAEStructure, path::String, modelName::String)
   # Create file
   filename = string(modelName, ".jl")

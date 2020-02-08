@@ -1,7 +1,7 @@
 #= /*
 * This file is part of OpenModelica.
 *
-* Copyright (c) 1998-CurrentYear, Open Source Modelica Consortium (OSMC),
+* Copyright (c) 1998-2020, Open Source Modelica Consortium (OSMC),
 * c/o Linköpings universitet, Department of Computer and Information Science,
 * SE-58183 Linköping, Sweden.
 *
@@ -30,15 +30,13 @@
 =#
 
 """
-  Some description about this module
+  File: SimulationCode.jl
+  Data strucutres used for simulation code.
 """
 module SimulationCode
 
 import DAE
 import BackendDAE
-
-using MetaModelica
-using ExportAll
 
 """
 Kind of a simulation variable
@@ -53,7 +51,7 @@ abstract type STATE <: SimVarType end
 """
 Algebraic variable
 """
-abstract type  ALG_VARIABLE <: SimVarType end
+abstract type ALG_VARIABLE <: SimVarType end
 
 """
 Input variable
@@ -67,18 +65,20 @@ abstract type PARAMETER <: SimVarType end
 
 
 """
-Some description 2
+Abstract type for a simulation variable
 """
 abstract type SimVar end
 
 """
-Additional information about a variable used in code generation.
+Variable data type used for code generation
 """
 struct SIMVAR <: SimVar
-  name :: String # TODO: Replace with DAE.ComponentRef
+  "Readable name of variable"
+  name :: String
   "Index of variable, 0 based, type based"
   index::Integer
-  varKind #= Kind of variable (State, Differentiated State,  Algebraic Variable, Parameter )=# ::SimVarType
+  "Kind of variable, one of SimulationCode.SimVarType"
+  varKind::DataType
 end
 
 
@@ -87,10 +87,8 @@ Root data structure containing information required for code generation to
 generate simulation code for a Modelica model.
 """
 struct SIM_CODE
-  #crefToSimVarHT::Dict{()}
+  crefToSimVarHT::Any   # Dict of SIMVAR
+  equations::Any
 end
-
-
-@exportAll()
 
 end # module SimulationCode

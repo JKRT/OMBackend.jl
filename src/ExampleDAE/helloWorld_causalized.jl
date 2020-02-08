@@ -8,7 +8,7 @@ const HelloWorld_causalized_DAE = BackendDAE.BACKEND_DAE(
           #= Var 2 =#
           BackendDAE.VAR(
             #= varName =# DAE.CREF_IDENT("x", DAE.T_REAL(ImmutableList.ListDef.Nil{Any}()), ImmutableList.ListDef.Nil{Any}()),
-            #= varKind =# BackendDAE.VARIABLE(),
+            #= varKind =# BackendDAE.STATE(0, nothing, true),
             #= varDirection =# DAE.BIDIR(),
             #= varType =# DAE.T_REAL(ImmutableList.ListDef.Nil{Any}()),
             #= bindExp =# nothing,

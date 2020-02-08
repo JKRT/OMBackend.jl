@@ -1,7 +1,7 @@
 #= /*
 * This file is part of OpenModelica.
 *
-* Copyright (c) 1998-CurrentYear, Open Source Modelica Consortium (OSMC),
+* Copyright (c) 1998-2020, Open Source Modelica Consortium (OSMC),
 * c/o Linköpings universitet, Department of Computer and Information Science,
 * SE-58183 Linköping, Sweden.
 *
@@ -35,7 +35,7 @@ Return string containing the OSMC copyright stuff.
 """
 function copyRightString()
 
-  string("#= /*
+  strOut = string("#= /*
 * This file is part of OpenModelica.
 *
 * Copyright (c) 1998-CurrentYear, Open Source Modelica Consortium (OSMC),
@@ -66,4 +66,5 @@ function copyRightString()
 *
 =#
 ")
+  return strOut
 end
