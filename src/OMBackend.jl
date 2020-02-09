@@ -57,7 +57,7 @@ import Prefix
 import SCode
 import ExampleDAEs
 import SimulationCode
-#import CodeGeneration
+import CodeGeneration
 
 function translate()
   local lst::DAE.DAElist = ExampleDAEs.dae
@@ -74,15 +74,12 @@ function execute_translation_steps(lst::DAE.DAElist)
   #= Create Backend structure from Frontend structure =#
   dae = BackendDAECreate.lower(lst)
   BackendDump.dumpBackendDAEStructure(dae, "translated");
-
   #= detect state variables =#
   dae = Causalize.detectStates(dae)
   BackendDump.dumpBackendDAEStructure(dae, "states marked");
-
   #= causalize system, for now DAEMode =#
   dae = Causalize.daeMode(dae)
   BackendDump.dumpBackendDAEStructure(dae, "residuals");
-
   #= create simCode -> target code =#
   #simCode = CodeGeneration.transformToSimCode(bDAE)
   #= Target code =#

@@ -30,14 +30,11 @@
 =#
 
 using MetaModelica
-
 using SimulationCode
 using BackendDAE
 
-
 """
-Collect variables from array of BackendDAE.Var
-
+Collect variables from array of BackendDAE.Var:
 Save the name and it's kind of each variable.
 Index will be set to -2.
 """
@@ -46,8 +43,7 @@ function collectVariables(allBackendVars::Array{BackendDAE.Var})
   numberOfVars = length(allBackendVars)
   simVars = Array{SimulationCode.SimVars}(undef, numberOfVars)
 
-  for (i,backendVar) in enumerate(allBackendVars) do
-
+  for (i,backendVar) in enumerate(allBackendVars)
     simVarName = ""
     if typeof(backendVar.varName) == DAE.CREF_IDENT
       simVarName = string(backendVar.varName.ident)

@@ -151,6 +151,10 @@ function traverseEquationExpressions(eq::BackendDAE.Equation, traversalOperation
    end
 end
 
+"""
+Directly maps the DAE type to the BDAE type.
+Before casualisation we do not know if variables are state or not.
+"""
 function DAE_VarKind_to_BDAE_VarKind(kind::DAE.VarKind)::BackendDAE.VarKind
   @match kind begin
     DAE.VARIABLE(__) => BackendDAE.VARIABLE()
