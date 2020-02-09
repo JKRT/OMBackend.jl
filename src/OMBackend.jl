@@ -60,31 +60,48 @@ import SimulationCode
 import CodeGeneration
 
 function translate()
-  local lst::DAE.DAElist = ExampleDAEs.dae
-  execute_translation_steps(lst)
+  local frontendDAE::DAE.DAElist = ExampleDAEs.HelloWorld_DAE
+  local bDAE = lower(frontendDAE)
+  #local simCode = generateSimulationCode(bDAE)
+  #generateTargetCodeAndSimulate(simCode)
 end
 
-function translate(lst_DAE_IR::DAE.DAElist)
-  execute_translation_steps(lst_DAE_IR)
+function translate(frontendDAE::DAE.DAElist)
+  local bDAE = lower(frontendDAE)
+  local simCode = generateSimulationCode(bDAE)
+  generateTargetCodeAndSimulate(simCode)
 end
 
-function execute_translation_steps(lst::DAE.DAElist)
+"""
+ Transforms given Frontend DAE IR to causalized backend DAE IR (BDAE IR)
+"""
+function lower(frontendDAE::DAE.DAElist)
   local bDAE::BackendDAE.BackendDAEStructure
   local simCode::SIM_CODE
   #= Create Backend structure from Frontend structure =#
-  dae = BackendDAECreate.lower(lst)
-  BackendDump.dumpBackendDAEStructure(dae, "translated");
+  bDAE = BackendDAECreate.lower(frontendDAE)
+  BackendDump.dumpBackendDAEStructure(bDAE, "translated");
   #= detect state variables =#
-  dae = Causalize.detectStates(dae)
-  BackendDump.dumpBackendDAEStructure(dae, "states marked");
+  bDAE = Causalize.detectStates(bDAE)
+  BackendDump.dumpBackendDAEStructure(bDAE, "states marked");
   #= causalize system, for now DAEMode =#
-  dae = Causalize.daeMode(dae)
-  BackendDump.dumpBackendDAEStructure(dae, "residuals");
-  #= create simCode -> target code =#
-  #simCode = CodeGeneration.transformToSimCode(bDAE)
+  bDAE = Causalize.daeMode(bDAE)
+  BackendDump.dumpBackendDAEStructure(bDAE, "residuals");
+  return bDAE
+end
+
+"""
+  Transforms causalized BDAE IR to simulation code
+"""
+function generateSimulationCode(bDAE::BackendDAE.BackendDAEStructure)::SimulationCode.SIM_CODE
+  CodeGeneration.transformToSimCode(bDAE)
+end
+
+
+function generateTargetCodeAndSimulate(simCode::SimulationCode.SIM_CODE)
   #= Target code =#
-  #fileName = CodeGeneration.generateCode(simCode)
-  #include(fileName)
+  fileName = CodeGeneration.generateCode(simCode)
+  include(fileName)
 end
 
 end #=OMBackend=#

@@ -37,6 +37,7 @@ module SimulationCode
 
 import DAE
 import BackendDAE
+using MetaModelica
 
 """
 Kind of a simulation variable
@@ -46,22 +47,22 @@ abstract type SimVarType end
 """
 State variable
 """
-abstract type STATE <: SimVarType end
+struct  STATE <: SimVarType end
 
 """
 Algebraic variable
 """
-abstract type ALG_VARIABLE <: SimVarType end
+struct ALG_VARIABLE <: SimVarType end
 
 """
 Input variable
 """
-abstract type INPUT <: SimVarType end
+struct  INPUT <: SimVarType end
 
 """
 Parameter variable
 """
-abstract type PARAMETER <: SimVarType end
+struct PARAMETER <: SimVarType end
 
 
 """
@@ -76,9 +77,9 @@ struct SIMVAR <: SimVar
   "Readable name of variable"
   name :: String
   "Index of variable, 0 based, type based"
-  index::Integer
+  index::Option{Integer}
   "Kind of variable, one of SimulationCode.SimVarType"
-  varKind::DataType
+  varKind::SimVarType
 end
 
 
@@ -87,8 +88,10 @@ Root data structure containing information required for code generation to
 generate simulation code for a Modelica model.
 """
 struct SIM_CODE
-  crefToSimVarHT::Any   # Dict of SIMVAR
-  equations::Any
+  "Mapping of names to the corresponding variable"
+  crefToSimVarHT::Dict{String, SimVar}# Dict of SIMVAR
+  "Array of Equations"
+  equations::Array
 end
 
 end # module SimulationCode
