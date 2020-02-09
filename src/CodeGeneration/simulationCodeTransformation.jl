@@ -32,8 +32,10 @@
 import DAE
 
 using MetaModelica
-using SimulationCode
 using BackendDAE
+using BackendEquation
+using SimulationCode
+
 
 """
   Collect variables from array of BackendDAE.Var:
@@ -53,6 +55,7 @@ end
 
 function collectEquations(equations::Array)
 end
+using BackendDAE
 
 function bDAEVarKindToSimCodeVarKind(backendVar::BackendDAE.Var)::SimulationCode.SimVarType
   varKind = @match backendVar.varKind begin
@@ -96,12 +99,13 @@ function transformToSimCode(backendDAE::BackendDAE.BACKEND_DAE)::SimulationCode.
     allocateAndCollectSimulationVariables(allBackendVars)
   # Assign indices and put all variable into an hash table
   local crefToSimVarHT = createIndices(simVars)
-  local equations = for equationSystem in backendDAE.eqs
-      [eq for eq in equationSystem.orderedEqs]
-  end
+
+  #= kabdelhak: is this efficient or inefficient? i have no idea but it works for now =#
+  local equations = BackendEquation.concenateEquations(backendDAE.eqs)
+
   local simulationEquations = allocateAndCollectSimulationEquations(equations)
   #= Construct SIM_CODE =#
-  simCode = SimulationCode.SIM_CODE(equations, crefToSimVarHT)
+  simCode = SimulationCode.SIM_CODE(crefToSimVarHT, equations)
   return simCode
 end
 
@@ -110,8 +114,11 @@ end
   Construct the HashTable.
 """
 function createIndices(simulationVars::Array{SimulationCode.SIMVAR})::Dict{String, SimulationCode.SimVar}
+  local crefToSimVarHT = Dict{String, SimulationCode.SimVar}()
   for var in simulationVars
+    crefToSimVarHT[var.name] = var
   end
+  (crefToSimVarHT)
 end
 
 """

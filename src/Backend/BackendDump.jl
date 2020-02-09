@@ -60,6 +60,8 @@ function dumpBackendDAEStructure(dae::BackendDAE.BackendDAEStructure, heading::S
     print(LINE + "\n")
     BackendDAEUtil.mapEqSystemEquationsNoUpdate(eq, printEqTraverse, 0)
   end
+
+  print("\n")
 end
 
 function printAnyTraverse(any, extArg)
@@ -463,6 +465,19 @@ function expLstStringify(expLst::List{DAE.Exp}, seperator::String)::String
       end
     end
   end
+end
+
+function dictPrettyPrint(d::Dict, pre=1)
+    for (k,v) in d
+        if typeof(v) <: Dict
+            s = "$(repr(k)) => "
+            println(join(fill(" ", pre)) * s)
+            pretty_print(v, pre+1+length(s))
+        else
+            println(join(fill(" ", pre)) * "$(repr(k)) => $(repr(v))")
+        end
+    end
+    nothing
 end
 
 @exportAll()

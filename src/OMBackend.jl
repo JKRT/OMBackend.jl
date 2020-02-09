@@ -57,12 +57,13 @@ import Prefix
 import SCode
 import ExampleDAEs
 import SimulationCode
+import SimCodeDump
 import CodeGeneration
 
 function translate()
   local frontendDAE::DAE.DAElist = ExampleDAEs.HelloWorld_DAE
   local bDAE = lower(frontendDAE)
-  #local simCode = generateSimulationCode(bDAE)
+  local simCode = generateSimulationCode(bDAE)
   #generateTargetCodeAndSimulate(simCode)
 end
 
@@ -94,7 +95,9 @@ end
   Transforms causalized BDAE IR to simulation code
 """
 function generateSimulationCode(bDAE::BackendDAE.BackendDAEStructure)::SimulationCode.SIM_CODE
-  CodeGeneration.transformToSimCode(bDAE)
+  simCode = CodeGeneration.transformToSimCode(bDAE)
+  SimCodeDump.dumpSimCode(simCode, "transformed simcode")
+  (simCode)
 end
 
 
