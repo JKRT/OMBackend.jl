@@ -34,6 +34,7 @@ import DAE
 using MetaModelica
 using SimulationCode
 using BackendDAE
+using Setfield
 
 """
   Collect variables from array of BackendDAE.Var:
@@ -96,22 +97,57 @@ function transformToSimCode(backendDAE::BackendDAE.BACKEND_DAE)::SimulationCode.
     allocateAndCollectSimulationVariables(allBackendVars)
   # Assign indices and put all variable into an hash table
   local crefToSimVarHT = createIndices(simVars)
-  local equations = for equationSystem in backendDAE.eqs
-      [eq for eq in equationSystem.orderedEqs]
+  local equations = let
+      [eq for es in equationSystems for eq in es.orderedEqs]
   end
+  @info equations
   local simulationEquations = allocateAndCollectSimulationEquations(equations)
   #= Construct SIM_CODE =#
-  simCode = SimulationCode.SIM_CODE(equations, crefToSimVarHT)
+  simCode = SimulationCode.SIM_CODE(crefToSimVarHT, simulationEquations)
   return simCode
 end
 
 """
+-Andreas:
   Assign the indices.
   Construct the HashTable.
+  1. Collect all variables
+2. Search all states (e.g. x and y) and give them indices starting at 1 (so x=1, y=2). Then give the corresponding state derivatives (x' and y') the same indices.
+3. Remaining algebraic variables will get indices starting with i+1, where i is the number of states.
+4. Parameters will get own set of indices, starting at 1.
+
 """
-function createIndices(simulationVars::Array{SimulationCode.SIMVAR})::Dict{String, SimulationCode.SimVar}
+function createIndices(simulationVars::Array{SimulationCode.SIMVAR})::Dict{String, Tuple{Integer, SimulationCode.SimVarType}}
+  @info simulationVars
+  local ht::Dict{String, Tuple{Integer, SimulationCode.SimVarType}} = Dict()
+  local stateCounter = 0
+  local parameterCounter = 0
+  local numberOfStates = 0
   for var in simulationVars
+    @match var.varKind begin
+      SimulationCode.STATE(__) => begin
+        stateCounter += 1
+        @set var.index = SOME(stateCounter)
+        push!(ht, var.name => (stateCounter, var.varKind))
+      end
+      SimulationCode.PARAMETER(__) => begin
+        parameterCounter += 1
+        push!(ht, var.name => (parameterCounter, var.varKind))
+      end
+      _ => continue
+    end
   end
+  for var in simulationVars
+    @match var.varKind begin
+      SimulationCode.ALG_VARIABLE(__) => begin
+        @set var.index = SOME(stateCounter)
+        push!(ht, var.name => (stateCounter, var.varKind))
+      end
+      _ => continue
+    end
+  end
+  @info ht
+  return ht
 end
 
 """
