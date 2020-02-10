@@ -31,11 +31,26 @@
 #=Author John Tinnerholm=#
 
 using Test
+using OMBackend
 
-try
-  println("Test if we can instantiate HelloWorld:")
-  @test true
-  #ExampleDAEs.HelloWorld_DAE
-catch
-  @test false
+# Load module for test DAEs
+const CURRENT_DIRECTORY = @__DIR__
+const EXAMPLE_DAE_DIRECTORY = CURRENT_DIRECTORY * "/ExampleDAE"
+if ! (CURRENT_DIRECTORY in LOAD_PATH)
+  @info("Setting up loadpath..")
+  push!(LOAD_PATH, CURRENT_DIRECTORY, EXAMPLE_DAE_DIRECTORY)
+  @info("Done setting up loadpath: $LOAD_PATH")
+end
+using ExampleDAEs
+
+
+@testset "UnitTests" begin
+  @testset "helloWorld" begin
+    frontendDAE::OMBackend.DAE.DAElist = ExampleDAEs.HelloWorld_DAE
+    @test OMBackend.translate(frontendDAE)
+  end
+  @testset "bouncingBall" begin
+    frontendDAE::OMBackend.DAE.DAElist = ExampleDAEs.BouncingBall_DAE
+    @test_broken OMBackend.translate(frontendDAE)
+  end
 end

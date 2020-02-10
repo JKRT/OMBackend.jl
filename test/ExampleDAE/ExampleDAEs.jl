@@ -9,8 +9,10 @@ import DAE
 import Prefix
 import SCode
 
-include("bouncingBall.jl")
 include("helloWorld.jl")
-#include("helloWorld_causalized.jl")
+include("bouncingBall.jl")
 
-end #= ExampleDAE =#
+export HelloWorld_DAE
+export BouncingBall_DAE
+
+end #= ExampleDAEs =#
