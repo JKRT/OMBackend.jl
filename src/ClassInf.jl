@@ -41,8 +41,6 @@ module ClassInf
 
         import Absyn
 
-        # import SCodeDump
-
           #= - Machine states, the string contains the classname. =#
          @Uniontype SMNode begin
               @Record UNKNOWN begin

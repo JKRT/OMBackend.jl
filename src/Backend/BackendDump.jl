@@ -104,6 +104,7 @@ function printEqTraverse(eq::BackendDAE.Equation, extArg)
   end
 end
 
+
 function printWhenEquation(whenEq::BackendDAE.WhenEquation)
   local elseWhen::BackendDAE.WhenEquation
   print("when " + expStringify(whenEq.condition) + " then\n")
@@ -290,11 +291,9 @@ function opStr(op::DAE.Operator)::String
       DAE.NEQUAL() => begin
         ("<>")
       end
-
       DAE.USERDEFINED() => begin
         ("[UNDEF OP]")
       end
-
     end
   end
 end

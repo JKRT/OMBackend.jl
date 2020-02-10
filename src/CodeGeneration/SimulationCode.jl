@@ -47,7 +47,15 @@ abstract type SimVarType end
 """
 State variable
 """
-struct  STATE <: SimVarType end
+struct  STATE <: SimVarType
+end
+
+"""
+ State Derivative
+"""
+struct  STATE_DERIVATIVE <: SimVarType
+  varName::String
+end
 
 """
 Algebraic variable
@@ -84,12 +92,14 @@ end
 
 
 """
-Root data structure containing information required for code generation to
-generate simulation code for a Modelica model.
+  Root data structure containing information required for code generation to
+  generate simulation code for a Modelica model.
 """
 struct SIM_CODE
   "Mapping of names to the corresponding variable"
   crefToSimVarHT::Dict{String, Tuple{Integer, SimVarType}} # Index and type
+ # "Mapping of index to corresponding variables"
+ # indexToVarHT::Dict{Integer, Tuple{String, SimVarType}}
   "Array of Equations"
   equations::Array
 end

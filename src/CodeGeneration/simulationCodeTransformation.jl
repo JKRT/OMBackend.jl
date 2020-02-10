@@ -51,15 +51,11 @@ function collectVariables(allBackendVars::Array{BackendDAE.Var})
   return simVars
 end
 
-function collectEquations(equations::Array)
-end
-using BackendDAE
-
 function bDAEVarKindToSimCodeVarKind(backendVar::BackendDAE.Var)::SimulationCode.SimVarType
   varKind = @match backendVar.varKind begin
     BackendDAE.STATE(__) => SimulationCode.STATE()
-    BackendDAE.PARAM(__) => SimulationCode.ALG_VARIABLE()
     BackendDAE.PARAM(__) || BackendDAE.CONST(__) => SimulationCode.PARAMETER()
+    BackendDAE.VARIABLE(__) => SimulationCode.ALG_VARIABLE()
     _ => @error("Kind $(typeof(backendVar.varKind)) of backend variable not handled.")
   end
 end
@@ -129,6 +125,8 @@ function createIndices(simulationVars::Array{SimulationCode.SIMVAR})::Dict{Strin
         stateCounter += 1
         @set var.index = SOME(stateCounter)
         push!(ht, var.name => (stateCounter, var.varKind))
+        #=Adding the state derivative as well=#
+        push!(ht, "der($(var.name))" => (stateCounter, SimulationCode.STATE_DERIVATIVE(var.name)))
       end
       SimulationCode.PARAMETER(__) => begin
         parameterCounter += 1
@@ -140,8 +138,8 @@ function createIndices(simulationVars::Array{SimulationCode.SIMVAR})::Dict{Strin
   for var in simulationVars
     @match var.varKind begin
       SimulationCode.ALG_VARIABLE(__) => begin
-        @set var.index = SOME(stateCounter)
-        push!(ht, var.name => (stateCounter, var.varKind))
+        var = @set var.index = SOME(stateCounter + 1)
+        push!(ht, var.name => (var.index.data, var.varKind))
       end
       _ => continue
     end

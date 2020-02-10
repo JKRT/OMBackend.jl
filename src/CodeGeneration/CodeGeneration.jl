@@ -31,36 +31,39 @@
 
 module CodeGeneration
 
+import Absyn
+import BackendDump
+
 using BackendDAE
 using SimulationCode
 
 include("CodeGenerationUtil.jl")
 include("simulationCodeTransformation.jl")
 
+"""
+The header string with the necessary imports
+"""
+const HEADER_STRING = "
+  using DifferentialEquations
+  using Sundials
+  using Plots
+"
+
 function generateSingleResidualEquation(file::IOStream, equation::BackendDAE.Equation)
+end
+
+function generate_state_boolean_vector()
+
 end
 
 
 """
-Write function modelName_DAE_equations() to file.
+Write  modelName_DAE_equations() to file.
 """
-function generateDAEFunction(file::IOStream, backendDAE::BackendDAE.BackendDAEStructure, modelName::String)
-  write(file, "function $(modelName)_DAE_equations(res, dx, x, p, t)\n")
-
-  equationSystems = backendDAE.eqs::EqSystem
-  index = 1
-#=
-  for eqSystem in equationSystems   # Loop over equation Systems
-    for equation in eqSystem.orderedEqs # Loop over equations
-      @match(equation)
-      @case(eq & RESIDUAL_EQUATION(__))
-        variablesHashTable = generateSingleResidualEquation(file, eq, variablesHashTable)
-        #write(file, string("  res[$index] = ", exp, "\n"))  # TODO: Add DAE.Exp to string() function
-    end
-  end
-=#
-
-  write(file, "end\n")
+function writeDAE_equationsToFile(fileName::String, contents::String)
+  local fdesc = open(fileName, "w")
+  write(fdesc, contents)
+  close(fdesc)
 end
 
 
@@ -68,23 +71,274 @@ end
 Generate a julia file containing functions to simulate the DAE
 """
 function generateCode(simCode::SimulationCode.SIM_CODE)
-  generateCode(simCode, "", "")
+  local stateVariables::Array = []
+  local algVariables::Array = []
+  local stateDerivatives::Array = []
+  local parameters::Array = []
+  local stateMarkings::Array = []
+  local  crefToSimVarHT = simCode.crefToSimVarHT
+  #= An array of 0:s=#
+  local residuals::Array = [0 for i in 1:length(simCode.equations)]
+  for varName in keys(crefToSimVarHT)
+    ixAndTy = crefToSimVarHT[varName]
+    local varType = ixAndTy[2]
+    @match varType  begin
+      SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
+      SimulationCode.STATE(__) => push!(stateVariables, varName)
+      SimulationCode.PARAMETER(__) => push!(parameters, varName)
+      SimulationCode.ALG_VARIABLE(__) => push!(algVariables, varName)
+      SimulationCode.STATE_DERIVATIVE(__) => push!(stateDerivatives, varName)
+    end
+  end
+  local modelName::String = "test"
+  for i in stateVariables
+    push!(stateMarkings, true)
+  end
+  for i in algVariables
+    push!(stateMarkings, false)
+  end
+  local differentialVarsFunction =
+    "function $(modelName)DifferentialVars()
+      return $stateMarkings
+     end
+    "
+
+  local startCondtions = "
+    function $(modelName)StartConditions(p, t0)
+      x0 = [1.0]
+      dx0 = [p[1]*x0[1]]
+      return x0, dx0
+    end
+  "
+  #= Generate $modelName_DAE_equations=#
+  local DAE_EQUATIONS = let
+    local eqStr = ""
+    local equationCounter = 1
+    for eq in simCode.equations
+      eqStr *= eqTraverseAppendToString(eq, simCode, 1)
+      equationCounter += 1
+    end
+    eqStr
+  end
+
+  local dae_equation_function =
+    "function $(modelName)DAE_equations(res, dx #=The state derivatives =#, x #= State & alg variables =#, p, t #=time=#)
+      $DAE_EQUATIONS
+     end
+    "
+  local parameterVars =  "
+    function $(modelName)ParameterVars()
+      return p=[0.5]
+    end
+  "
+local runnable = "
+ function $(modelName)Simulate(tspan = (0.0, 1.0))
+  # Define problem
+  p_is = $(modelName)ParameterVars()
+  (x0, dx0) =$(modelName)StartConditions(p_is, tspan[1])
+  differential_vars = $(modelName)DifferentialVars()
+  #= Pass the residual equations =#
+  problem = DAEProblem($(modelName)DAE_equations, dx0, x0, tspan, p_is, differential_vars=differential_vars)
+  # Solve with IDA:)
+  solution = solve(problem, IDA())
+  return solution
+end
+"
+  ("test.jl",
+   HEADER_STRING * startCondtions * differentialVarsFunction
+   * dae_equation_function * parameterVars * runnable)
 end
 
+"""
+TODO: Make less messy
+"""
+function eqTraverseAppendToString(eq::BackendDAE.Equation, simCode::SimulationCode.SIM_CODE, resNumber)
+  _ = begin
+    local lhs::DAE.Exp
+    local rhs::DAE.Exp
+    local cref::DAE.ComponentRef
+    local whenEquation::BackendDAE.WhenEquation
+    local result::String = ""
+    @match eq begin
+      BackendDAE.RESIDUAL_EQUATION(exp = rhs) => begin
+        result = result * ("res[$resNumber] = " + expStringify(rhs, simCode) + "\n")
+      end
+      BackendDAE.WHEN_EQUATION(whenEquation = whenEquation) => begin
+        @error "When equations not yet supported"
+      end
+      _ =>
+        @error "traversalError for $eq"
+    end
+  end
+  return result
+end
 
-"""
-Generate a julia file containing functions to simulate the DAE
-"""
-function generateCode(backendDAE::BackendDAE.BackendDAEStructure, path::String, modelName::String)
-  # Create file
-  filename = string(modelName, ".jl")
-  file = open(joinpath(path,filename), "w")
-  write(file, copyRightString())
-  # Write DAEFunction
-  generateDAEFunction(file, backendDAE, modelName)
-  # Finished code generation
-  close(file)
-  println("Generated file succesfull")
+function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
+  hashTable = simCode.crefToSimVarHT
+  str = begin
+    local int::ModelicaInteger
+    local real::ModelicaReal
+    local bool::Bool
+    local tmpStr::String
+    local cr::DAE.ComponentRef
+    local e1::DAE.Exp
+    local e2::DAE.Exp
+    local e3::DAE.Exp
+    local expl::List{DAE.Exp}
+    local lstexpl::List{List{DAE.Exp}}
+    @match exp begin
+      DAE.ICONST(int) => begin
+        string(int)
+      end
+
+      DAE.RCONST(real)  => begin
+        string(real)
+      end
+
+      DAE.SCONST(tmpStr)  => begin
+        (tmpStr)
+      end
+
+      DAE.BCONST(bool)  => begin
+        string(bool)
+      end
+
+      DAE.ENUM_LITERAL((Absyn.IDENT(str), int))  => begin
+        (str + "()" + string(int) + ")")
+      end
+
+      DAE.CREF(cr, _)  => begin
+        varName = BackendDump.crefStr(cr)
+        indexAndType = hashTable[varName]
+        @match indexAndType[2] begin
+          SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
+          SimulationCode.STATE(__) => "x[$(indexAndType[1])]"
+          SimulationCode.PARAMETER(__) => "p[$(indexAndType[1])]"
+          SimulationCode.ALG_VARIABLE(__) => "x[$(indexAndType[1])]"
+          SimulationCode.STATE_DERIVATIVE(__) => "dx[$(indexAndType[1])]"
+        end
+      end
+
+      DAE.UNARY(operator = op, exp = e1) => begin
+        ("(" + BackendDump.opStr(op) + " " + expStringify(e1, simCode) + ")")
+      end
+
+      DAE.BINARY(exp1 = e1, operator = op, exp2 = e2) => begin
+        (expStringify(e1, simCode) + " " + BackendDump.opStr(op) + " " + expStringify(e2, simCode))
+      end
+
+      DAE.LUNARY(operator = op, exp = e1)  => begin
+        ("(" + BackendDump.opStr(op) + " " + expStringify(e1, simCode) + ")")
+      end
+
+      DAE.LBINARY(exp1 = e1, operator = op, exp2 = e2) => begin
+        (expStringify(e1, simCode) + " " + BackendDump.opStr(op) + " " + expStringify(e2, simCode))
+      end
+
+      DAE.RELATION(exp1 = e1, operator = op, exp2 = e2) => begin
+        (expStringify(e1, simCode) + " " + BackendDump.opStr(op) + " " + expStringify(e2, simCode))
+      end
+
+      DAE.IFEXP(expCond = e1, expThen = e2, expElse = e3) => begin
+        (expStringify(e1, simCode) + " " + expStringify(e2, simCode) + " " + expStringify(e3, simCode))
+      end
+
+      DAE.CALL(path = Absyn.IDENT(tmpStr), expLst = expl)  => begin
+        #=
+          TODO: Keeping it simple for now=, we assume we only have one argument in the call
+          We handle derivitives seperatly
+        =#
+        varName = BackendDump.expStringify(listHead(expl))
+        indexAndType = hashTable[varName]
+        @match tmpStr begin
+          "der" => "dx[$(indexAndType[1])]"
+          _  =>  begin
+            tmpStr = tmpStr + "(" + BackendDump.expLstStringify(expl, ", ") + ")"
+          end
+        end
+      end
+
+      DAE.RECORD(path = Absyn.IDENT(tmpStr), exps = expl)  => begin
+        tmpStr = tmpStr + "[REC(" + BackendDump.expLstStringify(expl, ", ") + ")"
+      end
+
+      DAE.PARTEVALFUNCTION(path = Absyn.IDENT(tmpStr), expList = expl)  => begin
+        tmpStr = tmpStr + "[PARTEVAL](" + BackendDump.expLstStringify(expl, ", ") + ")"
+      end
+
+      DAE.ARRAY(array = expl)  => begin
+        "[ARR]" + BackendDump.expLstStringify(expl, ", ")
+      end
+
+      DAE.MATRIX(matrix = lstexpl)  => begin
+        str = "[MAT]"
+        for lst in lstexp
+          str = str + "{" + BackendDump.expLstStringify(lst, ", ") + "}"
+        end
+        (str)
+      end
+
+      DAE.RANGE(start = e1, step = NONE(), stop = e2)  => begin
+         expStringify(e1) + ":" + expStringify(e2)
+      end
+
+      DAE.RANGE(start = e1, step = SOME(e2), stop = e3)  => begin
+         expStringify(e1) + ":" + expStringify(e2) + ":" + expStringify(e3)
+      end
+
+      DAE.TUPLE(PR = expl) => begin
+         "[TPL](" + BackendDump.expLstStringify(expl, ", ") + ")"
+      end
+
+      DAE.CAST(exp = e1)  => begin
+         "[CAST]" + expStringify(e1)
+      end
+
+      DAE.ASUB(exp = e1, sub = expl)  => begin
+         "[ASUB]" + expStringify(e1) + "{" + BackendDump.expLstStringify(expl, ", ") + "}"
+      end
+
+      DAE.TSUB(exp = e1, ix = int) => begin
+         "[TSUB]" + expStringify(e1) + "(" + string(int) + ")"
+      end
+
+      DAE.RSUB(exp = e1)  => begin
+        "[RSUB]" + expStringify(e1)
+      end
+
+      DAE.SIZE(exp = e1, sz = NONE())  => begin
+        "[SIZE]" + expStringify(e1)
+      end
+
+      DAE.SIZE(exp = e1, sz = SOME(e2))  => begin
+         "[SIZE]" + expStringify(e1) + "(" + expStringify(e2) + ")"
+      end
+
+     DAE.CODE(__) => begin
+       "[CODE]"
+     end
+
+     DAE.REDUCTION(expr = e1) => begin
+       "[REDUCTION]" + expStringify(e1)
+     end
+
+     DAE.EMPTY(__)  => begin
+       "[EMPTY]"
+     end
+
+     DAE.CONS(e1, e2)  => begin
+       "[CONS]" + "{" + expStringify(e1) + ", " + expStringify(e2) + "}"
+     end
+
+     DAE.LIST(expl)  => begin
+       "[LST]" + "{" + BackendDump.expLstStringify(expl, ", ") + " }"
+     end
+
+    _ => begin
+      str = ""
+    end
+    end
+  end
 end
 
 end #= End CodeGeneration=#
