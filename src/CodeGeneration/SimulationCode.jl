@@ -89,7 +89,7 @@ generate simulation code for a Modelica model.
 """
 struct SIM_CODE
   "Mapping of names to the corresponding variable"
-  crefToSimVarHT::Dict{String, SimVar}# Dict of SIMVAR
+  crefToSimVarHT::Dict{String, Tuple{Integer, SimVarType}} # Index and type
   "Array of Equations"
   equations::Array
 end

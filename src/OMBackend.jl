@@ -64,8 +64,8 @@ function translate()
   local frontendDAE::DAE.DAElist = ExampleDAEs.HelloWorld_DAE
   local bDAE = lower(frontendDAE)
   local simCode = generateSimulationCode(bDAE)
-  #generateTargetCodeAndSimulate(simCode)
 end
+  #generateTargetCodeAndSimulate(simCode)
 
 function translate(frontendDAE::DAE.DAElist)
   local bDAE = lower(frontendDAE)
