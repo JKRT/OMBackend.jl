@@ -32,7 +32,6 @@
 import DAE
 
 using MetaModelica
-using SimulationCode
 using BackendDAE
 using Setfield
 
@@ -54,6 +53,7 @@ end
 
 function collectEquations(equations::Array)
 end
+using BackendDAE
 
 function bDAEVarKindToSimCodeVarKind(backendVar::BackendDAE.Var)::SimulationCode.SimVarType
   varKind = @match backendVar.varKind begin

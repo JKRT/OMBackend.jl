@@ -72,5 +72,18 @@ function makeResidualEquation(eqn::BackendDAE.Equation)
 end
 
 
+"""
+    kabdelhak:
+    create a single array with all equations
+"""
+function concenateEquations(eqs::Array{BackendDAE.EqSystem})::Array{BackendDAE.Equation}
+  eqArr::Array{BackendDAE.Equation} = []
+  for eq in eqs
+    eqArr = vcat(eqArr, eq.orderedEqs)
+  end
+  return eqArr
+end
+
+
 @exportAll()
 end

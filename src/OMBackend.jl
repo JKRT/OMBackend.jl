@@ -57,6 +57,7 @@ import Prefix
 import SCode
 import ExampleDAEs
 import SimulationCode
+import SimCodeDump
 import CodeGeneration
 
 function translate()
@@ -94,7 +95,9 @@ end
   Transforms causalized BDAE IR to simulation code
 """
 function generateSimulationCode(bDAE::BackendDAE.BackendDAEStructure)::SimulationCode.SIM_CODE
-  CodeGeneration.transformToSimCode(bDAE)
+  simCode = CodeGeneration.transformToSimCode(bDAE)
+  SimCodeDump.dumpSimCode(simCode, "transformed simcode")
+  (simCode)
 end
 
 
