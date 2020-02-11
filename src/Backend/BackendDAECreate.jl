@@ -51,13 +51,14 @@ import BackendDAEUtil
   The variables are inserted into a dictonary, Backend_DAE_Map.
   The equations are put in an expandable array.
   Where adding a new equation can be done in O(1) time if space is available.
-  inputs:  lst: DAE.DAElist, inCache: FCore.Cache, inEnv: FCore.Graph
+  inputs:  lst: DAE.DAE_LIST, inCache: FCore.Cache, inEnv: FCore.Graph
   outputs: BackendDAE.BackendDAE"""
-function lower(lst::DAE.DAElist)::BackendDAE.BackendDAEStructure
+function lower(lst::DAE.DAE_LIST)::BackendDAE.BackendDAEStructure
   local outBackendDAE::BackendDAE.BackendDAEStructure
   local eqSystems::Array{BackendDAE.EqSystem}
   local varArray::Array{BackendDAE.Var}
   local eqArray::Array{BackendDAE.Equation}
+  local name = listHead(lst.elementLst).ident
   (varArray, eqArray) = begin
     local elementLst::List{DAE.Element}
     local variableLst::List{BackendDAE.Var}
@@ -72,7 +73,7 @@ function lower(lst::DAE.DAElist)::BackendDAE.BackendDAEStructure
   local variables = BackendDAEUtil.convertVarArrayToBackendDAE_Variables(varArray)
   #= We start with an array of one system =#
   eqSystems = [BackendDAEUtil.createEqSystem(variables, eqArray)]
-  outBackendDAE = BackendDAE.BACKEND_DAE(eqSystems, BackendDAE.SHARED_DUMMY())
+  outBackendDAE = BackendDAE.BACKEND_DAE(name, eqSystems, BackendDAE.SHARED_DUMMY())
 end
 
 """

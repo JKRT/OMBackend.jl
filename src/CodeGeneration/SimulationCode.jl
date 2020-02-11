@@ -96,6 +96,7 @@ end
   generate simulation code for a Modelica model.
 """
 struct SIM_CODE
+  name::String
   "Mapping of names to the corresponding variable"
   crefToSimVarHT::Dict{String, Tuple{Integer, SimVarType}} # Index and type
  # "Mapping of index to corresponding variables"

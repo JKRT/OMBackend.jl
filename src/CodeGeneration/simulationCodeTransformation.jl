@@ -99,7 +99,7 @@ function transformToSimCode(backendDAE::BackendDAE.BACKEND_DAE)::SimulationCode.
   @info equations
   local simulationEquations = allocateAndCollectSimulationEquations(equations)
   #= Construct SIM_CODE =#
-  simCode = SimulationCode.SIM_CODE(crefToSimVarHT, simulationEquations)
+  simCode = SimulationCode.SIM_CODE(backendDAE.name, crefToSimVarHT, simulationEquations)
   return simCode
 end
 

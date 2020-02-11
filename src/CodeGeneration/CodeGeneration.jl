@@ -75,6 +75,7 @@ function generateCode(simCode::SimulationCode.SIM_CODE)
   local parameters::Array = []
   local stateMarkings::Array = []
   local  crefToSimVarHT = simCode.crefToSimVarHT
+  local modelName::String = simCode.name
   #= An array of 0:s=#
   local residuals::Array = [0 for i in 1:length(simCode.equations)]
   for varName in keys(crefToSimVarHT)
@@ -88,7 +89,7 @@ function generateCode(simCode::SimulationCode.SIM_CODE)
       SimulationCode.STATE_DERIVATIVE(__) => push!(stateDerivatives, varName)
     end
   end
-  local modelName::String = "test"
+
   for i in stateVariables
     push!(stateMarkings, true)
   end
@@ -141,7 +142,7 @@ function $(modelName)Simulate(tspan = (0.0, 1.0))
 end
 "
   # Return file content
-  return ("$(modelName).jl",
+  return ("$(modelName)",
    HEADER_STRING * startCondtions * differentialVarsFunction
    * dae_equation_function * parameterVars * runnable)
 end

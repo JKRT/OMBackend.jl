@@ -42,12 +42,6 @@ import ClassInf
 import SCode
 import Values
 
-Ident = String
-
-InstDims = List
-
-StartValue = Option
-
 const UNIQUEIO = "uniqueouter"::String
 
 const derivativeNamePrefix = "DER"::String
@@ -510,13 +504,11 @@ end
   end
 end
 
-#= A DAElist is a list of Elements. Variables, equations, functions,
+#= A DAE_LIST is a list of Elements. Variables, equations, functions,
 algorithms, etc. are all found in this list.
 =#
-@Uniontype DAElist begin
-  @Record DAE_LIST begin
-    elementLst::List{Element}
-  end
+struct DAE_LIST
+  elementLst::List{Element}
 end
 
 #= /* -- Algorithm.mo -- */ =#
@@ -600,7 +592,7 @@ end
 
     type_ #= this is the type of the iterator =#::Type
     iterIsArray #= True if the iterator has an array type, otherwise false. =#::Bool
-    iter #= the iterator variable =#::Ident
+    iter #= the iterator variable =#::String
     index #= the index of the iterator variable, to make it unique; used by the new inst =#::ModelicaInteger
     range #= range for the loop =#::Exp
     statementLst::List{Statement}
@@ -611,7 +603,7 @@ end
 
     type_ #= this is the type of the iterator =#::Type
     iterIsArray #= True if the iterator has an array type, otherwise false. =#::Bool
-    iter #= the iterator variable =#::Ident
+    iter #= the iterator variable =#::String
     index #= the index of the iterator variable, to make it unique; used by the new inst =#::ModelicaInteger
     range #= range for the loop =#::Exp
     statementLst::List{Statement}
@@ -726,7 +718,7 @@ end
 @Uniontype Var begin
   @Record TYPES_VAR begin
 
-    name #= name =#::Ident
+    name #= name =#::String
     attributes #= attributes =#::Attributes
     ty #= type =#::Type
     binding #= equation modification =#::Binding
@@ -959,44 +951,35 @@ end
 
 @Uniontype CodeType begin
   @Record C_EXPRESSION begin
-
   end
 
   @Record C_EXPRESSION_OR_MODIFICATION begin
-
   end
 
   @Record C_MODIFICATION begin
-
   end
 
   @Record C_TYPENAME begin
-
   end
 
   @Record C_VARIABLENAME begin
-
   end
 
   @Record C_VARIABLENAMES begin
-
   end
 end
 
 #= Is here because constants are not allowed to contain function pointers for some reason =#
 @Uniontype EvaluateSingletonType begin
   @Record EVAL_SINGLETON_TYPE_FUNCTION begin
-
     fun::EvaluateSingletonTypeFunction
   end
 
   @Record EVAL_SINGLETON_KNOWN_TYPE begin
-
     ty::Type
   end
 
   @Record NOT_SINGLETON begin
-
   end
 end
 
@@ -1210,7 +1193,7 @@ end
 @Uniontype SubMod begin
   @Record NAMEMOD begin
 
-    ident #= component name =#::Ident
+    ident #= component name =#::String
     mod #= modification =#::Mod
   end
 end
@@ -1861,7 +1844,7 @@ CREF_IDENT(..) is used for non-qualifed component names, e.g. x =#
 @Uniontype ComponentRef begin
   @Record CREF_QUAL begin
 
-    ident::Ident
+    ident::String
     identType #= type of the identifier, without considering the subscripts =#::Type
     subscriptLst::List{Subscript}
     componentRef::ComponentRef
@@ -1869,14 +1852,14 @@ CREF_IDENT(..) is used for non-qualifed component names, e.g. x =#
 
   @Record CREF_IDENT begin
 
-    ident::Ident
+    ident::String
     identType #= type of the identifier, without considering the subscripts =#::Type
     subscriptLst::List{Subscript}
   end
 
   @Record CREF_ITER begin
 
-    ident::Ident
+    ident::String
     index::ModelicaInteger
     identType #= type of the identifier, without considering the subscripts =#::Type
     subscriptLst::List{Subscript}
@@ -2019,7 +2002,7 @@ const emptySet = SETS(SET_TRIE_NODE("", WILD(), nil, 0), 0, nil, nil)::Sets
     protection #= if protected or public =#::VarVisibility
     ty #= Full type information required =#::Type
     binding #= Binding expression e.g. for parameters ; value of start attribute =#::Option{Exp}
-    dims #= dimensions =#::InstDims
+    dims #= dimensions =#::List
     connectorType #= The connector type: flow, stream, no prefix, or not a connector element. =#::ConnectorType
     source #= the origins of the component/equation/algorithm =#::ElementSource
     variableAttributesOption::Option{VariableAttributes}
@@ -2105,7 +2088,7 @@ const emptySet = SETS(SET_TRIE_NODE("", WILD(), nil, 0), 0, nil, nil)::Sets
 
     type_ #= this is the type of the iterator =#::Type
     iterIsArray #= True if the iterator has an array type, otherwise false. =#::Bool
-    iter #= the iterator variable =#::Ident
+    iter #= the iterator variable =#::String
     index #= the index of the iterator variable, to make it unique; used by the new inst =#::ModelicaInteger
     range #= range for the loop =#::Exp
     equations #= Equations =#::List{Element}
@@ -2149,8 +2132,7 @@ const emptySet = SETS(SET_TRIE_NODE("", WILD(), nil, 0), 0, nil, nil)::Sets
   end
 
   @Record COMP begin
-
-    ident::Ident
+    ident::String
     dAElist #= a component with subelements, normally only used at top level. =#::List{Element}
     source #= the origin of the component/equation/algorithm =#::ElementSource
     #=  we might not this here.
@@ -2224,7 +2206,7 @@ end
 
 @Record FLAT_SM begin
 
-  ident::Ident
+  ident::String
   dAElist #= The states/modes transitions and variable
   merging equations within the the flat state machine =#::List{Element}
 end
@@ -2273,15 +2255,13 @@ end
   end
 end
 
-const emptyDae = DAE_LIST(nil)::DAElist
+const emptyDae = DAE_LIST(nil)::DAE_LIST
 const T_ASSERTIONLEVEL = T_ENUMERATION(NONE(), Absyn.FULLYQUALIFIED(Absyn.IDENT("AssertionLevel")), list("error", "warning"), nil, nil)::Type
 
 const ASSERTIONLEVEL_ERROR = ENUM_LITERAL(Absyn.QUALIFIED("AssertionLevel", Absyn.IDENT("error")), 1)::Exp
 
 const ASSERTIONLEVEL_WARNING = ENUM_LITERAL(Absyn.QUALIFIED("AssertionLevel", Absyn.IDENT("warning")), 2)::Exp
 
-
-#= So that we can use wildcard imports and named imports when they do occur. Not good Julia practice =#
 const T_UNKNOWN_DEFAULT = T_UNKNOWN()
 const T_REAL_DEFAULT = T_REAL(nil)::Type
 const T_INTEGER_DEFAULT = T_INTEGER(nil)::Type
@@ -2304,8 +2284,7 @@ const T_COMPLEX_DEFAULT = T_COMPLEX(ClassInf.UNKNOWN(Absyn.IDENT("")), nil, NONE
 const T_COMPLEX_DEFAULT_RECORD = T_COMPLEX(ClassInf.RECORD(Absyn.IDENT("")), nil, NONE()) #= default complex with record CiState =#::Type
 const T_SOURCEINFO_DEFAULT_METARECORD = T_METARECORD(Absyn.QUALIFIED("SourceInfo", Absyn.IDENT("SOURCEINFO")), Absyn.IDENT("SourceInfo"), nil, 1, list(TYPES_VAR("fileName", dummyAttrVar, T_STRING_DEFAULT, UNBOUND(), NONE()), TYPES_VAR("isReadOnly", dummyAttrVar, T_BOOL_DEFAULT, UNBOUND(), NONE()), TYPES_VAR("lineNumberStart", dummyAttrVar, T_INTEGER_DEFAULT, UNBOUND(), NONE()), TYPES_VAR("columnNumberStart", dummyAttrVar, T_INTEGER_DEFAULT, UNBOUND(), NONE()), TYPES_VAR("lineNumberEnd", dummyAttrVar, T_INTEGER_DEFAULT, UNBOUND(), NONE()), TYPES_VAR("columnNumberEnd", dummyAttrVar, T_INTEGER_DEFAULT, UNBOUND(), NONE()), TYPES_VAR("lastModification", dummyAttrVar, T_REAL_DEFAULT, UNBOUND(), NONE())), true)::Type
 const T_SOURCEINFO_DEFAULT = T_METAUNIONTYPE(list(Absyn.QUALIFIED("SourceInfo", Absyn.IDENT("SOURCEINFO"))), nil, true, EVAL_SINGLETON_KNOWN_TYPE(T_SOURCEINFO_DEFAULT_METARECORD), Absyn.IDENT("SourceInfo"))::Type
-#=  Arrays of unknown dimension, eg. Real[:]
-=#
+#=  Arrays of unknown dimension, eg. Real[:] =#
 
 const T_ARRAY_REAL_NODIM = T_ARRAY(T_REAL_DEFAULT, list(DIM_UNKNOWN()))::Type
 

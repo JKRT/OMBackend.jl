@@ -183,6 +183,7 @@ The equations are also split into two lists, one with simple equations, a=b, a-b
 are removed from  the set of equations to speed up calculations. =#
 @Uniontype BackendDAEStructure begin
   @Record BACKEND_DAE begin
+    name::String
     eqs::EqSystems
     shared::Shared
   end
@@ -376,7 +377,7 @@ end
     varDirection #= input, output or bidirectional =#::DAE.VarDirection
     varType #= built-in type or enumeration =#::DAE.Type
     bindExp #= Binding expression e.g. for parameters =#::Option{DAE.Exp}
-    arryDim #= array dimensions of non-expanded var =#::DAE.InstDims
+    arryDim #= array dimensions of non-expanded var =#::List
     source #= origin of variable =#::DAE.ElementSource
     values #= values on built-in attributes =#::Option{DAE.VariableAttributes}
     tearingSelectOption #= value for TearingSelect =#::Option{TearingSelect}
