@@ -21,17 +21,12 @@ julia> include("deps/build.jl")
 ```
 Then precompile with
 ```julia
+(v1.1) pkg> activate .
 julia> using OMBackend
 ```
 
-# Test
-Assuming that you are developing the OMBackend package
+# Run tests
+Assuming you have activated OMBackend
 ```julia
-julia> dev .
-julia> using OMBackend
-julia> BackendDAE.translate()
+julia> include("test/runtests.jl")
 ```
-
-# Package structure
-* The main interface should be governed via the file all.jl in ./src/Main
-* Utility functions for DAE traversal can be found in the Util package and used by executing import Util
