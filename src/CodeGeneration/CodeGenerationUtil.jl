@@ -64,7 +64,6 @@ function copyRightString()
 *
 * See the full OSMC Public License conditions for more details.
 *
-=#
-")
+=#")
   return strOut
 end

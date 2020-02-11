@@ -43,17 +43,15 @@ include("simulationCodeTransformation.jl")
 """
 The header string with the necessary imports
 """
-const HEADER_STRING = "
-  using DifferentialEquations
-  using Sundials
-  using Plots
+const HEADER_STRING ="
+$(copyRightString())
+
+using DifferentialEquations
+using Sundials
+using Plots
 "
 
-function generateSingleResidualEquation(file::IOStream, equation::BackendDAE.Equation)
-end
-
 function generate_state_boolean_vector()
-
 end
 
 
@@ -97,42 +95,40 @@ function generateCode(simCode::SimulationCode.SIM_CODE)
   for i in algVariables
     push!(stateMarkings, false)
   end
-  local differentialVarsFunction =
-    "function $(modelName)DifferentialVars()
-      return $stateMarkings
-     end
-    "
-
-  local startCondtions = "
-    function $(modelName)StartConditions(p, t0)
-      x0 = [1.0]
-      dx0 = [p[1]*x0[1]]
-      return x0, dx0
-    end
-  "
+  local differentialVarsFunction ="
+function $(modelName)DifferentialVars()
+  return $stateMarkings
+end
+"
+  local startCondtions ="
+function $(modelName)StartConditions(p, t0)
+  x0 = [1.0]
+  dx0 = [p[1]*x0[1]]
+  return x0, dx0
+end
+"
   #= Generate $modelName_DAE_equations=#
   local DAE_EQUATIONS = let
     local eqStr = ""
-    local equationCounter = 1
-    for eq in simCode.equations
-      eqStr *= eqTraverseAppendToString(eq, simCode, 1)
-      equationCounter += 1
+    for (equationCounter,eq) in enumerate(simCode.equations)
+      eqStr *= eqTraverseAppendToString(eq, simCode, equationCounter)
     end
-    eqStr
+    eqStr[1:end-1]
   end
 
-  local dae_equation_function =
-    "function $(modelName)DAE_equations(res, dx #=The state derivatives =#, x #= State & alg variables =#, p, t #=time=#)
-      $DAE_EQUATIONS
-     end
-    "
-  local parameterVars =  "
-    function $(modelName)ParameterVars()
-      return p=[0.5]
-    end
-  "
-local runnable = "
- function $(modelName)Simulate(tspan = (0.0, 1.0))
+  local dae_equation_function ="
+function $(modelName)DAE_equations(res, dx #=The state derivatives =#, x #= State & alg variables =#, p, t #=time=#)
+$DAE_EQUATIONS
+end
+"
+  local parameterVars ="
+function $(modelName)ParameterVars()
+  return p=[0.5]
+end
+"
+
+local runnable ="
+function $(modelName)Simulate(tspan = (0.0, 1.0))
   # Define problem
   p_is = $(modelName)ParameterVars()
   (x0, dx0) =$(modelName)StartConditions(p_is, tspan[1])
@@ -144,7 +140,8 @@ local runnable = "
   return solution
 end
 "
-  ("test.jl",
+  # Return file content
+  return ("$(modelName).jl",
    HEADER_STRING * startCondtions * differentialVarsFunction
    * dae_equation_function * parameterVars * runnable)
 end
@@ -161,13 +158,14 @@ function eqTraverseAppendToString(eq::BackendDAE.Equation, simCode::SimulationCo
     local result::String = ""
     @match eq begin
       BackendDAE.RESIDUAL_EQUATION(exp = rhs) => begin
-        result = result * ("res[$resNumber] = " + expStringify(rhs, simCode) + "\n")
+        result = result * ("  res[$resNumber] = " + expStringify(rhs, simCode) + "\n")
       end
       BackendDAE.WHEN_EQUATION(whenEquation = whenEquation) => begin
-        @error "When equations not yet supported"
+        ErrorException("When equations not yet supported")
+
       end
       _ =>
-        @error "traversalError for $eq"
+        ErrorException("traversalError for $eq")
     end
   end
   return result
