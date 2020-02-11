@@ -2,8 +2,8 @@
 * This file is part of OpenModelica.
 *
 * Copyright (c) 1998-CurrentYear, Open Source Modelica Consortium (OSMC),
-* c/o Link�pings universitet, Department of Computer and Information Science,
-* SE-58183 Link�ping, Sweden.
+* c/o Linköpings universitet, Department of Computer and Information Science,
+* SE-58183 Linköping, Sweden.
 *
 * All rights reserved.
 *
@@ -32,11 +32,10 @@
 #= Setup to support multiple modules by adding them to the load path=#
 const CURRENT_DIRECTORY = @__DIR__
 const BACKEND_DIRECTORY = CURRENT_DIRECTORY * "/Backend"
-const EXAMPLE_DAE_DIRECTORY = CURRENT_DIRECTORY * "/ExampleDAE"
 const CODE_GENERATION_DIRECTORY = CURRENT_DIRECTORY * "/CodeGeneration"
 if ! (CURRENT_DIRECTORY in LOAD_PATH)
   @info("Setting up loadpath..")
-  push!(LOAD_PATH, CURRENT_DIRECTORY, BACKEND_DIRECTORY, EXAMPLE_DAE_DIRECTORY, CODE_GENERATION_DIRECTORY)
+  push!(LOAD_PATH, CURRENT_DIRECTORY, BACKEND_DIRECTORY, CODE_GENERATION_DIRECTORY)
   @info("Done setting up loadpath: $LOAD_PATH")
 end
 
@@ -55,17 +54,9 @@ import Causalize
 import DAE
 import Prefix
 import SCode
-import ExampleDAEs
 import SimulationCode
 import SimCodeDump
 import CodeGeneration
-
-function translate()
-  local frontendDAE::DAE.DAElist = ExampleDAEs.HelloWorld_DAE
-  local bDAE = lower(frontendDAE)
-  local simCode = generateSimulationCode(bDAE)
-  generateTargetCodeAndSimulate(simCode)
-end
 
 function translate(frontendDAE::DAE.DAElist)
   local bDAE = lower(frontendDAE)
