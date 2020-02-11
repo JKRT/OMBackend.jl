@@ -107,9 +107,15 @@ function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple
                                             #=TODO: Below might need to be changed =#
                                             BackendDAE.EQ_ATTR_DEFAULT_UNKNOWN) <| equationLst
         end
+
         DAE.WHEN_EQUATION(__) => begin
           equationLst = lowerWhenEquation(elem) <| equationLst
         end
+
+        DAE.IF_EQUATION(__) => begin
+          equationLst = lowerIfEquation(elem) <| equationLst
+        end
+
         DAE.COMP(__) => begin
           variableLst,equationLst = splitEquationsAndVars(elem.dAElist)
         end
@@ -175,6 +181,27 @@ function createWhenOperators(elementLst::List{DAE.Element},lst::List{BackendDAE.
       end
     end
   end
+end
+
+function lowerIfEquation(eq::DAE.Element)::Backend.Equation
+  local trueEquations::List{List{BackendDAE.Equation}} = nil
+  local tmpTrue::List{DAE.Equation}
+  local falseEquations::List{DAE.Equation}
+
+  for lst in eq.equations2
+    (_, tmpTrue) = splitEquationsAndVars(lst)
+    trueEquations = tmpTrue <| trueEquations
+  end
+
+  trueEquations = listReverse(trueEquations)
+
+  (_, falseEquations) = splitEquationsAndVars(eq.equations3)
+
+  return BackendDAE.IF_EQUATION(eq.condition1,
+                                trueEquations,
+                                falseEquations,
+                                eq.source,
+                                BackendDAE.EQ_ATTR_DEFAULT_UNKNOWN)
 end
 
 @exportAll()

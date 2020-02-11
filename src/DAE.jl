@@ -2114,6 +2114,7 @@ const emptySet = SETS(SET_TRIE_NODE("", WILD(), nil, 0), 0, nil, nil)::Sets
 
   @Record IF_EQUATION begin
 
+    #= kabdelhak: why this wierd numbering? =#
     condition1 #= Condition =#::List{Exp}
     equations2 #= Equations of true branch =#::List{List{Element}}
     equations3 #= Equations of false branch =#::List{Element}

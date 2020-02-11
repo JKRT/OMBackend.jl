@@ -417,5 +417,26 @@ function traverseExpTopDownSubs(inSubscript::List{<:DAE.Subscript}, rel::Functio
   (outSubscript, arg)
 end
 
+function transposeNestedList(lstlst::List{List{T}})::List{List{T}} where{T}
+  transposeNestedListAccumulator(lstlst, nil)
+end
+
+function transposeNestedListAccumulator(lstlst::List{List{T}}, acc::List{List{T}})::List{List{T}} where{T}
+  local rest::List{List{T}}=nil
+  local tmpLst::List{T}
+  local tmp::T
+
+  tmpLst <| _ = lstlst
+  if listLength(tmpLst) == 0
+    return acc
+  end
+
+  for lst in lstlst
+    tmp <| lst = lst
+    tmpLst = tmp <| tmpLst
+    rest = lst <| rest
+  end
+  transposeNestedListAccumulator(listReverse(rest), tmpLst <| acc)
+end
 
 end #=End Util=#

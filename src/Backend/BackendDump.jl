@@ -100,10 +100,14 @@ function printEqTraverse(eq::BackendDAE.Equation, extArg)
       BackendDAE.WHEN_EQUATION(whenEquation = whenEquation) => begin
         printWhenEquation(whenEquation)
       end
+
+      BackendDAE.IF_EQUATION() => begin
+        printIfEquation(eq)
+      end
+
     end
   end
 end
-
 
 function printWhenEquation(whenEq::BackendDAE.WhenEquation)
   local elseWhen::BackendDAE.WhenEquation
@@ -119,6 +123,45 @@ function printWhenEquation(whenEq::BackendDAE.WhenEquation)
     printWhenEquation(elseWhen)
   end
   print("end;\n")
+end
+
+function printIfEquation(ifEq::BackendDAE.Equation)
+  local conditions::List{DAE.Exp}
+  local condition::DAE.Exp
+  local trueEquations::List{List{BackendDAE.Equation}}
+  local trueEquation::List{BackendDAE.Equation}
+
+  condition <| conditions = ifEq.conditions
+  trueEquation <| trueEquations = ifEq.eqnstrue
+
+  print("if " + expStringify(condition) + " then\n")
+  for eq in trueEquation
+    print("  ")
+    printEqTraverse(eq, 0)
+    print("\n")
+  end
+
+  while listLength(conditions) != 0
+    condition <| conditions = conditions
+    trueEquation <| trueEquations = trueEquations
+    print("else if " + expStringify(condition) + " then\n")
+    for eq in trueEquation
+      print("  ")
+      printEqTraverse(eq, 0)
+      print("\n")
+    end
+  end
+
+  print("else\n")
+  for eq in eq.eqnsfalse
+    print("  ")
+    printEqTraverse(eq, 0)
+    print("\n")
+  end
+  print("end")
+
+
+
 end
 
 function whenOperatorStr(whenOp::BackendDAE.WhenOperator)::String
