@@ -34,12 +34,12 @@ const CURRENT_DIRECTORY = @__DIR__
 const BACKEND_DIRECTORY = CURRENT_DIRECTORY * "/Backend"
 const CODE_GENERATION_DIRECTORY = CURRENT_DIRECTORY * "/CodeGeneration"
 if ! (CURRENT_DIRECTORY in LOAD_PATH)
-  @info("Setting up loadpath..")
+  @debug("Setting up loadpath..")
   push!(LOAD_PATH, CURRENT_DIRECTORY, BACKEND_DIRECTORY, CODE_GENERATION_DIRECTORY)
-  @info("Done setting up loadpath: $LOAD_PATH")
+  @debug("Done setting up loadpath: $LOAD_PATH")
 end
 
-@info("initialize the backend API")
+@debug "initialize the backend API"
 
 module OMBackend
 
@@ -58,12 +58,12 @@ import SimulationCode
 import SimCodeDump
 import CodeGeneration
 
+global COMPILED_MODELS::Dict
+
 function translate(frontendDAE::DAE.DAElist)
   local bDAE = lower(frontendDAE)
   local simCode = generateSimulationCode(bDAE)
-  generateTargetCodeAndSimulate(simCode)
-
-  return true
+  generateTargetCode(simCode)
 end
 
 """
@@ -72,6 +72,7 @@ end
 function lower(frontendDAE::DAE.DAElist)
   local bDAE::BackendDAE.BackendDAEStructure
   local simCode::SIM_CODE
+  @assert typeof listHead(frontendDAE) is DAE.COMP
   #= Create Backend structure from Frontend structure =#
   bDAE = BackendDAECreate.lower(frontendDAE)
   BackendDump.dumpBackendDAEStructure(bDAE, "translated");
@@ -94,11 +95,17 @@ function generateSimulationCode(bDAE::BackendDAE.BackendDAEStructure)::Simulatio
 end
 
 
-function generateTargetCodeAndSimulate(simCode::SimulationCode.SIM_CODE)
+"""
+  Generates code interfacing DifferentialEquations.jl
+  The resulting code is saved in an array which contains functions that where simulated
+  this session.
+"""
+function generateTargetCode(simCode::SimulationCode.SIM_CODE)
   #= Target code =#
-  (fileName, functions)= CodeGeneration.generateCode(simCode)
-  @info functions
-  @info fileName
+  modelCode = CodeGeneration.generateCode(simCode)
+  @debug "Functions:" modelCode
+  @debug "Model:" fileName
+  push!(COMPILED_MODELS, modelCode)
   CodeGeneration.writeDAE_equationsToFile(fileName, functions)
   #include(fileName)
 end
