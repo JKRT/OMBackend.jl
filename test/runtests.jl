@@ -46,11 +46,29 @@ using ExampleDAEs
 
 @testset "UnitTests" begin
   @testset "helloWorld" begin
-    frontendDAE::OMBackend.DAE.DAElist = ExampleDAEs.HelloWorld_DAE
-    @test OMBackend.translate(frontendDAE)
+    @testset "compile" begin
+      frontendDAE::OMBackend.DAE.DAElist = ExampleDAEs.HelloWorld_DAE
+      @test OMBackend.translate(frontendDAE)
+    end
+    @testset "simulate" begin
+      include("test.jl")
+      @test solution=testSimulate()
+    end
+    @testset "validate solution" begin
+      @test false
+    end
   end
   @testset "bouncingBall" begin
-    frontendDAE::OMBackend.DAE.DAElist = ExampleDAEs.BouncingBall_DAE
-    @test_broken OMBackend.translate(frontendDAE)
+    @testset "compile" begin
+      frontendDAE::OMBackend.DAE.DAElist = ExampleDAEs.BouncingBall_DAE
+      @test_broken OMBackend.translate(frontendDAE)
+    end
+    @testset "simulate" begin
+      include("test.jl")
+      @test solution=testSimulate()
+    end
+    @testset "validate solution" begin
+      @test false
+    end
   end
 end
