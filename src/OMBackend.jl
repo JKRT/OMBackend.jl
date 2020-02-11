@@ -29,7 +29,7 @@
 *
 */ =#
 
-#= Setup to support multiple modules by adding them to the load path=#
+#= Setup to support multiple modules by adding them to the load path =#
 const CURRENT_DIRECTORY = @__DIR__
 const BACKEND_DIRECTORY = CURRENT_DIRECTORY * "/Backend"
 const CODE_GENERATION_DIRECTORY = CURRENT_DIRECTORY * "/CodeGeneration"
@@ -57,10 +57,16 @@ import SCode
 import SimulationCode
 import SimCodeDump
 import CodeGeneration
+import Base.Meta
 
-global COMPILED_MODELS::Dict
+"""
+Contains expressions of models in memory.
+Do NOT mutate in other modules!
+//John
+"""
+global COMPILED_MODELS = Dict()
 
-function translate(frontendDAE::DAE.DAElist)
+function translate(frontendDAE::DAE.DAE_LIST)::Tuple{String, String}
   local bDAE = lower(frontendDAE)
   local simCode = generateSimulationCode(bDAE)
   generateTargetCode(simCode)
@@ -69,10 +75,10 @@ end
 """
  Transforms given Frontend DAE IR to causalized backend DAE IR (BDAE IR)
 """
-function lower(frontendDAE::DAE.DAElist)
+function lower(frontendDAE::DAE.DAE_LIST)::BackendDAE.BackendDAEStructure
   local bDAE::BackendDAE.BackendDAEStructure
   local simCode::SIM_CODE
-  @assert typeof listHead(frontendDAE) is DAE.COMP
+  @assert typeof(listHead(frontendDAE.elementLst)) == DAE.COMP
   #= Create Backend structure from Frontend structure =#
   bDAE = BackendDAECreate.lower(frontendDAE)
   BackendDump.dumpBackendDAEStructure(bDAE, "translated");
@@ -91,23 +97,36 @@ end
 function generateSimulationCode(bDAE::BackendDAE.BackendDAEStructure)::SimulationCode.SIM_CODE
   simCode = CodeGeneration.transformToSimCode(bDAE)
   SimCodeDump.dumpSimCode(simCode, "transformed simcode")
-  (simCode)
+  simCode
 end
-
 
 """
   Generates code interfacing DifferentialEquations.jl
-  The resulting code is saved in an array which contains functions that where simulated
-  this session.
+  The resulting code is saved in a dictonary which contains functions that where simulated
+  this session. Returns the generated modelName and corresponding generated code
 """
 function generateTargetCode(simCode::SimulationCode.SIM_CODE)
   #= Target code =#
-  modelCode = CodeGeneration.generateCode(simCode)
+  (modelName, modelCode) = CodeGeneration.generateCode(simCode)
   @debug "Functions:" modelCode
-  @debug "Model:" fileName
-  push!(COMPILED_MODELS, modelCode)
+  @debug "Model:" modelName
+  COMPILED_MODELS[modelName] = modelCode
+  return (modelName, modelCode)
+end
+
+function writeModelToFile(modelName::String)
   CodeGeneration.writeDAE_equationsToFile(fileName, functions)
-  #include(fileName)
+end
+
+"""
+Evaluates the inmemory representation of modelName
+"""
+function simulateModel(modelName::String, tspan=(0.0, 1.0))
+  local modelCode = COMPILED_MODELS[modelName]
+  local res = Meta.parse("begin $modelCode end") #Hack
+  @info res
+  eval(res)
+  eval(Meta.parse("$(modelName)Simulate($(tspan))"))
 end
 
 end #=OMBackend=#
