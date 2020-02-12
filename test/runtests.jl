@@ -46,48 +46,37 @@ end
 using ExampleDAEs
 global MODEL_NAME = ""
 @testset "UnitTests" begin
-  @testset "helloWorld" begin
-    @testset "compile" begin
-      global MODEL_NAME
-      frontendDAE::OMBackend.DAE.DAE_LIST = ExampleDAEs.HelloWorld_DAE
-      try
-        #= TODO: We should check this with some reference IR =#
-        (MODEL_NAME, _) = OMBackend.translate(frontendDAE)
-        @info MODEL_NAME
-        @test true
-      catch e
-        @info e
-        throw(e)
-        @test false
+  for testCase in ["helloWorld", "vanDerPol", "influenca", "bouncingBall"]
+    @testset "$testCase" begin
+      @testset "compile" begin
+        global MODEL_NAME
+        frontendDAE::OMBackend.DAE.DAE_LIST = getfield(ExampleDAEs,Symbol("$(testCase)_DAE"))
+        try
+          #= TODO: We should check this with some reference IR =#
+          (MODEL_NAME, _) = OMBackend.translate(frontendDAE)
+          @info MODEL_NAME
+          @test true
+        catch e
+          @info e
+          throw(e)
+          @test false
+        end
       end
-    end
-    @testset "simulate" begin
-      global MODEL_NAME
-      try
-        simulationResults = OMBackend.simulateModel(MODEL_NAME)
-        @info "Simulation results:" simulationResults
-        @test true
-      catch e
-        @info e
-        @test false
+      @testset "simulate" begin
+        global MODEL_NAME
+        try
+          simulationResults = OMBackend.simulateModel(MODEL_NAME)
+          @info "Simulation results:" simulationResults
+          @test true
+        catch e
+          @info e
+          @test false
+        end
       end
-    end
-    @testset "validate solution" begin
-      @test_broken false
+      @testset "validate solution" begin
+        #= TODO Valiade solution =#
+        @test_broken false
+      end
     end
   end
-  #=
-  @testset "bouncingBall" begin
-    @testset "compile" begin
-      frontendDAE::OMBackend.DAE.DAE_LIST = ExampleDAEs.BouncingBall_DAE
-      @test_broken OMBackend.translate(frontendDAE)
-    end
-    @testset "simulate" begin
-     @test_broken false #solution=OMBackend.simulateModel(MODEL_NAME)
-    end
-    @testset "validate solution" begin
-      @test_broken false
-    end
-  endx
-=#
 end
