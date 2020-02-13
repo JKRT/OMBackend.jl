@@ -31,8 +31,8 @@
 
 #= Setup to support multiple modules by adding them to the load path =#
 const CURRENT_DIRECTORY = @__DIR__
-const BACKEND_DIRECTORY = CURRENT_DIRECTORY * "/Backend"
-const CODE_GENERATION_DIRECTORY = CURRENT_DIRECTORY * "/CodeGeneration"
+const BACKEND_DIRECTORY = joinpath(CURRENT_DIRECTORY,"Backend")
+const CODE_GENERATION_DIRECTORY = joinpath(CURRENT_DIRECTORY,"CodeGeneration")
 if ! (CURRENT_DIRECTORY in LOAD_PATH)
   @debug("Setting up loadpath..")
   push!(LOAD_PATH, CURRENT_DIRECTORY, BACKEND_DIRECTORY, CODE_GENERATION_DIRECTORY)
