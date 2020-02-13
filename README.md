@@ -1,5 +1,6 @@
-
-
+# About OMBackend.jl
+OMBackend.jl is one component of the new OpenModelica Compiler infrastructure for Julia. 
+It is able to transform given DAE IR and simulate using DifferentialEquations.jl as it's backend.   
 
 # Dependencies
 * Julia 1.1, 1.2 or 1.3
