@@ -81,13 +81,13 @@ function lower(frontendDAE::DAE.DAE_LIST)::BackendDAE.BackendDAEStructure
   @assert typeof(listHead(frontendDAE.elementLst)) == DAE.COMP
   #= Create Backend structure from Frontend structure =#
   bDAE = BackendDAECreate.lower(frontendDAE)
-  BackendDump.dumpBackendDAEStructure(bDAE, "translated");
+  print(BackendDump.stringHeading1(bDAE, "translated"));
   #= detect state variables =#
   bDAE = Causalize.detectStates(bDAE)
-  BackendDump.dumpBackendDAEStructure(bDAE, "states marked");
+  print(BackendDump.stringHeading1(bDAE, "states marked"));
   #= causalize system, for now DAEMode =#
   bDAE = Causalize.daeMode(bDAE)
-  BackendDump.dumpBackendDAEStructure(bDAE, "residuals");
+  print(BackendDump.stringHeading1(bDAE, "residuals"));
   return bDAE
 end
 
@@ -96,8 +96,8 @@ end
 """
 function generateSimulationCode(bDAE::BackendDAE.BackendDAEStructure)::SimulationCode.SIM_CODE
   simCode = CodeGeneration.transformToSimCode(bDAE)
-  SimCodeDump.dumpSimCode(simCode, "transformed simcode")
-  simCode
+  print(BackendDump.stringHeading1(simCode, "SIM_CODE: transformed simcode"))
+  return simCode
 end
 
 """

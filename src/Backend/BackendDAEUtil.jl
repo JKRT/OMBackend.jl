@@ -119,6 +119,7 @@ function mapEqSystemVariablesNoUpdate(syst::BackendDAE.EqSystem, traversalOperat
       end
     end
   end
+  return extArg
 end
 
 function traverseEquationExpressions(eq::BackendDAE.Equation, traversalOperation::Function, extArg::T)::Tuple{BackendDAE.Equation,T} where{T}
