@@ -35,6 +35,8 @@
 using Test
 using OMBackend
 
+global debug = false    "Set to true for debugging purpose"
+
 const CURRENT_DIRECTORY = @__DIR__
 const EXAMPLE_DAE_DIRECTORY = CURRENT_DIRECTORY * "/ExampleDAE"
 if ! (CURRENT_DIRECTORY in LOAD_PATH && EXAMPLE_DAE_DIRECTORY in LOAD_PATH)
@@ -54,9 +56,9 @@ global MODEL_NAME = ""
         try
           #= TODO: We should check this with some reference IR =#
           (MODEL_NAME, modelCode) = OMBackend.translate(frontendDAE)
-          open("$(testCase).jl", "w") do io
-            write(io, modelCode)
-          end;
+          if debug
+            generateFile(testCase, modelCode)
+          end
           @info MODEL_NAME
           @test true
         catch e
