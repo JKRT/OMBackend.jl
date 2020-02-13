@@ -53,7 +53,10 @@ global MODEL_NAME = ""
         frontendDAE::OMBackend.DAE.DAE_LIST = getfield(ExampleDAEs,Symbol("$(testCase)_DAE"))
         try
           #= TODO: We should check this with some reference IR =#
-          (MODEL_NAME, _) = OMBackend.translate(frontendDAE)
+          (MODEL_NAME, modelCode) = OMBackend.translate(frontendDAE)
+          open("$(testCase).jl", "w") do io
+            write(io, modelCode)
+          end;
           @info MODEL_NAME
           @test true
         catch e
