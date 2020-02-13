@@ -125,20 +125,18 @@ $DAE_EQUATIONS
 end
 "
   for param in parameters
-    #ht[param] -> (index, type(binding))
-    #p[index] = binding
     (index, simVarType) = crefToSimVarHT[param]
     bindExp = @match simVarType begin
       SimulationCode.PARAMETER(bindExp = SOME(exp)) => begin exp
     end
-      _ => ErrorException("Some occult error")
+      _ => ErrorException("Unknown SimulationCode.SimVarType for parameter.")
     end
     parameterEquations *= "  p[$index] #= $param =# = $(expStringify(bindExp, simCode))\n"
   end
   local parameterVars ="
 function $(modelName)ParameterVars()
   p = Array{Float64}(undef, $(arrayLength(parameters)))
-$(parameterEquations)return p
+$(parameterEquations)  return p
 end
 "
 
@@ -262,9 +260,9 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
           We handle derivitives seperatly
         =#
         varName = BackendDump.string(listHead(expl))
-        indexAndType = hashTable[varName]
+        (index, type) = hashTable[varName]
         @match tmpStr begin
-          "der" => "dx[$(indexAndType[1])]"
+          "der" => "dx[$index]  #= der($varName) =#"
           _  =>  begin
             tmpStr = tmpStr + "(" + BackendDump.lstStr(expl, ", ") + ")"
           end
