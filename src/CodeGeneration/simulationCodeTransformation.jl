@@ -54,7 +54,7 @@ end
 function bDAEVarKindToSimCodeVarKind(backendVar::BackendDAE.Var)::SimulationCode.SimVarType
   varKind = @match backendVar.varKind begin
     BackendDAE.STATE(__) => SimulationCode.STATE()
-    BackendDAE.PARAM(__) || BackendDAE.CONST(__) => SimulationCode.PARAMETER()
+    BackendDAE.PARAM(__) || BackendDAE.CONST(__) => SimulationCode.PARAMETER(backendVar.bindExp)
     BackendDAE.VARIABLE(__) => SimulationCode.ALG_VARIABLE()
     _ => @error("Kind $(typeof(backendVar.varKind)) of backend variable not handled.")
   end

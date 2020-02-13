@@ -58,7 +58,7 @@ function stringHeading2(in::Any, heading::String)::String
 end
 
 function stringHeading3(in::Any, heading::String)::String
-  str = heading3(heading) + "\n" + string(in)
+  str = heading3(heading) + string(in)
 end
 
 
@@ -93,7 +93,15 @@ function stringTraverse(in, str)::String
 end
 
 function string(var::BackendDAE.Var)::String
-  str = var.varName.ident + " | " + string(var.varKind) + "\n"
+  str = var.varName.ident + " | " + string(var.varKind)
+  str *= begin
+    local exp::DAE.Exp
+    @match var.bindExp begin
+      SOME(exp) => begin " | Binding: " + string(exp) end
+      _ => begin "" end
+    end
+  end
+  return str + "\n"
 end
 
 function string(varKind::BackendDAE.VarKind)::String
@@ -151,6 +159,44 @@ function string(varKind::BackendDAE.VarKind)::String
 
     end
   end
+end
+
+function string(attr::DAE.VariableAttributes)::String
+  local innerExp::DAE.Exp
+  str = ""
+  if isSome(attr.quantity)
+    SOME(innerExp) = attr.quantity
+    str = str + " [QUANT: " + string(innerExp) + "]"
+  end
+  if isSome(attr.unit)
+    SOME(innerExp) = attr.unit
+    str = str + " [UNIT: " + string(innerExp) + "]"
+  end
+  if isSome(attr.displayUnit)
+    SOME(innerExp) = attr.displayUnit
+    str = str + " [DISP_UNIT: " + string(innerExp) + "]"
+  end
+  if isSome(attr.min)
+    SOME(innerExp) = attr.min
+    str = str + " [MIN: " + string(innerExp) + "]"
+  end
+  if isSome(attr.max)
+    SOME(innerExp) = attr.max
+    str = str + " [MAX: " + string(innerExp) + "]"
+  end
+  if isSome(attr.fixed)
+    SOME(innerExp) = attr.fixed
+    str = str + " [FIXED: " + string(innerExp) + "]"
+  end
+  if isSome(attr.nominal)
+    SOME(innerExp) = attr.nominal
+    str = str + " [NOM: " + string(innerExp) + "]"
+  end
+  if isSome(attr.equationBound)
+    SOME(innerExp) = attr.equationBound
+    str = str + " [EQ_BOUND: " + string(innerExp) + "]"
+  end
+  return str
 end
 
 function string(eq::BackendDAE.Equation)::String
@@ -416,6 +462,7 @@ function string(exp::DAE.Exp)::String
     local e3::DAE.Exp
     local expl::List{DAE.Exp}
     local lstexpl::List{List{DAE.Exp}}
+    local ty::DAE.Type
     @match exp begin
       DAE.ICONST(int) => begin
         Base.string(int)
@@ -501,8 +548,8 @@ function string(exp::DAE.Exp)::String
          "[TPL](" + lstString(expl, ", ") + ")"
       end
 
-      DAE.CAST(exp = e1)  => begin
-         "[CAST]" + string(e1)
+      DAE.CAST(ty = ty, exp = e1)  => begin
+         string(ty) + string(e1)
       end
 
       DAE.ASUB(exp = e1, sub = expl)  => begin
@@ -552,6 +599,24 @@ function string(exp::DAE.Exp)::String
     end
   end
 end
+
+function string(ty::DAE.Type)::String
+  str = begin
+    @match ty begin
+      DAE.T_INTEGER() => begin "(int) " end
+
+      DAE.T_REAL() => begin "(real) " end
+
+      DAE.T_STRING() => begin "(string) " end
+
+      DAE.T_BOOL() => begin "(bool) " end
+
+      _ => begin "(undef. cast) " end
+    end
+  end
+  return str
+end
+
 
 function lstString(expLst::List{T}, seperator::String)::String where{T}
   str = begin

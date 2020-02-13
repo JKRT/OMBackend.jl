@@ -70,7 +70,9 @@ struct  INPUT <: SimVarType end
 """
 Parameter variable
 """
-struct PARAMETER <: SimVarType end
+struct PARAMETER <: SimVarType
+  bindExp::Option{DAE.Exp}
+end
 
 
 """
