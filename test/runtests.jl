@@ -35,7 +35,8 @@
 using Test
 using OMBackend
 
-global debug = false    "Set to true for debugging purpose"
+#= logging =#
+ENV["JULIA_DEBUG"] = "all"
 
 const CURRENT_DIRECTORY = @__DIR__
 const EXAMPLE_DAE_DIRECTORY = CURRENT_DIRECTORY * "/ExampleDAE"
@@ -56,9 +57,7 @@ global MODEL_NAME = ""
         try
           #= TODO: We should check this with some reference IR =#
           (MODEL_NAME, modelCode) = OMBackend.translate(frontendDAE)
-          if debug
-            generateFile(testCase, modelCode)
-          end
+          @debug generateFile(testCase, modelCode)
           @info MODEL_NAME
           @test true
         catch e
