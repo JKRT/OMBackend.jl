@@ -46,7 +46,7 @@ function collectVariables(allBackendVars::Array{BackendDAE.Var})
   for (i, backendVar) in enumerate(allBackendVars)
     local simVarName::String = bDAEIdentToSimCodeVarName(backendVar)
     local simVarKind::SimulationCode.SimVarType = bDAEVarKindToSimCodeVarKind(backendVar)
-    simVars[i] = SimulationCode.SIMVAR(simVarName, NONE(), simVarKind)
+    simVars[i] = SimulationCode.SIMVAR(simVarName, NONE(), simVarKind, backendVar.attributes)
   end
   return simVars
 end

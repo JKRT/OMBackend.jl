@@ -82,8 +82,7 @@ function generateCode(simCode::SimulationCode.SIM_CODE)
   #= An array of 0:s=#
   local residuals::Array = [0 for i in 1:length(simCode.equations)]
   for varName in keys(crefToSimVarHT)
-    ixAndTy = crefToSimVarHT[varName]
-    local varType = ixAndTy[2]
+    varType = crefToSimVarHT[varName].varType
     @match varType  begin
       SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
       SimulationCode.STATE(__) => push!(stateVariables, varName)
@@ -109,6 +108,9 @@ end
   # Generate start values
   for var in stateVariables,algVariables,stateDerivatives
     # TODO match VariableAttributes to get start
+    @match var.attributes begin
+
+    end
     startEquations *= "$var\n"
   end
   local startCondtions ="
@@ -134,7 +136,7 @@ $DAE_EQUATIONS
 end
 "
   for param in parameters
-    (index, simVarType) = crefToSimVarHT[param]
+    (index, simVarType, _) = crefToSimVarHT[param]
     bindExp = @match simVarType begin
       SimulationCode.PARAMETER(bindExp = SOME(exp)) => begin exp
     end
@@ -228,7 +230,7 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
 
       DAE.CREF(cr, _)  => begin
         varName = BackendDump.string(cr)
-        indexAndType = hashTable[varName]
+        (index, varKind, _) = hashTable[varName]
         @match indexAndType[2] begin
           SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
           SimulationCode.STATE(__) => "x[$(indexAndType[1])] #= $varName =#"
