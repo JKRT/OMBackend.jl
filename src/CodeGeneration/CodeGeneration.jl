@@ -338,6 +338,7 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
     end
     end
   end
+str = "(" * str * ")"
 end
 
 end #= End CodeGeneration=#
