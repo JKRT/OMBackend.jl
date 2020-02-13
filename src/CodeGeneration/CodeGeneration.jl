@@ -75,6 +75,7 @@ function generateCode(simCode::SimulationCode.SIM_CODE)
   local parameters::Array = []
   local stateMarkings::Array = []
   local parameterEquations = ""
+  local startEquations = ""
   local crefToSimVarHT = simCode.crefToSimVarHT
   local modelName::String = simCode.name
   local exp::DAE.Exp
@@ -92,10 +93,11 @@ function generateCode(simCode::SimulationCode.SIM_CODE)
     end
   end
 
-  for i in stateVariables
+  # Generate state variable marking
+  for var in stateVariables
     push!(stateMarkings, true)
   end
-  for i in algVariables
+  for var in algVariables
     push!(stateMarkings, false)
   end
   local differentialVarsFunction ="
@@ -103,11 +105,18 @@ function $(modelName)DifferentialVars()
   return $stateMarkings
 end
 "
+
+  # Generate start values
+  for var in stateVariables,algVariables,stateDerivatives
+    # TODO match VariableAttributes to get start
+    startEquations *= "$var\n"
+  end
   local startCondtions ="
 function $(modelName)StartConditions(p, t0)
-  x0 = [1.0]
-  dx0 = [p[1]*x0[1]]
-  return x0, dx0
+  x0 = Array{Float64}(undef, $(length(stateVariables)+length(algVariables)))
+  dx0 = Array{Float64}(undef, $(length(stateDerivatives)))
+
+$startEquations  return x0, dx0
 end
 "
   #= Generate $modelName_DAE_equations=#
@@ -175,7 +184,6 @@ function eqTraverseAppendToString(eq::BackendDAE.Equation, simCode::SimulationCo
       end
       BackendDAE.WHEN_EQUATION(whenEquation = whenEquation) => begin
         ErrorException("When equations not yet supported")
-
       end
       _ =>
         ErrorException("traversalError for $eq")
