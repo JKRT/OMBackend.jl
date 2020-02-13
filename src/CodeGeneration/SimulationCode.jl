@@ -91,7 +91,7 @@ struct SIMVAR <: SimVar
   "Kind of variable, one of SimulationCode.SimVarType"
   varKind::SimVarType
   "Variable attributes"
-  attributes::DAE.VariableAttributes
+  attributes::Option{DAE.VariableAttributes}
 end
 
 
@@ -102,9 +102,8 @@ end
 struct SIM_CODE
   name::String
   "Mapping of names to the corresponding variable"
-  crefToSimVarHT::Dict{String, SIMVAR} # Index and type
+  crefToSimVarHT::Dict{String, SIMVAR}
  # "Mapping of index to corresponding variables"
- # indexToVarHT::Dict{Integer, Tuple{String, SimVarType}}
   "Array of Equations"
   equations::Array
 end

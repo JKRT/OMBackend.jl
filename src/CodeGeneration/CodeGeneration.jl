@@ -82,8 +82,8 @@ function generateCode(simCode::SimulationCode.SIM_CODE)
   #= An array of 0:s=#
   local residuals::Array = [0 for i in 1:length(simCode.equations)]
   for varName in keys(crefToSimVarHT)
-    varType = crefToSimVarHT[varName].varType
-    @match varType  begin
+    simVar = crefToSimVarHT[varName]
+    @match simVar.varKind  begin
       SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
       SimulationCode.STATE(__) => push!(stateVariables, varName)
       SimulationCode.PARAMETER(__) => push!(parameters, varName)
@@ -106,13 +106,13 @@ end
 "
 
   # Generate start values
-  for var in stateVariables,algVariables,stateDerivatives
+  #for var in hcat(stateVariables, algVariables, stateDerivatives)
     # TODO match VariableAttributes to get start
-    @match var.attributes begin
-
-    end
-    startEquations *= "$var\n"
-  end
+    #@match var.attributes begin
+      #println(var.attributes)
+    #end
+    #startEquations *= "$var\n"
+  #end
   local startCondtions ="
 function $(modelName)StartConditions(p, t0)
   x0 = Array{Float64}(undef, $(length(stateVariables)+length(algVariables)))
@@ -136,13 +136,13 @@ $DAE_EQUATIONS
 end
 "
   for param in parameters
-    (index, simVarType, _) = crefToSimVarHT[param]
-    bindExp = @match simVarType begin
+    simVar = crefToSimVarHT[param]
+    bindExp = @match simVar.varKind begin
       SimulationCode.PARAMETER(bindExp = SOME(exp)) => begin exp
     end
       _ => ErrorException("Unknown SimulationCode.SimVarType for parameter.")
     end
-    parameterEquations *= "  p[$index] #= $param =# = $(expStringify(bindExp, simCode))\n"
+    parameterEquations *= "  p[$(simVar.index)] #= $param =# = $(expStringify(bindExp, simCode))\n"
   end
   local parameterVars ="
 function $(modelName)ParameterVars()
@@ -230,13 +230,13 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
 
       DAE.CREF(cr, _)  => begin
         varName = BackendDump.string(cr)
-        (index, varKind, _) = hashTable[varName]
-        @match indexAndType[2] begin
+        simVar = hashTable[varName]
+        @match simVar.varKind begin
           SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
-          SimulationCode.STATE(__) => "x[$(indexAndType[1])] #= $varName =#"
-          SimulationCode.PARAMETER(__) => "p[$(indexAndType[1])] #= $varName =#"
-          SimulationCode.ALG_VARIABLE(__) => "x[$(indexAndType[1])] #= $varName =#"
-          SimulationCode.STATE_DERIVATIVE(__) => "dx[$(indexAndType[1])] #= der($varName) =#"
+          SimulationCode.STATE(__) => "x[$(simVar.index)] #= $varName =#"
+          SimulationCode.PARAMETER(__) => "p[$(simVar.index)] #= $varName =#"
+          SimulationCode.ALG_VARIABLE(__) => "x[$(simVar.index)] #= $varName =#"
+          SimulationCode.STATE_DERIVATIVE(__) => "dx[$(simVar.index)] #= der($varName) =#"
         end
       end
 
@@ -270,9 +270,9 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
           We handle derivitives seperatly
         =#
         varName = BackendDump.string(listHead(expl))
-        (index, type) = hashTable[varName]
+        simVar = hashTable[varName]
         @match tmpStr begin
-          "der" => "dx[$index]  #= der($varName) =#"
+          "der" => "dx[$(simVar.index)]  #= der($varName) =#"
           _  =>  begin
             tmpStr = tmpStr + "(" + BackendDump.lstStr(expl, ", ") + ")"
           end

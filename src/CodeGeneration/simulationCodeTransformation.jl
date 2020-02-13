@@ -46,7 +46,7 @@ function collectVariables(allBackendVars::Array{BackendDAE.Var})
   for (i, backendVar) in enumerate(allBackendVars)
     local simVarName::String = bDAEIdentToSimCodeVarName(backendVar)
     local simVarKind::SimulationCode.SimVarType = bDAEVarKindToSimCodeVarKind(backendVar)
-    simVars[i] = SimulationCode.SIMVAR(simVarName, NONE(), simVarKind, backendVar.attributes)
+    simVars[i] = SimulationCode.SIMVAR(simVarName, NONE(), simVarKind, backendVar.values)
   end
   return simVars
 end
@@ -92,7 +92,7 @@ function transformToSimCode(backendDAE::BackendDAE.BACKEND_DAE)::SimulationCode.
   local simVars::Array{SimulationCode.SIMVAR} =
     allocateAndCollectSimulationVariables(allBackendVars)
   # Assign indices and put all variable into an hash table
-  local crefToSimVarHT = createIndices(simVars)
+  local crefToSimVarHT = creatSimVarHT(simVars)
   local equations = let
       [eq for es in equationSystems for eq in es.orderedEqs]
   end
@@ -113,9 +113,9 @@ end
 4. Parameters will get own set of indices, starting at 1.
 
 """
-function createIndices(simulationVars::Array{SimulationCode.SIMVAR})::Dict{String, Tuple{Integer, SimulationCode.SimVarType}}
+function creatSimVarHT(simulationVars::Array{SimulationCode.SIMVAR})::Dict{String, SimulationCode.SIMVAR}
   @info simulationVars
-  local ht::Dict{String, Tuple{Integer, SimulationCode.SimVarType}} = Dict()
+  local ht::Dict{String, SimulationCode.SIMVAR} = Dict()
   local stateCounter = 0
   local parameterCounter = 0
   local numberOfStates = 0
@@ -124,13 +124,18 @@ function createIndices(simulationVars::Array{SimulationCode.SIMVAR})::Dict{Strin
       SimulationCode.STATE(__) => begin
         stateCounter += 1
         @set var.index = SOME(stateCounter)
-        push!(ht, var.name => (stateCounter, var.varKind))
+        push!(ht, var.name => var)
         #=Adding the state derivative as well=#
-        push!(ht, "der($(var.name))" => (stateCounter, SimulationCode.STATE_DERIVATIVE(var.name)))
+        derVar = SimulationCode.SIMVAR("der($(var.name))",
+                                       stateCounter,
+                                       SimulationCode.STATE_DERIVATIVE(var.name),
+                                       SOME(DAE.emptyVarAttrReal))
+        push!(ht, derVar.name => derVar)
       end
       SimulationCode.PARAMETER(__) => begin
         parameterCounter += 1
-        push!(ht, var.name => (parameterCounter, var.varKind))
+        @set var.index = SOME(parameterCounter)
+        push!(ht, var.name => var)
       end
       _ => continue
     end
@@ -139,11 +144,14 @@ function createIndices(simulationVars::Array{SimulationCode.SIMVAR})::Dict{Strin
     @match var.varKind begin
       SimulationCode.ALG_VARIABLE(__) => begin
         var = @set var.index = SOME(stateCounter + 1)
-        push!(ht, var.name => (var.index.data, var.varKind))
+        push!(ht, var.name => var)
       end
       _ => continue
     end
   end
+
+  # TODO Set attributes of var
+
   @info ht
   return ht
 end
