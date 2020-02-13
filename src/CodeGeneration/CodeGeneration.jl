@@ -74,8 +74,10 @@ function generateCode(simCode::SimulationCode.SIM_CODE)
   local stateDerivatives::Array = []
   local parameters::Array = []
   local stateMarkings::Array = []
-  local  crefToSimVarHT = simCode.crefToSimVarHT
+  local parameterEquations = ""
+  local crefToSimVarHT = simCode.crefToSimVarHT
   local modelName::String = simCode.name
+  local exp::DAE.Exp
   #= An array of 0:s=#
   local residuals::Array = [0 for i in 1:length(simCode.equations)]
   for varName in keys(crefToSimVarHT)
@@ -122,9 +124,21 @@ function $(modelName)DAE_equations(res, dx #=The state derivatives =#, x #= Stat
 $DAE_EQUATIONS
 end
 "
+  for param in parameters
+    #ht[param] -> (index, type(binding))
+    #p[index] = binding
+    (index, simVarType) = crefToSimVarHT[param]
+    bindExp = @match simVarType begin
+      SimulationCode.PARAMETER(bindExp = SOME(exp)) => begin exp
+    end
+      _ => ErrorException("Some occult error")
+    end
+    parameterEquations *= "  p[$index] #= $param =# = $(expStringify(bindExp, simCode))\n"
+  end
   local parameterVars ="
 function $(modelName)ParameterVars()
-  return p=[0.5]
+  p = Array{Float64}(undef, $(arrayLength(parameters)))
+$(parameterEquations)return p
 end
 "
 
@@ -211,10 +225,10 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
         indexAndType = hashTable[varName]
         @match indexAndType[2] begin
           SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
-          SimulationCode.STATE(__) => "x[$(indexAndType[1])]"
-          SimulationCode.PARAMETER(__) => "p[$(indexAndType[1])]"
-          SimulationCode.ALG_VARIABLE(__) => "x[$(indexAndType[1])]"
-          SimulationCode.STATE_DERIVATIVE(__) => "dx[$(indexAndType[1])]"
+          SimulationCode.STATE(__) => "x[$(indexAndType[1])] #= $varName =#"
+          SimulationCode.PARAMETER(__) => "p[$(indexAndType[1])] #= $varName =#"
+          SimulationCode.ALG_VARIABLE(__) => "x[$(indexAndType[1])] #= $varName =#"
+          SimulationCode.STATE_DERIVATIVE(__) => "dx[$(indexAndType[1])] #= der($varName) =#"
         end
       end
 
@@ -290,27 +304,27 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
       end
 
       DAE.CAST(exp = e1)  => begin
-         "[CAST]" + expStringify(e1)
+         expStringify(e1, simCode)
       end
 
       DAE.ASUB(exp = e1, sub = expl)  => begin
-         "[ASUB]" + expStringify(e1) + "{" + BackendDump.lstStr(expl, ", ") + "}"
+         "[ASUB]" + expStringify(e1, simCode) + "{" + BackendDump.lstStr(expl, ", ") + "}"
       end
 
       DAE.TSUB(exp = e1, ix = int) => begin
-         "[TSUB]" + expStringify(e1) + "(" + string(int) + ")"
+         "[TSUB]" + expStringify(e1, simCode) + "(" + string(int) + ")"
       end
 
       DAE.RSUB(exp = e1)  => begin
-        "[RSUB]" + expStringify(e1)
+        "[RSUB]" + expStringify(e1, simCode)
       end
 
       DAE.SIZE(exp = e1, sz = NONE())  => begin
-        "[SIZE]" + expStringify(e1)
+        "[SIZE]" + expStringify(e1, simCode)
       end
 
       DAE.SIZE(exp = e1, sz = SOME(e2))  => begin
-         "[SIZE]" + expStringify(e1) + "(" + expStringify(e2) + ")"
+         "[SIZE]" + expStringify(e1, simCode) + "(" + expStringify(e2, simCode) + ")"
       end
 
      DAE.CODE(__) => begin
@@ -318,7 +332,7 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
      end
 
      DAE.REDUCTION(expr = e1) => begin
-       "[REDUCTION]" + expStringify(e1)
+       "[REDUCTION]" + expStringify(e1, simCode)
      end
 
      DAE.EMPTY(__)  => begin
@@ -326,7 +340,7 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
      end
 
      DAE.CONS(e1, e2)  => begin
-       "[CONS]" + "{" + expStringify(e1) + ", " + expStringify(e2) + "}"
+       "[CONS]" + "{" + expStringify(e1, simCode) + ", " + expStringify(e2, simCode) + "}"
      end
 
      DAE.LIST(expl)  => begin
