@@ -46,7 +46,8 @@ if ! (CURRENT_DIRECTORY in LOAD_PATH && EXAMPLE_DAE_DIRECTORY in LOAD_PATH)
   @info("Done setting up loadpath: $LOAD_PATH")
 end
 
-global TEST_CASES = ["helloWorld", "vanDerPol", "influenza", "bouncingBall"]
+global TEST_CASES = ["helloWorld", "lotkaVolterra",
+                     "vanDerPol", "influenza", "bouncingBall"]
 using ExampleDAEs
 global MODEL_NAME = ""
 @testset "UnitTests" begin

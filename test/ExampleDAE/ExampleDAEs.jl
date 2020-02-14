@@ -14,6 +14,7 @@ include("helloWorld.jl")
 include("bouncingBall.jl")
 include("vanDerPol.jl")
 include("influenca.jl")
+include("lotkaVolterra.jl")
 
 export helloWorld_DAE
 export bouncingBall_DAE
