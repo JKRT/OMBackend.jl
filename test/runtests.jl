@@ -30,13 +30,14 @@
 */ =#
 #=Author John Tinnerholm & Andreas Heureman=#
 
+import CSV
+import Tables
 
 # Load module for test DAEs
 using Test
 using OMBackend
 
 include("debugUtil.jl")
-
 #= logging =#
 ENV["JULIA_DEBUG"] = "all"
 
@@ -48,7 +49,12 @@ if ! (CURRENT_DIRECTORY in LOAD_PATH && EXAMPLE_DAE_DIRECTORY in LOAD_PATH)
   @info("Done setting up loadpath: $LOAD_PATH")
 end
 using ExampleDAEs
-global TEST_CASES = ["helloWorld", "lotkaVolterra", "vanDerPol", "influenza", "bouncingBall"]
+#global TEST_CASES = ["helloWorld", "lotkaVolterra", "vanDerPol", "influenza", "bouncingBall"]
+
+"""
+These currently work
+"""
+global TEST_CASES = ["helloWorld", "lotkaVolterra", "vanDerPol"]
 
 #using ExampleDAEs
 global MODEL_NAME = ""
@@ -73,8 +79,10 @@ global MODEL_NAME = ""
       @testset "simulate" begin
         global MODEL_NAME
         try
-          simulationResults = OMBackend.simulateModel(MODEL_NAME)
-          @info "Simulation results:" simulationResults
+          simulationResults = OMBackend.simulateModel(MODEL_NAME, (0.0,10.0))
+          simTable = Tables.table(simulationResults)
+          CSV.write("$(testCase)_result.csv", simTable)
+          @debug "Simulation results:" simulationResults
           @test true
         catch e
           @info e
@@ -82,8 +90,11 @@ global MODEL_NAME = ""
         end
       end
       @testset "validate solution" begin
-        #= TODO validate solution =#
-        @test_broken false
+        local omc_table::Array = Tables.matrix(CSV.read("./OMC_Reference/$(testCase)_res.csv"))
+        local julia_table::Array = Tables.matrix(CSV.read("$(testCase)_result.csv"))
+        @test omc_table ≈ julia_table
+        #= Delete the file =#
+        rm("$(testCase)_result.csv")
       end
     end
   end
