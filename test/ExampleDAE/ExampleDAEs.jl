@@ -20,5 +20,6 @@ export helloWorld_DAE
 export bouncingBall_DAE
 export vanDerPol_DAE
 export influenca_DAE
+export lotkaVolterra_DAE
 
 end #= ExampleDAEs =#

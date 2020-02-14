@@ -35,6 +35,8 @@
 using Test
 using OMBackend
 
+include("debugUtil.jl")
+
 #= logging =#
 ENV["JULIA_DEBUG"] = "all"
 
@@ -45,10 +47,10 @@ if ! (CURRENT_DIRECTORY in LOAD_PATH && EXAMPLE_DAE_DIRECTORY in LOAD_PATH)
   push!(LOAD_PATH, CURRENT_DIRECTORY, EXAMPLE_DAE_DIRECTORY)
   @info("Done setting up loadpath: $LOAD_PATH")
 end
-
-global TEST_CASES = ["helloWorld", "lotkaVolterra",
-                     "vanDerPol", "influenza", "bouncingBall"]
 using ExampleDAEs
+global TEST_CASES = ["helloWorld", "lotkaVolterra", "vanDerPol", "influenza", "bouncingBall"]
+
+#using ExampleDAEs
 global MODEL_NAME = ""
 @testset "UnitTests" begin
   for testCase in TEST_CASES
@@ -59,7 +61,7 @@ global MODEL_NAME = ""
         try
           #= TODO: We should check this with some reference IR =#
           (MODEL_NAME, modelCode) = OMBackend.translate(frontendDAE)
-          #@debug generateFile(testCase, modelCode)
+          @debug generateFile(testCase, modelCode)
           @info MODEL_NAME
           @test true
         catch e

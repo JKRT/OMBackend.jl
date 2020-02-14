@@ -83,8 +83,8 @@ function generateCode(simCode::SimulationCode.SIM_CODE)
   #= An array of 0:s=#
   local residuals::Array = [0 for i in 1:length(simCode.equations)]
   for varName in keys(crefToSimVarHT)
-    ixAndTy = crefToSimVarHT[varName]
-    local varType = ixAndTy[2]
+    ixAndVar = crefToSimVarHT[varName]
+    local varType = ixAndVar[2].varKind
     @match varType  begin
       SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
       SimulationCode.STATE(__) => push!(stateVariables, varName)
@@ -104,11 +104,21 @@ function generateCode(simCode::SimulationCode.SIM_CODE)
 function $(modelName)DifferentialVars()
   return $stateMarkings
 end
-"
-  local startCondtions ="
+"#=TODO!!! We use state for everything now. I am unsure how to differentiate between the two=#
+  #=Start conditions of algebraic and state variables=#
+  local START_CONDTIONS_EQUATIONS = let
+    local startCondStr::String =
+      getStartConditions(algVariables, "x0", simCode) *
+      #=TODO. It seems that there might be something else at play here..=#
+      getStartConditions(stateVariables, "x0", simCode)
+    startCondStr
+  end
+#=TODO!!! We use state for everything now. I am unsure how to differentiate between the two=#
+local startCondtions ="
 function $(modelName)StartConditions(p, t0)
-  x0 = [1.0]
-  dx0 = [p[1]*x0[1]]
+  local x0 = Array{Float64}(undef, $(arrayLength(stateVariables)))
+  local dx0 = Array{Float64}(undef, $(arrayLength(stateVariables)))
+  $START_CONDTIONS_EQUATIONS
   return x0, dx0
 end
 "
@@ -127,7 +137,8 @@ $DAE_EQUATIONS
 end
 "
   for param in parameters
-    (index, simVarType) = crefToSimVarHT[param]
+    (index, simVar) = crefToSimVarHT[param]
+    local simVarType::SimulationCode.SimVarType = simVar.varKind
     bindExp = @match simVarType begin
       SimulationCode.PARAMETER(bindExp = SOME(exp)) => begin exp
     end
@@ -221,13 +232,14 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
 
       DAE.CREF(cr, _)  => begin
         varName = BackendDAE.string(cr)
-        indexAndType = hashTable[varName]
-        @match indexAndType[2] begin
+        indexAndVar = hashTable[varName]
+        varKind::SimulationCode.SimVarType = indexAndVar[2].varKind
+        @match varKind begin
           SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
-          SimulationCode.STATE(__) => "x[$(indexAndType[1])] #= $varName =#"
-          SimulationCode.PARAMETER(__) => "p[$(indexAndType[1])] #= $varName =#"
-          SimulationCode.ALG_VARIABLE(__) => "x[$(indexAndType[1])] #= $varName =#"
-          SimulationCode.STATE_DERIVATIVE(__) => "dx[$(indexAndType[1])] #= der($varName) =#"
+          SimulationCode.STATE(__) => "x[$(indexAndVar[1])] #= $varName =#"
+          SimulationCode.PARAMETER(__) => "p[$(indexAndVar[1])] #= $varName =#"
+          SimulationCode.ALG_VARIABLE(__) => "x[$(indexAndVar[1])] #= $varName =#"
+          SimulationCode.STATE_DERIVATIVE(__) => "dx[$(indexAndVar[1])] #= der($varName) =#"
         end
       end
 
@@ -352,6 +364,33 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
     end
   end
 str = "(" * str * ")"
+end
+
+"""
+  Generates the starting conditions
+"""
+function getStartConditions(vars::Array, condName::String, simCode::SimulationCode.SIM_CODE)
+  local startCondStr::String = ""
+  local ht::Dict = simCode.crefToSimVarHT
+  for var in vars
+    (index, simVar) = ht[var]
+    simVarType = simVar.varKind
+    local optAttributes::Option{DAE.VariableAttributes} = simVar.attributes
+    _ = @match optAttributes begin
+        SOME(attributes) => begin
+          startCondStr *= @match attributes.start begin
+            SOME(start) => begin
+              @debug "Start value is:" start
+              "$condName[$index] #= $var =# = $(expStringify(start, simCode))\n"
+            end
+            NONE() => ""
+          end
+          NONE() => ""
+        end
+    end
+  end
+  @debug "Returning $startCondStr"
+  return startCondStr
 end
 
 end #= End CodeGeneration=#
