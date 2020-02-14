@@ -29,6 +29,8 @@
 *
 =#
 
+import BackendDAEUtil
+
 using MetaModelica
 
 const HEAD_LINE = "#############################################"::String
@@ -486,7 +488,7 @@ function Base.string(exp::DAE.Exp)::String
   end
 end
 
-function string(ty::DAE.Type)::String
+function Base.string(ty::DAE.Type)::String
   str = begin
     @match ty begin
       DAE.T_INTEGER() => begin "(int) " end

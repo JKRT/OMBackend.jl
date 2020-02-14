@@ -58,7 +58,7 @@ global MODEL_NAME = ""
         try
           #= TODO: We should check this with some reference IR =#
           (MODEL_NAME, modelCode) = OMBackend.translate(frontendDAE)
-          @debug generateFile(testCase, modelCode)
+          #@debug generateFile(testCase, modelCode)
           @info MODEL_NAME
           @test true
         catch e

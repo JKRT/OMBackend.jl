@@ -260,7 +260,7 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
           TODO: Keeping it simple for now=, we assume we only have one argument in the call
           We handle derivitives seperatly
         =#
-        varName = BackendDump.string(listHead(expl))
+        varName = BackendDAE.string(listHead(expl))
         (index, type) = hashTable[varName]
         @match tmpStr begin
           "der" => "dx[$index]  #= der($varName) =#"

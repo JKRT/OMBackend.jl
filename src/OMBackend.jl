@@ -95,7 +95,7 @@ end
 """
 function generateSimulationCode(bDAE::BackendDAE.BackendDAEStructure)::SimulationCode.SIM_CODE
   simCode = CodeGeneration.transformToSimCode(bDAE)
-  @debug BackendDump.stringHeading1(simCode, "SIM_CODE: transformed simcode")
+  @debug BackendDAE.stringHeading1(simCode, "SIM_CODE: transformed simcode")
   return simCode
 end
 
