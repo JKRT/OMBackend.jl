@@ -107,4 +107,9 @@ struct SIM_CODE
   equations::Array
 end
 
+#=
+We include directly, since Julia does not allow circular imports
+=#
+include("simCodeDump.jl")
+
 end # module SimulationCode

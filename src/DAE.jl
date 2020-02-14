@@ -1843,7 +1843,6 @@ CREF_QUAL(...) is used for qualified component names, e.g. a.b.c
 CREF_IDENT(..) is used for non-qualifed component names, e.g. x =#
 @Uniontype ComponentRef begin
   @Record CREF_QUAL begin
-
     ident::String
     identType #= type of the identifier, without considering the subscripts =#::Type
     subscriptLst::List{Subscript}

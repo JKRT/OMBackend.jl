@@ -1162,7 +1162,8 @@ end
 
 const emptyDAEModeData = BDAE_MODE_DATA(nil, nil, 0, NONE())::BackendDAEModeData
 
-#= So that we can use wildcard imports and named imports when they do occur. Not good Julia practice =#
+include("backendDump.jl")
+
 @exportAll()
 
 end

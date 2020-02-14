@@ -46,10 +46,11 @@ if ! (CURRENT_DIRECTORY in LOAD_PATH && EXAMPLE_DAE_DIRECTORY in LOAD_PATH)
   @info("Done setting up loadpath: $LOAD_PATH")
 end
 
+global TEST_CASES = ["helloWorld", "vanDerPol", "influenza", "bouncingBall"]
 using ExampleDAEs
 global MODEL_NAME = ""
 @testset "UnitTests" begin
-  for testCase in ["helloWorld", "vanDerPol", "influenca", "bouncingBall"]
+  for testCase in TEST_CASES
     @testset "$testCase" begin
       @testset "compile" begin
         global MODEL_NAME
@@ -78,7 +79,7 @@ global MODEL_NAME = ""
         end
       end
       @testset "validate solution" begin
-        #= TODO Valiade solution =#
+        #= TODO validate solution =#
         @test_broken false
       end
     end

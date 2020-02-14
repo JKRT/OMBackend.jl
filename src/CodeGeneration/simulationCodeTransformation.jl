@@ -29,12 +29,6 @@
 *
 =#
 
-import DAE
-
-using MetaModelica
-using BackendDAE
-using Setfield
-
 """
   Collect variables from array of BackendDAE.Var:
   Save the name and it's kind of each variable.
@@ -61,9 +55,10 @@ function bDAEVarKindToSimCodeVarKind(backendVar::BackendDAE.Var)::SimulationCode
 end
 
 function bDAEIdentToSimCodeVarName(backendVar::BackendDAE.Var)
-  local varName = backendVar.varName
+  local varName::DAE.ComponentRef = backendVar.varName
   @match varName begin
-    DAE.CREF_IDENT(__) => string(backendVar.varName.ident)
+    DAE.CREF_IDENT(__) => string(varName)
+    DAE.CREF_QUAL(__) => string(varName)
     _ => @error("Type $(typeof(varName)) not handled.")
   end
 end
@@ -73,22 +68,14 @@ end
 """
 function transformToSimCode(backendDAE::BackendDAE.BACKEND_DAE)::SimulationCode.SIM_CODE
   local equationSystems::Array = backendDAE.eqs
-  # Idea:
-  # Collect variables and generate index
-  # Have seperate indeces (starting with 1) for state derivatives, parameters and everything else
-  # If x is a state we need two variables der(x) and x and both need the same index
-  # dx[1] aka der(x) and x[1] aka x
-  # Parameter a would then be in p[1]
-  # Collect variables and sort for states
   local allOrderedVars::Array{BackendDAE.Var} =
     let
       [v for es in equationSystems for v in es.orderedVars.varArr]
     end
-
   local allSharedVars::Array{BackendDAE.Var} = getSharedVariablesLocalsAndGlobals(backendDAE.shared) #=TODO: One equation sys for now=#
 
   local allBackendVars = vcat(allOrderedVars, allSharedVars)
-  #==#
+
   local simVars::Array{SimulationCode.SIMVAR} =
     allocateAndCollectSimulationVariables(allBackendVars)
   # Assign indices and put all variable into an hash table
@@ -159,7 +146,7 @@ end
 Returns the shared global and local variable for the shared data in
 an equation system. If no such data is present. Return two empty arrays
 """
-function getSharedVariablesLocalsAndGlobals(shared::Shared)
+function getSharedVariablesLocalsAndGlobals(shared::BackendDAE.Shared)
   @match shared begin
     BackendDAE.SHARED(__) => vcat(shared.globalKnownVars, shared.localKnownVars)
     _ => []

@@ -49,13 +49,11 @@ using Absyn
 
 import BackendDAE
 import BackendDAECreate
-import BackendDump
 import Causalize
 import DAE
 import Prefix
 import SCode
 import SimulationCode
-import SimCodeDump
 import CodeGeneration
 import Base.Meta
 
@@ -81,13 +79,14 @@ function lower(frontendDAE::DAE.DAE_LIST)::BackendDAE.BackendDAEStructure
   @assert typeof(listHead(frontendDAE.elementLst)) == DAE.COMP
   #= Create Backend structure from Frontend structure =#
   bDAE = BackendDAECreate.lower(frontendDAE)
-  @debug BackendDump.stringHeading1(bDAE, "BackendDAE: translated")
+  @debug(BackendDAE.stringHeading1(bDAE, "translated"));
   #= detect state variables =#
   bDAE = Causalize.detectStates(bDAE)
-  @debug BackendDump.stringHeading1(bDAE, "BackendDAE: states marked")
+  @debug(BackendDAE.stringHeading1(bDAE, "states marked"));
   #= causalize system, for now DAEMode =#
   bDAE = Causalize.daeMode(bDAE)
-  @debug BackendDump.stringHeading1(bDAE, "BackendDAE: residuals")
+  @debug(BackendDAE.stringHeading1(bDAE, "residuals"));
+
   return bDAE
 end
 
@@ -123,8 +122,9 @@ Evaluates the inmemory representation of modelName
 """
 function simulateModel(modelName::String, tspan=(0.0, 1.0))
   local modelCode = COMPILED_MODELS[modelName]
+  @debug "Generated modelCode : $modelCode"
   local res = Meta.parse("begin $modelCode end") #Hack
-  @info res
+  @debug res
   eval(res)
   eval(Meta.parse("$(modelName)Simulate($(tspan))"))
 end

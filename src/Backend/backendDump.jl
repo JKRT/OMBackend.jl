@@ -29,25 +29,11 @@
 *
 =#
 
-
-module BackendDump
-
 using MetaModelica
-
-#= ExportAll is not good practice but it makes it so that we do not have to write export after each function :( =#
-using ExportAll
-
-import Absyn
-import DAE
-
-import BackendDAE
-import BackendDAEUtil
-import SimulationCode
 
 const HEAD_LINE = "#############################################"::String
 const DOUBLE_LINE = "============================================"::String
 const LINE = "---------------------------------------------"::String
-
 
 function stringHeading1(in::Any, heading::String)::String
   str = heading1(heading) + "\n" + string(in)
@@ -74,7 +60,7 @@ function heading3(heading::String)::String
   str = heading + ":\n" + LINE + "\n"
 end
 
-function string(dae::BackendDAE.BackendDAEStructure)::String
+function Base.string(dae::BackendDAE.BackendDAEStructure)::String
   str::String = ""
   for i in 1:arrayLength(dae.eqs)
     str = str + stringHeading2(dae.eqs[i], "EqSystem " + Base.string(i)) + "\n"
@@ -82,7 +68,7 @@ function string(dae::BackendDAE.BackendDAEStructure)::String
   return str
 end
 
-function string(eq::BackendDAE.EqSystem)::String
+function Base.string(eq::BackendDAE.EqSystem)::String
   str::String = ""
   str = str + heading3("Variables") + BackendDAEUtil.mapEqSystemVariablesNoUpdate(eq, stringTraverse, "") + "\n"
   str = str + heading3("Equations") + BackendDAEUtil.mapEqSystemEquationsNoUpdate(eq, stringTraverse, "") + "\n"
@@ -92,7 +78,7 @@ function stringTraverse(in, str)::String
   str = str + string(in)
 end
 
-function string(var::BackendDAE.Var)::String
+function Base.string(var::BackendDAE.Var)::String
   str = var.varName.ident + " | " + string(var.varKind)
   str *= begin
     local exp::DAE.Exp
@@ -104,102 +90,64 @@ function string(var::BackendDAE.Var)::String
   return str + "\n"
 end
 
-function string(varKind::BackendDAE.VarKind)::String
+function Base.string(varKind::BackendDAE.VarKind)::String
   str = begin
     @match varKind begin
-      BackendDAE.VARIABLE() => begin "VARIABLE" end
+      BackendDAE.VARIABLE() =>  "VARIABLE"
 
-      BackendDAE.STATE() => begin "STATE" end
+      BackendDAE.STATE() =>  "STATE"
 
-      BackendDAE.STATE_DER() => begin "STATE_DER" end
+      BackendDAE.STATE_DER() =>  "STATE_DER"
 
-      BackendDAE.DUMMY_DER() => begin "DUMMY_DER" end
+      BackendDAE.DUMMY_DER() =>  "DUMMY_DER"
 
-      BackendDAE.DUMMY_STATE() => begin "DUMMY_STATE" end
+      BackendDAE.DUMMY_STATE() =>  "DUMMY_STATE"
 
-      BackendDAE.CLOCKED_STATE() => begin "CLOCKED_STATE" end
+      BackendDAE.CLOCKED_STATE() =>  "CLOCKED_STATE"
 
-      BackendDAE.DISCRETE() => begin "DISCRETE" end
+      BackendDAE.DISCRETE() =>  "DISCRETE"
 
-      BackendDAE.PARAM() => begin "PARAM" end
+      BackendDAE.PARAM() =>  "PARAM"
 
-      BackendDAE.CONST() => begin "CONST" end
+      BackendDAE.CONST() =>  "CONST"
 
-      BackendDAE.EXTOBJ() => begin "EXTOBJ" end
+      BackendDAE.EXTOBJ() =>  "EXTOBJ"
 
-      BackendDAE.JAC_VAR() => begin "JAC_VAR" end
+      BackendDAE.JAC_VAR() =>  "JAC_VAR"
 
-      BackendDAE.JAC_DIFF_VAR() => begin "JAC_DIFF_VAR" end
+      BackendDAE.JAC_DIFF_VAR() =>  "JAC_DIFF_VAR"
 
-      BackendDAE.SEED_VAR() => begin "SEED_VAR" end
+      BackendDAE.SEED_VAR() =>  "SEED_VAR"
 
-      BackendDAE.OPT_CONSTR() => begin "OPT_CONSTR" end
+      BackendDAE.OPT_CONSTR() =>  "OPT_CONSTR"
 
-      BackendDAE.OPT_FCONSTR() => begin "OPT_FCONSTR" end
+      BackendDAE.OPT_FCONSTR() =>  "OPT_FCONSTR"
 
-      BackendDAE.OPT_INPUT_WITH_DER() => begin "OPT_INPUT_WITH_DER" end
+      BackendDAE.OPT_INPUT_WITH_DER() =>  "OPT_INPUT_WITH_DER"
 
-      BackendDAE.OPT_INPUT_DER() => begin "OPT_INPUT_DER" end
+      BackendDAE.OPT_INPUT_DER() =>  "OPT_INPUT_DER"
 
-      BackendDAE.OPT_TGRID() => begin "OPT_TGRID" end
+      BackendDAE.OPT_TGRID() =>  "OPT_TGRID"
 
-      BackendDAE.OPT_LOOP_INPUT() => begin "OPT_LOOP_INPUT" end
+      BackendDAE.OPT_LOOP_INPUT() =>  "OPT_LOOP_INPUT"
 
-      BackendDAE.ALG_STATE() => begin "ALG_STATE" end
+      BackendDAE.ALG_STATE() =>  "ALG_STATE"
 
-      BackendDAE.ALG_STATE_OLD() => begin "ALG_STATE_OLD" end
+      BackendDAE.ALG_STATE_OLD() =>  "ALG_STATE_OLD"
 
-      BackendDAE.DAE_RESIDUAL_VAR() => begin "DAE_RESIDUAL_VAR" end
+      BackendDAE.DAE_RESIDUAL_VAR() =>  "DAE_RESIDUAL_VAR"
 
-      BackendDAE.DAE_AUX_VAR() => begin "DAE_AUX_VAR" end
+      BackendDAE.DAE_AUX_VAR() =>  "DAE_AUX_VAR"
 
-      BackendDAE.LOOP_ITERATION() => begin "LOOP_ITERATION" end
+      BackendDAE.LOOP_ITERATION() =>  "LOOP_ITERATION"
 
-      BackendDAE.LOOP_SOLVED() => begin "LOOP_SOLVED" end
+      BackendDAE.LOOP_SOLVED() =>  "LOOP_SOLVED"
 
     end
   end
 end
 
-function string(attr::DAE.VariableAttributes)::String
-  local innerExp::DAE.Exp
-  str = ""
-  if isSome(attr.quantity)
-    SOME(innerExp) = attr.quantity
-    str = str + " [QUANT: " + string(innerExp) + "]"
-  end
-  if isSome(attr.unit)
-    SOME(innerExp) = attr.unit
-    str = str + " [UNIT: " + string(innerExp) + "]"
-  end
-  if isSome(attr.displayUnit)
-    SOME(innerExp) = attr.displayUnit
-    str = str + " [DISP_UNIT: " + string(innerExp) + "]"
-  end
-  if isSome(attr.min)
-    SOME(innerExp) = attr.min
-    str = str + " [MIN: " + string(innerExp) + "]"
-  end
-  if isSome(attr.max)
-    SOME(innerExp) = attr.max
-    str = str + " [MAX: " + string(innerExp) + "]"
-  end
-  if isSome(attr.fixed)
-    SOME(innerExp) = attr.fixed
-    str = str + " [FIXED: " + string(innerExp) + "]"
-  end
-  if isSome(attr.nominal)
-    SOME(innerExp) = attr.nominal
-    str = str + " [NOM: " + string(innerExp) + "]"
-  end
-  if isSome(attr.equationBound)
-    SOME(innerExp) = attr.equationBound
-    str = str + " [EQ_BOUND: " + string(innerExp) + "]"
-  end
-  return str
-end
-
-function string(eq::BackendDAE.Equation)::String
+function Base.string(eq::BackendDAE.Equation)::String
   str = begin
     local lhs::DAE.Exp
     local rhs::DAE.Exp
@@ -240,13 +188,11 @@ function string(eq::BackendDAE.Equation)::String
         while listLength(conditions) != 0
           condition <| conditions = conditions
           trueEquation <| trueEquations = trueEquations
-
           strTmp = strTmp + "else if " + string(condition) + " then\n"
           for eq in trueEquation
             strTmp = strTmp + "  " + string(eq) + "\n"
           end
         end
-
         strTmp = strTmp + "else\n"
         for eq in eq.eqnsfalse
           strTmp = strTmp + "  " + string(eq) + "\n"
@@ -258,7 +204,7 @@ function string(eq::BackendDAE.Equation)::String
   return str + "\n"
 end
 
-function string(whenEq::BackendDAE.WhenEquation)::String
+function Base.string(whenEq::BackendDAE.WhenEquation)::String
   local elseWhen::BackendDAE.WhenEquation
   str = "when " + string(whenEq.condition) + " then\n"
 
@@ -273,7 +219,7 @@ function string(whenEq::BackendDAE.WhenEquation)::String
   return str + "end;\n"
 end
 
-function string(whenOp::BackendDAE.WhenOperator)::String
+function Base.string(whenOp::BackendDAE.WhenOperator)::String
   str = begin
     local e1::DAE.Exp
     local e2::DAE.Exp
@@ -299,7 +245,7 @@ function string(whenOp::BackendDAE.WhenOperator)::String
 end
 
 "need to add subscripts and other cases!"
-function string(cr::DAE.ComponentRef)::String
+function Base.string(cr::DAE.ComponentRef)::String
   str = begin
     local ident::String
     local cref::DAE.ComponentRef
@@ -317,140 +263,80 @@ function string(cr::DAE.ComponentRef)::String
   end
 end
 
-function string(op::DAE.Operator)::String
+function Base.string(op::DAE.Operator)::String
   str = begin
     @match op begin
-      DAE.ADD() => begin
-        ("+")
-      end
+      DAE.ADD() => "+"
 
-      DAE.SUB() => begin
-        ("-")
-      end
+      DAE.SUB() => "-"
 
-      DAE.MUL() => begin
-        ("*")
-      end
+      DAE.MUL() => "*"
 
-      DAE.DIV() => begin
-        ("/")
-      end
+      DAE.DIV() => "/"
 
-      DAE.POW() => begin
-        ("^")
-      end
+      DAE.POW() => "^"
 
-      DAE.UMINUS() => begin
-        ("-")
-      end
+      DAE.UMINUS() =>  "-"
 
-      DAE.UMINUS_ARR() => begin
-        ("-")
-      end
+      DAE.UMINUS_ARR() => "-"
 
-      DAE.ADD_ARR() => begin
-        ("+")
-      end
+      DAE.ADD_ARR() => "+"
 
-      DAE.SUB_ARR() => begin
-        ("-")
-      end
+      DAE.SUB_ARR() => "-"
 
-      DAE.MUL_ARR() => begin
-        ("*")
-      end
+      DAE.MUL_ARR() => "*"
 
-      DAE.DIV_ARR() => begin
-        ("/")
-      end
+      DAE.DIV_ARR() => "/"
 
-      DAE.MUL_ARRAY_SCALAR() => begin
-        ("*")
-      end
+      DAE.MUL_ARRAY_SCALAR() => "*"
 
-      DAE.ADD_ARRAY_SCALAR() => begin
-        ("+")
-      end
+      DAE.ADD_ARRAY_SCALAR() => "+"
 
-      DAE.SUB_SCALAR_ARRAY() => begin
-        ("-")
-      end
+      DAE.SUB_SCALAR_ARRAY() =>  "-"
 
-      DAE.MUL_SCALAR_PRODUCT() => begin
-        ("*")
-      end
+      DAE.MUL_SCALAR_PRODUCT() => "*"
 
-      DAE.MUL_MATRIX_PRODUCT() => begin
-        ("*")
-      end
+      DAE.MUL_MATRIX_PRODUCT() => "*"
 
-      DAE.DIV_ARRAY_SCALAR() => begin
-        ("/")
-      end
+      DAE.DIV_ARRAY_SCALAR() => "/"
 
-      DAE.DIV_SCALAR_ARRAY() => begin
-        ("/")
-      end
+      DAE.DIV_SCALAR_ARRAY() => "/"
 
-      DAE.POW_ARRAY_SCALAR() => begin
-        ("^")
-      end
+      DAE.POW_ARRAY_SCALAR() => "^"
 
-      DAE.POW_SCALAR_ARRAY() => begin
-        ("^")
-      end
+      DAE.POW_SCALAR_ARRAY() => "^"
 
-      DAE.POW_ARR() => begin
-        ("^")
-      end
+      DAE.POW_ARR() => "^"
 
-      DAE.POW_ARR2() => begin
-        ("^")
-      end
+      DAE.POW_ARR2() => "^"
 
-      DAE.AND() => begin
-        ("and")
-      end
+      DAE.AND() => "and"
 
-      DAE.OR() => begin
-        ("or")
-      end
+      DAE.OR() => "or"
 
-      DAE.NOT() => begin
-        ("not")
-      end
+      DAE.NOT() => "not"
 
-      DAE.LESS() => begin
-        ("<")
-      end
+      DAE.LESS() => "<"
 
-      DAE.LESSEQ() => begin
-        ("<=")
-      end
+      DAE.LESSEQ() => "<="
 
-      DAE.GREATER() => begin
-        (">")
-      end
+      DAE.GREATER() => ">"
 
-      DAE.GREATEREQ() => begin
-        (">=")
-      end
+      DAE.GREATEREQ() => ">="
 
-      DAE.EQUAL() => begin
-        ("=")
-      end
+      DAE.EQUAL() => "="
 
-      DAE.NEQUAL() => begin
-        ("<>")
-      end
-      DAE.USERDEFINED() => begin
-        ("[UNDEF OP]")
-      end
+      DAE.NEQUAL() => "!="
+
+      DAE.USERDEFINED() => "[UNDEF OP]"
+
+      _ => throw("Unkown operator")
+
     end
   end
 end
 
-function string(exp::DAE.Exp)::String
+function Base.string(exp::DAE.Exp)::String
   str = begin
     local int::ModelicaInteger
     local real::ModelicaReal
@@ -635,24 +521,4 @@ function lstString(expLst::List{T}, seperator::String)::String where{T}
       end
     end
   end
-end
-
-function string(simCode::SimulationCode.SIM_CODE)::String
-  str = stringHeading3(simCode.crefToSimVarHT, "SimCodeVars")
-  str = str + heading3("SimCodeEquations")
-  for eq in simCode.equations
-    str = str + string(eq)
-  end
-  return str + "\n"
-end
-
-function string(d::Dict)::String
-  str = ""
-  for (k,v) in d
-    str = str + "  $(repr(k)) => $(repr(v))\n"
-  end
-  return str + "\n"
-end
-
-@exportAll()
 end

@@ -32,10 +32,12 @@
 module CodeGeneration
 
 import Absyn
-import BackendDump
-
-using BackendDAE
+import BackendDAE
+import DAE
+using MetaModelica
+using Setfield
 using SimulationCode
+
 
 include("CodeGenerationUtil.jl")
 include("simulationCodeTransformation.jl")
@@ -175,7 +177,6 @@ function eqTraverseAppendToString(eq::BackendDAE.Equation, simCode::SimulationCo
       end
       BackendDAE.WHEN_EQUATION(whenEquation = whenEquation) => begin
         ErrorException("When equations not yet supported")
-
       end
       _ =>
         ErrorException("traversalError for $eq")
@@ -219,7 +220,7 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
       end
 
       DAE.CREF(cr, _)  => begin
-        varName = BackendDump.string(cr)
+        varName = BackendDAE.string(cr)
         indexAndType = hashTable[varName]
         @match indexAndType[2] begin
           SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
@@ -231,27 +232,27 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
       end
 
       DAE.UNARY(operator = op, exp = e1) => begin
-        ("(" + BackendDump.string(op) + " " + expStringify(e1, simCode) + ")")
+        ("(" + BackendDAE.string(op) + " " + expStringify(e1, simCode) + ")")
       end
 
       DAE.BINARY(exp1 = e1, operator = op, exp2 = e2) => begin
-        (expStringify(e1, simCode) + " " + BackendDump.string(op) + " " + expStringify(e2, simCode))
+        (expStringify(e1, simCode) + " " + BackendDAE.string(op) + " " + expStringify(e2, simCode))
       end
 
       DAE.LUNARY(operator = op, exp = e1)  => begin
-        ("(" + BackendDump.string(op) + " " + expStringify(e1, simCode) + ")")
+        ("(" + BackendDAE.string(op) + " " + expStringify(e1, simCode) + ")")
       end
 
       DAE.LBINARY(exp1 = e1, operator = op, exp2 = e2) => begin
-        (expStringify(e1, simCode) + " " + BackendDump.string(op) + " " + expStringify(e2, simCode))
+        (expStringify(e1, simCode) + " " + BackendDAE.string(op) + " " + expStringify(e2, simCode))
       end
 
       DAE.RELATION(exp1 = e1, operator = op, exp2 = e2) => begin
-        (expStringify(e1, simCode) + " " + BackendDump.string(op) + " " + expStringify(e2, simCode))
+        (expStringify(e1, simCode) + " " + BackendDAE.string(op) + " " + expStringify(e2, simCode))
       end
-
+      #=TODO?=#
       DAE.IFEXP(expCond = e1, expThen = e2, expElse = e3) => begin
-        (expStringify(e1, simCode) + " " + expStringify(e2, simCode) + " " + expStringify(e3, simCode))
+        ("if " + expStringify(e1, simCode) + "" + expStringify(e2, simCode) + "else" + expStringify(e3, simCode) + "end")
       end
 
       DAE.CALL(path = Absyn.IDENT(tmpStr), expLst = expl)  => begin
@@ -264,27 +265,27 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
         @match tmpStr begin
           "der" => "dx[$index]  #= der($varName) =#"
           _  =>  begin
-            tmpStr = tmpStr + "(" + BackendDump.lstStr(expl, ", ") + ")"
+            tmpStr = tmpStr + "(" + BackendDAE.lstStr(expl, ", ") + ")"
           end
         end
       end
 
       DAE.RECORD(path = Absyn.IDENT(tmpStr), exps = expl)  => begin
-        tmpStr = tmpStr + "[REC(" + BackendDump.lstStr(expl, ", ") + ")"
+        tmpStr = tmpStr + "[REC(" + BackendDAE.lstStr(expl, ", ") + ")"
       end
 
       DAE.PARTEVALFUNCTION(path = Absyn.IDENT(tmpStr), expList = expl)  => begin
-        tmpStr = tmpStr + "[PARTEVAL](" + BackendDump.lstStr(expl, ", ") + ")"
+        tmpStr = tmpStr + "[PARTEVAL](" + BackendDAE.lstStr(expl, ", ") + ")"
       end
 
       DAE.ARRAY(array = expl)  => begin
-        "[ARR]" + BackendDump.lstStr(expl, ", ")
+        "[ARR]" + BackendDAE.lstStr(expl, ", ")
       end
 
       DAE.MATRIX(matrix = lstexpl)  => begin
         str = "[MAT]"
         for lst in lstexp
-          str = str + "{" + BackendDump.lstStr(lst, ", ") + "}"
+          str = str + "{" + BackendDAE.lstStr(lst, ", ") + "}"
         end
         (str)
       end
@@ -298,7 +299,7 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
       end
 
       DAE.TUPLE(PR = expl) => begin
-         "[TPL](" + BackendDump.lstStr(expl, ", ") + ")"
+         "[TPL](" + BackendDAE.lstStr(expl, ", ") + ")"
       end
 
       DAE.CAST(exp = e1)  => begin
@@ -306,7 +307,7 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
       end
 
       DAE.ASUB(exp = e1, sub = expl)  => begin
-         "[ASUB]" + expStringify(e1, simCode) + "{" + BackendDump.lstStr(expl, ", ") + "}"
+         "[ASUB]" + expStringify(e1) + "{" + BackendDAE.lstStr(expl, ", ") + "}"
       end
 
       DAE.TSUB(exp = e1, ix = int) => begin
@@ -342,7 +343,7 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
      end
 
      DAE.LIST(expl)  => begin
-       "[LST]" + "{" + BackendDump.lstStr(expl, ", ") + " }"
+       "[LST]" + "{" + BackendDAE.lstStr(expl, ", ") + " }"
      end
 
     _ => begin

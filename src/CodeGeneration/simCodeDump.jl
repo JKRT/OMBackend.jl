@@ -33,29 +33,34 @@
   File: SimCodeDump.jl
   Dumping functions for simulation code structures.
 """
-module SimCodeDump
 
-using BackendDump
+using BackendDAE
 using SimulationCode
 
 function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String)
-  print(BackendDump.DOUBLE_LINE + "\n")
+  print(BackendDAE.DOUBLE_LINE + "\n")
   print("SIM_CODE: " + heading + "\n")
-  print(BackendDump.DOUBLE_LINE + "\n\n")
+  print(BackendDAE.DOUBLE_LINE + "\n\n")
 
   print("SimCodeVars" + "\n")
-  print(BackendDump.LINE + "\n")
-  BackendDump.dictPrettyPrint(simCode.crefToSimVarHT)
+  print(BackendDAE.LINE + "\n")
+  BackendDAE.dictPrettyPrint(simCode.crefToSimVarHT)
   print("\n")
 
   print("SimCodeEquations" + "\n")
-  print(BackendDump.LINE + "\n")
+  print(BackendDAE.LINE + "\n")
   for eq in simCode.equations
-    BackendDump.printEqTraverse(eq, 0)
+    BackendDAE.printEqTraverse(eq, 0)
     print("\n")
   end
   print("\n")
 end
 
-
-end # model SimCodeDump
+function Base.string(simCode::SimulationCode.SIM_CODE)::String
+  str = stringHeading3(simCode.crefToSimVarHT, "SimCodeVars")
+  str = str + heading3("SimCodeEquations")
+  for eq in simCode.equations
+    str = str + string(eq)
+  end
+  return str + "\n"
+end
