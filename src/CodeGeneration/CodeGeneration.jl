@@ -79,6 +79,7 @@ function generateCode(simCode::SimulationCode.SIM_CODE)
   local crefToSimVarHT = simCode.crefToSimVarHT
   local modelName::String = simCode.name
   local exp::DAE.Exp
+  local index::Integer
   #= An array of 0:s=#
   local residuals::Array = [0 for i in 1:length(simCode.equations)]
   for varName in keys(crefToSimVarHT)
@@ -92,10 +93,22 @@ function generateCode(simCode::SimulationCode.SIM_CODE)
     end
   end
 
-  # Generate state variable marking
+  # Generate state variable marking and start equations for each state
   for var in stateVariables
     push!(stateMarkings, true)
+    simVar = crefToSimVarHT[var]
+    (startExp, index) = @match simVar begin
+      SimulationCode.SIMVAR(attributes=SOME(DAE.VAR_ATTR_REAL(start=SOME(exp))), index=SOME(index)) => (exp, index)
+      #= if there is no start expression take default 0 =#
+      SimulationCode.SIMVAR(index=SOME(index)) => (DAE.RCONST(0), index)
+      _ => begin
+        ErrorException("SimVar has no index: $(var)")
+        (DAE.RCONST(0), -2)
+      end
+    end
+    startEquations *= "  x0[$(index)] #= $var =# = $(expStringify(startExp, simCode))\n"
   end
+
   for var in algVariables
     push!(stateMarkings, false)
   end
@@ -137,12 +150,12 @@ end
 "
   for param in parameters
     simVar = crefToSimVarHT[param]
-    bindExp = @match simVar.varKind begin
-      SimulationCode.PARAMETER(bindExp = SOME(exp)) => begin exp
-    end
+    _ = @match simVar begin
+      SimulationCode.SIMVAR(varKind=SimulationCode.PARAMETER(bindExp = SOME(exp)), index = SOME(index)) => begin
+        parameterEquations *= "  p[$(index)] #= $param =# = $(expStringify(exp, simCode))\n"
+      end
       _ => ErrorException("Unknown SimulationCode.SimVarType for parameter.")
     end
-    parameterEquations *= "  p[$(simVar.index)] #= $param =# = $(expStringify(bindExp, simCode))\n"
   end
   local parameterVars ="
 function $(modelName)ParameterVars()
@@ -207,6 +220,7 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
     local e3::DAE.Exp
     local expl::List{DAE.Exp}
     local lstexpl::List{List{DAE.Exp}}
+    local index::Integer
     @match exp begin
       DAE.ICONST(int) => begin
         string(int)
@@ -231,12 +245,12 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
       DAE.CREF(cr, _)  => begin
         varName = BackendDump.string(cr)
         simVar = hashTable[varName]
-        @match simVar.varKind begin
-          SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
-          SimulationCode.STATE(__) => "x[$(simVar.index)] #= $varName =#"
-          SimulationCode.PARAMETER(__) => "p[$(simVar.index)] #= $varName =#"
-          SimulationCode.ALG_VARIABLE(__) => "x[$(simVar.index)] #= $varName =#"
-          SimulationCode.STATE_DERIVATIVE(__) => "dx[$(simVar.index)] #= der($varName) =#"
+        @match simVar begin
+          SimulationCode.SIMVAR(varKind=SimulationCode.INPUT(__), index = SOME(index)) => @error "INPUT not supported in CodeGen"
+          SimulationCode.SIMVAR(varKind=SimulationCode.STATE(__), index = SOME(index)) => "x[$(index)] #= $varName =#"
+          SimulationCode.SIMVAR(varKind=SimulationCode.PARAMETER(__), index = SOME(index)) => "p[$(index)] #= $varName =#"
+          SimulationCode.SIMVAR(varKind=SimulationCode.ALG_VARIABLE(__), index = SOME(index)) => "x[$(index)] #= $varName =#"
+          SimulationCode.SIMVAR(varKind=SimulationCode.STATE_DERIVATIVE(__), index = SOME(index)) => "dx[$(index)] #= der($varName) =#"
         end
       end
 
@@ -271,8 +285,8 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
         =#
         varName = BackendDump.string(listHead(expl))
         simVar = hashTable[varName]
-        @match tmpStr begin
-          "der" => "dx[$(simVar.index)]  #= der($varName) =#"
+        @match (tmpStr, simVar.index) begin
+          ("der", SOME(index)) => "dx[$(index)]  #= der($varName) =#"
           _  =>  begin
             tmpStr = tmpStr + "(" + BackendDump.lstStr(expl, ", ") + ")"
           end

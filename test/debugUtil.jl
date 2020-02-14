@@ -29,6 +29,8 @@
 *
 */ =#
 
+module debugUtil
+
 """
 Generate Julia file `testCase` with `modelCode`
 """
@@ -36,4 +38,6 @@ function generateFile(testCase, modelCode)
   open("$(testCase).jl", "w") do io
     write(io, modelCode)
   end;
+end
+
 end

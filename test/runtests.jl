@@ -35,6 +35,9 @@
 using Test
 using OMBackend
 
+include("debugUtil.jl")
+
+
 #= logging =#
 ENV["JULIA_DEBUG"] = "all"
 
@@ -57,7 +60,7 @@ global MODEL_NAME = ""
         try
           #= TODO: We should check this with some reference IR =#
           (MODEL_NAME, modelCode) = OMBackend.translate(frontendDAE)
-          @debug generateFile(testCase, modelCode)
+          @debug debugUtil.generateFile(testCase, modelCode)
           @info MODEL_NAME
           @test true
         catch e

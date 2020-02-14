@@ -123,7 +123,7 @@ function creatSimVarHT(simulationVars::Array{SimulationCode.SIMVAR})::Dict{Strin
     @match var.varKind begin
       SimulationCode.STATE(__) => begin
         stateCounter += 1
-        @set var.index = SOME(stateCounter)
+        var = @set var.index = SOME(stateCounter)
         push!(ht, var.name => var)
         #=Adding the state derivative as well=#
         derVar = SimulationCode.SIMVAR("der($(var.name))",
@@ -134,7 +134,7 @@ function creatSimVarHT(simulationVars::Array{SimulationCode.SIMVAR})::Dict{Strin
       end
       SimulationCode.PARAMETER(__) => begin
         parameterCounter += 1
-        @set var.index = SOME(parameterCounter)
+        var = @set var.index = SOME(parameterCounter)
         push!(ht, var.name => var)
       end
       _ => continue
@@ -143,14 +143,13 @@ function creatSimVarHT(simulationVars::Array{SimulationCode.SIMVAR})::Dict{Strin
   for var in simulationVars
     @match var.varKind begin
       SimulationCode.ALG_VARIABLE(__) => begin
+        #= ??????????????????????????? blatently wrong ???????????????????? =#
         var = @set var.index = SOME(stateCounter + 1)
         push!(ht, var.name => var)
       end
       _ => continue
     end
   end
-
-  # TODO Set attributes of var
 
   @info ht
   return ht
