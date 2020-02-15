@@ -52,7 +52,7 @@ end
 using ExampleDAEs
 global MODEL_NAME = ""
 @testset "UnitTests" begin
-  for testCase in ["helloWorld", "vanDerPol", "influenca", "bouncingBall"]
+  for testCase in ["helloWorld"] #["helloWorld", "vanDerPol", "influenca", "bouncingBall"]
     @testset "$testCase" begin
       @testset "compile" begin
         global MODEL_NAME

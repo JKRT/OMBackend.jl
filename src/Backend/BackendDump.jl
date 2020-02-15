@@ -43,12 +43,17 @@ import DAE
 import BackendDAE
 import BackendDAEUtil
 import SimulationCode
+import SimCodeDump
 
 const HEAD_LINE = "#############################################"::String
 const DOUBLE_LINE = "============================================"::String
 const LINE = "---------------------------------------------"::String
 
-
+"""
+    kabdelhak:
+    Main dumping functions to use outside. Tries to dump any type that has a
+    default string() function with a given heading.
+"""
 function stringHeading1(in::Any, heading::String)::String
   str = heading1(heading) + "\n" + string(in)
 end
@@ -61,7 +66,10 @@ function stringHeading3(in::Any, heading::String)::String
   str = heading3(heading) + string(in)
 end
 
-
+"""
+    kabdelhak:
+    Helper functions to create heading strings.
+"""
 function heading1(heading::String)::String
   str = HEAD_LINE + "\n" + heading + "\n" + HEAD_LINE + "\n\n"
 end
@@ -74,6 +82,10 @@ function heading3(heading::String)::String
   str = heading + ":\n" + LINE + "\n"
 end
 
+"""
+    kabdelhak:
+    BackendDAEStructure -> String
+"""
 function string(dae::BackendDAE.BackendDAEStructure)::String
   str::String = ""
   for i in 1:arrayLength(dae.eqs)
@@ -82,16 +94,28 @@ function string(dae::BackendDAE.BackendDAEStructure)::String
   return str
 end
 
+"""
+    kabdelhak:
+    EqSystem -> String
+"""
 function string(eq::BackendDAE.EqSystem)::String
   str::String = ""
   str = str + heading3("Variables") + BackendDAEUtil.mapEqSystemVariablesNoUpdate(eq, stringTraverse, "") + "\n"
   str = str + heading3("Equations") + BackendDAEUtil.mapEqSystemEquationsNoUpdate(eq, stringTraverse, "") + "\n"
 end
 
+"""
+    kabdelhak:
+    String appending traverser function.
+"""
 function stringTraverse(in, str)::String
   str = str + string(in)
 end
 
+"""
+    kabdelhak:
+    Var -> String
+"""
 function string(var::BackendDAE.Var)::String
   str = var.varName.ident + " | " + string(var.varKind)
   str *= begin
@@ -104,6 +128,10 @@ function string(var::BackendDAE.Var)::String
   return str + "\n"
 end
 
+"""
+    kabdelhak:
+    VarKind -> String
+"""
 function string(varKind::BackendDAE.VarKind)::String
   str = begin
     @match varKind begin
@@ -161,6 +189,10 @@ function string(varKind::BackendDAE.VarKind)::String
   end
 end
 
+"""
+    kabdelhak:
+    VariableAttributes -> String
+"""
 function string(attr::DAE.VariableAttributes)::String
   local innerExp::DAE.Exp
   str = ""
@@ -199,6 +231,10 @@ function string(attr::DAE.VariableAttributes)::String
   return str
 end
 
+"""
+    kabdelhak:
+    Equation -> String
+"""
 function string(eq::BackendDAE.Equation)::String
   str = begin
     local lhs::DAE.Exp
@@ -258,6 +294,10 @@ function string(eq::BackendDAE.Equation)::String
   return str + "\n"
 end
 
+"""
+    kabdelhak:
+    WhenEquation -> String
+"""
 function string(whenEq::BackendDAE.WhenEquation)::String
   local elseWhen::BackendDAE.WhenEquation
   str = "when " + string(whenEq.condition) + " then\n"
@@ -273,6 +313,10 @@ function string(whenEq::BackendDAE.WhenEquation)::String
   return str + "end;\n"
 end
 
+"""
+    kabdelhak:
+    WhenOperator -> String
+"""
 function string(whenOp::BackendDAE.WhenOperator)::String
   str = begin
     local e1::DAE.Exp
@@ -298,25 +342,55 @@ function string(whenOp::BackendDAE.WhenOperator)::String
   end
 end
 
-"need to add subscripts and other cases!"
+"""
+    kabdelhak:
+    DAE.ComponentRef -> String
+"""
 function string(cr::DAE.ComponentRef)::String
   str = begin
     local ident::String
     local cref::DAE.ComponentRef
+    local subscriptLst::List{DAE.Subscript}
     @match cr begin
-      DAE.CREF_QUAL(ident = ident, componentRef = cref) => begin
-        (ident + "." + string(cref))
-      end
-      DAE.CREF_IDENT(ident = ident) => begin
-        (ident)
-      end
-      DAE.CREF_ITER(ident = ident) => begin
-        (ident)
-      end
+      DAE.CREF_QUAL(ident = ident, subscriptLst = nil, componentRef = cref) => "$(ident)." + string(cref)
+      DAE.CREF_QUAL(ident = ident, subscriptLst = subscriptLst, componentRef = cref) => "$(ident){$(lstString(subscriptLst))}." + string(cref)
+
+      DAE.CREF_IDENT(ident = ident, subscriptLst = nil) => "$(ident)"
+      DAE.CREF_IDENT(ident = ident, subscriptLst = subscriptLst) => "$(ident){$(lstString(subscriptLst))}"
+
+      DAE.CREF_ITER(ident = ident, subscriptLst = nil) => "$(ident)"
+      DAE.CREF_ITER(ident = ident, subscriptLst = subscriptLst) => "$(ident){$(lstString(subscriptLst))}"
+
+      DAE.OPTIMICA_ATTR_INST_CREF(componentRef = cref, instant = ident) => string(cref) + "($(ident))"
+
+      DAE.WILD() => "WILD"
+
     end
   end
+  return str
 end
 
+"""
+    kabdelhak:
+    DAE.Subscript -> String
+"""
+function string(sub::DAE.Subscript)::String
+  str = begin
+    local exp::DAE.Exp
+    @match sub begin
+      DAE.WHOLEDIM() => ":"
+      DAE.SLICE(exp = exp) => string(exp)
+      DAE.INDEX(exp = exp) => string(exp)
+      DAE.WHOLE_NONEXP(exp = exp) => string(exp)
+    end
+  end
+  return str
+end
+
+"""
+    kabdelhak:
+    DAE.Operator -> String
+"""
 function string(op::DAE.Operator)::String
   str = begin
     @match op begin
@@ -450,6 +524,10 @@ function string(op::DAE.Operator)::String
   end
 end
 
+"""
+    kabdelhak:
+    Exp -> String
+"""
 function string(exp::DAE.Exp)::String
   str = begin
     local int::ModelicaInteger
@@ -481,7 +559,7 @@ function string(exp::DAE.Exp)::String
       end
 
       DAE.ENUM_LITERAL((Absyn.IDENT(str), int))  => begin
-        (str + "()" + string(int) + ")")
+        (str + "(" + string(int) + ")")
       end
 
       DAE.CREF(cr, _)  => begin
@@ -509,7 +587,7 @@ function string(exp::DAE.Exp)::String
       end
 
       DAE.IFEXP(expCond = e1, expThen = e2, expElse = e3) => begin
-        (string(e1) + " " + string(e2) + " " + string(e3))
+        ("if " + string(e1) + " then " + string(e2) + " else " + string(e3) + ";")
       end
 
       DAE.CALL(path = Absyn.IDENT(tmpStr), expLst = expl)  => begin
@@ -517,7 +595,7 @@ function string(exp::DAE.Exp)::String
       end
 
       DAE.RECORD(path = Absyn.IDENT(tmpStr), exps = expl)  => begin
-        tmpStr = tmpStr + "[REC(" + lstString(expl, ", ") + ")"
+        tmpStr = tmpStr + "[RECORD](" + lstString(expl, ", ") + ")"
       end
 
       DAE.PARTEVALFUNCTION(path = Absyn.IDENT(tmpStr), expList = expl)  => begin
@@ -525,7 +603,7 @@ function string(exp::DAE.Exp)::String
       end
 
       DAE.ARRAY(array = expl)  => begin
-        "[ARR]" + lstString(expl, ", ")
+        "[ARRAY]" + lstString(expl, ", ")
       end
 
       DAE.MATRIX(matrix = lstexpl)  => begin
@@ -537,7 +615,7 @@ function string(exp::DAE.Exp)::String
       end
 
       DAE.RANGE(start = e1, step = NONE(), stop = e2)  => begin
-         string(e1) + ":" + v(e2)
+         string(e1) + ":" + string(e2)
       end
 
       DAE.RANGE(start = e1, step = SOME(e2), stop = e3)  => begin
@@ -600,6 +678,10 @@ function string(exp::DAE.Exp)::String
   end
 end
 
+"""
+    kabdelhak:
+    Type -> String
+"""
 function string(ty::DAE.Type)::String
   str = begin
     @match ty begin
@@ -617,14 +699,18 @@ function string(ty::DAE.Type)::String
   return str
 end
 
-
-function lstString(expLst::List{T}, seperator::String)::String where{T}
+"""
+    kabdelhak:
+    List{T} -> String
+    NOTE: only works if string(::T) is defined
+"""
+function lstString(lst::List{T}, seperator::String)::String where{T}
   str = begin
-    local e::T
+    local t::T
     local rest::List{T}
-    @match expLst begin
-      (e <| rest) => begin
-        str = string(e)
+    @match lst begin
+      (t <| rest) => begin
+        str = string(t)
         for r in rest
           str = str + seperator + string(r)
         end
@@ -637,6 +723,45 @@ function lstString(expLst::List{T}, seperator::String)::String where{T}
   end
 end
 
+
+"""
+    kabdelhak:
+    Dict{String, SimulationCode.SIMVAR} -> String
+    NOTE: Hash table for code generation
+"""
+function string(d::Dict{String, SimulationCode.SIMVAR})::String
+  str = ""
+  for (k,v) in d
+    index = begin
+      local int::Integer
+      @match v.index begin
+        SOME(int) => int
+        _ => -1
+      end
+    end
+    str = str + "  $(repr(k)) => $(index): | $(string(v.varKind))\n"
+  end
+  return str + "\n"
+end
+
+"""
+    kabdelhak:
+    Dict -> String
+    NOTE: Fallback option for any Dict, try to provide individual ones for
+    each use case!
+"""
+function string(d::Dict)::String
+  str = ""
+  for (k,v) in d
+    str = str + "  $(repr(k)) => $(repr(v))\n"
+  end
+  return str + "\n"
+end
+
+"""
+    kabdelhak:
+    SimCode -> String
+"""
 function string(simCode::SimulationCode.SIM_CODE)::String
   str = stringHeading3(simCode.crefToSimVarHT, "SimCodeVars")
   str = str + heading3("SimCodeEquations")
@@ -646,12 +771,22 @@ function string(simCode::SimulationCode.SIM_CODE)::String
   return str + "\n"
 end
 
-function string(d::Dict)::String
-  str = ""
-  for (k,v) in d
-    str = str + "  $(repr(k)) => $(repr(v))\n"
+"""
+  kabdelhak:
+  SimVarType -> String
+"""
+function string(varKind::SimulationCode.SimVarType)::String
+  str = begin
+    local varName::String
+    local exp::DAE.Exp
+    @match varKind begin
+      SimulationCode.STATE() => "STATE"
+      SimulationCode.STATE_DERIVATIVE(varName = varName) => "STATE_DERIVATIVE($(varName))"
+      SimulationCode.ALG_VARIABLE() => "ALG_VARIABLE"
+      SimulationCode.INPUT() => "INPUT"
+      SimulationCode.PARAMETER(bindExp = SOME(exp)) => "PARAMTER($(string(exp)))"
+    end
   end
-  return str + "\n"
 end
 
 @exportAll()

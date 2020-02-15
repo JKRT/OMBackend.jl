@@ -222,25 +222,15 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
     local lstexpl::List{List{DAE.Exp}}
     local index::Integer
     @match exp begin
-      DAE.ICONST(int) => begin
-        string(int)
-      end
+      DAE.ICONST(int) => string(int)
 
-      DAE.RCONST(real)  => begin
-        string(real)
-      end
+      DAE.RCONST(real) => string(real)
 
-      DAE.SCONST(tmpStr)  => begin
-        (tmpStr)
-      end
+      DAE.SCONST(tmpStr) => tmpStr
 
-      DAE.BCONST(bool)  => begin
-        string(bool)
-      end
+      DAE.BCONST(bool)  => string(bool)
 
-      DAE.ENUM_LITERAL((Absyn.IDENT(str), int))  => begin
-        (str + "()" + string(int) + ")")
-      end
+      DAE.ENUM_LITERAL((Absyn.IDENT(str), int)) => (str + "(" + string(int) + ")")
 
       DAE.CREF(cr, _)  => begin
         varName = BackendDump.string(cr)
@@ -254,13 +244,9 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
         end
       end
 
-      DAE.UNARY(operator = op, exp = e1) => begin
-        ("(" + BackendDump.string(op) + " " + expStringify(e1, simCode) + ")")
-      end
+      DAE.UNARY(operator = op, exp = e1) => ("(" + BackendDump.string(op) + " " + expStringify(e1, simCode) + ")")
 
-      DAE.BINARY(exp1 = e1, operator = op, exp2 = e2) => begin
-        (expStringify(e1, simCode) + " " + BackendDump.string(op) + " " + expStringify(e2, simCode))
-      end
+      DAE.BINARY(exp1 = e1, operator = op, exp2 = e2) => (expStringify(e1, simCode) + " " + BackendDump.string(op) + " " + expStringify(e2, simCode))
 
       DAE.LUNARY(operator = op, exp = e1)  => begin
         ("(" + BackendDump.string(op) + " " + expStringify(e1, simCode) + ")")
@@ -294,7 +280,7 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
       end
 
       DAE.RECORD(path = Absyn.IDENT(tmpStr), exps = expl)  => begin
-        tmpStr = tmpStr + "[REC(" + BackendDump.lstStr(expl, ", ") + ")"
+        tmpStr = tmpStr + "[REC](" + BackendDump.lstStr(expl, ", ") + ")"
       end
 
       DAE.PARTEVALFUNCTION(path = Absyn.IDENT(tmpStr), expList = expl)  => begin

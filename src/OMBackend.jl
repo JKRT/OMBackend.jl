@@ -81,13 +81,13 @@ function lower(frontendDAE::DAE.DAE_LIST)::BackendDAE.BackendDAEStructure
   @assert typeof(listHead(frontendDAE.elementLst)) == DAE.COMP
   #= Create Backend structure from Frontend structure =#
   bDAE = BackendDAECreate.lower(frontendDAE)
-  @debug BackendDump.stringHeading1(bDAE, "BackendDAE: translated")
+  @debug "\n" + BackendDump.stringHeading1(bDAE, "BackendDAE: translated")
   #= detect state variables =#
   bDAE = Causalize.detectStates(bDAE)
-  @debug BackendDump.stringHeading1(bDAE, "BackendDAE: states marked")
+  @debug "\n" + BackendDump.stringHeading1(bDAE, "BackendDAE: states marked")
   #= causalize system, for now DAEMode =#
   bDAE = Causalize.daeMode(bDAE)
-  @debug BackendDump.stringHeading1(bDAE, "BackendDAE: residuals")
+  @debug "\n" + BackendDump.stringHeading1(bDAE, "BackendDAE: residuals")
   return bDAE
 end
 
@@ -96,7 +96,7 @@ end
 """
 function generateSimulationCode(bDAE::BackendDAE.BackendDAEStructure)::SimulationCode.SIM_CODE
   simCode = CodeGeneration.transformToSimCode(bDAE)
-  @debug BackendDump.stringHeading1(simCode, "SIM_CODE: transformed simcode")
+  @debug "\n" + BackendDump.stringHeading1(simCode, "SIM_CODE: transformed simcode")
   return simCode
 end
 
@@ -129,4 +129,5 @@ function simulateModel(modelName::String, tspan=(0.0, 1.0))
   eval(Meta.parse("$(modelName)Simulate($(tspan))"))
 end
 
+@exportAll()
 end #=OMBackend=#

@@ -51,6 +51,7 @@ function collectVariables(allBackendVars::Array{BackendDAE.Var})
   return simVars
 end
 
+#= why do we even do all these conversions? Why don't we keep one structure for good? =#
 function bDAEVarKindToSimCodeVarKind(backendVar::BackendDAE.Var)::SimulationCode.SimVarType
   varKind = @match backendVar.varKind begin
     BackendDAE.STATE(__) => SimulationCode.STATE()
@@ -127,7 +128,7 @@ function creatSimVarHT(simulationVars::Array{SimulationCode.SIMVAR})::Dict{Strin
         push!(ht, var.name => var)
         #=Adding the state derivative as well=#
         derVar = SimulationCode.SIMVAR("der($(var.name))",
-                                       stateCounter,
+                                       SOME(stateCounter),
                                        SimulationCode.STATE_DERIVATIVE(var.name),
                                        SOME(DAE.emptyVarAttrReal))
         push!(ht, derVar.name => derVar)
@@ -143,7 +144,7 @@ function creatSimVarHT(simulationVars::Array{SimulationCode.SIMVAR})::Dict{Strin
   for var in simulationVars
     @match var.varKind begin
       SimulationCode.ALG_VARIABLE(__) => begin
-        #= ??????????????????????????? blatently wrong ???????????????????? =#
+        #= ??????????????????????????? blatantly wrong ???????????????????? =#
         var = @set var.index = SOME(stateCounter + 1)
         push!(ht, var.name => var)
       end

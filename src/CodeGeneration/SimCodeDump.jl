@@ -35,27 +35,12 @@
 """
 module SimCodeDump
 
-using BackendDump
-using SimulationCode
+using MetaModelica
+using ExportAll
 
-function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String)
-  print(BackendDump.DOUBLE_LINE + "\n")
-  print("SIM_CODE: " + heading + "\n")
-  print(BackendDump.DOUBLE_LINE + "\n\n")
+import BackendDump
+import SimulationCode
 
-  print("SimCodeVars" + "\n")
-  print(BackendDump.LINE + "\n")
-  BackendDump.dictPrettyPrint(simCode.crefToSimVarHT)
-  print("\n")
-
-  print("SimCodeEquations" + "\n")
-  print(BackendDump.LINE + "\n")
-  for eq in simCode.equations
-    BackendDump.printEqTraverse(eq, 0)
-    print("\n")
-  end
-  print("\n")
-end
-
-
+#= move functions from BackendDump here =#
+@exportAll()
 end # model SimCodeDump

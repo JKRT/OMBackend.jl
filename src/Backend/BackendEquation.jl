@@ -76,17 +76,25 @@ function makeResidualEquation(eqn::BackendDAE.Equation)::BackendDAE.Equation
   end
 end
 
+"""
+    kabdelhak:
+    Creates a residual equation from an if equation.
+"""
 function makeResidualIfEquation(eqn::BackendDAE.Equation)::BackendDAE.Equation
     local trueEquations::List{List{BackendDAE.Equation}} = nil
     local tmpTrue::List{DAE.Equation}
     local falseEquations::List{DAE.Equation}
+    # put splitting of if equations here, needs to return an array equation or
+    # multiple equations
     (eqn)
 end
 
 """
    kabdelhak:
    Splits an if equation in multiple equations containing if expressions.
-   INTENDED?: Currently requires correct ordering of branch equations
+   INTENDED?: Currently does not require correct ordering of branch equations
+     because of residual form.
+   NOTE: Not used yet
 """
 function splitIfEquationResidual(eqn::BackendDAE.Equation)::List{BackendDAE.Equation}
   residualEqs::List{BackendDAE.Equation}=nil
@@ -97,6 +105,36 @@ function splitIfEquationResidual(eqn::BackendDAE.Equation)::List{BackendDAE.Equa
   return residualEqs
 end
 
+
+"""
+   kabdelhak:
+   Helper function to splitIfEquationResidual. Traverses all expressions to create the array
+   of if expressions.
+   e.g.
+     if COND_1 then
+       x = TRUE_1_1;
+       y = TRUE_2_1;
+       ...
+       n = TRUE_N_1;
+     elseif COND_2 then
+       x = TRUE_1_2;
+       y = TRUE_2_2;
+       ...
+       n = TRUE_N_2;
+     else
+       x = ELSE_1;
+       y = ELSE_2;
+       ...
+       n = ELSE_N;
+     end if;
+
+   becomes:
+
+    0 = if COND_1 then TRUE_1_1 - x elseif COND_2 then TRUE_1_2 - x else ELSE_1 - x;
+    0 = if COND_1 then TRUE_2_1 - y elseif COND_2 then TRUE_2_2 - y else ELSE_2 - y;
+       ...
+    0 = if COND_1 then TRUE_N_1 - n elseif COND_2 then TRUE_N_2 - n else ELSE_N - n;
+"""
 function splitIfEquationResidualTraverse(lstCond::List{DAE.Exp}, lstlstTrue::List{List{BackendDAE.Equation}}, lstFalse::List{BackendDAE.Equation}, acc::List{DAE.Exp})::List{DAE.Exp}
   acc = begin
       local tmpTrue::List{BackendDAE.Equation}
@@ -116,6 +154,10 @@ function splitIfEquationResidualTraverse(lstCond::List{DAE.Exp}, lstlstTrue::Lis
   return acc
 end
 
+"""
+    kabdelhak:
+    Creates nested if expressions to represent elseif.
+"""
 function makeNestedIfExpressionResidual(lstCond::List{DAE.Exp}, lstTrue::List{BackendDAE.Equation}, eqFalse::BackendDAE.Equation)
   exp = begin
     local cond::DAE.Exp
@@ -135,13 +177,18 @@ function makeNestedIfExpressionResidual(lstCond::List{DAE.Exp}, lstTrue::List{Ba
   end
 end
 
+"""
+    kabdelhak:
+    Creates a residual exp from two expressions lhs and rhs.
+    => lhs - rhs
+"""
 function makeResidualExp(lhs::DAE.Exp, rhs::DAE.Exp)::DAE.Exp
   DAE.BINARY(lhs, DAE.SUB(DAE.T_REAL_DEFAULT), rhs)
 end
 
 """
     kabdelhak:
-    create a single array with all equations
+    Creates a single array with all equations from all equation systems.
 """
 function concenateEquations(eqs::Array{BackendDAE.EqSystem})::Array{BackendDAE.Equation}
   eqArr::Array{BackendDAE.Equation} = []
