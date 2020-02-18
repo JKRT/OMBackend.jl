@@ -43,7 +43,7 @@ include("CodeGenerationUtil.jl")
 include("simulationCodeTransformation.jl")
 
 """
-The header string with the necessary imports
+  The header string with the necessary imports
 """
 const HEADER_STRING ="
 $(copyRightString())
@@ -58,7 +58,7 @@ end
 
 
 """
-Write  modelName_DAE_equations() to file.
+  Write  modelName_DAE_equations() to file.
 """
 function writeDAE_equationsToFile(fileName::String, contents::String)
   local fdesc = open(fileName, "w")
@@ -66,9 +66,8 @@ function writeDAE_equationsToFile(fileName::String, contents::String)
   close(fdesc)
 end
 
-
 """
-Generate a julia file containing functions to simulate the DAE
+  Generate a julia file containing functions to simulate the DAE
 """
 function generateCode(simCode::SimulationCode.SIM_CODE)
   local stateVariables::Array = []
@@ -76,7 +75,6 @@ function generateCode(simCode::SimulationCode.SIM_CODE)
   local stateDerivatives::Array = []
   local parameters::Array = []
   local stateMarkings::Array = []
-  local parameterEquations = ""
   local crefToSimVarHT = simCode.crefToSimVarHT
   local modelName::String = simCode.name
   local exp::DAE.Exp
@@ -93,93 +91,101 @@ function generateCode(simCode::SimulationCode.SIM_CODE)
       SimulationCode.STATE_DERIVATIVE(__) => push!(stateDerivatives, varName)
     end
   end
-
-  for i in stateVariables
-    push!(stateMarkings, true)
-  end
-  for i in algVariables
-    push!(stateMarkings, false)
-  end
-  local differentialVarsFunction ="
-function $(modelName)DifferentialVars()
-  return $stateMarkings
-end
-"#=TODO!!! We use state for everything now. I am unsure how to differentiate between the two=#
+  local stateMarkings = vcat([true for _ in stateVariables], [false for _ in algVariables])
   #=Start conditions of algebraic and state variables=#
-  local START_CONDTIONS_EQUATIONS = let
-    local startCondStr::String =
-      getStartConditions(algVariables, "x0", simCode) *
-      #=TODO. It seems that there might be something else at play here..=#
-      getStartConditions(stateVariables, "x0", simCode)
-    startCondStr
+  local DAE_EQUATIONS = createDAE_equations(simCode)
+  local PARAMETER_EQUATIONS = createParameterEquations(parameters, simCode)
+  local START_CONDTIONS_EQUATIONS = createStartConditionsEquations(algVariables, stateVariables, simCode)
+  @debug("Generating start conditions")
+  local START_CONDTIONS ="
+  function $(modelName)StartConditions(p, t0)
+    local x0 = Array{Float64}(undef, $(arrayLength(stateVariables)))
+    local dx0 = Array{Float64}(undef, $(arrayLength(stateVariables)))
+    $START_CONDTIONS_EQUATIONS
+    return x0, dx0
   end
-#=TODO!!! We use state for everything now. I am unsure how to differentiate between the two=#
-local startCondtions ="
-function $(modelName)StartConditions(p, t0)
-  local x0 = Array{Float64}(undef, $(arrayLength(stateVariables)))
-  local dx0 = Array{Float64}(undef, $(arrayLength(stateVariables)))
-  $START_CONDTIONS_EQUATIONS
-  return x0, dx0
+  "
+  local DAE_EQUATION_FUNCTION ="
+  function $(modelName)DAE_equations(res, dx #=The state derivatives =#, x #= State & alg variables =#, p, t #=time=#)
+  $DAE_EQUATIONS
+  end
+  "
+  local DIFFERENTIAL_VARS_FUNCTION ="
+  function $(modelName)DifferentialVars()
+    return $stateMarkings
+  end
+  "
+  local PARAMETER_VARS = "
+  function $(modelName)ParameterVars()
+    p = Array{Float64}(undef, $(arrayLength(parameters)))
+  $(PARAMETER_EQUATIONS)  return p
+  end
+  "
+  local RUNNABLE ="
+  function $(modelName)Simulate(tspan = (0.0, 1.0))
+    # Define problem
+    p_is = $(modelName)ParameterVars()
+    (x0, dx0) =$(modelName)StartConditions(p_is, tspan[1])
+    differential_vars = $(modelName)DifferentialVars()
+    #= Pass the residual equations =#
+    problem = DAEProblem($(modelName)DAE_equations, dx0, x0, tspan, p_is, differential_vars=differential_vars)
+    # Solve with IDA:)
+    solution = solve(problem, IDA())
+    return solution
+  end
+  "
+  @debug("Code-generation done")
+  # Return file content
+  return ("$(modelName)",
+          HEADER_STRING
+          * START_CONDTIONS
+          * DIFFERENTIAL_VARS_FUNCTION
+          * DAE_EQUATION_FUNCTION
+          * PARAMETER_VARS
+          * RUNNABLE)
 end
-"
-  #= Generate $modelName_DAE_equations=#
-  local DAE_EQUATIONS = let
+
+"""
+TODO: We use state for everything now. I am unsure how to differentiate between the two
+"""
+function createStartConditionsEquations(algVariables::Array,
+                                        stateVariables::Array,
+                                        simCode::SimulationCode.SIM_CODE)
+  return getStartConditions(algVariables, "x0", simCode) *
+         getStartConditions(stateVariables, "x0", simCode)
+end
+
+function createDAE_equations(simCode::SimulationCode.SIM_CODE)
+  let
     local eqStr = ""
     for (equationCounter,eq) in enumerate(simCode.equations)
-      eqStr *= eqTraverseAppendToString(eq, simCode, equationCounter)
+      eqStr *= eqtoJulia(eq, simCode, equationCounter)
     end
     eqStr[1:end-1]
   end
-
-  local dae_equation_function ="
-function $(modelName)DAE_equations(res, dx #=The state derivatives =#, x #= State & alg variables =#, p, t #=time=#)
-$DAE_EQUATIONS
 end
-"
+
+function createParameterEquations(parameters::Array, simCode::SimulationCode.SIM_CODE)
+  local parameterEquations::String = ""
+  local hT = simCode.crefToSimVarHT
   for param in parameters
-    (index, simVar) = crefToSimVarHT[param]
+    (index, simVar) = hT[param]
     local simVarType::SimulationCode.SimVarType = simVar.varKind
     bindExp = @match simVarType begin
-      SimulationCode.PARAMETER(bindExp = SOME(exp)) => begin exp
-    end
+      SimulationCode.PARAMETER(bindExp = SOME(exp)) => exp
       _ => ErrorException("Unknown SimulationCode.SimVarType for parameter.")
     end
     parameterEquations *= "  p[$index] #= $param =# = $(expStringify(bindExp, simCode))\n"
   end
-  local parameterVars ="
-function $(modelName)ParameterVars()
-  p = Array{Float64}(undef, $(arrayLength(parameters)))
-$(parameterEquations)  return p
-end
-"
-
-local runnable ="
-function $(modelName)Simulate(tspan = (0.0, 1.0))
-  # Define problem
-  p_is = $(modelName)ParameterVars()
-  (x0, dx0) =$(modelName)StartConditions(p_is, tspan[1])
-  differential_vars = $(modelName)DifferentialVars()
-  #= Pass the residual equations =#
-  problem = DAEProblem($(modelName)DAE_equations, dx0, x0, tspan, p_is, differential_vars=differential_vars)
-  # Solve with IDA:)
-  solution = solve(problem, IDA())
-  return solution
-end
-"
-  # Return file content
-  return ("$(modelName)",
-   HEADER_STRING * startCondtions * differentialVarsFunction
-   * dae_equation_function * parameterVars * runnable)
+  return parameterEquations
 end
 
 """
-TODO: Make less messy
+  Transforms a given equation into Julia code.
 """
-function eqTraverseAppendToString(eq::BackendDAE.Equation, simCode::SimulationCode.SIM_CODE, resNumber)
+function eqtoJulia(eq::BackendDAE.Equation, simCode::SimulationCode.SIM_CODE, resNumber)
   _ = begin
-    local lhs::DAE.Exp
     local rhs::DAE.Exp
-    local cref::DAE.ComponentRef
     local whenEquation::BackendDAE.WhenEquation
     local result::String = ""
     @match eq begin
@@ -210,26 +216,11 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
     local expl::List{DAE.Exp}
     local lstexpl::List{List{DAE.Exp}}
     @match exp begin
-      DAE.ICONST(int) => begin
-        string(int)
-      end
-
-      DAE.RCONST(real)  => begin
-        string(real)
-      end
-
-      DAE.SCONST(tmpStr)  => begin
-        (tmpStr)
-      end
-
-      DAE.BCONST(bool)  => begin
-        string(bool)
-      end
-
-      DAE.ENUM_LITERAL((Absyn.IDENT(str), int))  => begin
-        (str + "()" + string(int) + ")")
-      end
-
+      DAE.ICONST(int) => string(int)
+      DAE.RCONST(real)  => string(real)
+      DAE.SCONST(tmpStr)  => (tmpStr)
+      DAE.BCONST(bool)  => string(bool)
+      DAE.ENUM_LITERAL((Absyn.IDENT(str), int))  => str + "()" + string(int) + ")"
       DAE.CREF(cr, _)  => begin
         varName = BackendDAE.string(cr)
         indexAndVar = hashTable[varName]
@@ -242,23 +233,18 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
           SimulationCode.STATE_DERIVATIVE(__) => "dx[$(indexAndVar[1])] #= der($varName) =#"
         end
       end
-
       DAE.UNARY(operator = op, exp = e1) => begin
         ("(" + BackendDAE.string(op) + " " + expStringify(e1, simCode) + ")")
       end
-
       DAE.BINARY(exp1 = e1, operator = op, exp2 = e2) => begin
         (expStringify(e1, simCode) + " " + BackendDAE.string(op) + " " + expStringify(e2, simCode))
       end
-
       DAE.LUNARY(operator = op, exp = e1)  => begin
         ("(" + BackendDAE.string(op) + " " + expStringify(e1, simCode) + ")")
       end
-
       DAE.LBINARY(exp1 = e1, operator = op, exp2 = e2) => begin
         (expStringify(e1, simCode) + " " + BackendDAE.string(op) + " " + expStringify(e2, simCode))
       end
-
       DAE.RELATION(exp1 = e1, operator = op, exp2 = e2) => begin
         (expStringify(e1, simCode) + " " + BackendDAE.string(op) + " " + expStringify(e2, simCode))
       end
@@ -266,10 +252,9 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
       DAE.IFEXP(expCond = e1, expThen = e2, expElse = e3) => begin
         ("if " + expStringify(e1, simCode) + "" + expStringify(e2, simCode) + "else" + expStringify(e3, simCode) + "end")
       end
-
       DAE.CALL(path = Absyn.IDENT(tmpStr), expLst = expl)  => begin
         #=
-          TODO: Keeping it simple for now=, we assume we only have one argument in the call
+          TODO: Keeping it simple for now, we assume we only have one argument in the call
           We handle derivitives seperatly
         =#
         varName = BackendDAE.string(listHead(expl))
@@ -281,86 +266,10 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
           end
         end
       end
-
-      DAE.RECORD(path = Absyn.IDENT(tmpStr), exps = expl)  => begin
-        tmpStr = tmpStr + "[REC(" + BackendDAE.lstStr(expl, ", ") + ")"
-      end
-
-      DAE.PARTEVALFUNCTION(path = Absyn.IDENT(tmpStr), expList = expl)  => begin
-        tmpStr = tmpStr + "[PARTEVAL](" + BackendDAE.lstStr(expl, ", ") + ")"
-      end
-
-      DAE.ARRAY(array = expl)  => begin
-        "[ARR]" + BackendDAE.lstStr(expl, ", ")
-      end
-
-      DAE.MATRIX(matrix = lstexpl)  => begin
-        str = "[MAT]"
-        for lst in lstexp
-          str = str + "{" + BackendDAE.lstStr(lst, ", ") + "}"
-        end
-        (str)
-      end
-
-      DAE.RANGE(start = e1, step = NONE(), stop = e2)  => begin
-         expStringify(e1) + ":" + expStringify(e2)
-      end
-
-      DAE.RANGE(start = e1, step = SOME(e2), stop = e3)  => begin
-         expStringify(e1) + ":" + expStringify(e2) + ":" + expStringify(e3)
-      end
-
-      DAE.TUPLE(PR = expl) => begin
-         "[TPL](" + BackendDAE.lstStr(expl, ", ") + ")"
-      end
-
       DAE.CAST(exp = e1)  => begin
          expStringify(e1, simCode)
       end
-
-      DAE.ASUB(exp = e1, sub = expl)  => begin
-         "[ASUB]" + expStringify(e1) + "{" + BackendDAE.lstStr(expl, ", ") + "}"
-      end
-
-      DAE.TSUB(exp = e1, ix = int) => begin
-         "[TSUB]" + expStringify(e1, simCode) + "(" + string(int) + ")"
-      end
-
-      DAE.RSUB(exp = e1)  => begin
-        "[RSUB]" + expStringify(e1, simCode)
-      end
-
-      DAE.SIZE(exp = e1, sz = NONE())  => begin
-        "[SIZE]" + expStringify(e1, simCode)
-      end
-
-      DAE.SIZE(exp = e1, sz = SOME(e2))  => begin
-         "[SIZE]" + expStringify(e1, simCode) + "(" + expStringify(e2, simCode) + ")"
-      end
-
-     DAE.CODE(__) => begin
-       "[CODE]"
-     end
-
-     DAE.REDUCTION(expr = e1) => begin
-       "[REDUCTION]" + expStringify(e1, simCode)
-     end
-
-     DAE.EMPTY(__)  => begin
-       "[EMPTY]"
-     end
-
-     DAE.CONS(e1, e2)  => begin
-       "[CONS]" + "{" + expStringify(e1, simCode) + ", " + expStringify(e2, simCode) + "}"
-     end
-
-     DAE.LIST(expl)  => begin
-       "[LST]" + "{" + BackendDAE.lstStr(expl, ", ") + " }"
-     end
-
-    _ => begin
-      str = ""
-    end
+      _ =>  ErrorException("$exp not yet supported")
     end
   end
 str = "(" * str * ")"

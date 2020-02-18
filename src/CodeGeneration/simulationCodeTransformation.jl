@@ -123,10 +123,12 @@ function createIndices(simulationVars::Array{SimulationCode.SIMVAR})::Dict{Strin
       _ => continue
     end
   end
+  local algIndexCounter::Integer = stateCounter
   for var in simulationVars
     @match var.varKind begin
       SimulationCode.ALG_VARIABLE(__) => begin
-        var = @set var.index = SOME(stateCounter + 1)
+        algIndexCounter += 1
+        var = @set var.index = SOME(algIndexCounter)
         push!(ht, var.name => (var.index.data, var))
       end
       _ => continue
