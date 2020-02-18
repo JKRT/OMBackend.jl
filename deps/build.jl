@@ -9,6 +9,7 @@ using Pkg
 function buildDeps()
   Pkg.add("ExportAll")
   Pkg.add("Sundials")
+  Pkg.add("CSV")
   Pkg.add("DifferentialEquations")
   Pkg.add("Setfield")
   Pkg.add(PackageSpec(url="https://github.com/OpenModelica/ImmutableList.jl.git"))
