@@ -54,7 +54,8 @@ using ExampleDAEs
 """
 These currently work
 """
-global TEST_CASES = ["helloWorld", "lotkaVolterra", "vanDerPol"]
+global TEST_CASES = ["helloWorld", "lotkaVolterra", "vanDerPol", "bouncingBall"]
+#global TEST_CASES = ["bouncingBall"]
 
 #using ExampleDAEs
 global MODEL_NAME = ""

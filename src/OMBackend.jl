@@ -80,13 +80,12 @@ function lower(frontendDAE::DAE.DAE_LIST)::BackendDAE.BackendDAEStructure
   #= Create Backend structure from Frontend structure =#
   bDAE = BackendDAECreate.lower(frontendDAE)
   @debug(BackendDAE.stringHeading1(bDAE, "translated"));
-  #= detect state variables =#
+  bDAE = Causalize.detectIfEquations(bDAE)
+  @debug(BackendDAE.stringHeading1(bDAE, "if equations transformed"));
   bDAE = Causalize.detectStates(bDAE)
   @debug(BackendDAE.stringHeading1(bDAE, "states marked"));
-  #= causalize system, for now DAEMode =#
-  bDAE = Causalize.daeMode(bDAE)
+  bDAE = Causalize.residualizeEveryEquation(bDAE)
   @debug(BackendDAE.stringHeading1(bDAE, "residuals"));
-
   return bDAE
 end
 

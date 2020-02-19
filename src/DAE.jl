@@ -557,7 +557,6 @@ end
 4. when statements ('when E do S; end when;') =#
 @Uniontype Statement begin
   @Record STMT_ASSIGN begin
-
     type_::Type
     exp1::Exp
     exp::Exp
@@ -1339,21 +1338,18 @@ When making additions, update at least the following functions:
   end
 
   @Record IFEXP begin
-
     expCond::Exp
     expThen::Exp
     expElse::Exp
   end
 
   @Record CALL begin
-
     path::Absyn.Path
     expLst::List{Exp}
     attr::CallAttributes
   end
 
   @Record RECORD begin
-
     path::Absyn.Path
     exps #= component values =#::List{Exp}
     comp #= component name =#::List{String}
@@ -1865,7 +1861,6 @@ CREF_IDENT(..) is used for non-qualifed component names, e.g. x =#
   end
 
   @Record OPTIMICA_ATTR_INST_CREF begin
-
     componentRef::ComponentRef
     instant::String
   end
@@ -2000,7 +1995,7 @@ const emptySet = SETS(SET_TRIE_NODE("", WILD(), nil, 0), 0, nil, nil)::Sets
     parallelism #= parglobal, parlocal, or non_parallel =#::VarParallelism
     protection #= if protected or public =#::VarVisibility
     ty #= Full type information required =#::Type
-    binding #= Binding expression e.g. for parameters ; value of start attribute =#::Option{Exp}
+    binding #= Binding expression e.g. for parameters  value of start attribute =#::Option{Exp}
     dims #= dimensions =#::List
     connectorType #= The connector type: flow, stream, no prefix, or not a connector element. =#::ConnectorType
     source #= the origins of the component/equation/algorithm =#::ElementSource
@@ -2095,8 +2090,6 @@ const emptySet = SETS(SET_TRIE_NODE("", WILD(), nil, 0), 0, nil, nil)::Sets
   end
 
   @Record IF_EQUATION begin
-
-    #= kabdelhak: why this wierd numbering? =#
     condition1 #= Condition =#::List{Exp}
     equations2 #= Equations of true branch =#::List{List{Element}}
     equations3 #= Equations of false branch =#::List{Element}
@@ -2104,7 +2097,6 @@ const emptySet = SETS(SET_TRIE_NODE("", WILD(), nil, 0), 0, nil, nil)::Sets
   end
 
   @Record INITIAL_IF_EQUATION begin
-
     condition1 #= Condition =#::List{Exp}
     equations2 #= Equations of true branch =#::List{List{Element}}
     equations3 #= Equations of false branch =#::List{Element}
