@@ -33,36 +33,33 @@ This module contain the various functions that are related to the lowering
 of the DAE IR into Backend DAE IR (BDAE IR). BDAE IR is the representation we use
 before code generation.
 """
-module BackendDAECreate
+module BDAECreate
 
 using MetaModelica
 using ExportAll
 
 import DAE
-import BackendDAE
-import BackendDAEUtil
+import BDAE
+import BDAEUtil
 
 """
   This function translates a DAE, which is the result from instantiating a
-  class, into a more precise form, called BackendDAE.BackendDAE defined in this module.
-  The BackendDAE.BackendDAE representation splits the DAE into equations and variables
+  class, into a more precise form, called BDAE.BDAE defined in this module.
+  The BDAE.BDAE representation splits the DAE into equations and variables
   and further divides variables into known and unknown variables and the
   equations into simple and nonsimple equations.
-  The variables are inserted into a dictonary, Backend_DAE_Map.
-  The equations are put in an expandable array.
-  Where adding a new equation can be done in O(1) time if space is available.
-  inputs:  lst: DAE.DAE_LIST, inCache: FCore.Cache, inEnv: FCore.Graph
-  outputs: BackendDAE.BackendDAE"""
-function lower(lst::DAE.DAE_LIST)::BackendDAE.BackendDAEStructure
-  local outBackendDAE::BackendDAE.BackendDAEStructure
-  local eqSystems::Array{BackendDAE.EqSystem}
-  local varArray::Array{BackendDAE.Var}
-  local eqArray::Array{BackendDAE.Equation}
+  inputs:  lst: DAE.DAE_LIST
+  outputs: BDAE.BDAE"""
+function lower(lst::DAE.DAE_LIST)::BDAE.BDAEStructure
+  local outBDAE::BDAE.BDAEStructure
+  local eqSystems::Array{BDAE.EqSystem}
+  local varArray::Array{BDAE.Var}
+  local eqArray::Array{BDAE.Equation}
   local name = listHead(lst.elementLst).ident
   (varArray, eqArray) = begin
     local elementLst::List{DAE.Element}
-    local variableLst::List{BackendDAE.Var}
-    local equationLst::List{BackendDAE.Equation}
+    local variableLst::List{BDAE.Var}
+    local equationLst::List{BDAE.Equation}
     @match lst begin
       DAE.DAE_LIST(elementLst) => begin
         (variableLst, equationLst) = splitEquationsAndVars(elementLst)
@@ -70,26 +67,26 @@ function lower(lst::DAE.DAE_LIST)::BackendDAE.BackendDAEStructure
       end
     end
   end
-  local variables = BackendDAEUtil.convertVarArrayToBackendDAE_Variables(varArray)
+  local variables = BDAEUtil.convertVarArrayToBDAE_Variables(varArray)
   #= We start with an array of one system =#
-  eqSystems = [BackendDAEUtil.createEqSystem(variables, eqArray)]
-  outBackendDAE = BackendDAE.BACKEND_DAE(name, eqSystems, BackendDAE.SHARED_DUMMY())
+  eqSystems = [BDAEUtil.createEqSystem(variables, eqArray)]
+  outBDAE = BDAE.BACKEND_DAE(name, eqSystems, BDAE.SHARED_DUMMY())
 end
 
 """
-  Splits a given DAE.DAEList into equations and variables
+  Splits a given DAE.DAEList into a set of equations and a set of variables
 """
 function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple
-  local variableLst::List{BackendDAE.Var} = nil
-  local equationLst::List{BackendDAE.Equation} = nil
+  local variableLst::List{BDAE.Var} = nil
+  local equationLst::List{BDAE.Equation} = nil
   for elem in elementLst
     _ = begin
       local backendDAE_Var
       local backendDAE_Equation
       @match elem begin
         DAE.VAR(__) => begin
-          variableLst = BackendDAE.VAR(elem.componentRef,
-                                       BackendDAEUtil.DAE_VarKind_to_BDAE_VarKind(elem.kind),
+          variableLst = BDAE.VAR(elem.componentRef,
+                                       BDAEUtil.DAE_VarKind_to_BDAE_VarKind(elem.kind),
                                        elem.direction,
                                        elem.ty,
                                        elem.binding,
@@ -102,11 +99,11 @@ function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple
                                        ) <| variableLst
         end
         DAE.EQUATION(__) => begin
-          equationLst = BackendDAE.EQUATION(elem.exp,
+          equationLst = BDAE.EQUATION(elem.exp,
                                             elem.scalar,
                                             elem.source,
                                             #=TODO: Below might need to be changed =#
-                                            BackendDAE.EQ_ATTR_DEFAULT_UNKNOWN) <| equationLst
+                                            BDAE.EQ_ATTR_DEFAULT_UNKNOWN) <| equationLst
         end
 
         DAE.WHEN_EQUATION(__) => begin
@@ -129,24 +126,32 @@ function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple
   return (variableLst, equationLst)
 end
 
-function lowerWhenEquation(eq::DAE.Element)::BackendDAE.Equation
-  local whenOperatorLst::List{BackendDAE.WhenOperator} = nil
-  local whenEquation::BackendDAE.WhenEquation
-  local elseOption::Option{BackendDAE.WhenEquation} = NONE()
-  local elseEq::BackendDAE.Element
+"""
+  Given an array of equations remove all if expressions and converts them into
+  if-Equations
+"""
+function ifExprsToIfEqs(equation::Array)
+
+end
+
+function lowerWhenEquation(eq::DAE.Element)::BDAE.Equation
+  local whenOperatorLst::List{BDAE.WhenOperator} = nil
+  local whenEquation::BDAE.WhenEquation
+  local elseOption::Option{BDAE.WhenEquation} = NONE()
+  local elseEq::BDAE.Element
   whenOperatorLst = createWhenOperators(eq.equations, whenOperatorLst)
   if isSome(eq.elsewhen_)
     SOME(elseEq) = eq.elsewhen_
     elseOption = SOME(lowerWhenEquation(elseEq))
   end
-  whenEquation = BackendDAE.WHEN_STMTS(eq.condition, whenOperatorLst, elseOption)
-  return BackendDAE.WHEN_EQUATION(1, whenEquation, eq.source, BackendDAE.EQ_ATTR_DEFAULT_UNKNOWN)
+  whenEquation = BDAE.WHEN_STMTS(eq.condition, whenOperatorLst, elseOption)
+  return BDAE.WHEN_EQUATION(1, whenEquation, eq.source, BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
 end
 
-function createWhenOperators(elementLst::List{DAE.Element},lst::List{BackendDAE.WhenOperator})::List{BackendDAE.WhenOperator}
+function createWhenOperators(elementLst::List{DAE.Element},lst::List{BDAE.WhenOperator})::List{BDAE.WhenOperator}
   lst = begin
     local rest::List{DAE.Element}
-    local acc::List{BackendDAE.WhenOperator}
+    local acc::List{BDAE.WhenOperator}
     local cref::DAE.ComponentRef
     local e1::DAE.Exp
     local e2::DAE.Exp
@@ -154,23 +159,23 @@ function createWhenOperators(elementLst::List{DAE.Element},lst::List{BackendDAE.
     local source::DAE.ElementSource
     @match elementLst begin
       DAE.EQUATION(exp = e1, scalar = e2, source = source) <| rest => begin
-        acc = BackendDAE.ASSIGN(e1, e2, source) <| lst
+        acc = BDAE.ASSIGN(e1, e2, source) <| lst
         createWhenOperators(rest, acc)
       end
       DAE.ASSERT(condition = e1, message = e2, level = e3, source = source) <| rest => begin
-        acc = BackendDAE.ASSERT(e1, e2, e3, source) <| lst
+        acc = BDAE.ASSERT(e1, e2, e3, source) <| lst
         createWhenOperators(rest, acc)
       end
       DAE.TERMINATE(message = e1, source = source) <| rest => begin
-      acc = BackendDAE.TERMINATE(e1, source) <| lst
-      createWhenOperators(rest, acc)
+        acc = BDAE.TERMINATE(e1, source) <| lst
+        createWhenOperators(rest, acc)
       end
       DAE.REINIT(componentRef = cref, exp = e1, source = source) <| rest => begin
-        acc = BackendDAE.REINIT(cref, e1, source) <| lst
+        acc = BDAE.REINIT(cref, e1, source) <| lst
         createWhenOperators(rest, acc)
       end
       DAE.NORETCALL(exp = e1, source = source) <| rest => begin
-        acc = BackendDAE.NORETCALL(e1, source) <| lst
+        acc = BDAE.NORETCALL(e1, source) <| lst
         createWhenOperators(rest, acc)
       end
       #= MAYBE MORE CASES NEEDED =#
@@ -184,8 +189,11 @@ function createWhenOperators(elementLst::List{DAE.Element},lst::List{BackendDAE.
   end
 end
 
+"""
+  Transform a DAE if-equation into a backend if equation
+"""
 function lowerIfEquation(eq::DAE.Element)::Backend.Equation
-  local trueEquations::List{List{BackendDAE.Equation}} = nil
+  local trueEquations::List{List{BDAE.Equation}} = nil
   local tmpTrue::List{DAE.Equation}
   local falseEquations::List{DAE.Equation}
 
@@ -195,14 +203,13 @@ function lowerIfEquation(eq::DAE.Element)::Backend.Equation
   end
 
   trueEquations = listReverse(trueEquations)
-
   (_, falseEquations) = splitEquationsAndVars(eq.equations3)
 
-  return BackendDAE.IF_EQUATION(eq.condition1,
+  return BDAE.IF_EQUATION(eq.condition1,
                                 trueEquations,
                                 falseEquations,
                                 eq.source,
-                                BackendDAE.EQ_ATTR_DEFAULT_UNKNOWN)
+                                BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
 end
 
 @exportAll()

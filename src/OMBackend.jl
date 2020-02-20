@@ -47,8 +47,8 @@ using MetaModelica
 using ExportAll
 using Absyn
 
-import BackendDAE
-import BackendDAECreate
+import BDAE
+import BDAECreate
 import Causalize
 import DAE
 import Prefix
@@ -73,28 +73,28 @@ end
 """
  Transforms given Frontend DAE IR to causalized backend DAE IR (BDAE IR)
 """
-function lower(frontendDAE::DAE.DAE_LIST)::BackendDAE.BackendDAEStructure
-  local bDAE::BackendDAE.BackendDAEStructure
+function lower(frontendDAE::DAE.DAE_LIST)::BDAE.BDAEStructure
+  local bDAE::BDAE.BDAEStructure
   local simCode::SIM_CODE
   @assert typeof(listHead(frontendDAE.elementLst)) == DAE.COMP
   #= Create Backend structure from Frontend structure =#
-  bDAE = BackendDAECreate.lower(frontendDAE)
-  @debug(BackendDAE.stringHeading1(bDAE, "translated"));
+  bDAE = BDAECreate.lower(frontendDAE)
+  @debug(BDAE.stringHeading1(bDAE, "translated"));
   bDAE = Causalize.detectIfEquations(bDAE)
-  @debug(BackendDAE.stringHeading1(bDAE, "if equations transformed"));
+  @debug(BDAE.stringHeading1(bDAE, "if equations transformed"));
   bDAE = Causalize.detectStates(bDAE)
-  @debug(BackendDAE.stringHeading1(bDAE, "states marked"));
+  @debug(BDAE.stringHeading1(bDAE, "states marked"));
   bDAE = Causalize.residualizeEveryEquation(bDAE)
-  @debug(BackendDAE.stringHeading1(bDAE, "residuals"));
+  @debug(BDAE.stringHeading1(bDAE, "residuals"));
   return bDAE
 end
 
 """
   Transforms causalized BDAE IR to simulation code
 """
-function generateSimulationCode(bDAE::BackendDAE.BackendDAEStructure)::SimulationCode.SIM_CODE
+function generateSimulationCode(bDAE::BDAE.BDAEStructure)::SimulationCode.SIM_CODE
   simCode = CodeGeneration.transformToSimCode(bDAE)
-  @debug BackendDAE.stringHeading1(simCode, "SIM_CODE: transformed simcode")
+  @debug BDAE.stringHeading1(simCode, "SIM_CODE: transformed simcode")
   return simCode
 end
 

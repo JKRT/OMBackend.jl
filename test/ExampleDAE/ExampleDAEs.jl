@@ -2,7 +2,7 @@ module ExampleDAEs
 
 using Absyn
 using MetaModelica
-using BackendDAE
+using BDAE
 using ImmutableList
 
 import DAE

@@ -34,23 +34,23 @@
   Dumping functions for simulation code structures.
 """
 
-using BackendDAE
+using BDAE
 using SimulationCode
 
 function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String)
-  print(BackendDAE.DOUBLE_LINE + "\n")
+  print(BDAE.DOUBLE_LINE + "\n")
   print("SIM_CODE: " + heading + "\n")
-  print(BackendDAE.DOUBLE_LINE + "\n\n")
+  print(BDAE.DOUBLE_LINE + "\n\n")
 
   print("SimCodeVars" + "\n")
-  print(BackendDAE.LINE + "\n")
-  BackendDAE.dictPrettyPrint(simCode.crefToSimVarHT)
+  print(BDAE.LINE + "\n")
+  BDAE.dictPrettyPrint(simCode.crefToSimVarHT)
   print("\n")
 
-  print("SimCodeEquations" + "\n")
-  print(BackendDAE.LINE + "\n")
-  for eq in simCode.equations
-    BackendDAE.printEqTraverse(eq, 0)
+  print("SimCode residual equations" + "\n")
+  print(BDAE.LINE + "\n")
+  for eq in simCode.residualEquations
+    BDAE.printEqTraverse(eq, 0)
     print("\n")
   end
   print("\n")
@@ -59,7 +59,7 @@ end
 function Base.string(simCode::SimulationCode.SIM_CODE)::String
   str = stringHeading3(simCode.crefToSimVarHT, "SimCodeVars")
   str = str + heading3("SimCodeEquations")
-  for eq in simCode.equations
+  for eq in simCode.residualEquations
     str = str + string(eq)
   end
   return str + "\n"

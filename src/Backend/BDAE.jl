@@ -36,13 +36,13 @@
   constants and parameters.
   The equations are also split into two lists, one with simple equations, a=b, a-b=0, etc., that
   are removed from  the set of equations to speed up calculations."""
-module BackendDAE
+module BDAE
 
 using MetaModelica
 using ExportAll
 
 #= Predeclaration of mutable recursive types =#
-@UniontypeDecl BackendDAEStructure
+@UniontypeDecl BDAEStructure
 @UniontypeDecl EqSystem
 @UniontypeDecl SubClock
 @UniontypeDecl BaseClockPartitionKind
@@ -52,11 +52,10 @@ using ExportAll
 @UniontypeDecl SubPartition
 @UniontypeDecl PartitionsInfo
 @UniontypeDecl ExtraInfo
-@UniontypeDecl BackendDAEType
+@UniontypeDecl BDAEType
 @UniontypeDecl DataReconciliationData
 @UniontypeDecl Variables
 @UniontypeDecl CrefIndex
-@UniontypeDecl VariableArray
 @UniontypeDecl Var
 @UniontypeDecl VarKind
 @UniontypeDecl TearingSelect
@@ -86,30 +85,21 @@ using ExportAll
 @UniontypeDecl DifferentiateInputData
 @UniontypeDecl DifferentiationType
 @UniontypeDecl CompInfo
-@UniontypeDecl BackendDAEModeData
+@UniontypeDecl BDAEModeData
 
 import Absyn
 import DAE
 import DoubleEnded
 import SCode
 
-const EquationArray = Array #= Let's use the Julia array instead ExpandableArray =#
 const EqSystems = Array
 
-
 #=  AdjacencyMatrixes =#
-
 AdjacencyMatrixElementEntry = Integer
 AdjacencyMatrixElement = List
-AdjacencyMatrix = Array  #= array<list<Integer>> =#
-AdjacencyMatrixT = AdjacencyMatrix  #= a list of equation indices (1..n), one for each variable. Equations that -only-
-contain the state variable and not the derivative have a negative index. =#
-AdjacencyMatrixMapping = Tuple  #= a mapping for adjacency matrices that contains:
-array<list<Integer>>: array index -> scalar index list
-array<Integer>      : scalar index -> array index (not unique)
-IndexType           : the occurence condition type for the current adjacency matrix
-Boolean             : true if scalar
-Boolean             : true if analytical to structural singularity processing has already been done =#
+AdjacencyMatrix = Array
+AdjacencyMatrixT = AdjacencyMatrix
+AdjacencyMatrixMapping = Tuple
 AdjacencyMatrixElementEnhancedEntry = Tuple
 AdjacencyMatrixElementEnhanced = List
 AdjacencyMatrixEnhanced = Array
@@ -117,59 +107,23 @@ AdjacencyMatrixTEnhanced = AdjacencyMatrixEnhanced
 ExternalObjectClasses = List  #= classes of external objects stored in list =#
 StateSets = List  #= List of StateSets =#
 StrongComponents = List  #= Order of the equations the have to be solved =#
-
 SymbolicJacobians = List
-
 SymbolicJacobian = Tuple
-#=  symbolic equation system
-=#
-#=  Matrix name
-=#
-#=  diff vars (independent vars)
-=#
-#=  diffed vars (residual vars)
-=#
-#=  all diffed vars (residual vars + dependent vars)
-=#
-#=  original dependent variables
-=#
 SparsePatternCref = Tuple
 SparsePatternCrefs = List
-
 SparsePattern = Tuple
-#=  column-wise sparse pattern
-=#
-#=  row-wise sparse pattern
-=#
-#=  diff vars (independent vars) of associated jacobian
-=#
-#=  diffed vars (residual vars) of associated jacobian
-=#
-#=  nonZeroElements
-=#
+
 
 const emptySparsePattern = (nil, nil, (nil, nil), 0)::SparsePattern
 
 const SparseColoring = List
-#=  colouring
-=#
-#= /*
-Type only for transformation from analytical to structural singularity.
-*/ =#
+
 const LinearIntegerJacobianRow = List
-#=  Actual jacobian entries sparse, <column, value>
-=#
+
 const LinearIntegerJacobianRhs = Array
-#=  RHS-Exp for full pivot algorithm. Replacement for eliminated equation.
-=#
+
 const LinearIntegerJacobianIndices = Array
-#=  Index tuple <array, scalar> for equations
-=#
-#= /*
-The full linear integer matrix
-- additional boolean array to track which rows have been changed
-- additional boolean array to track which variables are matched to the equations
-*/ =#
+
 const LinearIntegerJacobian = Tuple
 
 InnerEquations = List
@@ -181,7 +135,7 @@ two lists, one for unknown variables states and algebraic and one for known vari
 constants and parameters.
 The equations are also split into two lists, one with simple equations, a=b, a-b=0, etc., that
 are removed from  the set of equations to speed up calculations. =#
-@Uniontype BackendDAEStructure begin
+@Uniontype BDAEStructure begin
   @Record BACKEND_DAE begin
     name::String
     eqs::EqSystems
@@ -192,9 +146,8 @@ end
 #= An independent system of equations (and their corresponding variables) =#
 @Uniontype EqSystem begin
   @Record EQSYSTEM begin
-
     orderedVars #= ordered Variables, only states and alg. vars =#::Variables
-    orderedEqs #= ordered Equations =#::EquationArray
+    orderedEqs #= ordered Equations =#::Array
     m::Option{AdjacencyMatrix}
     mT::Option{AdjacencyMatrixT}
     mapping #= current type of adjacency matrix, boolean is true if scalar =#::Option{AdjacencyMatrixMapping}
@@ -202,7 +155,7 @@ end
     stateSets #= the state sets of the system =#::StateSets
     partitionKind::BaseClockPartitionKind
     removedEqs #= these are equations that cannot solve for a variable.
-    e.g. assertions, external function calls, algorithm sections without effect =#::EquationArray
+    e.g. assertions, external function calls, algorithm sections without effect =#::Array
   end
 end
 
@@ -210,24 +163,12 @@ end
 @Uniontype SubClock begin
   @Record SUBCLOCK begin
   end
-
-  @Record INFERED_SUBCLOCK begin
-  end
 end
 
  const DEFAULT_SUBCLOCK = "TODO. NOT SUPPORTED"
 
 @Uniontype BaseClockPartitionKind begin
   @Record UNKNOWN_PARTITION begin
-  end
-
-  @Record CLOCKED_PARTITION begin
-    subPartIdx::Integer
-  end
-
-  @Record CONTINUOUS_TIME_PARTITION begin
-  end
-  @Record UNSPECIFIED_PARTITION begin
   end
 end
 
@@ -247,8 +188,8 @@ end
     buffer and results caching, etc., is avoided, but in C-code output all the
     data about variables' names, comments, units, etc. is preserved as well as
     pointer to their values (trajectories). =#::Variables
-    initialEqs #= Initial equations =#::EquationArray
-    removedEqs #= these are equations that cannot solve for a variable. for example assertions, external function calls, algorithm sections without effect =#::EquationArray
+    initialEqs #= Initial equations =#::Array
+    removedEqs #= these are equations that cannot solve for a variable. for example assertions, external function calls, algorithm sections without effect =#::Array
     constraints #= constraints (Optimica extension) =#::List{DAE.Constraint}
     classAttrs #= class attributes (Optimica extension) =#::List{DAE.ClassAttributes}
     cache #=TODO: Use the Julia cache here=#
@@ -256,11 +197,11 @@ end
     functionTree #= functions for Backend =# #=Let's skip this part people=#
     eventInfo #= eventInfo =#::EventInfo
     extObjClasses #= classes of external objects, contains constructor & destructor =#::ExternalObjectClasses
-    backendDAEType #= indicate for what the BackendDAE is used =#::BackendDAEType
+    backendDAEType #= indicate for what the BDAE is used =#::BDAEType
     symjacs #= Symbolic Jacobians =#::SymbolicJacobians
     info #= contains extra info that we send around like the model name =#::ExtraInfo
     partitionsInfo::PartitionsInfo
-    daeModeData #= DAEMode Data =#::BackendDAEModeData
+    daeModeData #= DAEMode Data =#::BDAEModeData
     dataReconciliationData::Option{DataReconciliationData}
   end
 
@@ -306,9 +247,9 @@ end
   end
 end
 
-#= BackendDAEType to indicate different types of BackendDAEs.
+#= BDAEType to indicate different types of BDAEs.
 For example for simulation, initialization, Jacobian, algebraic loops etc. =#
-@Uniontype BackendDAEType begin
+@Uniontype BDAEType begin
   @Record SIMULATION begin
   end
 
@@ -359,15 +300,6 @@ end
   end
 end
 
-#= array of Equations are expandable, to amortize the cost of adding
-equations in a more efficient manner =#
-@Uniontype VariableArray begin
-  @Record VARIABLE_ARRAY begin
-
-    numberOfElements #= no. elements =#::Integer
-    varOptArr::Array{Option{Var}}
-  end
-end
 
 #= variables =#
 @Uniontype Var begin
@@ -385,6 +317,12 @@ end
     connectorType #= flow, stream, unspecified or not connector. =#::DAE.ConnectorType
     unreplaceable #= indicates if it is allowed to replace this variable =#::Bool
   end
+end
+
+#=Simplify construction of var=#
+VAR(varName,varKind,varType) = let
+  VAR(varName, varKind, DAE.BIDIR(), varType, NONE(), nil, DAE.emptyElementSource,
+      NONE(), NONE(), DAE.NON_CONNECTOR(), true #= Unreplaceable =#)
 end
 
 #= variable kind =#
@@ -566,7 +504,6 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
   end
 
   @Record ARRAY_EQUATION begin
-
     dimSize #= dimension sizes =#::List{Integer}
     left #= lhs =#::DAE.Exp
     right #= rhs =#::DAE.Exp
@@ -576,7 +513,6 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
   end
 
   @Record SOLVED_EQUATION begin
-
     componentRef::DAE.ComponentRef
     exp::DAE.Exp
     source #= origin of equation =#::DAE.ElementSource
@@ -584,14 +520,12 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
   end
 
   @Record RESIDUAL_EQUATION begin
-
     exp #= not present from FrontEnd =#::DAE.Exp
     source #= origin of equation =#::DAE.ElementSource
     attr::EquationAttributes
   end
 
   @Record ALGORITHM begin
-
     size #= size of equation =#::Integer
     alg::DAE.Algorithm
     source #= origin of algorithm =#::DAE.ElementSource
@@ -600,7 +534,6 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
   end
 
   @Record WHEN_EQUATION begin
-
     size #= size of equation =#::Integer
     whenEquation::WhenEquation
     source #= origin of equation =#::DAE.ElementSource
@@ -608,7 +541,6 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
   end
 
   @Record COMPLEX_EQUATION begin
-
     size #= size of equation =#::Integer
     left #= lhs =#::DAE.Exp
     right #= rhs =#::DAE.Exp
@@ -617,7 +549,6 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
   end
 
   @Record IF_EQUATION begin
-
     conditions #= Condition =#::List{DAE.Exp}
     eqnstrue #= Equations of true branch =#::List{List{Equation}}
     eqnsfalse #= Equations of false branch =#::List{Equation}
@@ -626,7 +557,6 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
   end
 
   @Record FOR_EQUATION begin
-
     iter #= the iterator variable =#::DAE.Exp
     start #= start of iteration =#::DAE.Exp
     stop #= end of iteration =#::DAE.Exp
@@ -636,13 +566,11 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
   end
 
   @Record DUMMY_EQUATION begin
-
   end
 end
 
 @Uniontype WhenEquation begin
   @Record WHEN_STMTS begin
-
     condition #= the when-condition =#::DAE.Exp
     whenStmtLst::List{WhenOperator}
     elsewhenPart #= elsewhen equation with the same cref on the left hand side. =#::Option{WhenEquation}
@@ -651,21 +579,18 @@ end
 
 @Uniontype WhenOperator begin
   @Record ASSIGN begin
-
     left #= left hand side of equation =#::DAE.Exp
     right #= right hand side of equation =#::DAE.Exp
     source #= origin of equation =#::DAE.ElementSource
   end
 
   @Record REINIT begin
-
     stateVar #= State variable to reinit =#::DAE.ComponentRef
     value #= Value after reinit =#::DAE.Exp
     source #= origin of equation =#::DAE.ElementSource
   end
 
   @Record ASSERT begin
-
     condition::DAE.Exp
     message::DAE.Exp
     level::DAE.Exp
@@ -673,13 +598,11 @@ end
   end
 
   @Record TERMINATE begin
-
     message::DAE.Exp
     source #= the origin of the component/equation/algorithm =#::DAE.ElementSource
   end
 
   @Record NORETCALL begin
-
     exp::DAE.Exp
     source #= the origin of the component/equation/algorithm =#::DAE.ElementSource
   end
@@ -716,21 +639,17 @@ end
 
 @Uniontype IndexReduction begin
   @Record INDEX_REDUCTION begin
-
   end
 
   @Record NO_INDEX_REDUCTION begin
-
   end
 end
 
 @Uniontype EquationConstraints begin
   @Record ALLOW_UNDERCONSTRAINED begin
-
   end
 
   @Record EXACT begin
-
   end
 end
 
@@ -742,25 +661,21 @@ ConstraintEquations = Array
 
 @Uniontype StateOrder begin
   @Record STATEORDER begin
-
     hashTable #= x -> dx =#
     invHashTable #= dx -> {x,y,z} =#
   end
 
   @Record NOSTATEORDER begin
-
   end
 end
 
 @Uniontype StrongComponent begin
   @Record SINGLEEQUATION begin
-
     eqn::Integer
     var::Integer
   end
 
   @Record EQUATIONSYSTEM begin
-
     eqns::List{Integer}
     vars #= be careful with states, this are solved for der(x) =#::List{Integer}
     jac::Jacobian
@@ -807,25 +722,13 @@ end
   end
 end
 
-@Uniontype TearingSet begin
-  @Record TEARINGSET begin
-
-    tearingvars::List{Integer}
-    residualequations::List{Integer}
-    innerEquations #= list of matched equations and variables; these will be solved explicitly in the given order =#::InnerEquations
-    jac::Jacobian
-  end
-end
-
 @Uniontype InnerEquation begin
   @Record INNEREQUATION begin
-
     eqn::Integer
     vars::List{Integer}
   end
 
   @Record INNEREQUATIONCONSTRAINTS begin
-
     eqn::Integer
     vars::List{Integer}
     cons::Constraints
@@ -834,7 +737,6 @@ end
 
 @Uniontype StateSet begin
   @Record STATESET begin
-
     index::Integer
     rang::Integer
     #=  how many states are needed?
@@ -864,20 +766,13 @@ end
   end
 end
 
-#=
-=#
-#=  event info and stuff
-=#
-#=
-=#
+#=  event info and stuff =#
 
 @Uniontype EventInfo begin
   @Record EVENT_INFO begin
-
     timeEvents #= stores all information related to time events =#::List{TimeEvent}
     zeroCrossings #= list of zero crossing conditions =# #=TODO: Use something else..=#
     relations #= list of zero crossing function as before =#::DoubleEnded.MutableList
-    samples #= [deprecated] list of sample as before, only used by cpp runtime (TODO: REMOVE ME) =#  #=TODO: Use something else=#
     numberMathEvents #= stores the number of math function that trigger events e.g. floor, ceil, integer, ... =#::Integer
   end
 end
@@ -891,7 +786,6 @@ end
 
 @Uniontype ZeroCrossing begin
   @Record ZERO_CROSSING begin
-
     relation_ #= function =#::DAE.Exp
     occurEquLst #= list of equations where the function occurs =#::List{Integer}
   end
@@ -899,11 +793,9 @@ end
 
 @Uniontype TimeEvent begin
   @Record SIMPLE_TIME_EVENT begin
-
   end
 
   @Record SAMPLE_TIME_EVENT begin
-
     index #= unique sample index =#::Integer
     startExp::DAE.Exp
     intervalExp::DAE.Exp
@@ -913,61 +805,48 @@ end
 
 @Uniontype Solvability begin
   @Record SOLVABILITY_SOLVED begin
-
   end
 
   @Record SOLVABILITY_CONSTONE begin
-
   end
 
   @Record SOLVABILITY_CONST begin
-
     b #= false if the constant is almost zero (<1e-6) =#::Bool
   end
 
   @Record SOLVABILITY_PARAMETER begin
-
     b #= false if the partial derivative is zero =#::Bool
   end
 
   @Record SOLVABILITY_LINEAR begin
-
     b #= false if the partial derivative is zero =#::Bool
   end
 
   @Record SOLVABILITY_NONLINEAR begin
-
   end
 
   @Record SOLVABILITY_UNSOLVABLE begin
-
   end
 
   @Record SOLVABILITY_SOLVABLE begin
-
   end
 end
 
 
 @Uniontype IndexType begin
   @Record ABSOLUTE begin
-
   end
 
   @Record NORMAL begin
-
   end
 
   @Record SOLVABLE begin
-
   end
 
   @Record BASECLOCK_IDX begin
-
   end
 
   @Record SUBCLOCK_IDX begin
-
   end
 
   @Record SPARSE begin
@@ -975,32 +854,22 @@ end
   end
 end
 
-#=
-=#
-#=  Jacobian stuff
-=#
-#=
-=#
+#=  Jacobian stuff =#
 
 @Uniontype JacobianType begin
   @Record JAC_CONSTANT begin
-
   end
 
   @Record JAC_LINEAR begin
-
   end
 
   @Record JAC_NONLINEAR begin
-
   end
 
   @Record JAC_GENERIC begin
-
   end
 
   @Record JAC_NO_ANALYTIC begin
-
   end
 end
 
@@ -1031,19 +900,16 @@ FullJacobian = Option
 
 @Uniontype Jacobian begin
   @Record FULL_JACOBIAN begin
-
     jacobian::FullJacobian
   end
 
   @Record GENERIC_JACOBIAN begin
-
     jacobian::Option{SymbolicJacobian}
     sparsePattern::SparsePattern
     coloring::SparseColoring
   end
 
   @Record EMPTY_JACOBIAN begin
-
   end
 end
 
@@ -1084,30 +950,12 @@ DifferentiateInputArguments = Tuple
 #= Define the behaviour of differentiation method for (e.g. index reduction, ...) =#
 @Uniontype DifferentiationType begin
   @Record DIFFERENTIATION_TIME begin
-
-  end
-
-  @Record SIMPLE_DIFFERENTIATION begin
-
-  end
-
-  @Record DIFFERENTIATION_FUNCTION begin
-
-  end
-
-  @Record DIFF_FULL_JACOBIAN begin
-
-  end
-
-  @Record GENERIC_GRADIENT begin
-
   end
 end
 
 #= types to count operations for the components =#
 @Uniontype CompInfo begin
   @Record COUNTER begin
-
     #=  single equation
     =#
     comp::StrongComponent
@@ -1151,7 +999,7 @@ end
   end
 end
 
-@Uniontype BackendDAEModeData begin
+@Uniontype BDAEModeData begin
   @Record BDAE_MODE_DATA begin
     stateVars::List{Var}
     algStateVars::List{Var}
@@ -1160,7 +1008,7 @@ end
   end
 end
 
-const emptyDAEModeData = BDAE_MODE_DATA(nil, nil, 0, NONE())::BackendDAEModeData
+const emptyDAEModeData = BDAE_MODE_DATA(nil, nil, 0, NONE())::BDAEModeData
 
 include("backendDump.jl")
 

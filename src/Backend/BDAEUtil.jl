@@ -29,7 +29,7 @@
 *
 =#
 
-module BackendDAEUtil
+module BDAEUtil
 
 using MetaModelica
 
@@ -39,31 +39,31 @@ using Setfield
 import DAE
 import Util
 
-import BackendDAE
+import BDAE
 import BackendEquation
 
 """
-This function converts an array of variables to the BackendDAE variable structure
+This function converts an array of variables to the BDAE variable structure
 """
-function convertVarArrayToBackendDAE_Variables(vars::Array{BackendDAE.Var})::BackendDAE.Variables
-  local variables::BackendDAE.Variables = begin
-    BackendDAE.VARIABLES([i for i in vars])
+function convertVarArrayToBDAE_Variables(vars::Array{BDAE.Var})::BDAE.Variables
+  local variables::BDAE.Variables = begin
+    BDAE.VARIABLES([i for i in vars])
   end
   return variables
 end
 
-function createEqSystem(vars::BackendDAE.Variables, eqs::BackendDAE.EquationArray)
-  (BackendDAE.EQSYSTEM(vars, eqs, NONE(), NONE(), NONE(),
-                       BackendDAE.NO_MATCHING(), nil,
-                       BackendDAE.UNKNOWN_PARTITION(),
+function createEqSystem(vars::BDAE.Variables, eqs::Array)
+  (BDAE.EQSYSTEM(vars, eqs, NONE(), NONE(), NONE(),
+                       BDAE.NO_MATCHING(), nil,
+                       BDAE.UNKNOWN_PARTITION(),
                        BackendEquation.emptyEqns()))
 end
 
-function mapEqSystems(dae::BackendDAE.BackendDAEStructure, traversalOperation::Function)
+function mapEqSystems(dae::BDAE.BDAEStructure, traversalOperation::Function)
    dae = begin
-     local eqs::Array{BackendDAE.EqSystem, 1}
+     local eqs::Array{BDAE.EqSystem, 1}
      @match dae begin
-       BackendDAE.BACKEND_DAE(eqs = eqs) => begin
+       BDAE.BACKEND_DAE(eqs = eqs) => begin
          for i in 1:arrayLength(eqs)
            eqs[i] = traversalOperation(eqs[i])
          end
@@ -77,11 +77,11 @@ function mapEqSystems(dae::BackendDAE.BackendDAEStructure, traversalOperation::F
    end
 end
 
-function mapEqSystemEquations(syst::BackendDAE.EqSystem, traversalOperation::Function)
+function mapEqSystemEquations(syst::BDAE.EqSystem, traversalOperation::Function)
   syst = begin
-    local eqs::Array{BackendDAE.Equation,1}
+    local eqs::Array{BDAE.Equation,1}
     @match syst begin
-      BackendDAE.EQSYSTEM(orderedEqs = eqs) => begin
+      BDAE.EQSYSTEM(orderedEqs = eqs) => begin
         for i in 1:arrayLength(eqs)
           eqs[i] = traversalOperation(eqs[i])
         end
@@ -93,11 +93,11 @@ function mapEqSystemEquations(syst::BackendDAE.EqSystem, traversalOperation::Fun
 end
 
 
-function mapEqSystemEquationsNoUpdate(syst::BackendDAE.EqSystem, traversalOperation::Function, extArg)
+function mapEqSystemEquationsNoUpdate(syst::BDAE.EqSystem, traversalOperation::Function, extArg)
   extArg = begin
-    local eqs::Array{BackendDAE.Equation,1}
+    local eqs::Array{BDAE.Equation,1}
     @match syst begin
-      BackendDAE.EQSYSTEM(orderedEqs = eqs) => begin
+      BDAE.EQSYSTEM(orderedEqs = eqs) => begin
         for i in 1:arrayLength(eqs)
           extArg = traversalOperation(eqs[i], extArg)
         end
@@ -107,11 +107,11 @@ function mapEqSystemEquationsNoUpdate(syst::BackendDAE.EqSystem, traversalOperat
   end
 end
 
-function mapEqSystemVariablesNoUpdate(syst::BackendDAE.EqSystem, traversalOperation::Function, extArg)
+function mapEqSystemVariablesNoUpdate(syst::BDAE.EqSystem, traversalOperation::Function, extArg)
   extArg = begin
-    local varArr::Array{BackendDAE.Var,1}
+    local varArr::Array{BDAE.Var,1}
     @match syst begin
-      BackendDAE.EQSYSTEM(orderedVars = BackendDAE.VARIABLES(varArr = varArr)) => begin
+      BDAE.EQSYSTEM(orderedVars = BDAE.VARIABLES(varArr = varArr)) => begin
         for i in 1:arrayLength(varArr)
           extArg = traversalOperation(varArr[i], extArg)
         end
@@ -122,25 +122,27 @@ function mapEqSystemVariablesNoUpdate(syst::BackendDAE.EqSystem, traversalOperat
   return extArg
 end
 
-function traverseEquationExpressions(eq::BackendDAE.Equation, traversalOperation::Function, extArg::T)::Tuple{BackendDAE.Equation,T} where{T}
+function traverseEquationExpressions(eq::BDAE.Equation,
+                                     traversalOperation::Function,
+                                     extArg::T)::Tuple{BDAE.Equation,T} where{T}
    (eq, extArg) = begin
      local lhs::DAE.Exp
      local rhs::DAE.Exp
      local cref::DAE.ComponentRef
      @match eq begin
-       BackendDAE.EQUATION(lhs = lhs, rhs = rhs) => begin
+       BDAE.EQUATION(lhs = lhs, rhs = rhs) => begin
          (lhs, extArg) = Util.traverseExpTopDown(lhs, traversalOperation, extArg)
          (rhs, extArg) = Util.traverseExpTopDown(rhs, traversalOperation, extArg)
          @set eq.lhs = lhs
          @set eq.rhs = rhs
          (eq, extArg)
        end
-       BackendDAE.SOLVED_EQUATION(componentRef = cref, exp = rhs) => begin
+       BDAE.SOLVED_EQUATION(componentRef = cref, exp = rhs) => begin
          (rhs, extArg) = Util.traverseExpTopDown(rhs, traversalOperation, extArg)
          @set eq.rhs = rhs;
          (eq, extArg)
        end
-       BackendDAE.RESIDUAL_EQUATION(exp = rhs) => begin
+       BDAE.RESIDUAL_EQUATION(exp = rhs) => begin
          (rhs, extArg) = Util.traverseExpTopDown(rhs, traversalOperation, extArg)
          @set eq.rhs = rhs;
          (eq, extArg)
@@ -156,12 +158,12 @@ end
 Directly maps the DAE type to the BDAE type.
 Before casualisation we do not know if variables are state or not.
 """
-function DAE_VarKind_to_BDAE_VarKind(kind::DAE.VarKind)::BackendDAE.VarKind
+function DAE_VarKind_to_BDAE_VarKind(kind::DAE.VarKind)::BDAE.VarKind
   @match kind begin
-    DAE.VARIABLE(__) => BackendDAE.VARIABLE()
-    DAE.DISCRETE(__) => BackendDAE.DISCRETE()
-    DAE.PARAM(__) => BackendDAE.PARAM()
-    DAE.CONST(__) => BackendDAE.CONST()
+    DAE.VARIABLE(__) => BDAE.VARIABLE()
+    DAE.DISCRETE(__) => BDAE.DISCRETE()
+    DAE.PARAM(__) => BDAE.PARAM()
+    DAE.CONST(__) => BDAE.CONST()
   end
 end
 

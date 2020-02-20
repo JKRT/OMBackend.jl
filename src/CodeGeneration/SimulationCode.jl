@@ -36,7 +36,7 @@
 module SimulationCode
 
 import DAE
-import BackendDAE
+import BDAE
 using MetaModelica
 
 """
@@ -103,8 +103,10 @@ struct SIM_CODE
   name::String
   "Mapping of names to the corresponding variable"
   crefToSimVarHT::Dict{String, Tuple{Integer, SimVar}}
-  "Array of Equations"
-  equations::Array
+  "Different kinds of equations stored within simulation code"
+  residualEquations::Array{BDAE.RESIDUAL_EQUATION}
+  whenEquations::Array{BDAE.WHEN_EQUATION}
+  ifEquations::Array{BDAE.IF_EQUATION}
 end
 
 #=

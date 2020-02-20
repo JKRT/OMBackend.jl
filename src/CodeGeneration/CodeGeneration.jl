@@ -32,12 +32,11 @@
 module CodeGeneration
 
 import Absyn
-import BackendDAE
+import BDAE
 import DAE
 using MetaModelica
 using Setfield
 using SimulationCode
-
 
 include("CodeGenerationUtil.jl")
 include("simulationCodeTransformation.jl")
@@ -79,7 +78,7 @@ function generateCode(simCode::SimulationCode.SIM_CODE)
   local modelName::String = simCode.name
   local exp::DAE.Exp
   #= An array of 0:s=#
-  local residuals::Array = [0 for i in 1:length(simCode.equations)]
+  local residuals::Array = [0 for _ in 1:length(simCode.residualEquations)]
   for varName in keys(crefToSimVarHT)
     ixAndVar = crefToSimVarHT[varName]
     local varType = ixAndVar[2].varKind
@@ -93,7 +92,8 @@ function generateCode(simCode::SimulationCode.SIM_CODE)
   end
   local stateMarkings = vcat([true for _ in stateVariables], [false for _ in algVariables])
   #=Start conditions of algebraic and state variables=#
-  local DAE_EQUATIONS = createDAE_equations(simCode)
+  local DAE_EQUATIONS = createEquations(simCode.residualEquations, simCode)
+  local WHEN_EQUATIONS = createEquations(simCode.whenEquations, simCode)
   local PARAMETER_EQUATIONS = createParameterEquations(parameters, simCode)
   local START_CONDTIONS_EQUATIONS = createStartConditionsEquations(algVariables, stateVariables, simCode)
   @debug("Generating start conditions")
@@ -128,7 +128,7 @@ function generateCode(simCode::SimulationCode.SIM_CODE)
     (x0, dx0) =$(modelName)StartConditions(p_is, tspan[1])
     differential_vars = $(modelName)DifferentialVars()
     #= Pass the residual equations =#
-    problem = DAEProblem($(modelName)DAE_equations, dx0, x0, tspan, p_is, differential_vars=differential_vars)
+    problem = DAEProblem($(modelName)DAE_equations, dx0, x0, tspan, p_is, differential_vars=differential_vars, callback=CallbackSet())
     # Solve with IDA:)
     solution = solve(problem, IDA())
     return solution
@@ -155,14 +155,12 @@ function createStartConditionsEquations(algVariables::Array,
          getStartConditions(stateVariables, "x0", simCode)
 end
 
-function createDAE_equations(simCode::SimulationCode.SIM_CODE)
-  let
-    local eqStr = ""
-    for (equationCounter,eq) in enumerate(simCode.equations)
-      eqStr *= eqtoJulia(eq, simCode, equationCounter)
-    end
-    eqStr[1:end-1]
+function createEquations(equations::Array, simCode::SimulationCode.SIM_CODE)
+  local eqStr = ""
+  for (equationCounter, eq) in enumerate(equations)
+    eqStr *= eqtoJulia(eq, simCode, equationCounter)
   end
+  eqStr[1:end-1]
 end
 
 function createParameterEquations(parameters::Array, simCode::SimulationCode.SIM_CODE)
@@ -181,25 +179,51 @@ function createParameterEquations(parameters::Array, simCode::SimulationCode.SIM
 end
 
 """
-  Transforms a given equation into Julia code.
+  Transforms a given equation into Julia code
 """
-function eqtoJulia(eq::BackendDAE.Equation, simCode::SimulationCode.SIM_CODE, resNumber)
-  _ = begin
-    local rhs::DAE.Exp
-    local whenEquation::BackendDAE.WhenEquation
-    local result::String = ""
-    @match eq begin
-      BackendDAE.RESIDUAL_EQUATION(exp = rhs) => begin
-        result = result * ("  res[$resNumber] = " + expStringify(rhs, simCode) + "\n")
-      end
-      BackendDAE.WHEN_EQUATION(whenEquation = whenEquation) => begin
-        ErrorException("When equations not yet supported")
-      end
-      _ =>
-        ErrorException("traversalError for $eq")
+function eqtoJulia(eq::BDAE.Equation, simCode::SimulationCode.SIM_CODE, resNumber)::String
+  local rhs::DAE.Exp
+  local result::String = ""
+  result  *= @match eq begin
+    BDAE.RESIDUAL_EQUATION(exp = rhs) => begin
+      "  res[$resNumber] = " + expStringify(rhs, simCode) + "\n"
+    end
+    BDAE.WHEN_EQUATION(_, wEq, _) => begin
+      local whenStmts = createWhenStatements(wEq.whenStmtLst, simCode)
+      local cond = wEq.condition
+      @info whenStmts
+      @info cond
+      "condition(u,t,integrator) = $(expStringify(cond, simCode))
+       #= affect!(integrator) = <when stmt> =#
+       cb$(resNumber) = DiscreteCallback(condition,affect!)
+      "
+    end
+    _ => begin
+      ErrorException("traversalError for $eq")
     end
   end
-  return result
+end
+
+"""
+  Creates Julia code for  when equation.
+  E.g a set of Discrete callbacks
+  TODO: Handle the other cases
+"""
+function createWhenStatements(whenStatements::List, simCode::SimulationCode.SIM_CODE)
+  local res::String = ""
+  @debug "Calling createWhenStatements with: $whenStatements"
+  for wStmt in  whenStatements
+    res *= @match wStmt begin
+      SimulationCode.ASSIGN(__) => begin
+        "$(expStringify(wStmt.left, simCode)) = $(expStringify(wStmt.right, simCode)) \n"
+      end
+      SimulationCode.REINIT(__) => begin
+        "$(BDAE.string(wStmt.stateVar)) = $(expStringify(wStmt.value, simCode))"
+      end
+      _ => ErrorException("$whenStatements in @__FUNCTION__ not supported")
+    end
+  end
+  return res
 end
 
 function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
@@ -222,7 +246,7 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
       DAE.BCONST(bool)  => string(bool)
       DAE.ENUM_LITERAL((Absyn.IDENT(str), int))  => str + "()" + string(int) + ")"
       DAE.CREF(cr, _)  => begin
-        varName = BackendDAE.string(cr)
+        varName = BDAE.string(cr)
         indexAndVar = hashTable[varName]
         varKind::SimulationCode.SimVarType = indexAndVar[2].varKind
         @match varKind begin
@@ -234,45 +258,48 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
         end
       end
       DAE.UNARY(operator = op, exp = e1) => begin
-        ("(" + BackendDAE.string(op) + " " + expStringify(e1, simCode) + ")")
+        ("(" + BDAE.string(op) + " " + expStringify(e1, simCode) + ")")
       end
       DAE.BINARY(exp1 = e1, operator = op, exp2 = e2) => begin
-        (expStringify(e1, simCode) + " " + BackendDAE.string(op) + " " + expStringify(e2, simCode))
+        (expStringify(e1, simCode) + " " + BDAE.string(op) + " " + expStringify(e2, simCode))
       end
       DAE.LUNARY(operator = op, exp = e1)  => begin
-        ("(" + BackendDAE.string(op) + " " + expStringify(e1, simCode) + ")")
+        ("(" + BDAE.string(op) + " " + expStringify(e1, simCode) + ")")
       end
       DAE.LBINARY(exp1 = e1, operator = op, exp2 = e2) => begin
-        (expStringify(e1, simCode) + " " + BackendDAE.string(op) + " " + expStringify(e2, simCode))
+        (expStringify(e1, simCode) + " " + BDAE.string(op) + " " + expStringify(e2, simCode))
       end
       DAE.RELATION(exp1 = e1, operator = op, exp2 = e2) => begin
-        (expStringify(e1, simCode) + " " + BackendDAE.string(op) + " " + expStringify(e2, simCode))
+        (expStringify(e1, simCode) + " " + BDAE.string(op) + " " + expStringify(e2, simCode))
       end
       #=TODO?=#
       DAE.IFEXP(expCond = e1, expThen = e2, expElse = e3) => begin
-        ("if " + expStringify(e1, simCode) + "" + expStringify(e2, simCode) + "else" + expStringify(e3, simCode) + "end")
+        local res = ("if " + expStringify(e1, simCode) + "" + expStringify(e2, simCode) + "else" + expStringify(e3, simCode) + "end")
+        #= Evaluate it inline =#
+        #string(eval(Meta.parse(res)))
+        res
       end
       DAE.CALL(path = Absyn.IDENT(tmpStr), expLst = expl)  => begin
         #=
           TODO: Keeping it simple for now, we assume we only have one argument in the call
           We handle derivitives seperatly
         =#
-        varName = BackendDAE.string(listHead(expl))
+        varName = BDAE.string(listHead(expl))
         (index, type) = hashTable[varName]
         @match tmpStr begin
           "der" => "dx[$index]  #= der($varName) =#"
           _  =>  begin
-            tmpStr = tmpStr + "(" + BackendDAE.lstStr(expl, ", ") + ")"
+            tmpStr = tmpStr + "(" + BDAE.lstString(expl, ", ") + ")"
           end
         end
       end
       DAE.CAST(exp = e1)  => begin
          expStringify(e1, simCode)
       end
-      _ =>  ErrorException("$exp not yet supported")
+      _ =>  throw(ErrorException("$exp not yet supported"))
     end
   end
-str = "(" * str * ")"
+  return "(" * str * ")"
 end
 
 """

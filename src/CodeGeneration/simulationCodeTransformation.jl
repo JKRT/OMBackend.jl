@@ -30,11 +30,11 @@
 =#
 
 """
-  Collect variables from array of BackendDAE.Var:
+  Collect variables from array of BDAE.Var:
   Save the name and it's kind of each variable.
   Index will be set to NONE.
 """
-function collectVariables(allBackendVars::Array{BackendDAE.Var})
+function collectVariables(allBackendVars::Array{BDAE.Var})
   local numberOfVars::Integer = length(allBackendVars)
   local simVars::Array = Array{SimulationCode.SimVar}(undef, numberOfVars)
   for (i, backendVar) in enumerate(allBackendVars)
@@ -45,16 +45,16 @@ function collectVariables(allBackendVars::Array{BackendDAE.Var})
   return simVars
 end
 
-function bDAEVarKindToSimCodeVarKind(backendVar::BackendDAE.Var)::SimulationCode.SimVarType
+function bDAEVarKindToSimCodeVarKind(backendVar::BDAE.Var)::SimulationCode.SimVarType
   varKind = @match backendVar.varKind begin
-    BackendDAE.STATE(__) => SimulationCode.STATE()
-    BackendDAE.PARAM(__) || BackendDAE.CONST(__) => SimulationCode.PARAMETER(backendVar.bindExp)
-    BackendDAE.VARIABLE(__) => SimulationCode.ALG_VARIABLE()
+    BDAE.STATE(__) => SimulationCode.STATE()
+    BDAE.PARAM(__) || BDAE.CONST(__) => SimulationCode.PARAMETER(backendVar.bindExp)
+    BDAE.VARIABLE(__) => SimulationCode.ALG_VARIABLE()
     _ => @error("Kind $(typeof(backendVar.varKind)) of backend variable not handled.")
   end
 end
 
-function bDAEIdentToSimCodeVarName(backendVar::BackendDAE.Var)
+function bDAEIdentToSimCodeVarName(backendVar::BDAE.Var)
   local varName::DAE.ComponentRef = backendVar.varName
   @match varName begin
     DAE.CREF_IDENT(__) => string(varName)
@@ -64,44 +64,36 @@ function bDAEIdentToSimCodeVarName(backendVar::BackendDAE.Var)
 end
 
 """
-  Transform BackendDAEStructure to SimulationCode.SIM_CODE
+  Transform BDAEStructure to SimulationCode.SIM_CODE
+  TODO: We only handle one equation system for now
 """
-function transformToSimCode(backendDAE::BackendDAE.BACKEND_DAE)::SimulationCode.SIM_CODE
+function transformToSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.SIM_CODE
   local equationSystems::Array = backendDAE.eqs
-  local allOrderedVars::Array{BackendDAE.Var} =
-    let
-      [v for es in equationSystems for v in es.orderedVars.varArr]
-    end
-  local allSharedVars::Array{BackendDAE.Var} = getSharedVariablesLocalsAndGlobals(backendDAE.shared) #=TODO: One equation sys for now=#
-
+  local allOrderedVars::Array{BDAE.Var} = [v for es in equationSystems for v in es.orderedVars.varArr]
+  local allSharedVars::Array{BDAE.Var} = getSharedVariablesLocalsAndGlobals(backendDAE.shared)
   local allBackendVars = vcat(allOrderedVars, allSharedVars)
-
-  local simVars::Array{SimulationCode.SIMVAR} =
-    allocateAndCollectSimulationVariables(allBackendVars)
+  local simVars::Array{SimulationCode.SIMVAR} = allocateAndCollectSimulationVariables(allBackendVars)
   # Assign indices and put all variable into an hash table
   local crefToSimVarHT = createIndices(simVars)
-  local equations = let
-      [eq for es in equationSystems for eq in es.orderedEqs]
-  end
+  local equations = [eq for es in equationSystems for eq in es.orderedEqs]
   @info equations
-  local simulationEquations = allocateAndCollectSimulationEquations(equations)
+  #= Split equations into three parts. Residuals whenEquations and If-equations =#
+  (resEqs,whenEqs,ifEqs) = allocateAndCollectSimulationEquations(equations)
   #= Construct SIM_CODE =#
-  simCode = SimulationCode.SIM_CODE(backendDAE.name, crefToSimVarHT, simulationEquations)
-  return simCode
+  SimulationCode.SIM_CODE(backendDAE.name, crefToSimVarHT, resEqs, whenEqs, ifEqs)
 end
 
+
 """
--Andreas:
-  Assign the indices.
-  Construct the HashTable.
-  1. Collect all variables
+   Thiss functions create and assigns indices for variables
+   Thus Construct the table that maps variable name to the actual variable.
+It executes the following steps:
+1. Collect all variables
 2. Search all states (e.g. x and y) and give them indices starting at 1 (so x=1, y=2). Then give the corresponding state derivatives (x' and y') the same indices.
 3. Remaining algebraic variables will get indices starting with i+1, where i is the number of states.
 4. Parameters will get own set of indices, starting at 1.
-
 """
 function createIndices(simulationVars::Array{SimulationCode.SIMVAR})::Dict{String, Tuple{Integer, SimulationCode.SimVar}}
-  @info simulationVars
   local ht::Dict{String, Tuple{Integer, SimulationCode.SimVar}} = Dict()
   local stateCounter = 0
   local parameterCounter = 0
@@ -134,28 +126,31 @@ function createIndices(simulationVars::Array{SimulationCode.SIMVAR})::Dict{Strin
       _ => continue
     end
   end
-  @info ht
   return ht
 end
 
 """
-  Does nothing for now
+John:
+  Splits a given set of equations into different types
 """
-function allocateAndCollectSimulationEquations(equations)
- equations
+function allocateAndCollectSimulationEquations(equations)::Tuple
+  isRe(eq) = typeof(eq) == BDAE.RESIDUAL_EQUATION
+  isWhen(eq) = typeof(eq) == BDAE.WHEN_EQUATION
+  isIf(eq) = typeof(eq) == BDAE.IF_EQUATION
+  (filter(isRe, equations), filter(isWhen, equations), filter(isIf, equations))
 end
 
 """
 Returns the shared global and local variable for the shared data in
 an equation system. If no such data is present. Return two empty arrays
 """
-function getSharedVariablesLocalsAndGlobals(shared::BackendDAE.Shared)
+function getSharedVariablesLocalsAndGlobals(shared::BDAE.Shared)
   @match shared begin
-    BackendDAE.SHARED(__) => vcat(shared.globalKnownVars, shared.localKnownVars)
+    BDAE.SHARED(__) => vcat(shared.globalKnownVars, shared.localKnownVars)
     _ => []
   end
 end
 
-function allocateAndCollectSimulationVariables(bDAEVariables::Array{BackendDAE.Var})
+function allocateAndCollectSimulationVariables(bDAEVariables::Array{BDAE.Var})
   collectVariables(bDAEVariables)
 end

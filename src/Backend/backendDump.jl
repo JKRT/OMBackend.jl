@@ -29,7 +29,7 @@
 *
 =#
 
-import BackendDAEUtil
+import BDAEUtil
 
 using MetaModelica
 
@@ -62,7 +62,7 @@ function heading3(heading::String)::String
   str = heading + ":\n" + LINE + "\n"
 end
 
-function Base.string(dae::BackendDAE.BackendDAEStructure)::String
+function Base.string(dae::BDAE.BDAEStructure)::String
   str::String = ""
   for i in 1:arrayLength(dae.eqs)
     str = str + stringHeading2(dae.eqs[i], "EqSystem " + Base.string(i)) + "\n"
@@ -70,17 +70,17 @@ function Base.string(dae::BackendDAE.BackendDAEStructure)::String
   return str
 end
 
-function Base.string(eq::BackendDAE.EqSystem)::String
+function Base.string(eq::BDAE.EqSystem)::String
   str::String = ""
-  str = str + heading3("Variables") + BackendDAEUtil.mapEqSystemVariablesNoUpdate(eq, stringTraverse, "") + "\n"
-  str = str + heading3("Equations") + BackendDAEUtil.mapEqSystemEquationsNoUpdate(eq, stringTraverse, "") + "\n"
+  str = str + heading3("Variables") + BDAEUtil.mapEqSystemVariablesNoUpdate(eq, stringTraverse, "") + "\n"
+  str = str + heading3("Equations") + BDAEUtil.mapEqSystemEquationsNoUpdate(eq, stringTraverse, "") + "\n"
 end
 
 function stringTraverse(in, str)::String
   str = str + string(in)
 end
 
-function Base.string(var::BackendDAE.Var)::String
+function Base.string(var::BDAE.Var)::String
   str = var.varName.ident + " | " + string(var.varKind)
   str *= begin
     local exp::DAE.Exp
@@ -92,92 +92,92 @@ function Base.string(var::BackendDAE.Var)::String
   return str + "\n"
 end
 
-function Base.string(varKind::BackendDAE.VarKind)::String
+function Base.string(varKind::BDAE.VarKind)::String
   str = begin
     @match varKind begin
-      BackendDAE.VARIABLE() =>  "VARIABLE"
+      BDAE.VARIABLE() =>  "VARIABLE"
 
-      BackendDAE.STATE() =>  "STATE"
+      BDAE.STATE() =>  "STATE"
 
-      BackendDAE.STATE_DER() =>  "STATE_DER"
+      BDAE.STATE_DER() =>  "STATE_DER"
 
-      BackendDAE.DUMMY_DER() =>  "DUMMY_DER"
+      BDAE.DUMMY_DER() =>  "DUMMY_DER"
 
-      BackendDAE.DUMMY_STATE() =>  "DUMMY_STATE"
+      BDAE.DUMMY_STATE() =>  "DUMMY_STATE"
 
-      BackendDAE.CLOCKED_STATE() =>  "CLOCKED_STATE"
+      BDAE.CLOCKED_STATE() =>  "CLOCKED_STATE"
 
-      BackendDAE.DISCRETE() =>  "DISCRETE"
+      BDAE.DISCRETE() =>  "DISCRETE"
 
-      BackendDAE.PARAM() =>  "PARAM"
+      BDAE.PARAM() =>  "PARAM"
 
-      BackendDAE.CONST() =>  "CONST"
+      BDAE.CONST() =>  "CONST"
 
-      BackendDAE.EXTOBJ() =>  "EXTOBJ"
+      BDAE.EXTOBJ() =>  "EXTOBJ"
 
-      BackendDAE.JAC_VAR() =>  "JAC_VAR"
+      BDAE.JAC_VAR() =>  "JAC_VAR"
 
-      BackendDAE.JAC_DIFF_VAR() =>  "JAC_DIFF_VAR"
+      BDAE.JAC_DIFF_VAR() =>  "JAC_DIFF_VAR"
 
-      BackendDAE.SEED_VAR() =>  "SEED_VAR"
+      BDAE.SEED_VAR() =>  "SEED_VAR"
 
-      BackendDAE.OPT_CONSTR() =>  "OPT_CONSTR"
+      BDAE.OPT_CONSTR() =>  "OPT_CONSTR"
 
-      BackendDAE.OPT_FCONSTR() =>  "OPT_FCONSTR"
+      BDAE.OPT_FCONSTR() =>  "OPT_FCONSTR"
 
-      BackendDAE.OPT_INPUT_WITH_DER() =>  "OPT_INPUT_WITH_DER"
+      BDAE.OPT_INPUT_WITH_DER() =>  "OPT_INPUT_WITH_DER"
 
-      BackendDAE.OPT_INPUT_DER() =>  "OPT_INPUT_DER"
+      BDAE.OPT_INPUT_DER() =>  "OPT_INPUT_DER"
 
-      BackendDAE.OPT_TGRID() =>  "OPT_TGRID"
+      BDAE.OPT_TGRID() =>  "OPT_TGRID"
 
-      BackendDAE.OPT_LOOP_INPUT() =>  "OPT_LOOP_INPUT"
+      BDAE.OPT_LOOP_INPUT() =>  "OPT_LOOP_INPUT"
 
-      BackendDAE.ALG_STATE() =>  "ALG_STATE"
+      BDAE.ALG_STATE() =>  "ALG_STATE"
 
-      BackendDAE.ALG_STATE_OLD() =>  "ALG_STATE_OLD"
+      BDAE.ALG_STATE_OLD() =>  "ALG_STATE_OLD"
 
-      BackendDAE.DAE_RESIDUAL_VAR() =>  "DAE_RESIDUAL_VAR"
+      BDAE.DAE_RESIDUAL_VAR() =>  "DAE_RESIDUAL_VAR"
 
-      BackendDAE.DAE_AUX_VAR() =>  "DAE_AUX_VAR"
+      BDAE.DAE_AUX_VAR() =>  "DAE_AUX_VAR"
 
-      BackendDAE.LOOP_ITERATION() =>  "LOOP_ITERATION"
+      BDAE.LOOP_ITERATION() =>  "LOOP_ITERATION"
 
-      BackendDAE.LOOP_SOLVED() =>  "LOOP_SOLVED"
+      BDAE.LOOP_SOLVED() =>  "LOOP_SOLVED"
 
     end
   end
 end
 
-function Base.string(eq::BackendDAE.Equation)::String
+function Base.string(eq::BDAE.Equation)::String
   str = begin
     local lhs::DAE.Exp
     local rhs::DAE.Exp
     local cref::DAE.ComponentRef
-    local whenEquation::BackendDAE.WhenEquation
+    local whenEquation::BDAE.WhenEquation
     @match eq begin
-      BackendDAE.EQUATION(lhs = lhs, rhs = rhs) => begin
+      BDAE.EQUATION(lhs = lhs, rhs = rhs) => begin
         (string(lhs) + " = " + string(rhs))
       end
 
-      BackendDAE.SOLVED_EQUATION(componentRef = cref, exp = rhs) => begin
+      BDAE.SOLVED_EQUATION(componentRef = cref, exp = rhs) => begin
         (string(cref) + " = " + string(rhs))
       end
 
-      BackendDAE.RESIDUAL_EQUATION(exp = rhs) => begin
+      BDAE.RESIDUAL_EQUATION(exp = rhs) => begin
         ("0 = " + string(rhs))
       end
 
-      BackendDAE.WHEN_EQUATION(whenEquation = whenEquation) => begin
+      BDAE.WHEN_EQUATION(whenEquation = whenEquation) => begin
         string(whenEquation)
       end
 
-      BackendDAE.IF_EQUATION() => begin
+      BDAE.IF_EQUATION() => begin
         local strTmp::String
         local conditions::List{DAE.Exp}
         local condition::DAE.Exp
-        local trueEquations::List{List{BackendDAE.Equation}}
-        local trueEquation::List{BackendDAE.Equation}
+        local trueEquations::List{List{BDAE.Equation}}
+        local trueEquation::List{BDAE.Equation}
 
         condition <| conditions = ifEq.conditions
         trueEquation <| trueEquations = ifEq.eqnstrue
@@ -206,8 +206,8 @@ function Base.string(eq::BackendDAE.Equation)::String
   return str + "\n"
 end
 
-function Base.string(whenEq::BackendDAE.WhenEquation)::String
-  local elseWhen::BackendDAE.WhenEquation
+function Base.string(whenEq::BDAE.WhenEquation)::String
+  local elseWhen::BDAE.WhenEquation
   str = "when " + string(whenEq.condition) + " then\n"
 
   for op in whenEq.whenStmtLst
@@ -221,25 +221,25 @@ function Base.string(whenEq::BackendDAE.WhenEquation)::String
   return str + "end;\n"
 end
 
-function Base.string(whenOp::BackendDAE.WhenOperator)::String
+function Base.string(whenOp::BDAE.WhenOperator)::String
   str = begin
     local e1::DAE.Exp
     local e2::DAE.Exp
     local cref::DAE.ComponentRef
     @match whenOp begin
-      BackendDAE.ASSIGN(left = e1, right = e2) => begin
+      BDAE.ASSIGN(left = e1, right = e2) => begin
         (string(e1) + " := " + string(e2))
       end
-      BackendDAE.REINIT(stateVar = cref, value = e1) => begin
+      BDAE.REINIT(stateVar = cref, value = e1) => begin
         ("reinit(" + string(cref) + ", " + string(e1) + ")")
       end
-      BackendDAE.ASSERT(condition = e1, message = e2) => begin
+      BDAE.ASSERT(condition = e1, message = e2) => begin
         ("assert(" + string(e1) + ", " + string(e2) + ")")
       end
-      BackendDAE.TERMINATE(message = e1) => begin
+      BDAE.TERMINATE(message = e1) => begin
         ("[TERMINATE]" + string(e1))
       end
-      BackendDAE.NORETCALL(exp = e1) => begin
+      BDAE.NORETCALL(exp = e1) => begin
         ("[NORET]" + string(e1))
       end
     end
