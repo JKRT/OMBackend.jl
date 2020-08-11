@@ -39,7 +39,7 @@ if ! (CURRENT_DIRECTORY in LOAD_PATH)
   @debug("Done setting up loadpath: $LOAD_PATH")
 end
 
-@debug "initialize the backend API"
+@info("initialize backend API")
 
 module OMBackend
 
