@@ -33,7 +33,6 @@
 const CURRENT_DIRECTORY = @__DIR__
 const BACKEND_DIRECTORY = realpath(CURRENT_DIRECTORY * "/Backend")
 const CODE_GENERATION_DIRECTORY = realpath(CURRENT_DIRECTORY * "/CodeGeneration")
-
 const EXAMPLE_DAE_DIRECTORY = realpath(CURRENT_DIRECTORY * "./../test/ExampleDAE")
 
 @info "Starting.."
@@ -84,6 +83,8 @@ function runExample(modelName::String)
   translate(EXAMPLE_MODELS[modelName])
   println("Translation done:")
   println("Simulating with default settings:")
+  simulateModel(modelName)
+  println("Model now in memory")
 end
 
 """
