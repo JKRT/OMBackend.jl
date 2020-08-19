@@ -36,11 +36,11 @@ using MetaModelica
 using ExportAll
 using Setfield
 
-import DAE
-import Util
+import ..DAE
+import ..Util
 
-import BDAE
-import BackendEquation
+import ..BDAE
+import ..BackendEquation
 
 """
 This function converts an array of variables to the BDAE variable structure

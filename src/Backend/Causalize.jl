@@ -35,11 +35,11 @@ using MetaModelica
 using Setfield
 using ExportAll
 
+import ..BDAE
+import ..BDAEUtil
+import ..BackendEquation
+import ..DAE
 import Absyn
-import BDAE
-import BDAEUtil
-import BackendEquation
-import DAE
 
 """
     Variable can be: Variable, Discrete, Constant and Parameters

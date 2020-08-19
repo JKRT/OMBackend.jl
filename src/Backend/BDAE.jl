@@ -88,7 +88,7 @@ using ExportAll
 @UniontypeDecl BDAEModeData
 
 import Absyn
-import DAE
+import ..DAE
 import DoubleEnded
 import SCode
 
@@ -1005,5 +1005,6 @@ end
 const emptyDAEModeData = BDAE_MODE_DATA(nil, nil, 0, NONE())::BDAEModeData
 
 include("backendDump.jl")
+
 @exportAll()
 end

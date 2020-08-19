@@ -34,8 +34,6 @@
   Dumping functions for simulation code structures.
 """
 
-using SimulationCode
-
 function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String)
   print(BDAE.DOUBLE_LINE + "\n")
   print("SIM_CODE: " + heading + "\n")

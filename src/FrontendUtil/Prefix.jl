@@ -9,7 +9,7 @@ using ExportAll
 @UniontypeDecl ClassPrefix
 
 import SCode
-import ClassInf
+import ..ClassInf
 
 #= A Prefix has a component prefix and a class prefix.
 The component prefix consist of a name an a list of constant valued subscripts.

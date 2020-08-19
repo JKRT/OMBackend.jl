@@ -29,7 +29,6 @@
 *
 =#
 
-import BDAEUtil
 
 using MetaModelica
 
@@ -70,11 +69,11 @@ function Base.string(dae::BDAE.BDAEStructure)::String
   return str
 end
 
-function Base.string(eq::BDAE.EqSystem)::String
-  str::String = ""
-  str = str + heading3("Variables") + BDAEUtil.mapEqSystemVariablesNoUpdate(eq, stringTraverse, "") + "\n"
-  str = str + heading3("Equations") + BDAEUtil.mapEqSystemEquationsNoUpdate(eq, stringTraverse, "") + "\n"
-end
+# function Base.string(eq::BDAE.EqSystem)::String
+#   str::String = ""
+#   str = str + heading3("Variables") + BDAEUtil.mapEqSystemVariablesNoUpdate(eq, stringTraverse, "") + "\n"
+#   str = str + heading3("Equations") + BDAEUtil.mapEqSystemEquationsNoUpdate(eq, stringTraverse, "") + "\n"
+# end
 
 function stringTraverse(in, str)::String
   str = str + string(in)

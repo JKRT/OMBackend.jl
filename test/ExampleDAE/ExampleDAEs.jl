@@ -2,13 +2,14 @@ module ExampleDAEs
 
 using Absyn
 using MetaModelica
-using BDAE
 using ImmutableList
-
-import DAE
-import Prefix
 import SCode
-import ClassInf
+
+using ..FrontendUtil
+
+import .DAE
+import .Prefix
+import .ClassInf
 
 include("helloWorld.jl")
 include("bouncingBall.jl")

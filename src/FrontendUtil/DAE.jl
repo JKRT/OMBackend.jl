@@ -36,11 +36,11 @@ using ExportAll
 
 include("DAE_Interface.jl")
 
+import ..AbsynUtil
+import ..ClassInf
+import ..Values
 import Absyn
-import AbsynUtil
-import ClassInf
 import SCode
-import Values
 
 const UNIQUEIO = "uniqueouter"::String
 

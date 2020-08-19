@@ -38,9 +38,9 @@ module BDAECreate
 using MetaModelica
 using ExportAll
 
-import DAE
-import BDAE
-import BDAEUtil
+import ..DAE
+import ..BDAE
+import ..BDAEUtil
 
 """
   This function translates a DAE, which is the result from instantiating a

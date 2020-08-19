@@ -35,10 +35,16 @@
 """
 module SimulationCode
 
-import DAE
-import BDAE
 using MetaModelica
 using DataStructures
+using Setfield
+
+using ..FrontendUtil
+using ..Backend
+
+import ..FrontendUtil.DAE
+import ..Backend.BDAE
+
 
 """
 Kind of a simulation variable
@@ -159,5 +165,6 @@ end
 We include directly, since Julia does not allow circular imports
 =#
 include("simCodeDump.jl")
+include("simulationCodeTransformation.jl")
 
 end # module SimulationCode

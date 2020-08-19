@@ -1,6 +1,6 @@
 module Util
 
-import DAE
+import ..DAE
 import DoubleEnded
 
 using MetaModelica
@@ -425,9 +425,19 @@ function transposeNestedListAccumulator(lstlst::List{List{T}}, acc::List{List{T}
   local rest::List{List{T}}=nil
   local tmpLst::List{T}
   local tmp::T
-
-  tmpLst <| _ = lstlst
+  @match tmpLst <| _ = lstlst
   if listLength(tmpLst) == 0
+    for lst in lstlst
+      tmp <| lst = lst
+      tmpLst = tmp <| tmpLst
+      rest = lst <| rest
+    end
+    transposeNestedListAccumulator(listReverse(rest), tmpLst <| acc)
+  end
+  return acc
+end
+
+
 #= author: lochel
 This function extracts all crefs from the input expression, except 'time'. =#
 function getAllCrefs(inExp::DAE.Exp)::List{DAE.ComponentRef}
@@ -448,18 +458,6 @@ function getAllCrefs2(inExp::DAE.Exp, inCrefList::List{<:DAE.ComponentRef})::Tup
   end
   (outExp, outCrefList)
 end
-    return acc
-  end
-
-  for lst in lstlst
-    tmp <| lst = lst
-    tmpLst = tmp <| tmpLst
-    rest = lst <| rest
-  end
-  transposeNestedListAccumulator(listReverse(rest), tmpLst <| acc)
-end
-
-
 
 
 end #=End Util=#

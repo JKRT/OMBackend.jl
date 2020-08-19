@@ -31,17 +31,20 @@
 
 module CodeGeneration
 
-import Absyn
-import BDAE
-import DAE
-#import GraphAlgorithms
 using DataStructures
 using MetaModelica
 using Setfield
-using SimulationCode
+
+using ..FrontendUtil
+using ..Backend
+using ..SimulationCode
+
+#import GraphAlgorithms
+import ..Backend.BDAE
+import ..FrontendUtil.DAE
+import Absyn
 
 include("codeGenerationUtil.jl")
-include("simulationCodeTransformation.jl")
 
 """
   The header string with the necessary imports

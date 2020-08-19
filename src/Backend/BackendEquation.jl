@@ -35,8 +35,8 @@ using MetaModelica
 
 using ExportAll
 
-import DAE
-import BDAE
+import ..DAE
+import ..BDAE
 
 """
     kabdelhak:

@@ -1,4 +1,5 @@
 module AbsynUtil
+
 import Absyn
 using MetaModelica
 using Absyn
