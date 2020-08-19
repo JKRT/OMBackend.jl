@@ -174,6 +174,7 @@ function detectStateExpression(exp::DAE.Exp, stateCrefs::Dict{DAE.ComponentRef, 
   return (exp, cont, outCrefs)
 end
 
+
 """
     kabdelhak:
     Traverses all variables and uses a hashmap to determine if a variable needs

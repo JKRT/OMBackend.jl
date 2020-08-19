@@ -62,11 +62,9 @@ function makeResidualEquation(eqn::BDAE.Equation)::BDAE.Equation
       BDAE.EQUATION(lhs, rhs, source, attr) => begin
         BDAE.RESIDUAL_EQUATION(makeResidualExp(lhs, rhs), source, attr)
       end
-
       BDAE.IF_EQUATION(__) => begin
         (eqn) #makeResidualIfEquation(eqn)
       end
-
       _ => begin
         (eqn)
       end
@@ -149,6 +147,23 @@ function concenateEquations(eqs::Array{BDAE.EqSystem})::Array{BDAE.Equation}
   return eqArr
 end
 
+"
+  Author:johti17
+  input: Backend Equation, eq
+  input: All existing variables
+  output All variable in that specific equation
+"
+function getAllVariables(eq::BDAE.Equation, vars::Array{BDAE.Var})::Array{DAE.ComponentRef}
+  componentReferences = Util.getAllCrefs(eq)
+  varNames = [v.varName for v in vars]
+  variablesInEq::Array = []
+  for vn in varNames
+    if vn in componentReferences
+      push!(vn, variablesInEq)
+    end
+  end
+  return variablesInEq
+end
 
 @exportAll()
 end

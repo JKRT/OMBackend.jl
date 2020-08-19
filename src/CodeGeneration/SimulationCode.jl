@@ -38,6 +38,7 @@ module SimulationCode
 import DAE
 import BDAE
 using MetaModelica
+using DataStructures
 
 """
 Kind of a simulation variable
@@ -94,19 +95,64 @@ struct SIMVAR <: SimVar
   attributes::Option{DAE.VariableAttributes}
 end
 
+"Abstract type for simulation code"
+abstract type SimCode end
 
 """
   Root data structure containing information required for code generation to
   generate simulation code for a Modelica model.
 """
-struct SIM_CODE
+struct SIM_CODE <: SimCode
   name::String
   "Mapping of names to the corresponding variable"
   crefToSimVarHT::Dict{String, Tuple{Integer, SimVar}}
-  "Different kinds of equations stored within simulation code"
+  "Different equations stored within simulation code"
   residualEquations::Array{BDAE.RESIDUAL_EQUATION}
   whenEquations::Array{BDAE.WHEN_EQUATION}
   ifEquations::Array{BDAE.IF_EQUATION}
+end
+
+
+"""
+  This is the explicit representation of SimCode.
+  In this representation all residual equations
+  are sorted horisontally and vertically.
+  This representation is selected if we do not use DAE-Mode
+
+"""
+struct EXPLICIT_SIM_CODE <: SimCode
+  "Name of the model"
+  name::String
+  "Mapping of names to the corresponding variable.
+   Each variable has a unique index.
+   The purpose of this mapping is to have aliases for each unique index.
+   We also need to keep track of each simulation variable.
+  "
+  nameToVar::OrderedDict{String, Tuple{Integer, SimVar}}
+  indexToEquation::OrderedDict{Int, BDAE.RESIDUAL_EQUATION}
+  "Equation <-> Variable graph (Bidirectional)"
+  variableEqMapping::OrderedDict{String, Int}
+  "Regular equations are encoded as residuals"
+  residualEquations::Array{BDAE.RESIDUAL_EQUATION}
+  whenEquations::Array{BDAE.WHEN_EQUATION}
+  ifEquations::Array{BDAE.IF_EQUATION}
+  isSingular::Bool
+  "
+    The match order:
+    Result of assign array, e.g array(j) = equation_i
+  "
+  matchOrder::Array{Int}
+  "
+    The merged graph. E.g digraph constructed from matching info.
+    The indicies are the same as above and they are shared.
+    If the system is singular tearing is needed.
+  "
+  sortedGraph::OrderedDict{Int,Array{Int}}
+  "
+    The strongly connected components of the sorted graph.
+    This information can be used for tearing.
+  "
+  stronglyConnectedComponents::Array
 end
 
 #=

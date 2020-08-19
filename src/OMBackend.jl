@@ -31,15 +31,22 @@
 
 #= Setup to support multiple modules by adding them to the load path =#
 const CURRENT_DIRECTORY = @__DIR__
-const BACKEND_DIRECTORY = CURRENT_DIRECTORY * "/Backend"
-const CODE_GENERATION_DIRECTORY = CURRENT_DIRECTORY * "/CodeGeneration"
+const BACKEND_DIRECTORY = realpath(CURRENT_DIRECTORY * "/Backend")
+const CODE_GENERATION_DIRECTORY = realpath(CURRENT_DIRECTORY * "/CodeGeneration")
+
+const EXAMPLE_DAE_DIRECTORY = realpath(CURRENT_DIRECTORY * "./../test/ExampleDAE")
+
+@info "Starting.."
+@info LOAD_PATH
 if ! (CURRENT_DIRECTORY in LOAD_PATH)
   @debug("Setting up loadpath..")
-  push!(LOAD_PATH, CURRENT_DIRECTORY, BACKEND_DIRECTORY, CODE_GENERATION_DIRECTORY)
+  push!(LOAD_PATH, CURRENT_DIRECTORY, BACKEND_DIRECTORY, CODE_GENERATION_DIRECTORY, EXAMPLE_DAE_DIRECTORY)
   @debug("Done setting up loadpath: $LOAD_PATH")
 end
 
+
 @info("initialize backend API")
+@info "Our current loadpath: $LOAD_PATH"
 
 module OMBackend
 
@@ -53,9 +60,31 @@ import Causalize
 import DAE
 import Prefix
 import SCode
+import Base.Meta
+@info "Test"
 import SimulationCode
 import CodeGeneration
-import Base.Meta
+import ExampleDAEs
+
+global EXAMPLE_MODELS = Dict("HelloWorld" => ExampleDAEs.helloWorld_DAE)
+
+function info()
+  println("OMBackend.jl")
+  println("A Julia backend for the Equation Oriented Language Modelica!")
+  println("Run any test module by executing runExample(<model-name>)")
+  println("Available Example models include:")
+  for (k,v) in EXAMPLE_MODELS
+    println(k)
+  end
+  println("Cheers // The Devs")
+end
+
+function runExample(modelName::String)
+  println("Translating Hybrid DAE of: $modelName")
+  translate(EXAMPLE_MODELS[modelName])
+  println("Translation done:")
+  println("Simulating with default settings:")
+end
 
 """
 Contains expressions of models in memory.
@@ -90,9 +119,9 @@ function lower(frontendDAE::DAE.DAE_LIST)::BDAE.BDAEStructure
 end
 
 """
-  Transforms causalized BDAE IR to simulation code
+  Transforms causalized BDAE IR to simulation code for DAE-mode
 """
-function generateSimulationCode(bDAE::BDAE.BDAEStructure)::SimulationCode.SIM_CODE
+function generateSimulationCode(bDAE::BDAE.BDAEStructure)::SimulationCode.SimCode
   simCode = CodeGeneration.transformToSimCode(bDAE)
   @debug BDAE.stringHeading1(simCode, "SIM_CODE: transformed simcode")
   return simCode
@@ -117,7 +146,7 @@ function writeModelToFile(modelName::String)
 end
 
 """
-Evaluates the inmemory representation of modelName
+  Evaluates the in memory representation of a named model
 """
 function simulateModel(modelName::String, tspan=(0.0, 1.0))
   local modelCode = COMPILED_MODELS[modelName]

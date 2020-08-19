@@ -34,11 +34,13 @@ module CodeGeneration
 import Absyn
 import BDAE
 import DAE
+#import GraphAlgorithms
+using DataStructures
 using MetaModelica
 using Setfield
 using SimulationCode
 
-include("CodeGenerationUtil.jl")
+include("codeGenerationUtil.jl")
 include("simulationCodeTransformation.jl")
 
 """

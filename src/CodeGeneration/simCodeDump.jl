@@ -30,11 +30,10 @@
 =#
 
 """
-  File: SimCodeDump.jl
+  File: simCodeDump.jl
   Dumping functions for simulation code structures.
 """
 
-using BDAE
 using SimulationCode
 
 function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String)

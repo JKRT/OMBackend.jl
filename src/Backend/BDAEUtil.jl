@@ -53,10 +53,15 @@ function convertVarArrayToBDAE_Variables(vars::Array{BDAE.Var})::BDAE.Variables
 end
 
 function createEqSystem(vars::BDAE.Variables, eqs::Array)
-  (BDAE.EQSYSTEM(vars, eqs, NONE(), NONE(), NONE(),
-                       BDAE.NO_MATCHING(), nil,
-                       BDAE.UNKNOWN_PARTITION(),
-                       BackendEquation.emptyEqns()))
+  (BDAE.EQSYSTEM(vars,
+                 eqs,
+                 NONE(),
+                 NONE(),
+                 NONE(),
+                 BDAE.NO_MATCHING(),
+                 nil,
+                 BDAE.UNKNOWN_PARTITION(),
+                 BackendEquation.emptyEqns()))
 end
 
 function mapEqSystems(dae::BDAE.BDAEStructure, traversalOperation::Function)

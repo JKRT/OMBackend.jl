@@ -1,5 +1,18 @@
 
 "
+  This files contains the various graph algorithms
+  Author: John Tinnerholm
+
+"
+module GraphAlgorithms
+
+import LightGraphs
+using GraphPlot
+using Compose
+using Cairo
+
+
+"
   Regular matching. Does not solve singularities.
   Author: John Tinnerholm
   input:
@@ -10,7 +23,7 @@
          isSingular::Boolean,          Boolean indicating if the system is singular or not.
 "
 
-function matching(dict::OrderedDict,n)
+function matching(dict::OrderedDict,n)::Tuple{Bool, Array}
   "Calculates the path for equation i"
   function PF(i)
     eMark[i] = true
@@ -70,10 +83,10 @@ function merge(matchOrder, graph::OrderedDict)
 
   local counter = 0
   local values = graph.vals
-  local g = SimpleDiGraph()
+  local g = LightGraphs.SimpleDiGraph()
   local arrRepresentation = []
   for i in matchOrder
-    add_vertex!(g)
+    LightGraphs.add_vertex!(g)
   end
   for eq in eqOrder
     counter += 1
@@ -82,7 +95,7 @@ function merge(matchOrder, graph::OrderedDict)
     solvedIn = matchOrder[c]
     for e in solvedIn
       push!(arrRepresentation, [e, eq])
-      add_edge!(g, e, eq)
+      LightGraphs.add_edge!(g, e, eq)
     end
   end
   #=Create the dict repr=#
@@ -164,3 +177,17 @@ function tarjan(g::OrderedDict, n)::Array
   end
   return sccs
 end
+
+"
+    Plots the given equation graph
+"
+function plotEquationGraph(filePath::String, g, labels::Array{String}, dims = {16cm, 16cm}::Tuple)
+  plot3 = gplot(g, nodelabel=labels,
+                nodefillc="blue",
+                nodelabelc="white",
+                edgestrokec="black",
+                layout=spring_layout)
+  draw(Compose.PDF(filePath, dims...), plot3)
+end
+
+end #= GraphAlgorithms =#

@@ -428,6 +428,26 @@ function transposeNestedListAccumulator(lstlst::List{List{T}}, acc::List{List{T}
 
   tmpLst <| _ = lstlst
   if listLength(tmpLst) == 0
+#= author: lochel
+This function extracts all crefs from the input expression, except 'time'. =#
+function getAllCrefs(inExp::DAE.Exp)::List{DAE.ComponentRef}
+  local outCrefs::List{DAE.ComponentRef}
+  (_, outCrefs) = traverseExpBottomUp(inExp, getAllCrefs2, nil)
+  outCrefs
+end
+
+function getAllCrefs2(inExp::DAE.Exp, inCrefList::List{<:DAE.ComponentRef})::Tuple{DAE.Exp, List{DAE.ComponentRef}}
+  local outCrefList::List{DAE.ComponentRef} = inCrefList
+  local outExp::DAE.Exp = inExp
+  local cr::DAE.ComponentRef
+  if isCref(inExp)
+    @match DAE.CREF(componentRef = cr) = inExp
+    if ! listMember(cr, inCrefList)
+      outCrefList = _cons(cr, outCrefList)
+    end
+  end
+  (outExp, outCrefList)
+end
     return acc
   end
 
@@ -438,5 +458,8 @@ function transposeNestedListAccumulator(lstlst::List{List{T}}, acc::List{List{T}
   end
   transposeNestedListAccumulator(listReverse(rest), tmpLst <| acc)
 end
+
+
+
 
 end #=End Util=#

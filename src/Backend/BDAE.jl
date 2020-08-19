@@ -320,10 +320,11 @@ end
 end
 
 #=Simplify construction of var=#
-VAR(varName,varKind,varType) = let
-  VAR(varName, varKind, DAE.BIDIR(), varType, NONE(), nil, DAE.emptyElementSource,
-      NONE(), NONE(), DAE.NON_CONNECTOR(), true #= Unreplaceable =#)
-end
+VAR(varName,varKind,varType) =
+  let
+    VAR(varName, varKind, DAE.BIDIR(), varType, NONE(), nil, DAE.emptyElementSource,
+        NONE(), NONE(), DAE.NON_CONNECTOR(), true #= Unreplaceable =#)
+  end
 
 #= variable kind =#
 @Uniontype VarKind begin
@@ -616,13 +617,6 @@ end
     source #= origin of equation =#::DAE.ElementSource
   end
 end
-
-#=
-=#
-#=   Matching, strong components and StateSets
-=#
-#=
-=#
 
 @Uniontype Matching begin
   @Record NO_MATCHING begin
@@ -1011,7 +1005,5 @@ end
 const emptyDAEModeData = BDAE_MODE_DATA(nil, nil, 0, NONE())::BDAEModeData
 
 include("backendDump.jl")
-
 @exportAll()
-
 end

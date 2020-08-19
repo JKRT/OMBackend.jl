@@ -16,11 +16,9 @@ The component prefix consist of a name an a list of constant valued subscripts.
 The class prefix contains the variability of the class, i.e unspecified, parameter or constant. =#
 @Uniontype PrefixType begin
   @Record NOPRE begin
-
   end
 
   @Record PREFIX begin
-
     compPre #= component prefixes are stored in inverse order c.b.a =#::ComponentPrefix
     classPre #= the class prefix, i.e. variability, var, discrete, param, const =#::ClassPrefix
   end
@@ -41,7 +39,6 @@ NOTE: Component prefixes are stored in inverse order c.b[2].a! =#
   end
 
   @Record NOCOMPPRE begin
-
   end
 end
 
