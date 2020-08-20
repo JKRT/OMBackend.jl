@@ -37,6 +37,7 @@ using ExportAll
 
 import ..DAE
 import ..BDAE
+import ..Util
 
 """
     kabdelhak:
@@ -153,8 +154,8 @@ end
   input: All existing variables
   output All variable in that specific equation
 "
-function getAllVariables(eq::BDAE.Equation, vars::Array{BDAE.Var})::Array{DAE.ComponentRef}
-  componentReferences = Util.getAllCrefs(eq)
+function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Array{BDAE.Var})::Array{DAE.ComponentRef}
+  componentReferences = Util.getAllCrefs(eq.exp)
   varNames = [v.varName for v in vars]
   variablesInEq::Array = []
   for vn in varNames

@@ -36,16 +36,16 @@ const HEAD_LINE = "#############################################"::String
 const DOUBLE_LINE = "============================================"::String
 const LINE = "---------------------------------------------"::String
 
-function stringHeading1(in::Any, heading::String)::String
-  str = heading1(heading) + "\n" + string(in)
+function stringHeading1(i::Any, heading::String)::String
+  str = heading1(heading) + "\n" + string(i)
 end
 
-function stringHeading2(in::Any, heading::String)::String
-  str = heading2(heading) + "\n" + string(in)
+function stringHeading2(i::Any, heading::String)::String
+  str = heading2(heading) + "\n" + string(i)
 end
 
-function stringHeading3(in::Any, heading::String)::String
-  str = heading3(heading) + string(in)
+function stringHeading3(i::Any, heading::String)::String
+  str = heading3(heading) + string(i)
 end
 
 
@@ -69,11 +69,11 @@ function Base.string(dae::BDAE.BDAEStructure)::String
   return str
 end
 
-# function Base.string(eq::BDAE.EqSystem)::String
-#   str::String = ""
-#   str = str + heading3("Variables") + BDAEUtil.mapEqSystemVariablesNoUpdate(eq, stringTraverse, "") + "\n"
-#   str = str + heading3("Equations") + BDAEUtil.mapEqSystemEquationsNoUpdate(eq, stringTraverse, "") + "\n"
-# end
+function Base.string(eq::BDAE.EqSystem)::String
+  str::String = ""
+  str = str + heading3("Variables") + BDAEUtil.mapEqSystemVariablesNoUpdate(eq, stringTraverse, "") + "\n"
+  str = str + heading3("Equations") + BDAEUtil.mapEqSystemEquationsNoUpdate(eq, stringTraverse, "") + "\n"
+end
 
 function stringTraverse(in, str)::String
   str = str + string(in)

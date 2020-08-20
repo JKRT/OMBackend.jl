@@ -162,9 +162,10 @@ struct EXPLICIT_SIM_CODE <: SimCode
 end
 
 #=
-We include directly, since Julia does not allow circular imports
+  We include directly, since Julia does not allow circular imports
 =#
 include("simCodeDump.jl")
 include("simulationCodeTransformation.jl")
+include("explicitSimCode.jl")
 
 end # module SimulationCode

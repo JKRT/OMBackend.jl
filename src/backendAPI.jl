@@ -4,6 +4,7 @@ using Absyn
 
 import .Backend.BDAE
 import .Backend.BDAECreate
+import .Backend.BDAEUtil
 import .Backend.Causalize
 import ..CodeGeneration
 import OMBackend.ExampleDAEs
@@ -12,8 +13,14 @@ import .FrontendUtil.Prefix
 import .SimulationCode
 import Base.Meta
 import SCode
-@info "Test"
+
 global EXAMPLE_MODELS = Dict("HelloWorld" => OMBackend.ExampleDAEs.helloWorld_DAE)
+
+#=Settings=#
+@enum BackendMode begin
+  DAE_MODE = 1
+  ODE_MODE = 2
+end
 
 function info()
   println("OMBackend.jl")
@@ -35,6 +42,17 @@ function runExample(modelName::String)
   println("Model now in memory")
 end
 
+
+function runExampleExplicit(modelName::String)
+  println("Translating Hybrid DAE of: $modelName")
+  translate(EXAMPLE_MODELS[modelName], ODE_MODE)
+  println("Translation done:")
+#  println("Simulating with default settings:")
+#  simulateModel(modelName)
+#  println("Model now in memory")
+end
+
+
 """
 Contains expressions of models in memory.
 Do NOT mutate in other modules!
@@ -42,10 +60,20 @@ Do NOT mutate in other modules!
 """
 global COMPILED_MODELS = Dict()
 
-function translate(frontendDAE::DAE.DAE_LIST)::Tuple{String, String}
+function translate(frontendDAE::DAE.DAE_LIST, BackendMode = DAE_MODE)::Tuple{String, String}
   local bDAE = lower(frontendDAE)
-  local simCode = generateSimulationCode(bDAE)
-  generateTargetCode(simCode)
+  local simCode
+  if BackendMode == DAE_MODE
+    simCode = generateSimulationCode(bDAE)
+    generateTargetCode(simCode)
+  elseif BackendMode == ODE_MODE
+    simCode = generateExplicitSimulationCode(bDAE)
+    generateTargetCodeDASSL(simCode)
+  else
+    @error "No mode specificed: valid modes are:"
+    println("ODE_MODE")
+    println("DAE_MODE")
+  end
 end
 
 """
@@ -57,13 +85,13 @@ function lower(frontendDAE::DAE.DAE_LIST)::BDAE.BDAEStructure
   @assert typeof(listHead(frontendDAE.elementLst)) == DAE.COMP
   #= Create Backend structure from Frontend structure =#
   bDAE = BDAECreate.lower(frontendDAE)
-  @debug(BDAE.stringHeading1(bDAE, "translated"));
+  @info(BDAEUtil.stringHeading1(bDAE, "translated"));
   bDAE = Causalize.detectIfEquations(bDAE)
-  @debug(BDAE.stringHeading1(bDAE, "if equations transformed"));
+  @debug(BDAEUtil.stringHeading1(bDAE, "if equations transformed"));
   bDAE = Causalize.detectStates(bDAE)
-  @debug(BDAE.stringHeading1(bDAE, "states marked"));
+  @debug(BDAEUtil.stringHeading1(bDAE, "states marked"));
   bDAE = Causalize.residualizeEveryEquation(bDAE)
-  @debug(BDAE.stringHeading1(bDAE, "residuals"));
+  @debug(BDAEUtil.stringHeading1(bDAE, "residuals"));
   return bDAE
 end
 
@@ -72,6 +100,16 @@ end
 """
 function generateSimulationCode(bDAE::BDAE.BDAEStructure)::SimulationCode.SimCode
   simCode = SimulationCode.transformToSimCode(bDAE)
+  @debug BDAE.stringHeading1(simCode, "SIM_CODE: transformed simcode")
+  return simCode
+end
+
+
+"""
+  Transforms causalized BDAE IR to simulation code for DAE-mode
+"""
+function generateExplicitSimulationCode(bDAE::BDAE.BDAEStructure)::SimulationCode.SimCode
+  simCode = SimulationCode.transformToExplicitSimCode(bDAE)
   @debug BDAE.stringHeading1(simCode, "SIM_CODE: transformed simcode")
   return simCode
 end
@@ -88,6 +126,17 @@ function generateTargetCode(simCode::SimulationCode.SIM_CODE)
   @debug "Model:" modelName
   COMPILED_MODELS[modelName] = modelCode
   return (modelName, modelCode)
+end
+
+
+"""
+  Generates code interfacing DifferentialEquations.jl
+  The resulting code is saved in a dictonary which contains functions that where simulated
+  this session. Returns the generated modelName and corresponding generated code
+"""
+function generateTargetCode(simCode::SimulationCode.EXPLICIT_SIM_CODE)
+  #= Target code =#
+  @info "Code generation for explicit simcode is not yet supported"
 end
 
 function writeModelToFile(modelName::String)

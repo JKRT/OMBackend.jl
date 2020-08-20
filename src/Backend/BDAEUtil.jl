@@ -31,10 +31,11 @@
 
 module BDAEUtil
 
+import Absyn
 using MetaModelica
-
 using ExportAll
 using Setfield
+
 
 import ..DAE
 import ..Util
@@ -172,5 +173,15 @@ function DAE_VarKind_to_BDAE_VarKind(kind::DAE.VarKind)::BDAE.VarKind
   end
 end
 
+function isStateOrVariable(kind::BDAE.VarKind)
+  res = @match kind begin
+  BDAE.VARIABLE(__) => true
+  BDAE.STATE(__) => true
+  _ => false
+  end
+  return res
+end
+
+include("backendDump.jl")
 @exportAll()
 end

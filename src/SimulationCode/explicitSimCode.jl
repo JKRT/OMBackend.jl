@@ -1,11 +1,11 @@
 
 """
-TODO:
-This function transforms DAE-mode style simcode into explicit simcode.
-In explicit simcode the residual equations are sorted vertically and horisontally
-#1 Get all variables beloning to a specific residual
-"""
-function transformToExplicitSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.EXPLICIT_SIMCODE
+  TODO:
+  This function transforms DAE-mode style simcode into explicit simcode.
+  In explicit simcode the residual equations are sorted vertically and horisontally
+    #1 Get all variables beloning to a specific residual
+ """
+function transformToExplicitSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.EXPLICIT_SIM_CODE
   local equationSystems::Array = backendDAE.eqs
   local allOrderedVars::Array{BDAE.Var} = [v for es in equationSystems for v in es.orderedVars.varArr]
   local allSharedVars::Array{BDAE.Var} = getSharedVariablesLocalsAndGlobals(backendDAE.shared)
@@ -16,15 +16,15 @@ function transformToExplicitSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCod
   #= Split equations into three parts. Residuals whenEquations and If-equations =#
   (resEqs,whenEqs,ifEqs) = allocateAndCollectSimulationEquations(equations)
   #=Only assume I have residuals for now=#
-  assert(length(whenEqs) == 0)
-  assert(length(ifEqs) == 0)
+  @assert(length(whenEqs) == 0, "IF EQUATION NOT YET SUPPORTED IN EXPLICIT CODE GEN")
+  @assert(length(ifEqs) == 0, "WHEN EQUATION NOT YET SUPPORTED IN EXPLICIT CODE GEN")
   local indexToEquation = createEquationIndicies(resEqs)
   #= Create equation <-> variable mapping =#
-  local variableEqMapping = createEquationVariableBidirectionGraph(equations, allBackendVars)
+  local variableEqMapping = createEquationVariableBidirectionGraph(equations, allBackendVars, crefToSimVarHT)
   (isSingular::Bool, matchOrder::Array) = GraphAlgorithms.matching(dict, length(dict.keys))
   (_, labels, sortedGraph::OrderedDict) = GraphAlgorithms.merge(machOrder, variableEqMapping)
   stronglyConnectedComponents::Array = GraphAlgorithms.tarjan(sortedGraph)
-  return SimulationCode.EXPLICIT_SIMCODE(backendDAE.name,
+  return SimulationCode.EXPLICIT_SIM_CODE(backendDAE.name,
                                          crefToSimVarHT,
                                          indexToEquation,
                                          variableEqMapping,
@@ -41,9 +41,13 @@ function createEquationVariableBidirectionGraph(equations, allBackendVars, crefT
   local eqCounter::Int = 1
   local varCounter::Int = 1
   local variableEqMapping = OrderedDict()
-  assert(length(equations) == length(allBackendVars), "The set of variables != set of equations")
+  local unknownVariables = filter((x) -> BDAEUtil.isStateOrVariable(x.varKind), allBackendVars)
+  nEquations = length(equations)
+  nVariables = length(unknownVariables)
+  @assert(nEquations == nVariables, "The set of variables != set of equations: #Variables: $nVariables, #Equations $nEquations")
   for eq in equations
-    variablesForEq = getAllVariables(eq, allBackendVars)
+    variablesForEq = Backend.BackendEquation.getAllVariables(eq, allBackendVars)
+    @info "After getting variables"
     variableEqMapping["e$(eqCounter)"] = getIndiciesOfVariables(variablesForEq,crefToSimVarHT)
     eqCounter += 1
   end
@@ -60,19 +64,18 @@ end
 
 function createEquationIndicies(resEqs)
   local index = 1;
-  local ht::OrderedDict()
+  local ht::OrderedDict = OrderedDict()
   for e in resEqs
     ht["e$(index)"] = e
   end
   return ht
 end
 
-function createExplicitIndicies(simVar:Array{SimulationCode.SIMVAR})
-  local ht::OrderedDict{String, Tuple{Integer, SimulationCode.SimVar}} = Dict()
+function createExplicitIndicies(simulationVars::Array{SIMVAR})
+  local ht::OrderedDict{String, Tuple{Integer, SimulationCode.SimVar}} = OrderedDict()
   local stateCounter = 0
   local parameterCounter = 0
   local numberOfStates = 0
-  for var in simulationVars
   for var in simulationVars
     @match var.varKind begin
       SimulationCode.STATE(__) => begin

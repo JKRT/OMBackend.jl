@@ -442,21 +442,31 @@ end
 This function extracts all crefs from the input expression, except 'time'. =#
 function getAllCrefs(inExp::DAE.Exp)::List{DAE.ComponentRef}
   local outCrefs::List{DAE.ComponentRef}
-  (_, outCrefs) = traverseExpBottomUp(inExp, getAllCrefs2, nil)
+  (_, _, outCrefs) = traverseExpTopDown(inExp, getAllCrefs2, nil)
   outCrefs
 end
 
-function getAllCrefs2(inExp::DAE.Exp, inCrefList::List{<:DAE.ComponentRef})::Tuple{DAE.Exp, List{DAE.ComponentRef}}
+function getAllCrefs2(inExp::DAE.Exp, inCrefList::List{<:DAE.ComponentRef})::Tuple{DAE.Exp, Bool, List{DAE.ComponentRef}}
   local outCrefList::List{DAE.ComponentRef} = inCrefList
   local outExp::DAE.Exp = inExp
   local cr::DAE.ComponentRef
+  @info "Before cref check"
   if isCref(inExp)
     @match DAE.CREF(componentRef = cr) = inExp
     if ! listMember(cr, inCrefList)
       outCrefList = _cons(cr, outCrefList)
     end
   end
-  (outExp, outCrefList)
+  @info "Returning exp:$outExp and list: $outCrefList"
+  (outExp, false, outCrefList)
+end
+
+function isCref(inExp::DAE.Exp)
+  res = @match inExp begin
+    DAE.CREF(__) => true
+    _ => false
+  end
+  return res
 end
 
 
