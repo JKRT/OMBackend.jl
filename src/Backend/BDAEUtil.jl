@@ -37,7 +37,7 @@ using ExportAll
 using Setfield
 
 
-import ..DAE
+import DAE
 import ..Util
 
 import ..BDAE

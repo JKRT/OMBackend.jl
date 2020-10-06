@@ -49,7 +49,6 @@ if ! (CURRENT_DIRECTORY in LOAD_PATH && EXAMPLE_DAE_DIRECTORY in LOAD_PATH)
   @info("Done setting up loadpath: $LOAD_PATH")
 end
 using ExampleDAEs
-#global TEST_CASES = ["helloWorld", "lotkaVolterra", "vanDerPol", "influenza", "bouncingBall"]
 
 """
 These currently work
@@ -60,44 +59,88 @@ global TEST_CASES = ["helloWorld", "lotkaVolterra", "vanDerPol"]
 #using ExampleDAEs
 global MODEL_NAME = ""
 @testset "UnitTests" begin
-  for testCase in TEST_CASES
-    @testset "$testCase" begin
-      @testset "compile" begin
-        global MODEL_NAME
-        frontendDAE::OMBackend.DAE.DAE_LIST = getfield(ExampleDAEs,Symbol("$(testCase)_DAE"))
-        try
-          #= TODO: We should check this with some reference IR =#
-          (MODEL_NAME, modelCode) = OMBackend.translate(frontendDAE)
-          @debug generateFile(testCase, modelCode)
-          @info MODEL_NAME
-          @test true
-        catch e
-          @info e
-          throw(e)
-          @test false
+  @testset "DAE-mode" begin
+    for testCase in TEST_CASES
+      @testset "$testCase" begin
+        @testset "compile" begin
+          global MODEL_NAME
+          frontendDAE::OMBackend.DAE.DAE_LIST = getfield(ExampleDAEs,Symbol("$(testCase)_DAE"))
+          try
+            #= TODO: We should check this with some reference IR =#
+            (MODEL_NAME, modelCode) = OMBackend.translate(frontendDAE)
+            @debug generateFile(testCase, modelCode)
+            @info MODEL_NAME
+            @test true
+          catch e
+            @info e
+            throw(e)
+            @test false
+          end
         end
-      end
-      @testset "simulate" begin
-        global MODEL_NAME
-        try
-          simulationResults = OMBackend.simulateModel(MODEL_NAME, (0.0,10.0))
-          simTable = Tables.table(simulationResults)
-          CSV.write("$(testCase)_result.csv", simTable)
-          @debug "Simulation results:" simulationResults
-          @test true
-        catch e
-          @info e
-          @test false
+        @testset "simulate" begin
+          global MODEL_NAME
+          try
+            simulationResults = OMBackend.simulateModel(MODEL_NAME, (0.0,10.0))
+            simTable = Tables.table(simulationResults)
+            CSV.write("$(testCase)_result.csv", simTable)
+            @debug "Simulation results:" simulationResults
+            @test true
+          catch e
+            @info e
+            @test false
+          end
         end
-      end
-      #= TODO: Currently issues due to difference in csv format =#
-      @testset "validate solution" begin
-        local omc_table::Array = Tables.matrix(CSV.read("./OMC_Reference/$(testCase)_res.csv"))
-        local julia_table::Array = Tables.matrix(CSV.read("$(testCase)_result.csv"))
-        @test_broken omc_table ≈ julia_table
-        #= Delete the file =#
-        #rm("$(testCase)_result.csv")
+        #= TODO: Currently issues due to difference in csv format =#
+        @testset "validate solution" begin
+          local omc_table::Array = Tables.matrix(CSV.read("./OMC_Reference/$(testCase)_res.csv"))
+          local julia_table::Array = Tables.matrix(CSV.read("$(testCase)_result.csv"))
+          @test_broken omc_table ≈ julia_table
+          #= Delete the file =#
+          #rm("$(testCase)_result.csv")
+        end
       end
     end
+  end
+
+  @testset "ODE-mode" begin
+    for testCase in TEST_CASES
+      @testset "$testCase" begin
+        @testset "compile" begin
+          global MODEL_NAME
+          frontendDAE::OMBackend.DAE.DAE_LIST = getfield(ExampleDAEs,Symbol("$(testCase)_DAE"))
+          try
+            #= TODO: We should check this with some reference IR =#
+            (MODEL_NAME, modelCode) = OMBackend.translate(frontendDAE)
+            @debug generateFile(testCase, modelCode)
+            @info MODEL_NAME
+            @test true
+          catch e
+            @info e
+            throw(e)
+            @test false
+          end
+        end
+        @testset "simulate" begin
+          global MODEL_NAME
+          try
+            simulationResults = OMBackend.simulateModel(MODEL_NAME, (0.0,10.0))
+            simTable = Tables.table(simulationResults)
+            CSV.write("$(testCase)_result.csv", simTable)
+            @debug "Simulation results:" simulationResults
+            @test true
+          catch e
+            @info e
+            @test false
+          end
+        end
+        #= TODO: Currently issues due to difference in csv format =#
+        @testset "validate solution" begin
+          local omc_table::Array = Tables.matrix(CSV.read("./OMC_Reference/$(testCase)_res.csv"))
+          local julia_table::Array = Tables.matrix(CSV.read("$(testCase)_result.csv"))
+          @test_broken omc_table ≈ julia_table
+          #= Delete the file =#
+          #rm("$(testCase)_result.csv")
+        end
+      end
   end
 end

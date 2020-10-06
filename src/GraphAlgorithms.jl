@@ -1,20 +1,18 @@
 
 "
-  This files contains the various graph algorithms.
-
-  More specficially routines for matching, merging and strongly connected components
-
+  This files contains the various graph algorithms
   Author: John Tinnerholm
 
 "
 module GraphAlgorithms
 
 import LightGraphs
+
 using GraphPlot
 using Compose
 using Cairo
 using DataStructures
-
+import DataStructures.OrderedDict
 
 "
   Regular matching. Does not solve singularities.
@@ -27,7 +25,7 @@ using DataStructures
          isSingular::Boolean,          Boolean indicating if the system is singular or not.
 "
 
-function matching(dict::OrderedDict,n)::Tuple{Bool, Array}
+function matching(dict::DataStructures.OrderedDict, n)::Tuple{Bool, Array}
   "Calculates the path for equation i"
   function PF(i)
     eMark[i] = true
@@ -57,7 +55,7 @@ function matching(dict::OrderedDict,n)::Tuple{Bool, Array}
   local assign = [0 for i in 1:n]
   local vMark = []
   local eMark = []
-  local isSingular = true
+  local isSingular = false
   @info "Starting"
   for i in 1:n
     vMark = [false for j in 1:n]
@@ -70,14 +68,12 @@ function matching(dict::OrderedDict,n)::Tuple{Bool, Array}
   return isSingular,assign
 end
 
-
-
 "
   Author: John Tinnerholm
   Given a order, and a graph represented as an adjacency list creates a new digraph
   representing a causalised system.
 "
-function merge(matchOrder, graph::OrderedDict)
+function merge(matchOrder, graph::DataStructures.OrderedDict)
   "
     Remove function for arrays...
   "
@@ -92,7 +88,7 @@ function merge(matchOrder, graph::OrderedDict)
   for i in matchOrder
     LightGraphs.add_vertex!(g)
   end
-  for eq in matchOrder
+  for eq in eqOrder
     counter += 1
     c = remove!(values[eq], counter)
     #=Now I need to know. What equation solves for the remaining variables=#
@@ -104,8 +100,7 @@ function merge(matchOrder, graph::OrderedDict)
   end
   #=Create the dict repr=#
   dictRepr = OrderedDict()
-  for i in 1:length(matchOrder)
-    key = i
+  for key in 1:length(matchOrder)
     dictRepr[key] = []
   end
   for i in arrRepresentation
@@ -113,10 +108,8 @@ function merge(matchOrder, graph::OrderedDict)
     push!(dictRepr[key], i[2])
   end
   labels = ["f$(matchOrder[i])|z$(i)"  for i in 1:length(matchOrder)]
-  return g, labels, dictRepr
+  return g,labels,dictRepr
 end
-
-
 
 "
   Author: John Tinnerholm

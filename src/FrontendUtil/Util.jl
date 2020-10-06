@@ -1,6 +1,6 @@
 module Util
 
-import ..DAE
+import DAE
 import DoubleEnded
 
 using MetaModelica
@@ -438,11 +438,12 @@ function transposeNestedListAccumulator(lstlst::List{List{T}}, acc::List{List{T}
 end
 
 
-#= author: lochel
-This function extracts all crefs from the input expression, except 'time'. =#
+" author: lochel
+  This function extracts all crefs from the input expression, except 'time'.
+"
 function getAllCrefs(inExp::DAE.Exp)::List{DAE.ComponentRef}
   local outCrefs::List{DAE.ComponentRef}
-  (_, _, outCrefs) = traverseExpTopDown(inExp, getAllCrefs2, nil)
+  (_, outCrefs) = traverseExpTopDown(inExp, getAllCrefs2, nil)
   outCrefs
 end
 
@@ -450,15 +451,13 @@ function getAllCrefs2(inExp::DAE.Exp, inCrefList::List{<:DAE.ComponentRef})::Tup
   local outCrefList::List{DAE.ComponentRef} = inCrefList
   local outExp::DAE.Exp = inExp
   local cr::DAE.ComponentRef
-  @info "Before cref check"
   if isCref(inExp)
     @match DAE.CREF(componentRef = cr) = inExp
     if ! listMember(cr, inCrefList)
       outCrefList = _cons(cr, outCrefList)
     end
   end
-  @info "Returning exp:$outExp and list: $outCrefList"
-  (outExp, false, outCrefList)
+  (outExp, true, outCrefList)
 end
 
 function isCref(inExp::DAE.Exp)

@@ -22,7 +22,6 @@ end
 
 """
 For all states give them initial values:
-For instance given 10 state variables,
 """
 function helloWorld_startConditions(p, t0)
   x0 = [1.0]

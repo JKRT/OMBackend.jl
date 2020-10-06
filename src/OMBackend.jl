@@ -29,32 +29,17 @@
 *
 */ =#
 
-#= Setup to support multiple modules by adding them to the load path =#
-
-# const BACKEND_DIRECTORY = realpath(CURRENT_DIRECTORY * "/Backend")
-# const CODE_GENERATION_DIRECTORY = realpath(CURRENT_DIRECTORY * "/CodeGeneration")
-# const EXAMPLE_DAE_DIRECTORY = realpath(CURRENT_DIRECTORY * "./../test/ExampleDAE")
-
-# @info "Starting.."
-# @info LOAD_PATH
-# if ! (CURRENT_DIRECTORY in LOAD_PATH)
-#   @debug("Setting up loadpath..")
-#   push!(LOAD_PATH, CURRENT_DIRECTORY, BACKEND_DIRECTORY, CODE_GENERATION_DIRECTORY, EXAMPLE_DAE_DIRECTORY)
-#   @debug("Done setting up loadpath: $LOAD_PATH")
-# end
-
-
-# @info("initialize backend API")
-# @info "Our current loadpath: $LOAD_PATH"
-
 module OMBackend
-
+import DAE
 const CURRENT_DIRECTORY = @__DIR__
+include("$CURRENT_DIRECTORY/globalConstants.jl")
+export PLOT_PACKAGE_GRAPH
 include("$CURRENT_DIRECTORY/FrontendUtil/FrontendUtil.jl")
+include("$CURRENT_DIRECTORY/BackendUtil/BackendUtil.jl")
 include("$CURRENT_DIRECTORY/Backend/Backend.jl")
 include("$CURRENT_DIRECTORY/SimulationCode/SimulationCode.jl")
 include("$CURRENT_DIRECTORY/CodeGeneration/CodeGeneration.jl")
 include("$CURRENT_DIRECTORY/../test/ExampleDAE/ExampleDAEs.jl")
+#= Finnaly add the API=#
 include("backendAPI.jl")
-
 end #=OMBackend=#

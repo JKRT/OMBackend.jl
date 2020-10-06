@@ -35,7 +35,7 @@ using MetaModelica
 
 using ExportAll
 
-import ..DAE
+import DAE
 import ..BDAE
 import ..Util
 
@@ -160,7 +160,7 @@ function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Array{BDAE.Var})::Arr
   variablesInEq::Array = []
   for vn in varNames
     if vn in componentReferences
-      push!(vn, variablesInEq)
+      push!(variablesInEq, vn)
     end
   end
   return variablesInEq

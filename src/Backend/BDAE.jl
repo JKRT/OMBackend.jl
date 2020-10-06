@@ -88,7 +88,7 @@ using ExportAll
 @UniontypeDecl BDAEModeData
 
 import Absyn
-import ..DAE
+import DAE
 import DoubleEnded
 import SCode
 
@@ -165,7 +165,7 @@ end
   end
 end
 
- const DEFAULT_SUBCLOCK = "TODO. NOT SUPPORTED"
+const DEFAULT_SUBCLOCK = "TODO. NOT SUPPORTED"
 
 @Uniontype BaseClockPartitionKind begin
   @Record UNKNOWN_PARTITION begin
@@ -551,7 +551,7 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
 
   @Record IF_EQUATION begin
     conditions #= Condition =#::List{DAE.Exp}
-    eqnstrue #= Equations of true branch =#::List{List{Equation}}
+    eqnstrue #= Equations of true branch =#::List{Equation}
     eqnsfalse #= Equations of false branch =#::List{Equation}
     source #= origin of equation =#::DAE.ElementSource
     attr::EquationAttributes

@@ -1,3 +1,4 @@
+import ..OMBackend
 
 """
   TODO:
@@ -11,33 +12,63 @@ function transformToExplicitSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCod
   local allSharedVars::Array{BDAE.Var} = getSharedVariablesLocalsAndGlobals(backendDAE.shared)
   local allBackendVars::Array{BDAE.Var} = vcat(allOrderedVars, allSharedVars)
   local simVars::Array{SimulationCode.SIMVAR} = allocateAndCollectSimulationVariables(allBackendVars)
-  local crefToSimVarHT = createExplicitIndicies(simVars)
+  local crefToSimVarHT::OrderedDict = createExplicitIndicies(simVars)
   local equations = [eq for es in equationSystems for eq in es.orderedEqs]
   #= Split equations into three parts. Residuals whenEquations and If-equations =#
   (resEqs,whenEqs,ifEqs) = allocateAndCollectSimulationEquations(equations)
   #=Only assume I have residuals for now=#
   @assert(length(whenEqs) == 0, "IF EQUATION NOT YET SUPPORTED IN EXPLICIT CODE GEN")
   @assert(length(ifEqs) == 0, "WHEN EQUATION NOT YET SUPPORTED IN EXPLICIT CODE GEN")
-  local indexToEquation = createEquationIndicies(resEqs)
+  local indexToEquation::OrderedDict = createEquationIndicies(resEqs)
   #= Create equation <-> variable mapping =#
-  local variableEqMapping = createEquationVariableBidirectionGraph(equations, allBackendVars, crefToSimVarHT)
-  (isSingular::Bool, matchOrder::Array) = GraphAlgorithms.matching(dict, length(dict.keys))
-  (_, labels, sortedGraph::OrderedDict) = GraphAlgorithms.merge(machOrder, variableEqMapping)
+  local eqVariableMapping = createEquationVariableBidirectionGraph(equations, allBackendVars, crefToSimVarHT)
+
+  (isSingular::Bool, matchOrder::Array) = GraphAlgorithms.matching(eqVariableMapping, length(eqVariableMapping.keys))
+  (g, labels, sortedGraph::OrderedDict) = GraphAlgorithms.merge(matchOrder, eqVariableMapping)
   stronglyConnectedComponents::Array = GraphAlgorithms.tarjan(sortedGraph)
+  if OMBackend.PLOT_EQUATION_GRAPH
+    @info "Plotting"
+    GraphAlgorithms.plotEquationGraph("./digraphOutput$(backendDAE.name).pdf", g, labels)
+  end
+  #= Reorder the residuals =#
+  reOrderedResiduals = []
+  reverseTopologicalSort = stronglyConnectedComponents
+
+  #= Check algebraic loops =#
+  loopsExist = false
+  for i in reverseTopologicalSort
+    if length(i) > 1
+      loopsExist = true
+      break
+    end
+  end
+  @info reverseTopologicalSort
+  if ! loopsExist
+    for i in reverseTopologicalSort
+      push!(reOrderedResiduals, resEqs[i[1]])
+    end
+  else
+    @info "Loop encountered exiting..."
+    @error "Unresolved loop"
+  end
+
   return SimulationCode.EXPLICIT_SIM_CODE(backendDAE.name,
                                          crefToSimVarHT,
                                          indexToEquation,
-                                         variableEqMapping,
-                                         resEqs,
+                                         eqVariableMapping,
+                                         reOrderedResiduals,
                                          whenEqs,
                                          ifEqs,
                                          isSingular,
                                          matchOrder,
                                          sortedGraph,
-                                         sortedGraph)
+                                         stronglyConnectedComponents)
 end
 
-function createEquationVariableBidirectionGraph(equations, allBackendVars, crefToSimVarHT)::Dict
+"
+ This function
+"
+function createEquationVariableBidirectionGraph(equations, allBackendVars, crefToSimVarHT)::OrderedDict
   local eqCounter::Int = 1
   local varCounter::Int = 1
   local variableEqMapping = OrderedDict()
@@ -45,10 +76,12 @@ function createEquationVariableBidirectionGraph(equations, allBackendVars, crefT
   nEquations = length(equations)
   nVariables = length(unknownVariables)
   @assert(nEquations == nVariables, "The set of variables != set of equations: #Variables: $nVariables, #Equations $nEquations")
+
+  @info "After getting variables"
   for eq in equations
+    #= Fetch all variables beloning to the specific equation =#
     variablesForEq = Backend.BackendEquation.getAllVariables(eq, allBackendVars)
-    @info "After getting variables"
-    variableEqMapping["e$(eqCounter)"] = getIndiciesOfVariables(variablesForEq,crefToSimVarHT)
+    variableEqMapping["e$(eqCounter)"] = getIndiciesOfVariables(variablesForEq, crefToSimVarHT)
     eqCounter += 1
   end
   return variableEqMapping
@@ -56,8 +89,16 @@ end
 
 function getIndiciesOfVariables(variables, crefToSimVarHT::OrderedDict{String, Tuple{Integer, SimVar}})::Array
   indicies = []
+  @info "crefToSimVar" crefToSimVarHT
+  @info "Variables:" variables
   for v in variables
-    push!(indicies, crefToSimVarHT[string(v)][1])
+    candidate = crefToSimVarHT[string(v)]
+    @info "Candidate:" candidate
+    if ! isStateOrAlgebraic(candidate[2])
+      continue
+    else
+      push!(indicies, candidate[1])
+    end
   end
   return indicies
 end
@@ -66,7 +107,8 @@ function createEquationIndicies(resEqs)
   local index = 1;
   local ht::OrderedDict = OrderedDict()
   for e in resEqs
-    ht["e$(index)"] = e
+    ht[index] = e
+    index += 1
   end
   return ht
 end

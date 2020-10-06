@@ -38,7 +38,7 @@ using ExportAll
 import ..BDAE
 import ..BDAEUtil
 import ..BackendEquation
-import ..DAE
+import DAE
 import Absyn
 
 """
@@ -135,10 +135,13 @@ global replaceIfExpressionWithTmpVar
       @match exp begin
         DAE.IFEXP(cond, expThen, expElse) => begin
           local varAsCREF::DAE.CREF = DAE.CREF(var, varType)
-          local backendVar = BDAE.VAR(varName, BDAE.VARIABLE(), varType)
+          local backendVar = BDAE.VAR(DAE.CREF_IDENT(varName, DAE.T_UNKNOWN_DEFAULT, nil),
+                                      BDAE.VARIABLE(), varType)
           tmpVarToElement[backendVar] = BDAE.IF_EQUATION(list(cond),
-                                             list(BDAE.EQUATION(varAsCREF,expThen, attr, emptySource)),
-                                             list(BDAE.EQUATION(varAsCREF, expElse, attr,emptySource)))
+                                                         list(BDAE.EQUATION(varAsCREF,expThen, emptySource, attr)),
+                                                         list(BDAE.EQUATION(varAsCREF, expElse, emptySource, attr)),
+                                                         emptySource,
+                                                         BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
           (varAsCREF, true, tmpVarToElement)
         end
         _ => begin

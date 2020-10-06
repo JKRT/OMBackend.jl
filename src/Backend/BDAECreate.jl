@@ -38,7 +38,7 @@ module BDAECreate
 using MetaModelica
 using ExportAll
 
-import ..DAE
+import DAE
 import ..BDAE
 import ..BDAEUtil
 
@@ -68,6 +68,8 @@ function lower(lst::DAE.DAE_LIST)::BDAE.BDAEStructure
     end
   end
   local variables = BDAEUtil.convertVarArrayToBDAE_Variables(varArray)
+  @debug "varArray:" length(variableLst)
+  @debug "eqLst:" length(equationLst)
   #= We start with an array of one system =#
   eqSystems = [BDAEUtil.createEqSystem(variables, eqArray)]
   outBDAE = BDAE.BACKEND_DAE(name, eqSystems, BDAE.SHARED_DUMMY())
@@ -118,6 +120,7 @@ function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple
           variableLst,equationLst = splitEquationsAndVars(elem.dAElist)
         end
         _ => begin
+          @info "We skipped:" elem
           continue
         end
       end
