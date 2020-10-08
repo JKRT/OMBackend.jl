@@ -168,8 +168,9 @@ function simulateModel(modelName::String, tspan=(0.0, 1.0))
   @debug "Generated modelCode : $modelCode"
   local res = Meta.parse("begin $modelCode end") #Hack
   @debug res
-  eval(res)
-  eval(Meta.parse("$(modelName)Simulate($(tspan))"))
+  @eval $res
+  local more = Meta.parse("$(modelName)Simulate($(tspan))")
+  @eval $more
 end
 
 """
