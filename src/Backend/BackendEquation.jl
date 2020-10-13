@@ -33,11 +33,11 @@ module BackendEquation
 
 using MetaModelica
 
-#= ExportAll is not good practice but it makes it so that we do not have to write export after each function :( =#
 using ExportAll
 
 import DAE
-import BDAE
+import ..BDAE
+import ..Util
 
 """
     kabdelhak:
@@ -63,11 +63,9 @@ function makeResidualEquation(eqn::BDAE.Equation)::BDAE.Equation
       BDAE.EQUATION(lhs, rhs, source, attr) => begin
         BDAE.RESIDUAL_EQUATION(makeResidualExp(lhs, rhs), source, attr)
       end
-
       BDAE.IF_EQUATION(__) => begin
         (eqn) #makeResidualIfEquation(eqn)
       end
-
       _ => begin
         (eqn)
       end
@@ -150,6 +148,23 @@ function concenateEquations(eqs::Array{BDAE.EqSystem})::Array{BDAE.Equation}
   return eqArr
 end
 
+"
+  Author:johti17
+  input: Backend Equation, eq
+  input: All existing variables
+  output All variable in that specific equation
+"
+function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Array{BDAE.Var})::Array{DAE.ComponentRef}
+  componentReferences = Util.getAllCrefs(eq.exp)
+  varNames = [v.varName for v in vars]
+  variablesInEq::Array = []
+  for vn in varNames
+    if vn in componentReferences
+      push!(variablesInEq, vn)
+    end
+  end
+  return variablesInEq
+end
 
 @exportAll()
 end

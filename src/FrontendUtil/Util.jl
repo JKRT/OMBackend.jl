@@ -425,18 +425,48 @@ function transposeNestedListAccumulator(lstlst::List{List{T}}, acc::List{List{T}
   local rest::List{List{T}}=nil
   local tmpLst::List{T}
   local tmp::T
-
-  tmpLst <| _ = lstlst
+  @match tmpLst <| _ = lstlst
   if listLength(tmpLst) == 0
-    return acc
+    for lst in lstlst
+      tmp <| lst = lst
+      tmpLst = tmp <| tmpLst
+      rest = lst <| rest
+    end
+    transposeNestedListAccumulator(listReverse(rest), tmpLst <| acc)
   end
-
-  for lst in lstlst
-    tmp <| lst = lst
-    tmpLst = tmp <| tmpLst
-    rest = lst <| rest
-  end
-  transposeNestedListAccumulator(listReverse(rest), tmpLst <| acc)
+  return acc
 end
+
+
+" author: lochel
+  This function extracts all crefs from the input expression, except 'time'.
+"
+function getAllCrefs(inExp::DAE.Exp)::List{DAE.ComponentRef}
+  local outCrefs::List{DAE.ComponentRef}
+  (_, outCrefs) = traverseExpTopDown(inExp, getAllCrefs2, nil)
+  outCrefs
+end
+
+function getAllCrefs2(inExp::DAE.Exp, inCrefList::List{<:DAE.ComponentRef})::Tuple{DAE.Exp, Bool, List{DAE.ComponentRef}}
+  local outCrefList::List{DAE.ComponentRef} = inCrefList
+  local outExp::DAE.Exp = inExp
+  local cr::DAE.ComponentRef
+  if isCref(inExp)
+    @match DAE.CREF(componentRef = cr) = inExp
+    if ! listMember(cr, inCrefList)
+      outCrefList = _cons(cr, outCrefList)
+    end
+  end
+  (outExp, true, outCrefList)
+end
+
+function isCref(inExp::DAE.Exp)
+  res = @match inExp begin
+    DAE.CREF(__) => true
+    _ => false
+  end
+  return res
+end
+
 
 end #=End Util=#

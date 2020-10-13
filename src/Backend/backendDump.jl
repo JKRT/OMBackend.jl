@@ -29,7 +29,6 @@
 *
 =#
 
-import BDAEUtil
 
 using MetaModelica
 
@@ -37,16 +36,16 @@ const HEAD_LINE = "#############################################"::String
 const DOUBLE_LINE = "============================================"::String
 const LINE = "---------------------------------------------"::String
 
-function stringHeading1(in::Any, heading::String)::String
-  str = heading1(heading) + "\n" + string(in)
+function stringHeading1(i::Any, heading::String)::String
+  str = heading1(heading) + "\n" + string(i)
 end
 
-function stringHeading2(in::Any, heading::String)::String
-  str = heading2(heading) + "\n" + string(in)
+function stringHeading2(i::Any, heading::String)::String
+  str = heading2(heading) + "\n" + string(i)
 end
 
-function stringHeading3(in::Any, heading::String)::String
-  str = heading3(heading) + string(in)
+function stringHeading3(i::Any, heading::String)::String
+  str = heading3(heading) + string(i)
 end
 
 

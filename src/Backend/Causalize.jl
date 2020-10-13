@@ -35,11 +35,11 @@ using MetaModelica
 using Setfield
 using ExportAll
 
-import Absyn
-import BDAE
-import BDAEUtil
-import BackendEquation
+import ..BDAE
+import ..BDAEUtil
+import ..BackendEquation
 import DAE
+import Absyn
 
 """
     Variable can be: Variable, Discrete, Constant and Parameters
@@ -135,10 +135,13 @@ global replaceIfExpressionWithTmpVar
       @match exp begin
         DAE.IFEXP(cond, expThen, expElse) => begin
           local varAsCREF::DAE.CREF = DAE.CREF(var, varType)
-          local backendVar = BDAE.VAR(varName, BDAE.VARIABLE(), varType)
+          local backendVar = BDAE.VAR(DAE.CREF_IDENT(varName, DAE.T_UNKNOWN_DEFAULT, nil),
+                                      BDAE.VARIABLE(), varType)
           tmpVarToElement[backendVar] = BDAE.IF_EQUATION(list(cond),
-                                             list(BDAE.EQUATION(varAsCREF,expThen, attr, emptySource)),
-                                             list(BDAE.EQUATION(varAsCREF, expElse, attr,emptySource)))
+                                                         list(BDAE.EQUATION(varAsCREF,expThen, emptySource, attr)),
+                                                         list(BDAE.EQUATION(varAsCREF, expElse, emptySource, attr)),
+                                                         emptySource,
+                                                         BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
           (varAsCREF, true, tmpVarToElement)
         end
         _ => begin
@@ -173,6 +176,7 @@ function detectStateExpression(exp::DAE.Exp, stateCrefs::Dict{DAE.ComponentRef, 
   end
   return (exp, cont, outCrefs)
 end
+
 
 """
     kabdelhak:

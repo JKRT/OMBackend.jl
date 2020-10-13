@@ -165,7 +165,7 @@ end
   end
 end
 
- const DEFAULT_SUBCLOCK = "TODO. NOT SUPPORTED"
+const DEFAULT_SUBCLOCK = "TODO. NOT SUPPORTED"
 
 @Uniontype BaseClockPartitionKind begin
   @Record UNKNOWN_PARTITION begin
@@ -320,10 +320,11 @@ end
 end
 
 #=Simplify construction of var=#
-VAR(varName,varKind,varType) = let
-  VAR(varName, varKind, DAE.BIDIR(), varType, NONE(), nil, DAE.emptyElementSource,
-      NONE(), NONE(), DAE.NON_CONNECTOR(), true #= Unreplaceable =#)
-end
+VAR(varName,varKind,varType) =
+  let
+    VAR(varName, varKind, DAE.BIDIR(), varType, NONE(), nil, DAE.emptyElementSource,
+        NONE(), NONE(), DAE.NON_CONNECTOR(), true #= Unreplaceable =#)
+  end
 
 #= variable kind =#
 @Uniontype VarKind begin
@@ -550,7 +551,7 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
 
   @Record IF_EQUATION begin
     conditions #= Condition =#::List{DAE.Exp}
-    eqnstrue #= Equations of true branch =#::List{List{Equation}}
+    eqnstrue #= Equations of true branch =#::List{Equation}
     eqnsfalse #= Equations of false branch =#::List{Equation}
     source #= origin of equation =#::DAE.ElementSource
     attr::EquationAttributes
@@ -616,13 +617,6 @@ end
     source #= origin of equation =#::DAE.ElementSource
   end
 end
-
-#=
-=#
-#=   Matching, strong components and StateSets
-=#
-#=
-=#
 
 @Uniontype Matching begin
   @Record NO_MATCHING begin
@@ -1010,8 +1004,5 @@ end
 
 const emptyDAEModeData = BDAE_MODE_DATA(nil, nil, 0, NONE())::BDAEModeData
 
-include("backendDump.jl")
-
 @exportAll()
-
 end

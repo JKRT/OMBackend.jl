@@ -31,15 +31,19 @@
 
 module CodeGeneration
 
-import Absyn
-import BDAE
-import DAE
+using DataStructures
 using MetaModelica
 using Setfield
-using SimulationCode
 
-include("CodeGenerationUtil.jl")
-include("simulationCodeTransformation.jl")
+using ..FrontendUtil
+using ..Backend
+using ..SimulationCode
+
+import ..Backend.BDAE
+import DAE
+import Absyn
+
+include("codeGenerationUtil.jl")
 
 """
   The header string with the necessary imports
@@ -64,6 +68,22 @@ function writeDAE_equationsToFile(fileName::String, contents::String)
   write(fdesc, contents)
   close(fdesc)
 end
+
+function generateCode(simCode::SimulationCode.EXPLICIT_SIM_CODE)
+  local stateVariables::Array = []
+  local algVariables::Array = []
+  local stateDerivatives::Array = []
+  local parameters::Array = []
+  local stateMarkings::Array = []
+  local crefToSimVarHT = simCode.nameToVar
+  local modelName::String = simCode.name
+  local exp::DAE.Exp
+  #= An array of 0:s=#
+  local residuals::Array = [0 for _ in 1:length(simCode.residualEquations)]
+  @info "Residuals:" simCode.residualEquations
+  @info "Mapping:" simCode.eqVariableMapping
+end
+
 
 """
   Generate a julia file containing functions to simulate the DAE
@@ -308,10 +328,17 @@ end
 function getStartConditions(vars::Array, condName::String, simCode::SimulationCode.SIM_CODE)
   local startCondStr::String = ""
   local ht::Dict = simCode.crefToSimVarHT
+  if length(vars) == 0
+    return startCondStr
+  end
   for var in vars
     (index, simVar) = ht[var]
     simVarType = simVar.varKind
     local optAttributes::Option{DAE.VariableAttributes} = simVar.attributes
+    @debug "simVar.attributes: $simVar.attributes"
+    if simVar.attributes == nothing
+      continue
+    end
     _ = @match optAttributes begin
         SOME(attributes) => begin
           startCondStr *= @match attributes.start begin

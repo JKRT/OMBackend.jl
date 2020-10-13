@@ -1,7 +1,7 @@
-#=
+#= /*
 * This file is part of OpenModelica.
 *
-* Copyright (c) 1998-CurrentYear, Open Source Modelica Consortium (OSMC),
+* Copyright (c) 1998-2020, Open Source Modelica Consortium (OSMC),
 * c/o Linköpings universitet, Department of Computer and Information Science,
 * SE-58183 Linköping, Sweden.
 *
@@ -27,19 +27,30 @@
 *
 * See the full OSMC Public License conditions for more details.
 *
-*/ =#
+=#
 
-module OMBackend
+"""
+  File: SimulationCode.jl
+  Data structures and algorithms used for simulation code.
+"""
+module SimulationCode
+
+using MetaModelica
+using DataStructures
+using Setfield
+
+using ..FrontendUtil
+using ..Backend
+
 import DAE
-const CURRENT_DIRECTORY = @__DIR__
-include("$CURRENT_DIRECTORY/globalConstants.jl")
-export PLOT_PACKAGE_GRAPH
-include("$CURRENT_DIRECTORY/FrontendUtil/FrontendUtil.jl")
-include("$CURRENT_DIRECTORY/BackendUtil/BackendUtil.jl")
-include("$CURRENT_DIRECTORY/Backend/Backend.jl")
-include("$CURRENT_DIRECTORY/SimulationCode/SimulationCode.jl")
-include("$CURRENT_DIRECTORY/CodeGeneration/CodeGeneration.jl")
-include("$CURRENT_DIRECTORY/../test/ExampleDAE/ExampleDAEs.jl")
-#= Finnaly add the API=#
-include("backendAPI.jl")
-end #=OMBackend=#
+import ..Backend.BDAE
+import ..BackendUtil.GraphAlgorithms
+import LightGraphs
+
+include("simCodeData.jl")
+include("simCodeUtil.jl")
+include("simCodeDump.jl")
+include("simulationCodeTransformation.jl")
+include("explicitSimCode.jl")
+
+end # module SimulationCode

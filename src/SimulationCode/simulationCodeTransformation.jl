@@ -64,7 +64,7 @@ function bDAEIdentToSimCodeVarName(backendVar::BDAE.Var)
 end
 
 """
-  Transform BDAEStructure to SimulationCode.SIM_CODE
+  Transform BDAE-Structure to SimulationCode.SIM_CODE
   TODO: We only handle one equation system for now
 """
 function transformToSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.SIM_CODE
@@ -76,7 +76,6 @@ function transformToSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.SIM_CO
   # Assign indices and put all variable into an hash table
   local crefToSimVarHT = createIndices(simVars)
   local equations = [eq for es in equationSystems for eq in es.orderedEqs]
-  @info equations
   #= Split equations into three parts. Residuals whenEquations and If-equations =#
   (resEqs,whenEqs,ifEqs) = allocateAndCollectSimulationEquations(equations)
   #= Construct SIM_CODE =#
@@ -84,8 +83,10 @@ function transformToSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.SIM_CO
 end
 
 
+
+
 """
-   Thiss functions create and assigns indices for variables
+   This functions create and assigns indices for variables
    Thus Construct the table that maps variable name to the actual variable.
 It executes the following steps:
 1. Collect all variables

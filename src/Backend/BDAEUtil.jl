@@ -31,16 +31,17 @@
 
 module BDAEUtil
 
+import Absyn
 using MetaModelica
-
 using ExportAll
 using Setfield
 
-import DAE
-import Util
 
-import BDAE
-import BackendEquation
+import DAE
+import ..Util
+
+import ..BDAE
+import ..BackendEquation
 
 """
 This function converts an array of variables to the BDAE variable structure
@@ -53,10 +54,15 @@ function convertVarArrayToBDAE_Variables(vars::Array{BDAE.Var})::BDAE.Variables
 end
 
 function createEqSystem(vars::BDAE.Variables, eqs::Array)
-  (BDAE.EQSYSTEM(vars, eqs, NONE(), NONE(), NONE(),
-                       BDAE.NO_MATCHING(), nil,
-                       BDAE.UNKNOWN_PARTITION(),
-                       BackendEquation.emptyEqns()))
+  (BDAE.EQSYSTEM(vars,
+                 eqs,
+                 NONE(),
+                 NONE(),
+                 NONE(),
+                 BDAE.NO_MATCHING(),
+                 nil,
+                 BDAE.UNKNOWN_PARTITION(),
+                 BackendEquation.emptyEqns()))
 end
 
 function mapEqSystems(dae::BDAE.BDAEStructure, traversalOperation::Function)
@@ -167,5 +173,15 @@ function DAE_VarKind_to_BDAE_VarKind(kind::DAE.VarKind)::BDAE.VarKind
   end
 end
 
+function isStateOrVariable(kind::BDAE.VarKind)
+  res = @match kind begin
+  BDAE.VARIABLE(__) => true
+  BDAE.STATE(__) => true
+  _ => false
+  end
+  return res
+end
+
+include("backendDump.jl")
 @exportAll()
 end
