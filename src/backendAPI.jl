@@ -8,8 +8,6 @@ import .Backend.BDAEUtil
 import .Backend.Causalize
 import ..CodeGeneration
 import OMBackend.ExampleDAEs
-import .FrontendUtil.DAE
-import .FrontendUtil.Prefix
 import .SimulationCode
 import Base.Meta
 import SCode

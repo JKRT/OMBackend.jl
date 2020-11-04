@@ -37,7 +37,9 @@ using ExportAll
 
 import DAE
 import ..BDAE
+import ..BDAEUtil
 import ..Util
+import ..Causalize
 
 """
     kabdelhak:
@@ -163,15 +165,19 @@ end
   output All variable in that specific equation
 "
 function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Array{BDAE.Var})::Array{DAE.ComponentRef}
-  componentReferences = Util.getAllCrefs(eq.exp)
-  varNames = [v.varName for v in vars]
-  variablesInEq::Array = []
-  for vn in varNames
-    if vn in componentReferences
-      push!(variablesInEq, vn)
+    local componentReferences::List = Util.getAllCrefs(eq.exp)
+    local stateCrefs = Dict{DAE.ComponentRef, Bool}()
+    (_, stateElements)  = BDAEUtil.traverseEquationExpressions(eq, Causalize.detectStateExpression, stateCrefs)
+    local stateElementArray = collect(keys(stateElements))
+    local componentReferencesArr::Array = [componentReferences..., stateElementArray...]
+    local varNames = [v.varName for v in vars]
+    variablesInEq::Array = []
+    for vn in varNames
+        if vn in componentReferencesArr
+            push!(variablesInEq, vn)
+        end
     end
-  end
-  return variablesInEq
+    return variablesInEq
 end
 
 @exportAll()

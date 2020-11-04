@@ -142,17 +142,17 @@ function traverseEquationExpressions(eq::BDAE.Equation,
          @assign eq.lhs = lhs
          @assign eq.rhs = rhs
          (eq, extArg)
-       end #= TODO: Are the below to be considered?=#
-       # BDAE.SOLVED_EQUATION(componentRef = cref, exp = rhs) => begin
-       #   (rhs, extArg) = Util.traverseExpTopDown(rhs, traversalOperation, extArg)
-       #   @assign eq.rhs = rhs;
-       #   (eq, extArg)
-       # end
-       # BDAE.RESIDUAL_EQUATION(exp = rhs) => begin
-       #   (rhs, extArg) = Util.traverseExpTopDown(rhs, traversalOperation, extArg)
-       #   @assign eq.rhs = rhs;
-       #   (eq, extArg)
-       # end
+       end
+       BDAE.SOLVED_EQUATION(componentRef = cref, exp = rhs) => begin
+         (rhs, extArg) = Util.traverseExpTopDown(rhs, traversalOperation, extArg)
+         @set eq.rhs = rhs;
+         (eq, extArg)
+       end
+       BDAE.RESIDUAL_EQUATION(exp = rhs) => begin
+         (rhs, extArg) = Util.traverseExpTopDown(rhs, traversalOperation, extArg)
+         @set eq.exp = rhs;
+         (eq, extArg)
+       end
        _ => begin
          (eq, extArg)
        end

@@ -27,7 +27,8 @@ using DataStructures
          isSingular::Boolean,          Boolean indicating if the system is singular or not.
 "
 
-function matching(dict::OrderedDict,n)::Tuple{Bool, Array}
+
+function matching(dict::DataStructures.OrderedDict, n)::Tuple{Bool, Array}
   "Calculates the path for equation i"
   function PF(i)
     eMark[i] = true
@@ -57,7 +58,7 @@ function matching(dict::OrderedDict,n)::Tuple{Bool, Array}
   local assign = [0 for i in 1:n]
   local vMark = []
   local eMark = []
-  local isSingular = true
+  local isSingular = false
   @info "Starting"
   for i in 1:n
     vMark = [false for j in 1:n]
@@ -69,7 +70,6 @@ function matching(dict::OrderedDict,n)::Tuple{Bool, Array}
   end
   return isSingular,assign
 end
-
 
 
 "
@@ -92,6 +92,7 @@ function merge(matchOrder, graph::OrderedDict)
   for i in matchOrder
     LightGraphs.add_vertex!(g)
   end
+  @info "$matchOrder"
   for eq in matchOrder
     counter += 1
     c = remove!(values[eq], counter)

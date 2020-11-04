@@ -22,8 +22,9 @@ function transformToExplicitSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCod
   local indexToEquation::OrderedDict = createEquationIndicies(resEqs)
   #= Create equation <-> variable mapping =#
   local eqVariableMapping = createEquationVariableBidirectionGraph(equations, allBackendVars, crefToSimVarHT)
-
+  @info "eqVariableMapping: $eqVariableMapping"
   (isSingular::Bool, matchOrder::Array) = GraphAlgorithms.matching(eqVariableMapping, length(eqVariableMapping.keys))
+  @info "is singular: $isSingular"  
   (g, labels, sortedGraph::OrderedDict) = GraphAlgorithms.merge(matchOrder, eqVariableMapping)
   stronglyConnectedComponents::Array = GraphAlgorithms.tarjan(sortedGraph)
   if OMBackend.PLOT_EQUATION_GRAPH
@@ -42,14 +43,15 @@ function transformToExplicitSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCod
       break
     end
   end
-  @info reverseTopologicalSort
+    #= Tearing could be added here =#
+  @info "Strongly connected components!" reverseTopologicalSort
   if ! loopsExist
     for i in reverseTopologicalSort
       push!(reOrderedResiduals, resEqs[i[1]])
     end
   else
     @info "Loop encountered exiting..."
-    @error "Unresolved loop"
+    @error "Unresolved algebraic loop"
   end
 
   return SimulationCode.EXPLICIT_SIM_CODE(backendDAE.name,
@@ -77,13 +79,14 @@ function createEquationVariableBidirectionGraph(equations, allBackendVars, crefT
   nVariables = length(unknownVariables)
   @assert(nEquations == nVariables, "The set of variables != set of equations: #Variables: $nVariables, #Equations $nEquations")
 
-  @info "After getting variables"
+  @info "After getting variables # $nVariables"
   for eq in equations
     #= Fetch all variables beloning to the specific equation =#
     variablesForEq = Backend.BackendEquation.getAllVariables(eq, allBackendVars)
-    variableEqMapping["e$(eqCounter)"] = getIndiciesOfVariables(variablesForEq, crefToSimVarHT)
+    variableEqMapping["e$(eqCounter)"] = sort(getIndiciesOfVariables(variablesForEq, crefToSimVarHT))
     eqCounter += 1
   end
+  @info variableEqMapping
   return variableEqMapping
 end
 

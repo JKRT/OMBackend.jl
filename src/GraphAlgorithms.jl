@@ -74,13 +74,12 @@ end
   representing a causalised system.
 "
 function merge(matchOrder, graph::DataStructures.OrderedDict)
+ @info "Hello"
   "
-    Remove function for arrays...
-  "
+    Remove function for arrays..."
   function remove!(a, item)
     deleteat!(a, findall(x->x==item, a))
   end
-
   local counter = 0
   local values = graph.vals
   local g = LightGraphs.SimpleDiGraph()
@@ -92,7 +91,9 @@ function merge(matchOrder, graph::DataStructures.OrderedDict)
     counter += 1
     c = remove!(values[eq], counter)
     #=Now I need to know. What equation solves for the remaining variables=#
+    @info "Value of c: $c"
     solvedIn = matchOrder[c]
+    @info "Solved in: $solvedIn"  
     for e in solvedIn
       push!(arrRepresentation, [e, eq])
       LightGraphs.add_edge!(g, e, eq)
