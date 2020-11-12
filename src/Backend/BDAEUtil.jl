@@ -182,6 +182,55 @@ function isStateOrVariable(kind::BDAE.VarKind)
   return res
 end
 
+
+"""
+    kabdelhak:
+    Detects if a given expression is a der() call and adds the corresponding
+    cref to a hashmap
+"""
+function detectStateExpression(exp::DAE.Exp, stateCrefs::Dict{DAE.ComponentRef, Bool})
+  local cont::Bool
+  local outCrefs = stateCrefs
+  (outCrefs, cont) = begin
+    local state::DAE.ComponentRef
+    @match exp begin
+      DAE.CALL(Absyn.IDENT("der"), DAE.CREF(state) <| _ ) => begin
+        #= add state with boolean value that does not matter, it is later onlBDAE.BACKEND_DAE(eqs = eqs)y checked if it exists at all =#
+        outCrefs[state] = true
+        (outCrefs, true)
+      end
+      _ => begin
+        (outCrefs, true)
+      end
+    end
+  end
+  return (exp, cont, outCrefs)
+end
+
+
+"
+  Author:johti17
+  input: Backend Equation, eq
+  input: All existing variables
+  output All variable in that specific equation
+"
+function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Array{BDAE.Var})::Array{DAE.ComponentRef}
+    local componentReferences::List = Util.getAllCrefs(eq.exp)
+    local stateCrefs = Dict{DAE.ComponentRef, Bool}()
+    (_, stateElements)  = traverseEquationExpressions(eq, detectStateExpression, stateCrefs)
+    local stateElementArray = collect(keys(stateElements))
+    local componentReferencesArr::Array = [componentReferences..., stateElementArray...]
+    local varNames = [v.varName for v in vars]
+    variablesInEq::Array = []
+    for vn in varNames
+        if vn in componentReferencesArr
+            push!(variablesInEq, vn)
+        end
+    end
+    return variablesInEq
+end
+
+
 include("backendDump.jl")
 @exportAll()
 end

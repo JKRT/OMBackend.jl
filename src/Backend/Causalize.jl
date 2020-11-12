@@ -156,6 +156,7 @@ global function replaceIfExpressionWithTmpVar(exp::DAE.Exp, tmpVarToElement::Dic
     return (newExp, cont, tmpVarToElement)
   end
 end
+
 """
     kabdelhak:
     Detects if a given expression is a der() call and adds the corresponding

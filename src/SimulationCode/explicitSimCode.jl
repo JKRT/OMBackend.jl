@@ -82,7 +82,7 @@ function createEquationVariableBidirectionGraph(equations, allBackendVars, crefT
   @info "After getting variables # $nVariables"
   for eq in equations
     #= Fetch all variables beloning to the specific equation =#
-    variablesForEq = Backend.BackendEquation.getAllVariables(eq, allBackendVars)
+    variablesForEq = Backend.BDAEUtil.getAllVariables(eq, allBackendVars)
     variableEqMapping["e$(eqCounter)"] = sort(getIndiciesOfVariables(variablesForEq, crefToSimVarHT))
     eqCounter += 1
   end

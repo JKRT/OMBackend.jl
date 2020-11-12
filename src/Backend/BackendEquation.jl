@@ -37,7 +37,6 @@ using ExportAll
 
 import DAE
 import ..BDAE
-import ..BDAEUtil
 import ..Util
 import ..Causalize
 
@@ -156,28 +155,6 @@ function concenateEquations(eqs::Array{BDAE.EqSystem})::Array{BDAE.Equation}
     eqArr = vcat(eqArr, eq.orderedEqs)
   end
   return eqArr
-end
-
-"
-  Author:johti17
-  input: Backend Equation, eq
-  input: All existing variables
-  output All variable in that specific equation
-"
-function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Array{BDAE.Var})::Array{DAE.ComponentRef}
-    local componentReferences::List = Util.getAllCrefs(eq.exp)
-    local stateCrefs = Dict{DAE.ComponentRef, Bool}()
-    (_, stateElements)  = BDAEUtil.traverseEquationExpressions(eq, Causalize.detectStateExpression, stateCrefs)
-    local stateElementArray = collect(keys(stateElements))
-    local componentReferencesArr::Array = [componentReferences..., stateElementArray...]
-    local varNames = [v.varName for v in vars]
-    variablesInEq::Array = []
-    for vn in varNames
-        if vn in componentReferencesArr
-            push!(variablesInEq, vn)
-        end
-    end
-    return variablesInEq
 end
 
 @exportAll()
