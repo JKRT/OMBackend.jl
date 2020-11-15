@@ -119,8 +119,8 @@ function generateCode(simCode::SimulationCode.SIM_CODE)
   @debug("Generating start conditions")
   local START_CONDTIONS ="
   function $(modelName)StartConditions(p, t0)
-    local x0 = Array{Float64}(undef, $(arrayLength(stateVariables)))
-    local dx0 = Array{Float64}(undef, $(arrayLength(stateVariables)))
+    local x0 = Array{Float64}(undef, $(length(stateVariables) + length(algVariables)))
+    local dx0 = Array{Float64}(undef, $(length(stateVariables) + length(algVariables)))
     $START_CONDTIONS_EQUATIONS
     return x0, dx0
   end
@@ -139,6 +139,11 @@ function generateCode(simCode::SimulationCode.SIM_CODE)
   function $(modelName)ParameterVars()
     p = Array{Float64}(undef, $(arrayLength(parameters)))
   $(PARAMETER_EQUATIONS)  return p
+  end
+  "
+  local WHEN_EQUATIONS_FN ="
+  function $(modelName)CallbackSet()
+    $WHEN_EQUATIONS
   end
   "
   local RUNNABLE ="
@@ -162,6 +167,7 @@ function generateCode(simCode::SimulationCode.SIM_CODE)
           * DIFFERENTIAL_VARS_FUNCTION
           * DAE_EQUATION_FUNCTION
           * PARAMETER_VARS
+          * WHEN_EQUATIONS_FN
           * RUNNABLE)
 end
 
@@ -213,9 +219,12 @@ function eqtoJulia(eq::BDAE.Equation, simCode::SimulationCode.SIM_CODE, resNumbe
       local cond = wEq.condition
       @info whenStmts
       @info cond
-      "condition(u,t,integrator) = $(expStringify(cond, simCode))
-       #= affect!(integrator) = <when stmt> =#
-       cb$(resNumber) = DiscreteCallback(condition,affect!)
+      "condition(x,t,integrator) = $(expStringify(cond, simCode))
+       #= affect!(integrator) = let
+        $whenStmts
+       end
+       =#
+       cb$(resNumber) = DiscreteCallback(condition, affect!)
       "
     end
     _ => begin
@@ -234,11 +243,11 @@ function createWhenStatements(whenStatements::List, simCode::SimulationCode.SIM_
   @debug "Calling createWhenStatements with: $whenStatements"
   for wStmt in  whenStatements
     res *= @match wStmt begin
-      SimulationCode.ASSIGN(__) => begin
+      BDAE.ASSIGN(__) => begin
         "$(expStringify(wStmt.left, simCode)) = $(expStringify(wStmt.right, simCode)) \n"
       end
-      SimulationCode.REINIT(__) => begin
-        "$(BDAE.string(wStmt.stateVar)) = $(expStringify(wStmt.value, simCode))"
+      BDAE.REINIT(__) => begin
+        "$(BDAE.string(wStmt.stateVar)) = $(expStringify(wStmt.value, simCode))\n"
       end
       _ => ErrorException("$whenStatements in @__FUNCTION__ not supported")
     end
@@ -294,9 +303,7 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
       end
       #=TODO?=#
       DAE.IFEXP(expCond = e1, expThen = e2, expElse = e3) => begin
-        local res = ("if " + expStringify(e1, simCode) + "" + expStringify(e2, simCode) + "else" + expStringify(e3, simCode) + "end")
-        #= Evaluate it inline =#
-        #string(eval(Meta.parse(res)))
+        local res = ("if " + expStringify(e1, simCode) + "\n" + expStringify(e2, simCode) + "\nelse\n" + expStringify(e3, simCode) + "\nend")
         res
       end
       DAE.CALL(path = Absyn.IDENT(tmpStr), expLst = expl)  => begin
@@ -307,14 +314,21 @@ function expStringify(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE)::String
         varName = BDAE.string(listHead(expl))
         (index, type) = hashTable[varName]
         @match tmpStr begin
-          "der" => "dx[$index]  #= der($varName) =#"
+         "der" => "dx[$index]  #= der($varName) =#"
           _  =>  begin
-            tmpStr = tmpStr + "(" + BDAE.lstString(expl, ", ") + ")"
+            tmpStr = tmpStr * string(tuple(map((x) -> expStringify(x, simCode), expl)...)...)
           end
         end
       end
       DAE.CAST(exp = e1)  => begin
          expStringify(e1, simCode)
+      end
+      DAE.ARRAY(DAE.T_ARRAY(DAE.T_BOOL(__)), scalar, array) => begin
+        local arrayExp = "#= Array exp=# reduce(|, ["
+        for e in array
+          arrayExp *= expStringify(e, simCode) + ","
+        end
+        arrayExp *= "])"
       end
       _ =>  throw(ErrorException("$exp not yet supported"))
     end

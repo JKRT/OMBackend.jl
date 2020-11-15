@@ -311,11 +311,11 @@ function Base.string(op::DAE.Operator)::String
 
       DAE.POW_ARR2() => "^"
 
-      DAE.AND() => "and"
+      DAE.AND() => "&&"
 
-      DAE.OR() => "or"
+      DAE.OR() => "||"
 
-      DAE.NOT() => "not"
+      DAE.NOT() => "!"
 
       DAE.LESS() => "<"
 
