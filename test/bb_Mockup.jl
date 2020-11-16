@@ -18,12 +18,13 @@ end
 
 function BouncingBallDAE_equations(res, dx, x, p, t #=time=#)
   res[1] = ((dx[2]  #= der(h) =#) - (x[1] #= v =#))
-  res[2] = (dx[1]  #= der(v) =#)
-            if 0 < x[5]  #= flying =#
-              - p[1] #= g =#
-            else
-              0.0
-            end
+    res[2] = (dx[1]  #= der(v) =#) +
+    if 0 < x[5]  #= flying =#
+        @info "Flying: TIME $t"
+        - p[1] #= g =#
+    else
+        0.0
+    end
   res[3] = ((x[4] #= impact =#) - ((x[2] #= h =#) <= (0.0)))
 end
 
@@ -61,7 +62,13 @@ function BouncingBallSimulate(tspan = (0.0, 3.0))
   @info x0
   differential_vars = BouncingBallDifferentialVars()
   #= Pass the residual equations =#
-  problem = DAEProblem(BouncingBallDAE_equations, dx0, x0, tspan, p_is, differential_vars=differential_vars, callback=CallbackSet())
+    problem = DAEProblem(BouncingBallDAE_equations,
+                         dx0,
+                         x0,
+                         tspan,
+                         p_is,
+                         differential_vars=differential_vars,
+                         callback=CallbackSet())
   # Solve with IDA:)
   solution = solve(problem, IDA())
   return solution
