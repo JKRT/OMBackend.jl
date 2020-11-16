@@ -94,10 +94,12 @@ struct EXPLICIT_SIM_CODE <: SimCode
   eqVariableMapping::OrderedDict{String, Array{Int}}
 
   "Regular equations are encoded as residuals"
-  residualEquations::Array{BDAE.RESIDUAL_EQUATION}
+  residualEquations::Array{BDAE.RESIDUAL_EQUATION}  
   whenEquations::Array{BDAE.WHEN_EQUATION}
   ifEquations::Array{BDAE.IF_EQUATION}
-
+  "
+   If matching resulted in singularity. 
+  "
   isSingular::Bool
   "
     The match order:

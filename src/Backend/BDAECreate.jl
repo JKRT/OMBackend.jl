@@ -41,6 +41,7 @@ using ExportAll
 import DAE
 import ..BDAE
 import ..BDAEUtil
+import ..Causalize
 
 """
   This function translates a DAE, which is the result from instantiating a
@@ -107,34 +108,23 @@ function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple
                                             #=TODO: Below might need to be changed =#
                                             BDAE.EQ_ATTR_DEFAULT_UNKNOWN) <| equationLst
         end
-
         DAE.WHEN_EQUATION(__) => begin
           equationLst = lowerWhenEquation(elem) <| equationLst
         end
-
         DAE.IF_EQUATION(__) => begin
           equationLst = lowerIfEquation(elem) <| equationLst
         end
-
         DAE.COMP(__) => begin
           variableLst,equationLst = splitEquationsAndVars(elem.dAElist)
         end
         _ => begin
-          @info "We skipped:" elem
+          @error "Skipped:" elem
           continue
         end
       end
     end
   end
   return (variableLst, equationLst)
-end
-
-"""
-  Given an array of equations remove all if expressions and converts them into
-  if-Equations
-"""
-function ifExprsToIfEqs(equation::Array)
-
 end
 
 function lowerWhenEquation(eq::DAE.Element)::BDAE.Equation
@@ -199,12 +189,10 @@ function lowerIfEquation(eq::DAE.Element)::Backend.Equation
   local trueEquations::List{List{BDAE.Equation}} = nil
   local tmpTrue::List{DAE.Equation}
   local falseEquations::List{DAE.Equation}
-
   for lst in eq.equations2
     (_, tmpTrue) = splitEquationsAndVars(lst)
     trueEquations = tmpTrue <| trueEquations
   end
-
   trueEquations = listReverse(trueEquations)
   (_, falseEquations) = splitEquationsAndVars(eq.equations3)
 

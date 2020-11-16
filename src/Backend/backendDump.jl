@@ -171,34 +171,28 @@ function Base.string(eq::BDAE.Equation)::String
         string(whenEquation)
       end
 
-      BDAE.IF_EQUATION() => begin
+      BDAE.IF_EQUATION(__) => begin
         local strTmp::String
         local conditions::List{DAE.Exp}
         local condition::DAE.Exp
-        local trueEquations::List{List{BDAE.Equation}}
-        local trueEquation::List{BDAE.Equation}
-
-        condition <| conditions = ifEq.conditions
-        trueEquation <| trueEquations = ifEq.eqnstrue
-
-        strTmp = "if " + string(condition) + " then\n"
-        for eq in trueEquation
-          strTmp = strTmp + "  " + string(eq) + "\n"
+        local trueEquations::List{BDAE.Equation}
+        local trueEquation::BDAE.Equation
+        local ifEq = eq
+        conditions = ifEq.conditions
+        trueEquations  = ifEq.eqnstrue
+        local condStr::String = ""
+        for cond in conditions
+            condStr += string(cond)
         end
-
-        while listLength(conditions) != 0
-          condition <| conditions = conditions
-          trueEquation <| trueEquations = trueEquations
-          strTmp = strTmp + "else if " + string(condition) + " then\n"
-          for eq in trueEquation
-            strTmp = strTmp + "  " + string(eq) + "\n"
-          end
+        strTmp = "if " + condStr + " then\n"
+        for teq in trueEquations
+            strTmp += string(teq)
         end
-        strTmp = strTmp + "else\n"
-        for eq in eq.eqnsfalse
-          strTmp = strTmp + "  " + string(eq) + "\n"
+        strTmp += "else\n"
+        for feq in ifEq.eqnsfalse
+          strTmp += string(feq)
         end
-        strTmp = strTmp + "end"
+        strTmp += "\n end"
       end
     end
   end

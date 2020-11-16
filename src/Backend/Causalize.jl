@@ -55,7 +55,7 @@ end
   Replaces all if expressions with a temporary variable.
   Adds an equation assigning this variable to the set of equations.
 """
-function detectIfEquations(dae::BDAE.BDAEStructure)
+function detectIfExpressions(dae::BDAE.BDAEStructure)
   BDAEUtil.mapEqSystems(dae, detectIfEquationsEqSystem)
 end
 
@@ -95,18 +95,22 @@ function detectIfEquationsEqSystem(syst::BDAE.EqSystem)::BDAE.EqSystem
     local eqs::Array
     local tmpVarToElement = Dict{BDAE.VAR, BDAE.IF_EQUATION}()
     @match syst begin
-      BDAE.EQSYSTEM(vars, eqs) => begin
-        for eq in eqs
-          (_, tmpVarToElement) = BDAEUtil.traverseEquationExpressions(eq,
-                                                                            replaceIfExpressionWithTmpVar,
-                                                                            tmpVarToElement)
-        end
+      BDAE.EQSYSTEM(__) => begin
+          for i in 1:length(syst.orderedEqs)
+            local eq = syst.orderedEqs[i]
+            (eq2, dictAndEQ) = BDAEUtil.traverseEquationExpressions(eq,
+                                                                  replaceIfExpressionWithTmpVar,
+                                                                  tmpVarToElement)
+              if ! (eq === eq2)
+                  @assign syst.orderedEqs[i] = eq2
+              end
+          end
         #= Append the new variables to the list of variables =#
         local newVariables = collect(keys(tmpVarToElement))
         local newEquations = collect(values(tmpVarToElement))
-        @debug "After conversion. New Variables: $newVariables, New Equations: $newEquations"
-        @set syst.orderedEqs = vcat(syst.orderedEqs, newEquations)
-        @set syst.orderedVars.varArr = vcat(syst.orderedVars.varArr, newVariables)
+
+        @assign syst.orderedEqs = vcat(syst.orderedEqs, newEquations)
+        @assign syst.orderedVars.varArr = vcat(syst.orderedVars.varArr, newVariables)
         syst
       end
     end
@@ -123,12 +127,11 @@ Thus we create the mapping
   tmpVar -> equation it is assigned in
 """
 local tick = 0
-global replaceIfExpressionWithTmpVar
-  function replaceIfExpressionWithTmpVar(exp::DAE.Exp, tmpVarToElement::Dict{BDAE.VAR, BDAE.IF_EQUATION})
+global function replaceIfExpressionWithTmpVar(exp::DAE.Exp, tmpVarToElement::Dict)
     (newExp, cont, tmpVarToElement) = begin
       #= All these temporary variables are REAL numbers for now =#
       local varType = DAE.T_REAL_DEFAULT
-      local varName = "tmp$tick"
+      local varName = "ifEq_tmp$tick"
       local var::DAE.ComponentRef = DAE.CREF_IDENT(varName, varType, nil)
       local emptySource = DAE.emptyElementSource
       local attr = BDAE.EQ_ATTR_DEFAULT_UNKNOWN
@@ -138,7 +141,7 @@ global replaceIfExpressionWithTmpVar
           local backendVar = BDAE.VAR(DAE.CREF_IDENT(varName, DAE.T_UNKNOWN_DEFAULT, nil),
                                       BDAE.VARIABLE(), varType)
           tmpVarToElement[backendVar] = BDAE.IF_EQUATION(list(cond),
-                                                         list(BDAE.EQUATION(varAsCREF,expThen, emptySource, attr)),
+                                                         list(BDAE.EQUATION(varAsCREF, expThen, emptySource, attr)),
                                                          list(BDAE.EQUATION(varAsCREF, expElse, emptySource, attr)),
                                                          emptySource,
                                                          BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
@@ -165,7 +168,8 @@ function detectStateExpression(exp::DAE.Exp, stateCrefs::Dict{DAE.ComponentRef, 
     local state::DAE.ComponentRef
     @match exp begin
       DAE.CALL(Absyn.IDENT("der"), DAE.CREF(state) <| _ ) => begin
-        #= add state with boolean value that does not matter, it is later onlBDAE.BACKEND_DAE(eqs = eqs)y checked if it exists at all =#
+        #= Add state with boolean value that does not matter, 
+           it is later onlBDAE.BACKEND_DAE(eqs = eqs)y checked if it exists at all =#
         outCrefs[state] = true
         (outCrefs, true)
       end
@@ -217,7 +221,7 @@ end
     (daeMode)
 """
 function residualizeEveryEquation(dae::BDAE.BDAEStructure)
-  dae = BDAEUtil.mapEqSystems(dae, makeResidualEquations)
+  return BDAEUtil.mapEqSystems(dae, makeResidualEquations)
 end
 
 """
