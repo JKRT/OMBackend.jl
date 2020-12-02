@@ -58,10 +58,8 @@ using Sundials
 
 "
 
+"Counter for generating callbacks for a model"
 global callbackCounter = 0
-function generate_state_boolean_vector()
-end
-
 
 """
   Write  modelName_DAE_equations() to file.
@@ -149,7 +147,7 @@ function generateCode(simCode::SimulationCode.SIM_CODE)
   "
   local WHEN_EQUATIONS_FN ="
   function $(modelName)CallbackSet(p#=parameters=#)
-    #= WHEN EQUATIONS. Discrete callbacks =#
+    #= WHEN EQUATIONS=#
     $WHEN_EQUATIONS
     #= IF EQUATIONS =#
     $IF_EQUATIONS
@@ -264,34 +262,37 @@ function eqToJulia(eq::BDAE.Equation, simCode::SimulationCode.SIM_CODE, resNumbe
     end
     BDAE.WHEN_EQUATION(_, wEq, _) => begin
       global callbackCounter += 1
-      local whenStmts = createWhenStatements(wEq.whenStmtLst, simCode, prefix="integerator.u")
-      local cond = wEq.condition
-      "condition(x,t,integrator) = bool(floor($(expToJL(cond, simCode))))
-       affect!(integrator) = let
+      local whenStmts = createWhenStatements(wEq.whenStmtLst, simCode, prefix="integrator.u")
+      local cond = prepForZeroCrossing(wEq.condition)
+      "condition$(callbackCounter)(x,t,integrator) = begin 
+         $(expToJL(cond, simCode))
+       end
+       affect$(callbackCounter)!(integrator) = let
         $whenStmts
        end
-       cb$(callbackCounter) = DiscreteCallback(condition, affect!)
+       cb$(callbackCounter) = ContinuousCallback(condition$(callbackCounter), 
+           affect$(callbackCounter)!, rootfind=true, save_positions=(false,true), )
       "
     end
     BDAE.IF_EQUATION(conds, trueEqs, falseEqs) => begin
       global callbackCounter += 1
-      f(x) = eqToJulia(x, simCode, resNumber, prefix = "integerator.u")
+      f(x) = eqToJulia(x, simCode, resNumber, prefix = "integrator.u")
       local condsJL = tuple(map((x) -> expToJL(x, simCode; varPrefix="x"), conds)...)
       local trueEqJL = map(f, trueEqs)
       local falseEqJL = map(f, falseEqs)
-      truePart = "condition(x,t,integrator) = bool(floor($(condsJL...)))
+      truePart = "condition$(callbackCounter)(x,t,integrator) = Bool(floor($(condsJL...)))
        affect$(callbackCounter)!(integrator) = let
         $(trueEqJL...)
        end
-       cb$(callbackCounter)$(callbackCounter) = ContiniuousCallback(condition, affect!)
+       cb$(callbackCounter) = ContinuousCallback(condition$(callbackCounter), affect$(callbackCounter)!)
       "
       global callbackCounter += 1
       falsePart =
-       "condition$(callbackCounter)(x,t,integrator) = ! bool(floor($(condsJL...)))
+       "condition$(callbackCounter)(x,t,integrator) = ! Bool(floor($(condsJL...)))
        affect$(callbackCounter)!(integrator) = let
         $(falseEqJL...)
        end
-       cb$(callbackCounter) = ContinuousCallback(condition, affect!)
+       cb$(callbackCounter) = ContinuousCallback(condition$(callbackCounter), affect$(callbackCounter)!)
       "
       truePart + falsePart
     end
@@ -316,7 +317,8 @@ function createWhenStatements(whenStatements::List, simCode::SimulationCode.SIM_
         "$(expToJL(wStmt.left, simCode, varPrefix=prefix)) = $(expToJL(wStmt.right, simCode, varPrefix=prefix)) \n"
       end
       BDAE.REINIT(__) => begin
-        "$(BDAE.string(wStmt.stateVar)) = $(expToJL(wStmt.value, simCode, varPrefix=prefix))\n"
+        (index, type) = simCode.crefToSimVarHT[BDAE.string(wStmt.stateVar)]
+        "integrator.u[$(index)] = $(expToJL(wStmt.value, simCode, varPrefix=prefix))\n"
       end
       _ => ErrorException("$whenStatements in @__FUNCTION__ not supported")
     end
@@ -348,14 +350,24 @@ function expToJL(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE; varPrefix="x"):
       DAE.ENUM_LITERAL((Absyn.IDENT(str), int))  => str + "()" + string(int) + ")"
       DAE.CREF(cr, _)  => begin
         varName = BDAE.string(cr)
-        indexAndVar = hashTable[varName]
-        varKind::SimulationCode.SimVarType = indexAndVar[2].varKind
-        @match varKind begin
-          SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
-          SimulationCode.STATE(__) => "$varPrefix[$(indexAndVar[1])] #= $varName =#"
-          SimulationCode.PARAMETER(__) => "p[$(indexAndVar[1])] #= $varName =#"
-          SimulationCode.ALG_VARIABLE(__) => "$varPrefix[$(indexAndVar[1])] #= $varName =#"
-          SimulationCode.STATE_DERIVATIVE(__) => "dx[$(indexAndVar[1])] #= der($varName) =#"
+        builtin = if varName == "time"
+          true
+        else
+          false
+        end
+        if ! builtin
+          #= If we refeer to time, we simply return t instead of a concrete variable =#
+          indexAndVar = hashTable[varName]
+          varKind::SimulationCode.SimVarType = indexAndVar[2].varKind
+          @match varKind begin
+            SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
+            SimulationCode.STATE(__) => "$varPrefix[$(indexAndVar[1])] #= $varName =#"
+            SimulationCode.PARAMETER(__) => "p[$(indexAndVar[1])] #= $varName =#"
+            SimulationCode.ALG_VARIABLE(__) => "$varPrefix[$(indexAndVar[1])] #= $varName =#"
+            SimulationCode.STATE_DERIVATIVE(__) => "dx[$(indexAndVar[1])] #= der($varName) =#"
+          end
+        else #= Currently only time is a builtin variabe. Time is represented as t in the generated code =#
+          "t"
         end
       end
       DAE.UNARY(operator = op, exp = e1) => begin
@@ -388,7 +400,7 @@ function expToJL(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE; varPrefix="x"):
           "der" => "dx[$index]  #= der($varName) =#"
           "pre" => begin
             indexForVar = hashTable[varName][1]
-            "(integrator.uprev[$(indexForVar)])"
+            "(integrator.u[$(indexForVar)])"
           end
           "edge" =>  begin
              indexForVar = hashTable[varName][1]
@@ -433,13 +445,15 @@ function getStartConditions(vars::Array, condName::String, simCode::SimulationCo
       continue
     end
     _ = @match optAttributes begin
-        SOME(attributes) => begin
-          startCondStr *= @match attributes.start begin
-            SOME(start) => begin
-              @debug "Start value is:" start
-              "$condName[$index] #= $var =# = $(expToJL(start, simCode))\n"
-            end
-            NONE() => ""
+          SOME(attributes) => begin
+            startCondStr *= @match (attributes.start, attributes.fixed) begin
+             (SOME(start), SOME(fixed)) || (SOME(start), _)  => begin
+                @debug "Start value is:" start
+                "$condName[$index] #= $var =# = $(expToJL(start, simCode))\n"
+               end
+             (NONE(), SOME(fixed)) => "$condName[$index] = 0.0\n"
+             (NONE(), NONE()) => ""
+             (_, _) => ""  
           end
           NONE() => ""
         end
@@ -448,5 +462,6 @@ function getStartConditions(vars::Array, condName::String, simCode::SimulationCo
   @debug "Returning $startCondStr"
   return startCondStr
 end
+
 
 end #= End CodeGeneration=#

@@ -86,7 +86,7 @@ function translate(frontendDAE::DAE.DAE_LIST, BackendMode = DAE_MODE)::Tuple{Str
 end
 
 """
- Transforms given DAE-IR/Hybrid DAE to causalized backend DAE-IR (BDAE IR)
+ Transforms given DAE-IR/Hybrid DAE to backend DAE-IR (BDAE-IR)
 """
 function lower(frontendDAE::DAE.DAE_LIST)::BDAE.BDAEStructure
   local bDAE::BDAE.BDAEStructure
@@ -106,7 +106,7 @@ function lower(frontendDAE::DAE.DAE_LIST)::BDAE.BDAEStructure
 end
 
 """
-  Transforms causalized BDAE IR to simulation code for DAE-mode
+  Transforms  BDAE-IR to simulation code for DAE-mode
 """
 function generateSimulationCode(bDAE::BDAE.BDAEStructure)::SimulationCode.SimCode
   simCode = SimulationCode.transformToSimCode(bDAE)
@@ -116,7 +116,7 @@ end
 
 
 """
-  Transforms causalized BDAE IR to simulation code for DAE-mode
+  Transforms BDAE-IR to simulation code for DAE-mode
 """
 function generateExplicitSimulationCode(bDAE::BDAE.BDAEStructure)::SimulationCode.SimCode
   simCode = SimulationCode.transformToExplicitSimCode(bDAE)
@@ -176,10 +176,21 @@ function printModel(modelName::String)
     end
 end
 
+
+"
+    Prints compiled models to stdout
+"
+function availableModels()
+    println("Compiled models:")
+    for m in keys(COMPILED_MODELS)
+        println("    $m")
+    end
+end
+
 """
   Evaluates the in memory representation of a named model
 """
-function simulateModel(modelName::String, tspan=(0.0, 1.0))
+function simulateModel(modelName::String; tspan=(0.0, 1.0))
   local modelCode = COMPILED_MODELS[modelName]
   @debug "Generated modelCode : $modelCode"
   local res = Meta.parse("begin $modelCode end") #Hack
