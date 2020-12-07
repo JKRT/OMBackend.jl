@@ -67,3 +67,37 @@ function copyRightString()
 =#")
   return strOut
 end
+
+
+"
+  TODO: John
+    Transform a condition into a zero crossing function.
+    For instance y > 10 -> y - 10
+
+    Assumes a Real-Expression.
+    Also assume that relation expressions are written as <= That is we go from positive 
+    to negative.. 
+    Fix this.
+"
+function prepForZeroCrossing(conditonalExpression::DAE.Exp)
+  res = @match conditonalExpression begin
+    DAE.BINARY(exp1 = e1, operator = op, exp2 = e2) => begin
+      DAE.BINARY(lhs, DAE.SUB(DAE.T_REAL_DEFAULT), rhs)
+    end
+    DAE.LUNARY(operator = op, exp = e1)  => begin
+      DAE.BINARY(e1, DAE.SUB(DAE.T_REAL_DEFAULT), e2)
+    end
+    DAE.LBINARY(exp1 = e1, operator = op, exp2 = e2) => begin
+      DAE.BINARY(e1, DAE.SUB(DAE.T_REAL_DEFAULT), e2)
+    end
+    DAE.RELATION(exp1 = e1, operator = op, exp2 = e2) => begin
+      DAE.BINARY(e1, DAE.SUB(DAE.T_REAL_DEFAULT), e2)
+    end
+    _ => begin
+      conditonalExpression
+    end
+  end
+  return res
+end
+
+

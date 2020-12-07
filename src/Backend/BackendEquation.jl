@@ -64,7 +64,7 @@ function makeResidualEquation(eqn::BDAE.Equation)::BDAE.Equation
         BDAE.RESIDUAL_EQUATION(makeResidualExp(lhs, rhs), source, attr)
       end
       BDAE.IF_EQUATION(__) => begin
-        (eqn) #makeResidualIfEquation(eqn)
+        makeResidualIfEquation(eqn)
       end
       _ => begin
         (eqn)
@@ -73,11 +73,19 @@ function makeResidualEquation(eqn::BDAE.Equation)::BDAE.Equation
   end
 end
 
-function makeResidualIfEquation(eqn::BDAE.Equation)::BDAE.Equation
-    local trueEquations::List{List{BDAE.Equation}} = nil
-    local tmpTrue::List{DAE.Equation}
-    local falseEquations::List{DAE.Equation}
-    (eqn)
+" Transform the sub-equations of an if-equation into residuals"
+function makeResidualIfEquation(eqn::BDAE.IF_EQUATION)::BDAE.Equation
+    local trueEquations::List{BDAE.Equation} = eqn.eqnstrue
+    local falseEquations::List{BDAE.Equation} = eqn.eqnsfalse
+    local trueEquations2::List{BDAE.Equation} = nil
+    local falseEquations2::List{BDAE.Equation} = nil
+    for eq in trueEquations
+      trueEquations2 = makeResidualEquation(eq) <| trueEquations2
+    end
+    for eq in falseEquations
+      falseEquations2 = makeResidualEquation(eq) <| falseEquations2
+    end
+    return BDAE.IF_EQUATION(eqn.conditions, trueEquations2, falseEquations2, eqn.source, eqn.attr)
 end
 
 """

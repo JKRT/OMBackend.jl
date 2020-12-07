@@ -13,6 +13,7 @@ import .FrontendUtil.Prefix
 import .SimulationCode
 import Base.Meta
 import SCode
+import JuliaFormatter
 
 global EXAMPLE_MODELS = Dict("HelloWorld" => OMBackend.ExampleDAEs.helloWorld_DAE
                              ,"ExportedDAE" => OMBackend.ExampleDAEs.exportedDAE
@@ -85,7 +86,7 @@ function translate(frontendDAE::DAE.DAE_LIST, BackendMode = DAE_MODE)::Tuple{Str
 end
 
 """
- Transforms given Frontend DAE IR to causalized backend DAE IR (BDAE IR)
+ Transforms given DAE-IR/Hybrid DAE to backend DAE-IR (BDAE-IR)
 """
 function lower(frontendDAE::DAE.DAE_LIST)::BDAE.BDAEStructure
   local bDAE::BDAE.BDAEStructure
@@ -95,17 +96,17 @@ function lower(frontendDAE::DAE.DAE_LIST)::BDAE.BDAEStructure
   #= Create Backend structure from Frontend structure =#
   bDAE = BDAECreate.lower(frontendDAE)
   @debug(BDAEUtil.stringHeading1(bDAE, "translated"));
-  bDAE = Causalize.detectIfEquations(bDAE)
+  bDAE = Causalize.detectIfExpressions(bDAE)  
   @debug(BDAEUtil.stringHeading1(bDAE, "if equations transformed"));
   bDAE = Causalize.detectStates(bDAE)
   @debug(BDAEUtil.stringHeading1(bDAE, "states marked"));
   bDAE = Causalize.residualizeEveryEquation(bDAE)
-  @debug(BDAEUtil.stringHeading1(bDAE, "residuals"));
+  @info(BDAEUtil.stringHeading1(bDAE, "residuals"));
   return bDAE
 end
 
 """
-  Transforms causalized BDAE IR to simulation code for DAE-mode
+  Transforms  BDAE-IR to simulation code for DAE-mode
 """
 function generateSimulationCode(bDAE::BDAE.BDAEStructure)::SimulationCode.SimCode
   simCode = SimulationCode.transformToSimCode(bDAE)
@@ -115,7 +116,7 @@ end
 
 
 """
-  Transforms causalized BDAE IR to simulation code for DAE-mode
+  Transforms BDAE-IR to simulation code for DAE-mode
 """
 function generateExplicitSimulationCode(bDAE::BDAE.BDAEStructure)::SimulationCode.SimCode
   simCode = SimulationCode.transformToExplicitSimCode(bDAE)
@@ -154,16 +155,42 @@ function writeModelToFile(modelName::String)
   model = COMPILED_MODELS[modelName]
   fileName = "$modelName.jl"
   try
+    formattedModel = JuliaFormatter.format_text(model)
     CodeGeneration.writeDAE_equationsToFile(modelName, model)
   catch
     @info "Failed writing $model to file: $fileName"
   end
 end
 
+"
+  If specified model exists. Print it to stdout.
+"
+function printModel(modelName::String)
+    try
+        model = COMPILED_MODELS[modelName]
+        println(JuliaFormatter.format_text(model))
+    catch
+      @error "Model: $modelName is not compiled. Available models are: $(COMPILED_MODELS.keys())"
+      @error "COMPILED_MODEL: $(COMPILED_MODELS[modelName])"
+      throw("Backend error")
+    end
+end
+
+
+"
+    Prints compiled models to stdout
+"
+function availableModels()
+    println("Compiled models:")
+    for m in keys(COMPILED_MODELS)
+        println("    $m")
+    end
+end
+
 """
   Evaluates the in memory representation of a named model
 """
-function simulateModel(modelName::String, tspan=(0.0, 1.0))
+function simulateModel(modelName::String; tspan=(0.0, 1.0))
   local modelCode = COMPILED_MODELS[modelName]
   @debug "Generated modelCode : $modelCode"
   local res = Meta.parse("begin $modelCode end") #Hack

@@ -73,7 +73,7 @@ function mapEqSystems(dae::BDAE.BDAEStructure, traversalOperation::Function)
          for i in 1:arrayLength(eqs)
            eqs[i] = traversalOperation(eqs[i])
          end
-         @set dae.eqs = eqs
+         @assign dae.eqs = eqs
          (dae)
        end
        _ => begin
@@ -91,7 +91,7 @@ function mapEqSystemEquations(syst::BDAE.EqSystem, traversalOperation::Function)
         for i in 1:arrayLength(eqs)
           eqs[i] = traversalOperation(eqs[i])
         end
-        @set syst.orderedEqs = eqs
+        @assign syst.orderedEqs = eqs
         (syst)
       end
     end
@@ -136,23 +136,23 @@ function traverseEquationExpressions(eq::BDAE.Equation,
      local rhs::DAE.Exp
      local cref::DAE.ComponentRef
      @match eq begin
-       BDAE.EQUATION(lhs = lhs, rhs = rhs) => begin
+       BDAE.EQUATION(lhs, rhs) => begin
          (lhs, extArg) = Util.traverseExpTopDown(lhs, traversalOperation, extArg)
          (rhs, extArg) = Util.traverseExpTopDown(rhs, traversalOperation, extArg)
-         @set eq.lhs = lhs
-         @set eq.rhs = rhs
+         @assign eq.lhs = lhs
+         @assign eq.rhs = rhs
          (eq, extArg)
-       end
-       BDAE.SOLVED_EQUATION(componentRef = cref, exp = rhs) => begin
-         (rhs, extArg) = Util.traverseExpTopDown(rhs, traversalOperation, extArg)
-         @set eq.rhs = rhs;
-         (eq, extArg)
-       end
-       BDAE.RESIDUAL_EQUATION(exp = rhs) => begin
-         (rhs, extArg) = Util.traverseExpTopDown(rhs, traversalOperation, extArg)
-         @set eq.rhs = rhs;
-         (eq, extArg)
-       end
+       end #= TODO: Are the below to be considered?=#
+       # BDAE.SOLVED_EQUATION(componentRef = cref, exp = rhs) => begin
+       #   (rhs, extArg) = Util.traverseExpTopDown(rhs, traversalOperation, extArg)
+       #   @assign eq.rhs = rhs;
+       #   (eq, extArg)
+       # end
+       # BDAE.RESIDUAL_EQUATION(exp = rhs) => begin
+       #   (rhs, extArg) = Util.traverseExpTopDown(rhs, traversalOperation, extArg)
+       #   @assign eq.rhs = rhs;
+       #   (eq, extArg)
+       # end
        _ => begin
          (eq, extArg)
        end
