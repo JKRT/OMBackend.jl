@@ -68,16 +68,15 @@ Do NOT mutate in other modules!
 """
 global COMPILED_MODELS = Dict()
 
-function translate(frontendDAE::DAE.DAE_LIST, BackendMode = DAE_MODE)::Tuple{String, String}
+function translate(frontendDAE::DAE.DAE_LIST, BackendMode = DAE_MODE)::Tuple{String, Expr}
   local bDAE = lower(frontendDAE)
   local simCode
   if BackendMode == DAE_MODE
     simCode = generateSimulationCode(bDAE)
-    generateTargetCode(simCode)
+    return generateTargetCode(simCode)
   elseif BackendMode == ODE_MODE
     simCode = generateExplicitSimulationCode(bDAE)
-
-    generateTargetCode(simCode)
+    return generateTargetCode(simCode)
   else
     @error "No mode specificed: valid modes are:"
     println("ODE_MODE")
@@ -101,7 +100,7 @@ function lower(frontendDAE::DAE.DAE_LIST)::BDAE.BDAEStructure
   bDAE = Causalize.detectStates(bDAE)
   @debug(BDAEUtil.stringHeading1(bDAE, "states marked"));
   bDAE = Causalize.residualizeEveryEquation(bDAE)
-  @info(BDAEUtil.stringHeading1(bDAE, "residuals"));
+  @debug(BDAEUtil.stringHeading1(bDAE, "residuals"));
   return bDAE
 end
 
@@ -131,7 +130,7 @@ end
 """
 function generateTargetCode(simCode::SimulationCode.SIM_CODE)
   #= Target code =#
-  (modelName, modelCode) = CodeGeneration.generateCode(simCode)
+  (modelName::String, modelCode::Expr) = CodeGeneration.generateCode(simCode)
   @debug "Functions:" modelCode
   @debug "Model:" modelName
   COMPILED_MODELS[modelName] = modelCode
@@ -146,8 +145,12 @@ end
 """
 function generateTargetCode(simCode::SimulationCode.EXPLICIT_SIM_CODE)
   #= Target code =#
-  (modelName, modelCode) = CodeGeneration.generateCode(simCode)
   @info "Code generation for explicit simcode is not yet supported"
+  try
+    (modelName, modelCode) = CodeGeneration.generateCode(simCode)
+  catch
+    @info "ODE mode failed"
+  end
   @info "Plotting results"
 end
 
@@ -167,12 +170,15 @@ end
 "
 function printModel(modelName::String)
     try
-        model = COMPILED_MODELS[modelName]
-        println(JuliaFormatter.format_text(model))
-    catch
-      @error "Model: $modelName is not compiled. Available models are: $(COMPILED_MODELS.keys())"
-      @error "COMPILED_MODEL: $(COMPILED_MODELS[modelName])"
-      throw("Backend error")
+      model::Expr = COMPILED_MODELS[modelName]
+      modelStr::String = "$model"
+      formattedResults = modelStr #JuliaFormatter.format_text(modelStr;
+                                  #                  remove_extra_newlines = true,
+                                   #                 always_use_return = true)
+      println(formattedResults)
+    catch e 
+      @error "Model: $(modelName) is not compiled. Available models are: $(availableModels())"
+      throw("Error printing model")
     end
 end
 
@@ -180,24 +186,28 @@ end
 "
     Prints compiled models to stdout
 "
-function availableModels()
-    println("Compiled models:")
+function availableModels()::String
+  str = "Compiled models:\n"
     for m in keys(COMPILED_MODELS)
-        println("    $m")
+      str *= "  $m\n"
     end
+  return str
 end
 
 """
   Evaluates the in memory representation of a named model
 """
 function simulateModel(modelName::String; tspan=(0.0, 1.0))
-  local modelCode = COMPILED_MODELS[modelName]
-  @debug "Generated modelCode : $modelCode"
-  local res = Meta.parse("begin $modelCode end") #Hack
-  @debug res
-  @eval $res
-  local more = Meta.parse("$(modelName)Simulate($(tspan))")
-  @eval $more
+  local modelCode::Expr = COMPILED_MODELS[modelName]
+  try
+    @eval $modelCode
+    local modelRunnable = Meta.parse("$(modelName)Simulate($(tspan))")
+    #= Run the model with the supplied tspan. =# 
+    @eval $modelRunnable
+  catch err
+    @info "Interactive evaluation failed: $err"
+    @info "$modelCode"
+  end
 end
 
 """
