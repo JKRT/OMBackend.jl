@@ -1,7 +1,7 @@
-#= /*
+#=
 * This file is part of OpenModelica.
 *
-* Copyright (c) 1998-2020, Open Source Modelica Consortium (OSMC),
+* Copyright (c) 1998-CurrentYear, Open Source Modelica Consortium (OSMC),
 * c/o Linköpings universitet, Department of Computer and Information Science,
 * SE-58183 Linköping, Sweden.
 *
@@ -27,6 +27,7 @@
 *
 * See the full OSMC Public License conditions for more details.
 *
+  Author: John Tinnerholm, john.tinnerholm@liu.se
 =#
 
 module CodeGeneration
@@ -49,17 +50,10 @@ include("codeGenerationUtil.jl")
   The header string with the necessary imports
 """
 const HEADER_STRING ="
-$(copyRightString())
-
-using DiffEqBase
-using DifferentialEquations
-using Plots
-using Sundials
-
-"
+$(copyRightString())"
 
 "Counter for generating callbacks for a model"
-global callbackCounter = 0
+global CALLBACK_COUNTER = 0
 
 """
   Write  modelName_DAE_equations() to file.
@@ -70,26 +64,19 @@ function writeDAE_equationsToFile(fileName::String, contents::String)
   close(fdesc)
 end
 
+"
+  ODE-mode code generation
+"
 function generateCode(simCode::SimulationCode.EXPLICIT_SIM_CODE)
-  local stateVariables::Array = []
-  local algVariables::Array = []
-  local stateDerivatives::Array = []
-  local parameters::Array = []
-  local stateMarkings::Array = []
-  local crefToSimVarHT = simCode.nameToVar
-  local modelName::String = simCode.name
-  local exp::DAE.Exp
-  #= An array of 0:s=#
-  local residuals::Array = [0 for _ in 1:length(simCode.residualEquations)]
-  @debug "Residuals:" simCode.residualEquations
-  @debug "Mapping:" simCode.eqVariableMapping
+  throw("Not implemented..")
 end
 
 
 """
   Generate Julia code from SimCode.
+Returns an expression in memory representing the program and a string
 """
-function generateCode(simCode::SimulationCode.SIM_CODE)
+function generateCode(simCode::SimulationCode.SIM_CODE)::Tuple{String, Expr}
   local stateVariables::Array = []
   local algVariables::Array = []
   local stateDerivatives::Array = []
@@ -121,104 +108,125 @@ function generateCode(simCode::SimulationCode.SIM_CODE)
   local PARAMETER_EQUATIONS = createParameterEquations(parameters, simCode)
   local START_CONDTIONS_EQUATIONS = createStartConditionsEquations(algVariables, stateVariables, simCode)
   @debug("Generating start conditions")
-  local START_CONDTIONS ="
-  function $(modelName)StartConditions(p, t0)
-    local x0 = Array{Float64}(undef, $(length(stateVariables) + length(algVariables)))
-    local dx0 = Array{Float64}(undef, $(length(stateVariables) + length(algVariables)))
-    $START_CONDTIONS_EQUATIONS
-    return x0, dx0
+  local START_CONDTIONS = quote
+      function $(Symbol("$(modelName)StartConditions"))(p, t0)
+        local x0 = zeros($(length(stateVariables) + length(algVariables)))
+        local dx0 = zeros($(length(stateVariables) + length(algVariables)))
+        $START_CONDTIONS_EQUATIONS
+        return x0, dx0
+      end
+    end
+    local DAE_EQUATION_FUNCTION = quote
+        function $(Symbol("$(modelName)DAE_equations"))(res, dx, x, p, t)
+          $(DAE_EQUATIONS...)
+        end
+      end
+      local DIFFERENTIAL_VARS_FUNCTION = quote
+        begin
+          function $(Symbol("$(modelName)DifferentialVars"))()
+            return $stateMarkings
+          end
+        end
+      end
+  local PARAMETER_VARS = quote
+    function $(Symbol("$(modelName)ParameterVars"))()
+      p = Array{Float64}(undef, $(arrayLength(parameters)))
+      $(PARAMETER_EQUATIONS...)
+      return p
+    end
   end
-  "
-  local DAE_EQUATION_FUNCTION ="
-  function $(modelName)DAE_equations(res, dx #=The state derivatives =#, x #= State & alg variables =#, p, t #=time=#)
-  $DAE_EQUATIONS
+  local WHEN_EQUATIONS_FN = quote
+    function $(Symbol("$(modelName)CallbackSet"))(p)
+      $(LineNumberNode((@__LINE__), "WHEN EQUATIONS"))
+      $(WHEN_EQUATIONS...)
+      $(LineNumberNode((@__LINE__), "IF EQUATIONS"))
+      $(IF_EQUATIONS...)
+      return CallbackSet($(evaluateCallBackset()))
+    end
   end
-  "
-  local DIFFERENTIAL_VARS_FUNCTION ="
-  function $(modelName)DifferentialVars()
-    return $stateMarkings
+  local RUNNABLE = quote
+    function $(Symbol("$(modelName)Simulate"))(tspan = (0.0, 1.0))
+      # Define problem    
+      p = $(Symbol("$(modelName)ParameterVars"))()
+      (x0, dx0) =$(Symbol("$(modelName)StartConditions"))(p, tspan[1])
+      differential_vars = $(Symbol("$(modelName)DifferentialVars"))()
+      #= Pass the residual equations =#
+      problem = DAEProblem($(Symbol("$(modelName)DAE_equations")), dx0, x0, 
+                           tspan, p, differential_vars=differential_vars, 
+                           callback=$(Symbol("$(modelName)CallbackSet"))(p))
+      # Solve with IDA:)
+      solution = solve(problem, IDA())
+      return solution
+    end
   end
-  "
-  local PARAMETER_VARS = "
-  function $(modelName)ParameterVars()
-    p = Array{Float64}(undef, $(arrayLength(parameters)))
-  $(PARAMETER_EQUATIONS)  return p
-  end
-  "
-  local WHEN_EQUATIONS_FN ="
-  function $(modelName)CallbackSet(p#=parameters=#)
-    #= WHEN EQUATIONS=#
-    $WHEN_EQUATIONS
-    #= IF EQUATIONS =#
-    $IF_EQUATIONS
-    return CallbackSet($(evaluateCallBackset()))
-  end
-  "
-  local RUNNABLE ="
-  function $(modelName)Simulate(tspan = (0.0, 1.0))
-    # Define problem
-    p = $(modelName)ParameterVars()
-    (x0, dx0) =$(modelName)StartConditions(p, tspan[1])
-    differential_vars = $(modelName)DifferentialVars()
-    #= Pass the residual equations =#
-    problem = DAEProblem($(modelName)DAE_equations, dx0, x0, 
-                         tspan, p, differential_vars=differential_vars, 
-                         callback=$(modelName)CallbackSet(p))
-    # Solve with IDA:)
-    solution = solve(problem, IDA())
-    return solution
-  end
-  "
   @debug("Code-generation done")
-  global callbackCounter = 0
+  global CALLBACK_COUNTER = 0
+  program = quote    
+    $(HEADER_STRING)
+    using DiffEqBase
+    using DifferentialEquations
+    using Plots
+    using Sundials
+    $(START_CONDTIONS)
+    $(DIFFERENTIAL_VARS_FUNCTION)
+    $(DAE_EQUATION_FUNCTION)
+    $(PARAMETER_VARS)
+    $(WHEN_EQUATIONS_FN)
+    $(RUNNABLE)
+  end
   # Return file content
-  return ("$(modelName)",
-          HEADER_STRING
-          * START_CONDTIONS
-          * DIFFERENTIAL_VARS_FUNCTION
-          * DAE_EQUATION_FUNCTION
-          * PARAMETER_VARS
-          * WHEN_EQUATIONS_FN
-          * RUNNABLE)
+  return ("$(modelName)", program)
 end
 
-
-function evaluateCallBackset()::String
-    local tmpStr::String = ""
-    for t in 1:callbackCounter
-      tmpStr += "cb$(t),"
+function evaluateCallBackset()::Expr
+  local cbs::Array{Expr} = []
+  for t in 1:CALLBACK_COUNTER
+    push!(cbs,
+          quote
+          $(Symbol("cb$(t)"))
+          end)
+  end
+  expr::Expr = if length(cbs) < 1
+    quote end
+  else
+    quote
+      $((cbs...))
     end
-    return tmpStr
+  end
+  return expr 
 end
 
 """
-    TODO: We use state for everything now. I am unsure how to differentiate between the two
+    TODO: We use state for everything now. 
+    I am unsure how to differentiate between the two
 """
 function createStartConditionsEquations(algVariables::Array,
                                         stateVariables::Array,
-                                        simCode::SimulationCode.SIM_CODE)
-  return getStartConditions(algVariables, "x0", simCode) *
-         getStartConditions(stateVariables, "x0", simCode)
+                                        simCode::SimulationCode.SIM_CODE)::Expr
+  return quote
+    $(getStartConditions(algVariables, "x0", simCode))
+    $(getStartConditions(stateVariables, "x0", simCode)) #Should be DX0?
+  end
 end
 
-function createResidualEquations(equations::Array, simCode::SimulationCode.SIM_CODE)
-  local eqStr = ""
+function createResidualEquations(equations::Array, simCode::SimulationCode.SIM_CODE)::Array{Expr}
+  local eqs::Array{Expr} = []
   for (equationCounter, eq) in enumerate(equations)
-    eqStr *= residualEqtoJulia(eq, simCode, equationCounter)
+    push!(eqs, residualEqtoJulia(eq, simCode, equationCounter))
   end
-  eqStr[1:end-1]
+  return eqs
 end
 
-function createEquations(equations::Array, simCode::SimulationCode.SIM_CODE)
-  local eqStr = ""
+function createEquations(equations::Array, simCode::SimulationCode.SIM_CODE)::Array{Expr}
+  local eqs::Array{Expr} = []
   for (equationCounter, eq) in enumerate(equations)
-    eqStr *= eqToJulia(eq, simCode, equationCounter)
+    push!(eqs, eqToJulia(eq, simCode, equationCounter))
   end
-  eqStr[1:end-1]
+  return eqs
 end
 
 function createParameterEquations(parameters::Array, simCode::SimulationCode.SIM_CODE)
-  local parameterEquations::String = ""
+  local parameterEquations::Array = []
   local hT = simCode.crefToSimVarHT
   for param in parameters
     (index, simVar) = hT[param]
@@ -227,7 +235,12 @@ function createParameterEquations(parameters::Array, simCode::SimulationCode.SIM
       SimulationCode.PARAMETER(bindExp = SOME(exp)) => exp
       _ => ErrorException("Unknown SimulationCode.SimVarType for parameter.")
     end
-    parameterEquations *= "  p[$index] #= $param =# = $(expToJL(bindExp, simCode))\n"
+    push!(parameterEquations,
+          quote
+          $(LineNumberNode(@__LINE__, "$param"))
+          p[$index] = $(expToJuliaExp(bindExp, simCode))
+          end
+          )
   end
   return parameterEquations
 end
@@ -235,69 +248,79 @@ end
 """
   Transforms a given equation into Julia code
 """
-function residualEqtoJulia(eq::BDAE.Equation, simCode::SimulationCode.SIM_CODE, resNumber)::String
+function residualEqtoJulia(eq::BDAE.Equation, simCode::SimulationCode.SIM_CODE, resNumber)::Expr
   local rhs::DAE.Exp
-  local result::String = ""
-  result  *= @match eq begin
+  local result::Expr = @match eq begin
     BDAE.RESIDUAL_EQUATION(exp = rhs) => begin
-      "res[$resNumber] = " + expToJL(rhs, simCode) + "\n"
+      quote
+        res[$(resNumber)] = $(expToJuliaExp(rhs, simCode))
+      end
     end
     _ => begin
-      "traversalError for $eq"
+      throw("traversalError for $eq")
     end
   end
+  return result
 end
 
 """
-  Transforms a given equation into Julia code
-The optional parameter prefix specifices the prefix to which the result is written. 
+    Transforms a given equation into Julia code
+    The optional parameter prefix specifices the prefix.
+    The prefix is used for...
 """
-function eqToJulia(eq::BDAE.Equation, simCode::SimulationCode.SIM_CODE, resNumber; prefix="res")::String
+function eqToJulia(eq::BDAE.Equation, simCode::SimulationCode.SIM_CODE, resNumber; prefix="res")::Expr
   local rhs::DAE.Exp
-  local result::String = ""
-  result  *= @match eq begin
+  @match eq begin
     BDAE.RESIDUAL_EQUATION(exp = rhs) => begin
       @info "Value of eqToJulia $prefix"
-      "  $(prefix)[$resNumber] = " + expToJL(rhs, simCode; varPrefix = prefix) + "\n"
+      "  $(prefix)[$resNumber] = " + expToJuliaExp(rhs, simCode; varPrefix = prefix) + "\n"
     end
     BDAE.WHEN_EQUATION(_, wEq, _) => begin
-      global callbackCounter += 1
       local whenStmts = createWhenStatements(wEq.whenStmtLst, simCode, prefix="integrator.u")
       local cond = prepForZeroCrossing(wEq.condition)
-      "condition$(callbackCounter)(x,t,integrator) = begin 
-         $(expToJL(cond, simCode))
-       end
-       affect$(callbackCounter)!(integrator) = let
-        $whenStmts
-       end
-       cb$(callbackCounter) = ContinuousCallback(condition$(callbackCounter), 
-           affect$(callbackCounter)!, rootfind=true, save_positions=(false,true), )
-      "
+      global CALLBACK_COUNTER += 1
+      quote
+        function $(Symbol("condition$(CALLBACK_COUNTER)"))(x,t,integrator) 
+          $(expToJuliaExp(cond, simCode))
+        end
+        function $(Symbol("affect$(CALLBACK_COUNTER)!"))(integrator)
+          $(whenStmts...)
+        end
+        $(Symbol("cb$(CALLBACK_COUNTER)")) = ContinuousCallback($(Symbol("condition$(CALLBACK_COUNTER)")), 
+                                                                $(Symbol("affect$(CALLBACK_COUNTER)!")),
+                                                                rootfind=true, save_positions=(false,true),
+                                                                affect_neg! = $(Symbol("affect$(CALLBACK_COUNTER)!")),)
+      end
     end
     BDAE.IF_EQUATION(conds, trueEqs, falseEqs) => begin
-      global callbackCounter += 1
+      global CALLBACK_COUNTER += 1
       f(x) = eqToJulia(x, simCode, resNumber, prefix = "integrator.u")
-      local condsJL = tuple(map((x) -> expToJL(x, simCode; varPrefix="x"), conds)...)
+      local condsJL = tuple(map((x) -> expToJuliaExp(x, simCode; varPrefix="x"), conds)...)
       local trueEqJL = map(f, trueEqs)
       local falseEqJL = map(f, falseEqs)
-      truePart = "condition$(callbackCounter)(x,t,integrator) = Bool(floor($(condsJL...)))
-       affect$(callbackCounter)!(integrator) = let
-        $(trueEqJL...)
-       end
-       cb$(callbackCounter) = ContinuousCallback(condition$(callbackCounter), affect$(callbackCounter)!)
-      "
-      global callbackCounter += 1
-      falsePart =
-       "condition$(callbackCounter)(x,t,integrator) = ! Bool(floor($(condsJL...)))
-       affect$(callbackCounter)!(integrator) = let
-        $(falseEqJL...)
-       end
-       cb$(callbackCounter) = ContinuousCallback(condition$(callbackCounter), affect$(callbackCounter)!)
-      "
-      truePart + falsePart
+      quote 
+        function $(Symbol("condition$(CALLBACK_COUNTER)"))(x,t,integrator)
+          Bool(floor($(condsJL...)))
+        end
+        function $(Symbol("affect$(CALLBACK_COUNTER)!"))(integrator)
+          $(trueEqJL...)
+        end
+        $(Symbol("cb$(CALLBACK_COUNTER)")) = ContinuousCallback(Symbol("condition$(CALLBACK_COUNTER)"),
+                                                            Symbol("affect$(CALLBACK_COUNTER)!"))
+        $(global CALLBACK_COUNTER += 1)
+        function $(Symbol("condition$(CALLBACK_COUNTER)"))(x,t,integrator)
+           ! Bool(floor($(condsJL...)))
+         end
+         function $(Symbol("affect$(CALLBACK_COUNTER)!"))(integrator)
+           $(falseEqJL...)
+         end
+         createSymbol("cb$(CALLBACK_COUNTER)") = ContinuousCallback(
+           Symbol("condition$(CALLBACK_COUNTER)"),
+           Symbol("affect$(CALLBACK_COUNTER)!"))
+      end
     end
     _ => begin
-      "traversalError for $eq"
+      throw("Error when generating code for $eq")
     end
   end
 end
@@ -308,17 +331,21 @@ end
   E.g a set of Discrete callbacks
   TODO: Handle the other cases
 """
-function createWhenStatements(whenStatements::List, simCode::SimulationCode.SIM_CODE; prefix="x")
-  local res::String = ""
+function createWhenStatements(whenStatements::List, simCode::SimulationCode.SIM_CODE; prefix="x")::Array{Expr}
+  local res::Array{Expr} = []
   @debug "Calling createWhenStatements with: $whenStatements"
   for wStmt in  whenStatements
-    res *= @match wStmt begin
+    @match wStmt begin
       BDAE.ASSIGN(__) => begin
-        "$(expToJL(wStmt.left, simCode, varPrefix=prefix)) = $(expToJL(wStmt.right, simCode, varPrefix=prefix)) \n"
+        push!(res, quote
+              $(expToJuliaExp(wStmt.left, simCode, varPrefix=prefix)) = $(expToJuliaExp(wStmt.right, simCode, varPrefix=prefix))
+              end)
       end
       BDAE.REINIT(__) => begin
         (index, type) = simCode.crefToSimVarHT[BDAE.string(wStmt.stateVar)]
-        "integrator.u[$(index)] = $(expToJL(wStmt.value, simCode, varPrefix=prefix))\n"
+        push!(res, quote 
+              integrator.u[$(index)] = $(expToJuliaExp(wStmt.value, simCode, varPrefix=prefix))
+              end)
       end
       _ => ErrorException("$whenStatements in @__FUNCTION__ not supported")
     end
@@ -326,14 +353,13 @@ function createWhenStatements(whenStatements::List, simCode::SimulationCode.SIM_
   return res
 end
 
-"
- Conver DAE.Exp into a Julia string. 
-"
-function expToJL(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE; varPrefix="x")::String
+
+"Converts a DAE expression into a Julia expression"
+function expToJuliaExp(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE; varPrefix="x")::Expr
   hashTable = simCode.crefToSimVarHT
-  str = begin
-    local int::ModelicaInteger
-    local real::ModelicaReal
+  local expr::Expr = begin
+    local int::Int64
+    local real::Float64
     local bool::Bool
     local tmpStr::String
     local cr::DAE.ComponentRef
@@ -343,11 +369,10 @@ function expToJL(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE; varPrefix="x"):
     local expl::List{DAE.Exp}
     local lstexpl::List{List{DAE.Exp}}
     @match exp begin
-      DAE.ICONST(int) => string(int)
-      DAE.RCONST(real)  => string(real)
-      DAE.SCONST(tmpStr)  => (tmpStr)
-      DAE.BCONST(bool)  => string(bool)
-      DAE.ENUM_LITERAL((Absyn.IDENT(str), int))  => str + "()" + string(int) + ")"
+      DAE.BCONST(bool) => quote $bool end
+      DAE.ICONST(int) => quote $int end
+      DAE.RCONST(real) => quote $real end
+      DAE.SCONST(tmpStr) => quote $tmpStr end
       DAE.CREF(cr, _)  => begin
         varName = BDAE.string(cr)
         builtin = if varName == "time"
@@ -361,107 +386,114 @@ function expToJL(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE; varPrefix="x"):
           varKind::SimulationCode.SimVarType = indexAndVar[2].varKind
           @match varKind begin
             SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
-            SimulationCode.STATE(__) => "$varPrefix[$(indexAndVar[1])] #= $varName =#"
-            SimulationCode.PARAMETER(__) => "p[$(indexAndVar[1])] #= $varName =#"
-            SimulationCode.ALG_VARIABLE(__) => "$varPrefix[$(indexAndVar[1])] #= $varName =#"
-            SimulationCode.STATE_DERIVATIVE(__) => "dx[$(indexAndVar[1])] #= der($varName) =#"
+            SimulationCode.STATE(__) => quote
+              $(LineNumberNode(@__LINE__, "$varName state"))
+              $(Symbol(varPrefix))[$(indexAndVar[1])]
+            end
+            SimulationCode.PARAMETER(__) => quote
+              $(LineNumberNode(@__LINE__, "$varName parameter"))
+              p[$(indexAndVar[1])]
+              end
+            SimulationCode.ALG_VARIABLE(__) => quote
+              $(LineNumberNode(@__LINE__, "$varName, algebraic"))
+              $(Symbol(varPrefix))[$(indexAndVar[1])]
+            end
+            SimulationCode.STATE_DERIVATIVE(__) => :(dx[$(indexAndVar[1])] #= der($varName) =#)
           end
         else #= Currently only time is a builtin variabe. Time is represented as t in the generated code =#
-          "t"
+         quote
+            t
+         end
         end
       end
       DAE.UNARY(operator = op, exp = e1) => begin
-        ("(" + BDAE.string(op) + " " + expToJL(e1, simCode) + ")")
+        o = DAE_OP_toJuliaOperator(op)
+        quote
+          $(o)($(expToJuliaExp(e1, simCode)))
+        end
       end
       DAE.BINARY(exp1 = e1, operator = op, exp2 = e2) => begin
-        (expToJL(e1, simCode, varPrefix=varPrefix) + " " + BDAE.string(op) + " " + expToJL(e2, simCode, varPrefix=varPrefix))
+        a = expToJuliaExp(e1, simCode, varPrefix=varPrefix)
+        b = expToJuliaExp(e2, simCode, varPrefix=varPrefix)
+        o = DAE_OP_toJuliaOperator(op)
+        quote
+          $o($(a), $(b))
+        end
       end
       DAE.LUNARY(operator = op, exp = e1)  => begin
-        ("(" + BDAE.string(op) + " " + expToJL(e1, simCode, varPrefix=varPrefix) + ")")
+        quote
+          $("(" + BDAE.string(op) + " " + expToJuliaExp(e1, simCode, varPrefix=varPrefix) + ")")
+        end
       end
       DAE.LBINARY(exp1 = e1, operator = op, exp2 = e2) => begin
-        (expToJL(e1, simCode, varPrefix=varPrefix) + " " + BDAE.string(op) + " " + expToJL(e2, simCode, varPrefix=varPrefix))
+        quote 
+          $(expToJuliaExp(e1, simCode, varPrefix=varPrefix) + " " + BDAE.string(op) + " " + expToJuliaExp(e2, simCode, varPrefix=varPrefix))
+        end
       end
       DAE.RELATION(exp1 = e1, operator = op, exp2 = e2) => begin
-        (expToJL(e1, simCode, varPrefix=varPrefix) + " " + BDAE.string(op) + " " + expToJL(e2, simCode,varPrefix=varPrefix))
+        quote 
+          $(expToJuliaExp(e1, simCode,
+                          varPrefix=varPrefix) + " "
+            + BDAE.string(op) + " " + expToJuliaExp(e2, simCode,varPrefix=varPrefix))
+        end
       end
-      #=TODO?=#
       DAE.IFEXP(expCond = e1, expThen = e2, expElse = e3) => begin
-        "if" + expToJL(e1, simCode, varPrefix=varPrefix) + "\n" + expToJL(e2, simCode,varPrefix=varPrefix) + "else\n" + expToJL(e3, simCode,varPrefix=varPrefix) + "\nend"
+        throw(ErrorException("If expressions not allowed in backend code"))
       end
-      DAE.CALL(path = Absyn.IDENT(tmpStr), expLst = expl)  => begin
-        #=
-          TODO: Keeping it simple for now, we assume we only have one argument in the call
-          We handle derivitives seperatly
-        =#
-        varName = BDAE.string(listHead(expl))
-        (index, type) = hashTable[varName]
-        @match tmpStr begin
-          "der" => "dx[$index]  #= der($varName) =#"
-          "pre" => begin
-            indexForVar = hashTable[varName][1]
-            "(integrator.u[$(indexForVar)])"
-          end
-          "edge" =>  begin
-             indexForVar = hashTable[varName][1]
-             string(tuple(map((x) -> expToJL(x, simCode, varPrefix=varPrefix), expl)...)...) + " && ! integrator.uprev[$(indexForVar)]"
-          end
-          _  =>  begin
-            tmpStr *= string(tuple(map((x) -> expToJL(x, simCode, varPrefix=varPrefix), expl)...)...)
-          end
-        end
-      end
-      DAE.CAST(exp = e1)  => begin
-         expToJL(e1, simCode)
-      end
-      DAE.ARRAY(DAE.T_ARRAY(DAE.T_BOOL(__)), scalar, array) => begin
-        local arrayExp = "#= Array exp=# reduce(|, ["
-        for e in array
-          arrayExp *= expToJL(e, simCode) + ","
-        end
-        arrayExp *= "])"
+      DAE.CALL(path = Absyn.IDENT(tmpStr), expLst = explst)  => begin
+        DAECallExpressionToJuliaCallExpression(tmpStr, explst, simCode, hashTable, varPrefix=varPrefix)
       end
       _ =>  throw(ErrorException("$exp not yet supported"))
     end
   end
-  return "(" + str + ")"
+  return expr
 end
 
+
 """
-  Generates the starting conditions
+    Generates the start conditions
+  TODO:
+    Fix generation here further.. intermediate strings are probably not necessary.. 
 """
-function getStartConditions(vars::Array, condName::String, simCode::SimulationCode.SIM_CODE)
-  local startCondStr::String = ""
+function getStartConditions(vars::Array, condName::String, simCode::SimulationCode.SIM_CODE)::Expr
+  local startExprs::Array{Expr} = []
   local ht::Dict = simCode.crefToSimVarHT
   if length(vars) == 0
-    return startCondStr
+    return quote
+    end
   end
   for var in vars
     (index, simVar) = ht[var]
-    simVarType = simVar.varKind
+    local simVarType = simVar.varKind
     local optAttributes::Option{DAE.VariableAttributes} = simVar.attributes
-    @debug "simVar.attributes: $simVar.attributes"
     if simVar.attributes == nothing
       continue
     end
-    _ = @match optAttributes begin
-          SOME(attributes) => begin
-            startCondStr *= @match (attributes.start, attributes.fixed) begin
-             (SOME(start), SOME(fixed)) || (SOME(start), _)  => begin
-                @debug "Start value is:" start
-                "$condName[$index] #= $var =# = $(expToJL(start, simCode))\n"
-               end
-             (NONE(), SOME(fixed)) => "$condName[$index] = 0.0\n"
-             (NONE(), NONE()) => ""
-             (_, _) => ""  
+    () = @match optAttributes begin
+      SOME(attributes) => begin
+        () = @match (attributes.start, attributes.fixed) begin
+          (SOME(start), SOME(fixed)) || (SOME(start), _)  => begin
+            @debug "Start value is:" start
+            push!(startExprs,
+                  quote
+                  $(LineNumberNode(@__LINE__, "$var"))
+                  $(Symbol("$condName"))[$index] = $(expToJuliaExp(start, simCode))
+                  end)
+            ()
           end
-          NONE() => ""
+          (NONE(), SOME(fixed)) => begin
+            push!(startExprs, :($(condName)[$(index)] = 0.0))
+            ()
+          end
+          (_, _) => ()
         end
+        NONE() => ()
+      end
     end
   end
-  @debug "Returning $startCondStr"
-  return startCondStr
+  return quote
+    $(startExprs...)
+  end
 end
-
 
 end #= End CodeGeneration=#

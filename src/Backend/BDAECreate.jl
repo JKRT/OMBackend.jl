@@ -119,7 +119,7 @@ function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple
         end
         _ => begin
           @error "Skipped:" elem
-          continue
+          throw("Unsupported equation: $elem")
         end
       end
     end
