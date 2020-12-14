@@ -288,7 +288,7 @@ function eqToJulia(eq::BDAE.Equation, simCode::SimulationCode.SIM_CODE, resNumbe
         end
         $(Symbol("cb$(CALLBACK_COUNTER)")) = ContinuousCallback($(Symbol("condition$(CALLBACK_COUNTER)")), 
                                                                 $(Symbol("affect$(CALLBACK_COUNTER)!")),
-                                                                rootfind=true, save_positions=(false,true),
+                                                                rootfind=true, save_positions=(false, false),
                                                                 affect_neg! = $(Symbol("affect$(CALLBACK_COUNTER)!")),)
       end
     end
