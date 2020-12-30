@@ -1,11 +1,10 @@
 @info("OMBackend: Starting build script")
 
-push!(LOAD_PATH, "@v#.#", "@stdlib")
+#push!(LOAD_PATH, "@v#.#", "@stdlib"
 @info("Current loadpath: $LOAD_PATH")
 
 using Pkg
 
-# Add dependencies
 function buildDeps()
   Pkg.add("ExportAll")
   Pkg.add("Sundials")
@@ -29,5 +28,4 @@ function buildDeps()
 end
 
 buildDeps()
-
 @info("OMBackend: Finished build script")
