@@ -24,6 +24,7 @@ function buildDeps()
   Pkg.add(PackageSpec(url="https://github.com/OpenModelica/Absyn.jl"))
   Pkg.add(PackageSpec(url="https://github.com/OpenModelica/SCode.jl"))
   Pkg.add(PackageSpec(url="https://github.com/OpenModelica/DoubleEnded.jl"))
+  Pkg.add(PackageSpec(url="https://github.com/JKRT/DAE.jl"))
   @info("Build all dependencies succesfull")
 end
 
