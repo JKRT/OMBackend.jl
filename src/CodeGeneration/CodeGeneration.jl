@@ -44,7 +44,7 @@ import ..Backend.BDAE
 import DAE
 import Absyn
 
-include("codeGenerationUtil.jl")
+include("./CodeGenerationUtil.jl")
 
 """
   The header string with the necessary imports
