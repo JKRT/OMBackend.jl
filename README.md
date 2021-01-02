@@ -47,6 +47,28 @@ julia> include("test/runtests.jl")
 ```
 
 # Example use 
-<TODO>
+Assuming you use DAE.jl and a suitable frontend you can use OMBackend to simulate your Modelica models.
 
+```
+model BouncingBallReals
+  parameter Real e=0.7;
+  parameter Real g=9.81;
+  Real h(start=1);
+  Real v;
+equation 
+  der(h) = v;
+  der(v) = -g;  
+  when h <= 0 then
+    reinit(v, -e*pre(v));
+  end when;
+end BouncingBallReals;
+```
 
+Simply pass the given DAE to the function translate. 
+
+```
+julia> OMBackend.translate(BouncingBallReals)
+julia> OMBackend.simulate("BouncingBallReals", tspan = (0.0, 2.5))
+```
+
+![image](https://user-images.githubusercontent.com/8775827/99516636-b6914280-298e-11eb-85cf-c9041314e9b4.png)
