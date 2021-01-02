@@ -44,7 +44,7 @@ import ..Backend.BDAE
 import DAE
 import Absyn
 
-include("codeGenerationUtil.jl")
+include("./CodeGenerationUtil.jl")
 
 """
   The header string with the necessary imports
@@ -443,10 +443,22 @@ function expToJuliaExp(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE; varPrefix
       DAE.CALL(path = Absyn.IDENT(tmpStr), expLst = explst)  => begin
         DAECallExpressionToJuliaCallExpression(tmpStr, explst, simCode, hashTable, varPrefix=varPrefix)
       end
+      DAE.CAST(ty, exp)  => begin
+        quote
+          $(generateCastExpression(ty, exp, simCode, varPrefix))
+        end
+      end
       _ =>  throw(ErrorException("$exp not yet supported"))
     end
   end
   return expr
+end
+
+function generateCastExpression(ty, exp, simCode, varPrefix)
+  return @match ty, exp begin
+    (DAE.T_REAL(__), DAE.ICONST(__)) => float(eval(expToJuliaExp(exp, simCode, varPrefix=varPrefix)))
+    _ => throw("Cast $ty: not yet supported in codegen!")
+  end
 end
 
 

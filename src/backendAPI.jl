@@ -16,12 +16,11 @@ import SCode
 import JuliaFormatter
 
 global EXAMPLE_MODELS = Dict("HelloWorld" => OMBackend.ExampleDAEs.helloWorld_DAE
-                             ,"ExportedDAE" => OMBackend.ExampleDAEs.exportedDAE
                              , "LotkaVolterra" => OMBackend.ExampleDAEs.lotkaVolterra_DAE
                              , "VanDerPol" => OMBackend.ExampleDAEs.vanDerPol_DAE
                              , "BouncingBall" => OMBackend.ExampleDAEs.bouncingBall_DAE
                              , "Influenza" => OMBackend.ExampleDAEs.influenza_DAE)
-#=Settings=#
+#= Settings =#
 @enum BackendMode begin
   DAE_MODE = 1
   ODE_MODE = 2

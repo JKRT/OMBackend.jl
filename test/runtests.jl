@@ -28,37 +28,30 @@
 * See the full OSMC Public License conditions for more details.
 *
 */ =#
-#=Author John Tinnerholm & Andreas Heureman=#
+
+#= Author John Tinnerholm & Andreas Heureman =#
 
 import CSV
 import Tables
 
 # Load module for test DAEs
-using Test
-using OMBackend
 
 include("debugUtil.jl")
-#= logging =#
-ENV["JULIA_DEBUG"] = "all"
+#= Uncomment to turn on logging =#
+#ENV["JULIA_DEBUG"] = "OMBackend"
 
-const CURRENT_DIRECTORY = @__DIR__
-const EXAMPLE_DAE_DIRECTORY = CURRENT_DIRECTORY * "/ExampleDAE"
-if ! (CURRENT_DIRECTORY in LOAD_PATH && EXAMPLE_DAE_DIRECTORY in LOAD_PATH)
-  @info("Setting up loadpath..")
-  push!(LOAD_PATH, CURRENT_DIRECTORY, EXAMPLE_DAE_DIRECTORY)
-  @info("Done setting up loadpath: $LOAD_PATH")
-end
-using ExampleDAEs
+using OMBackend
+using OMBackend.ExampleDAEs
+using Test
+
 
 """
-These currently work
+   DAE's to use for the sanity check. 
 """
 global TEST_CASES = ["helloWorld", "lotkaVolterra", "vanDerPol"]
-#global TEST_CASES = ["bouncingBall"]
-
-#using ExampleDAEs
 global MODEL_NAME = ""
-@testset "UnitTests" begin
+
+@testset "Sanity test. Simple translation and simulation of Hybrid-DAE" begin
   @testset "DAE-mode" begin
     for testCase in TEST_CASES
       @testset "$testCase" begin
@@ -69,7 +62,7 @@ global MODEL_NAME = ""
             #= TODO: We should check this with some reference IR =#
             (MODEL_NAME, modelCode) = OMBackend.translate(frontendDAE)
             @debug generateFile(testCase, modelCode)
-            @info MODEL_NAME
+            @info "Translated: $MODEL_NAME"
             @test true
           catch e
             @info e
@@ -80,67 +73,18 @@ global MODEL_NAME = ""
         @testset "simulate" begin
           global MODEL_NAME
           try
-            simulationResults = OMBackend.simulateModel(MODEL_NAME, (0.0,10.0))
+            @info "Simulating: $MODEL_NAME"
+            simulationResults = OMBackend.simulateModel(MODEL_NAME; tspan=(0.0, 1.0))
             simTable = Tables.table(simulationResults)
             CSV.write("$(testCase)_result.csv", simTable)
             @debug "Simulation results:" simulationResults
-            @test true
+            @test simulationResults.retcode == :Success
           catch e
             @info e
             @test false
           end
-        end
-        #= TODO: Currently issues due to difference in csv format =#
-        @testset "validate solution" begin
-          local omc_table::Array = Tables.matrix(CSV.read("./OMC_Reference/$(testCase)_res.csv"))
-          local julia_table::Array = Tables.matrix(CSV.read("$(testCase)_result.csv"))
-          @test_broken omc_table ≈ julia_table
-          #= Delete the file =#
-          #rm("$(testCase)_result.csv")
         end
       end
     end
-  end
-
-  @testset "ODE-mode" begin
-    for testCase in TEST_CASES
-      @testset "$testCase" begin
-        @testset "compile" begin
-          global MODEL_NAME
-          frontendDAE::OMBackend.DAE.DAE_LIST = getfield(ExampleDAEs,Symbol("$(testCase)_DAE"))
-          try
-            #= TODO: We should check this with some reference IR =#
-            (MODEL_NAME, modelCode) = OMBackend.translate(frontendDAE)
-            @debug generateFile(testCase, modelCode)
-            @info MODEL_NAME
-            @test true
-          catch e
-            @info e
-            throw(e)
-            @test false
-          end
-        end
-        @testset "simulate" begin
-          global MODEL_NAME
-          try
-            simulationResults = OMBackend.simulateModel(MODEL_NAME, (0.0,10.0))
-            simTable = Tables.table(simulationResults)
-            CSV.write("$(testCase)_result.csv", simTable)
-            @debug "Simulation results:" simulationResults
-            @test true
-          catch e
-            @info e
-            @test false
-          end
-        end
-        #= TODO: Currently issues due to difference in csv format =#
-        @testset "validate solution" begin
-          local omc_table::Array = Tables.matrix(CSV.read("./OMC_Reference/$(testCase)_res.csv"))
-          local julia_table::Array = Tables.matrix(CSV.read("$(testCase)_result.csv"))
-          @test_broken omc_table ≈ julia_table
-          #= Delete the file =#
-          #rm("$(testCase)_result.csv")
-        end
-      end
   end
 end

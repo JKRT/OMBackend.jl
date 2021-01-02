@@ -1,35 +1,51 @@
 # About OMBackend.jl
 OMBackend.jl is one component of the new OpenModelica Compiler infrastructure for Julia.
-It is able to transform given DAE IR and simulate using DifferentialEquations.jl as it's backend.
+It is able to transform a given Hybrid DAE and simulate it using DifferentialEquations.jl.
+
+Currently only so called DAE-mode is supported, using the Sundials package with the IDA solver. 
 
 # Dependencies
-* Julia 1.1, 1.2 or 1.3
+* Julia 1.5
 * ExportAll.jl
 * MetaModelica.jl
 * Setfield.jl
 * OMCompiler.jl
 * DifferentialEquations.jl
 
-Experimental support for Julia 1.5
-
 # Installation
-Install dependencies with
+Install dependencies with:
 ```julia
 julia> import Pkg
 julia> Pkg.build("OMBackend")
 ```
-or
+or:
 ```julia
 julia> include("deps/build.jl")
 ```
-Then precompile with
+Then precompile with:
 ```julia
-(v1.1) pkg> activate .
+(v1.6) pkg> activate .
 julia> using OMBackend
 ```
 
-# Run tests
-Assuming you have activated OMBackend
+# Running tests
+
+In the folder containing OMBackend:
+```julia
+julia> activate .
+```
+Then run:
+
+```julia
+(OMBackend) pkg> test
+```
+
+As an alternative  assuming you have activated OMBackend:
 ```julia
 julia> include("test/runtests.jl")
 ```
+
+# Example use 
+<TODO>
+
+
