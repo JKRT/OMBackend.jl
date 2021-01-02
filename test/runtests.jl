@@ -73,6 +73,7 @@ global MODEL_NAME = ""
         @testset "simulate" begin
           global MODEL_NAME
           try
+            @info "Simulating: $MODEL_NAME"
             simulationResults = OMBackend.simulateModel(MODEL_NAME; tspan=(0.0, 1.0))
             simTable = Tables.table(simulationResults)
             CSV.write("$(testCase)_result.csv", simTable)
