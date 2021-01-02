@@ -1,6 +1,6 @@
 @info("OMBackend: Starting build script")
 
-#push!(LOAD_PATH, "@v#.#", "@stdlib"
+push!(LOAD_PATH, "@v#.#", "@stdlib")
 @info("Current loadpath: $LOAD_PATH")
 
 using Pkg
@@ -18,12 +18,13 @@ function buildDeps()
   Pkg.add("Compose")
   Pkg.add("LightGraphs")
   Pkg.add("JuliaFormatter")
-  Pkg.add(PackageSpec(url="https://github.com/OpenModelica/ImmutableList.jl"))
-  Pkg.add(PackageSpec(url="https://github.com/OpenModelica/MetaModelica.jl"))
-  Pkg.add(PackageSpec(url="https://github.com/OpenModelica/Absyn.jl"))
-  Pkg.add(PackageSpec(url="https://github.com/OpenModelica/SCode.jl"))
-  Pkg.add(PackageSpec(url="https://github.com/OpenModelica/DoubleEnded.jl"))
-  Pkg.add(PackageSpec(url="https://github.com/JKRT/DAE.jl"))
+  #= This packages are available using the OpenModelica Julia registry=#
+  Pkg.add("ImmutableList")
+  Pkg.add("MetaModelica")
+  Pkg.add("Absyn")
+  Pkg.add("SCode")
+  Pkg.add("DoubleEnded")
+  Pkg.add("DAE")
   @info("Build all dependencies succesfull")
 end
 
