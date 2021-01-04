@@ -175,9 +175,9 @@ end
 
 function isStateOrVariable(kind::BDAE.VarKind)
   res = @match kind begin
-  BDAE.VARIABLE(__) => true
-  BDAE.STATE(__) => true
-  _ => false
+    BDAE.VARIABLE(__) => true
+    BDAE.STATE(__) => true
+    _ => false
   end
   return res
 end
