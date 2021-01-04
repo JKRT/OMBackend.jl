@@ -145,12 +145,12 @@ function traverseEquationExpressions(eq::BDAE.Equation,
        end
        BDAE.SOLVED_EQUATION(componentRef = cref, exp = rhs) => begin
          (rhs, extArg) = Util.traverseExpTopDown(rhs, traversalOperation, extArg)
-         @set eq.rhs = rhs;
+         @assign eq.rhs = rhs;
          (eq, extArg)
        end
        BDAE.RESIDUAL_EQUATION(exp = rhs) => begin
          (rhs, extArg) = Util.traverseExpTopDown(rhs, traversalOperation, extArg)
-         @set eq.exp = rhs;
+         @assign eq.exp = rhs;
          (eq, extArg)
        end
        _ => begin
