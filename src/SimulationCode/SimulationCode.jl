@@ -46,7 +46,7 @@ import DAE
 import ..Backend.BDAE
 import ..BackendUtil.GraphAlgorithms
 import LightGraphs
-
+import MetaGraphs
 include("simCodeData.jl")
 include("simCodeUtil.jl")
 include("simCodeDump.jl")

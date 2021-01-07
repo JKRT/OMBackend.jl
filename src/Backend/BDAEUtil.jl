@@ -182,6 +182,24 @@ function isStateOrVariable(kind::BDAE.VarKind)
   return res
 end
 
+function isVariable(kind::BDAE.VarKind)
+  res = @match kind begin
+    BDAE.VARIABLE(__) => true
+    _ => false
+  end
+  return res
+end
+
+function isState(kind::BDAE.VarKind)
+  res = @match kind begin
+    BDAE.STATE(__) => true
+    _ => false
+  end
+  return res
+end
+
+
+
 
 """
     kabdelhak:
@@ -215,11 +233,38 @@ end
   output All variable in that specific equation
 "
 function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Array{BDAE.Var})::Array{DAE.ComponentRef}
+  local componentReferences::List = Util.getAllCrefs(eq.exp)
+  local stateCrefs = Dict{DAE.ComponentRef, Bool}()
+  (_, stateElements)  = traverseEquationExpressions(eq, detectStateExpression, stateCrefs)
+  local stateElementArray = collect(keys(stateElements))
+  @info "stateElementArray $stateElementArray"
+  @info "componentReferences $(listArray(componentReferences))"
+  local componentReferencesNotStates::Array = [componentReferences...]
+  local componentReferencesArr::Array = [componentReferences..., stateElementArray...]
+  variablesInEq::Array = []
+  for var in vars
+    local vn = var.varName
+    if vn in componentReferencesNotStates && isVariable(var.varKind)
+      push!(variablesInEq, vn)
+    elseif vn in stateElementArray
+      push!(variablesInEq, vn)
+    else
+      continue
+    end
+  end
+  return variablesInEq
+end
+
+
+"
+  Author:johti17
+  input: Backend Equation, eq
+  input: All existing variables
+  output All variable in that specific equation except the state variables
+"
+function getAllVariablesExceptStates(eq::BDAE.RESIDUAL_EQUATION, vars::Array{BDAE.Var})::Array{DAE.ComponentRef}
     local componentReferences::List = Util.getAllCrefs(eq.exp)
-    local stateCrefs = Dict{DAE.ComponentRef, Bool}()
-    (_, stateElements)  = traverseEquationExpressions(eq, detectStateExpression, stateCrefs)
-    local stateElementArray = collect(keys(stateElements))
-    local componentReferencesArr::Array = [componentReferences..., stateElementArray...]
+    local componentReferencesArr::Array = [componentReferences...]
     local varNames = [v.varName for v in vars]
     variablesInEq::Array = []
     for vn in varNames
@@ -229,7 +274,6 @@ function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Array{BDAE.Var})::Arr
     end
     return variablesInEq
 end
-
 
 include("backendDump.jl")
 @exportAll()

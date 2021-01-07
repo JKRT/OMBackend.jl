@@ -78,57 +78,19 @@ function transformToSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.SIM_CO
   local equations = [eq for es in equationSystems for eq in es.orderedEqs]
   #= Split equations into three parts. Residuals whenEquations and If-equations =#
   (resEqs,whenEqs,ifEqs) = allocateAndCollectSimulationEquations(equations)
+  #= Sorting/Matching (This is used for the start condtions) =#
+  local eqVariableMapping = createEquationVariableBidirectionGraph(equations, allBackendVars, crefToSimVarHT)
+  (isSingular::Bool, matchOrder::Array) = GraphAlgorithms.matching(eqVariableMapping, length(eqVariableMapping.keys))
+  local digraph::MetaGraphs.MetaDiGraph = GraphAlgorithms.merge(matchOrder, eqVariableMapping)
+    if OMBackend.PLOT_EQUATION_GRAPH
+      local labels = makeLabels(digraph, matchOrder, crefToSimVarHT)
+      GraphAlgorithms.plotEquationGraph("./digraphOutput$(backendDAE.name).pdf", digraph, labels)
+    end
+  stronglyConnectedComponents::Array = GraphAlgorithms.topological_sort(digraph) 
   #= Construct SIM_CODE =#
-  SimulationCode.SIM_CODE(backendDAE.name, crefToSimVarHT, resEqs, whenEqs, ifEqs)
+  SimulationCode.SIM_CODE(backendDAE.name, crefToSimVarHT, resEqs, whenEqs, ifEqs, isSingular, digraph, stronglyConnectedComponents)
 end
 
-
-
-
-"""
-   This functions create and assigns indices for variables
-   Thus Construct the table that maps variable name to the actual variable.
-It executes the following steps:
-1. Collect all variables
-2. Search all states (e.g. x and y) and give them indices starting at 1 (so x=1, y=2). Then give the corresponding state derivatives (x' and y') the same indices.
-3. Remaining algebraic variables will get indices starting with i+1, where i is the number of states.
-4. Parameters will get own set of indices, starting at 1.
-"""
-function createIndices(simulationVars::Array{SimulationCode.SIMVAR})::Dict{String, Tuple{Integer, SimulationCode.SimVar}}
-  local ht::Dict{String, Tuple{Integer, SimulationCode.SimVar}} = Dict()
-  local stateCounter = 0
-  local parameterCounter = 0
-  local numberOfStates = 0
-  for var in simulationVars
-    @match var.varKind begin
-      SimulationCode.STATE(__) => begin
-        stateCounter += 1
-        @set var.index = SOME(stateCounter)
-        stVar = SimulationCode.SIMVAR(var.name, var.index, SimulationCode.STATE_DERIVATIVE(var.name), var.attributes)
-        push!(ht, var.name => (stateCounter, var))
-        #=Adding the state derivative as well=#
-        push!(ht, "der($(var.name))" => (stateCounter, stVar))
-      end
-      SimulationCode.PARAMETER(__) => begin
-        parameterCounter += 1
-        push!(ht, var.name => (parameterCounter, var))
-      end
-      _ => continue
-    end
-  end
-  local algIndexCounter::Integer = stateCounter
-  for var in simulationVars
-    @match var.varKind begin
-      SimulationCode.ALG_VARIABLE(__) => begin
-        algIndexCounter += 1
-        var = @set var.index = SOME(algIndexCounter)
-        push!(ht, var.name => (var.index.data, var))
-      end
-      _ => continue
-    end
-  end
-  return ht
-end
 
 """
 John:

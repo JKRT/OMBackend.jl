@@ -10,14 +10,14 @@
 module GraphAlgorithms
 
 import LightGraphs
+import MetaGraphs
 using GraphPlot
 using Compose
 using Cairo
 using DataStructures
 
-
 "
-  Regular matching. Does not solve singularities.
+  Regular matching. (Does not solve singularities).
   Author: John Tinnerholm
   input:
         dict, adjacency list representation of the equation-variable graph
@@ -73,50 +73,85 @@ end
 
 
 "
-  Author: John Tinnerholm
+Author: John Tinnerholm
   Given a order, and a graph represented as an adjacency list creates a new digraph
   representing a causalised system.
+  input matchOrder, assign array(j) = i The variable j is solved in equation i
+  input graph equation -> {Equation -> variables belonging to it}
+  output LightGraphs.SimpleDiGraph
 "
-function merge(matchOrder, graph::OrderedDict)
-  "
-    Remove function for arrays...
+function merge(matchOrder::Array, graph::OrderedDict)::MetaGraphs.MetaDiGraph  "
+      Remove function for arrays...
   "
   function remove!(a, item)
     deleteat!(a, findall(x->x==item, a))
-  end
-
-  local counter = 0
-  local values = graph.vals
-  local g = LightGraphs.SimpleDiGraph()
-  local arrRepresentation = []
-  for i in matchOrder
+  end 
+  #= 
+    Convert the given map into an array representation.
+    Similar format to the assign matrix but represent the dependencies 
+    depends(i) = {Set of variables used in equation i}.
+  =#
+  local depends = graph.vals
+  local g = MetaGraphs.MetaDiGraph()
+  #= 
+    Create vertices each equation in matchorder is one vertex in the graph. 
+  =#
+  for eq in 1:length(matchOrder)
     LightGraphs.add_vertex!(g)
+    MetaGraphs.set_prop!(g, eq, :eID, eq)
   end
-  @info "$matchOrder"
-  for eq in matchOrder
-    counter += 1
-    c = remove!(values[eq], counter)
-    #=Now I need to know. What equation solves for the remaining variables=#
-    solvedIn = matchOrder[c]
-    for e in solvedIn
-      push!(arrRepresentation, [e, eq])
-      LightGraphs.add_edge!(g, e, eq)
+  for eq in 1:length(matchOrder)
+    varIdx = findall(x->x==eq, matchOrder)
+    if length(varIdx) == 0
+      continue;
+    end
+    local depVariables = remove!(depends[eq], varIdx[1])
+    #= Solve for the remaining variables =#
+    if ! isempty(depVariables)
+      for v in depVariables
+        MetaGraphs.set_prop!(g, matchOrder[v], :vID, v)
+        MetaGraphs.set_prop!(g, eq, :vID, varIdx[1])
+        LightGraphs.add_edge!(g, matchOrder[v], eq)
+      end
+    else
+      MetaGraphs.set_prop!(g, eq, :vID, varIdx[1])
     end
   end
-  #=Create the dict repr=#
-  dictRepr = OrderedDict()
-  for i in 1:length(matchOrder)
-    key = i
-    dictRepr[key] = []
-  end
-  for i in arrRepresentation
-    key = i[1]
-    push!(dictRepr[key], i[2])
-  end
-  labels = ["f$(matchOrder[i])|z$(i)"  for i in 1:length(matchOrder)]
-  return g, labels, dictRepr
+  @info dumpGraphProperties(g)
+  return g
 end
 
+"
+  Dumps the properties of a given MetaDiGraph.
+"
+function dumpGraphProperties(g::MetaGraphs.MetaDiGraph)
+  local nVertices = LightGraphs.vertices(g).stop
+  local str = "Meta properties of the graph:\n"
+  for i in 1:nVertices
+    str *= "Properties: $(MetaGraphs.props(g, i))\n"
+  end
+  return str
+end
+
+"
+  Topological sort
+"
+function topological_sort(g::LightGraphs.AbstractGraph)::Array
+  LightGraphs.topological_sort_by_dfs(g)
+end
+
+
+"
+    Plots the given equation graph
+"
+function plotEquationGraph(filePath::String, g::LightGraphs.AbstractGraph, labels, dims = (64cm, 64cm)::Tuple)
+  plot = gplot(g, nodelabel=labels,
+                nodefillc="blue",
+                nodelabelc="white",
+                edgestrokec="black",
+                layout=spring_layout)
+  draw(Compose.PDF(filePath, dims...), plot)
+end
 
 
 "
@@ -168,8 +203,8 @@ function tarjan(g::OrderedDict, n)::Array
   local sccs = []
   local stack = []
   #=
-  Incidices for the vertices 1->n
-  0 = undefined
+    Incidices for the vertices 1->n
+    0 = undefined
   =#
   local vIndicies = [0 for i in 1:n]
   local vLowLinks = [0 for i in 1:n]
@@ -183,16 +218,5 @@ function tarjan(g::OrderedDict, n)::Array
   return sccs
 end
 
-"
-    Plots the given equation graph
-"
-function plotEquationGraph(filePath::String, g, labels::Array{String}, dims = (16cm, 16cm)::Tuple)
-  plot3 = gplot(g, nodelabel=labels,
-                nodefillc="blue",
-                nodelabelc="white",
-                edgestrokec="black",
-                layout=spring_layout)
-  draw(Compose.PDF(filePath, dims...), plot3)
-end
 
 end #= GraphAlgorithms =#

@@ -17,6 +17,7 @@ function buildDeps()
   Pkg.add("Cairo")
   Pkg.add("Compose")
   Pkg.add("LightGraphs")
+  Pkg.add("MetaGraphs")
   Pkg.add("JuliaFormatter")
   #= This packages are available using the OpenModelica Julia registry=#
   Pkg.add("ImmutableList")

@@ -73,7 +73,7 @@ function translate(frontendDAE::DAE.DAE_LIST, BackendMode = DAE_MODE)::Tuple{Str
     return generateTargetCode(simCode)
   elseif BackendMode == ODE_MODE
     simCode = generateExplicitSimulationCode(bDAE)
-    return generateTargetCode(simCode)
+    return ("Error", :())
   else
     @error "No mode specificed: valid modes are:"
     println("ODE_MODE")
@@ -114,10 +114,11 @@ end
 """
   Transforms BDAE-IR to simulation code for DAE-mode
 """
-function generateExplicitSimulationCode(bDAE::BDAE.BDAEStructure)::SimulationCode.SimCode
+function generateExplicitSimulationCode(bDAE::BDAE.BDAEStructure)
   simCode = SimulationCode.transformToExplicitSimCode(bDAE)
-  @debug BDAE.stringHeading1(simCode, "SIM_CODE: transformed simcode")
-  return simCode
+  @info "Code generation for ODE-mode not yet supported! Exiting.."
+#  @debug BDAE.stringHeading1(simCode, "SIM_CODE: transformed simcode")
+#  return simCode
 end
 
 """
