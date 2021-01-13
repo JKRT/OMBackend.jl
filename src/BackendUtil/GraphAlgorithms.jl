@@ -59,7 +59,6 @@ function matching(dict::DataStructures.OrderedDict, n)::Tuple{Bool, Array}
   local vMark = []
   local eMark = []
   local isSingular = false
-  @info "Starting"
   for i in 1:n
     vMark = [false for j in 1:n]
     eMark = [false for j in 1:n]
@@ -117,7 +116,7 @@ function merge(matchOrder::Array, graph::OrderedDict)::MetaGraphs.MetaDiGraph  "
       MetaGraphs.set_prop!(g, eq, :vID, varIdx[1])
     end
   end
-  @info dumpGraphProperties(g)
+  @debug dumpGraphProperties(g)
   return g
 end
 

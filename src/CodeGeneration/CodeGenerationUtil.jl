@@ -28,7 +28,17 @@
 * See the full OSMC Public License conditions for more details.
 *
 =#
+#=
+# Author: John Tinnerholm (johti17)
+=#
+import MacroTools
 
+struct OMSolution
+  "Solution given by DifferentialEquations.jl"
+  diffEqSol
+  "Various metadata for the specific model"
+  idxToName::OrderedDict
+end
 
 """
 Return string containing the OSMC copyright stuff.
@@ -272,3 +282,66 @@ function DAECallExpressionToJuliaCallExpression(pathStr::String, expLst::List, s
     end
   end
 end
+
+"
+  Removes all comments from a given exp
+"
+function removeComments(ex::Expr)::Expr
+  filter!(ex.args) do e
+    isa(e, LineNumberNode) && return false
+    if isa(e, Expr)
+      (e::Expr).head === :line && return false
+      removeComments(e::Expr)
+    end
+    return true
+  end
+  return ex
+end
+
+"""
+Transforms:
+  <name>[<index>] -> <name>_index
+"""
+function arrayToSymbolicVariable(arrayRepr::Expr)::Expr
+  MacroTools.postwalk(arrayRepr) do x
+    MacroTools.@capture(x, T_[index_]) || return let
+      x
+    end
+    return let
+      local newVarStr::String = "$(T)_$(index)"
+      local newVar = Symbol(newVarStr)
+      return newVar
+    end
+  end
+end
+
+"
+ Removes all the redudant blocks from a generated expression
+"
+function stripBeginBlocks(e)::Expr
+  MacroTools.postwalk(e) do x
+    return MacroTools.unblock(x)
+  end
+end
+
+"""
+Transforms:
+  <name>_index -> <name>[index]
+"""
+const pattern = r".*_[0-9]+"
+function symbolicVariableToArrayRef(e::Expr)::Expr
+  MacroTools.postwalk(e) do x
+      x isa Symbol || return let
+        x
+    end
+    return let
+      if match(pattern, "$x") == nothing
+        return x
+      end
+      local splitted = split("$x", "_")
+      local res = Meta.parse("$(splitted[1])[$(splitted[2])]")
+      return res
+    end
+  end
+end
+

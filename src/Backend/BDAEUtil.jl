@@ -237,8 +237,6 @@ function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Array{BDAE.Var})::Arr
   local stateCrefs = Dict{DAE.ComponentRef, Bool}()
   (_, stateElements)  = traverseEquationExpressions(eq, detectStateExpression, stateCrefs)
   local stateElementArray = collect(keys(stateElements))
-  @info "stateElementArray $stateElementArray"
-  @info "componentReferences $(listArray(componentReferences))"
   local componentReferencesNotStates::Array = [componentReferences...]
   local componentReferencesArr::Array = [componentReferences..., stateElementArray...]
   variablesInEq::Array = []

@@ -88,7 +88,9 @@ function transformToSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.SIM_CO
     end
   stronglyConnectedComponents::Array = GraphAlgorithms.topological_sort(digraph) 
   #= Construct SIM_CODE =#
-  SimulationCode.SIM_CODE(backendDAE.name, crefToSimVarHT, resEqs, whenEqs, ifEqs, isSingular, digraph, stronglyConnectedComponents)
+  SimulationCode.SIM_CODE(backendDAE.name, crefToSimVarHT,
+                          resEqs,whenEqs, ifEqs, isSingular, matchOrder,
+                          digraph, stronglyConnectedComponents)
 end
 
 
