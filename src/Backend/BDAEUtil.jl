@@ -142,17 +142,17 @@ function traverseEquationExpressions(eq::BDAE.Equation,
          @assign eq.lhs = lhs
          @assign eq.rhs = rhs
          (eq, extArg)
-       end #= TODO: Are the below to be considered?=#
-       # BDAE.SOLVED_EQUATION(componentRef = cref, exp = rhs) => begin
-       #   (rhs, extArg) = Util.traverseExpTopDown(rhs, traversalOperation, extArg)
-       #   @assign eq.rhs = rhs;
-       #   (eq, extArg)
-       # end
-       # BDAE.RESIDUAL_EQUATION(exp = rhs) => begin
-       #   (rhs, extArg) = Util.traverseExpTopDown(rhs, traversalOperation, extArg)
-       #   @assign eq.rhs = rhs;
-       #   (eq, extArg)
-       # end
+       end
+       BDAE.SOLVED_EQUATION(componentRef = cref, exp = rhs) => begin
+         (rhs, extArg) = Util.traverseExpTopDown(rhs, traversalOperation, extArg)
+         @assign eq.rhs = rhs;
+         (eq, extArg)
+       end
+       BDAE.RESIDUAL_EQUATION(exp = rhs) => begin
+         (rhs, extArg) = Util.traverseExpTopDown(rhs, traversalOperation, extArg)
+         @assign eq.exp = rhs;
+         (eq, extArg)
+       end
        _ => begin
          (eq, extArg)
        end
@@ -175,11 +175,102 @@ end
 
 function isStateOrVariable(kind::BDAE.VarKind)
   res = @match kind begin
-  BDAE.VARIABLE(__) => true
-  BDAE.STATE(__) => true
-  _ => false
+    BDAE.VARIABLE(__) => true
+    BDAE.STATE(__) => true
+    _ => false
   end
   return res
+end
+
+function isVariable(kind::BDAE.VarKind)
+  res = @match kind begin
+    BDAE.VARIABLE(__) => true
+    _ => false
+  end
+  return res
+end
+
+function isState(kind::BDAE.VarKind)
+  res = @match kind begin
+    BDAE.STATE(__) => true
+    _ => false
+  end
+  return res
+end
+
+
+
+
+"""
+    kabdelhak:
+    Detects if a given expression is a der() call and adds the corresponding
+    cref to a hashmap
+"""
+function detectStateExpression(exp::DAE.Exp, stateCrefs::Dict{DAE.ComponentRef, Bool})
+  local cont::Bool
+  local outCrefs = stateCrefs
+  (outCrefs, cont) = begin
+    local state::DAE.ComponentRef
+    @match exp begin
+      DAE.CALL(Absyn.IDENT("der"), DAE.CREF(state) <| _ ) => begin
+        #= add state with boolean value that does not matter, it is later onlBDAE.BACKEND_DAE(eqs = eqs)y checked if it exists at all =#
+        outCrefs[state] = true
+        (outCrefs, true)
+      end
+      _ => begin
+        (outCrefs, true)
+      end
+    end
+  end
+  return (exp, cont, outCrefs)
+end
+
+
+"
+  Author:johti17
+  input: Backend Equation, eq
+  input: All existing variables
+  output All variable in that specific equation
+"
+function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Array{BDAE.Var})::Array{DAE.ComponentRef}
+  local componentReferences::List = Util.getAllCrefs(eq.exp)
+  local stateCrefs = Dict{DAE.ComponentRef, Bool}()
+  (_, stateElements)  = traverseEquationExpressions(eq, detectStateExpression, stateCrefs)
+  local stateElementArray = collect(keys(stateElements))
+  local componentReferencesNotStates::Array = [componentReferences...]
+  local componentReferencesArr::Array = [componentReferences..., stateElementArray...]
+  variablesInEq::Array = []
+  for var in vars
+    local vn = var.varName
+    if vn in componentReferencesNotStates && isVariable(var.varKind)
+      push!(variablesInEq, vn)
+    elseif vn in stateElementArray
+      push!(variablesInEq, vn)
+    else
+      continue
+    end
+  end
+  return variablesInEq
+end
+
+
+"
+  Author:johti17
+  input: Backend Equation, eq
+  input: All existing variables
+  output All variable in that specific equation except the state variables
+"
+function getAllVariablesExceptStates(eq::BDAE.RESIDUAL_EQUATION, vars::Array{BDAE.Var})::Array{DAE.ComponentRef}
+    local componentReferences::List = Util.getAllCrefs(eq.exp)
+    local componentReferencesArr::Array = [componentReferences...]
+    local varNames = [v.varName for v in vars]
+    variablesInEq::Array = []
+    for vn in varNames
+        if vn in componentReferencesArr
+            push!(variablesInEq, vn)
+        end
+    end
+    return variablesInEq
 end
 
 include("backendDump.jl")

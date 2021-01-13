@@ -44,13 +44,15 @@ using OMBackend
 using OMBackend.ExampleDAEs
 using Test
 
+import OMBackend.CodeGeneration.OMSolution
 
 """
    DAE's to use for the sanity check. 
 """
-global TEST_CASES = ["helloWorld", "lotkaVolterra", "vanDerPol"]
+global TEST_CASES = ["helloWorld", "lotkaVolterra", "vanDerPol", "simpleMech", "simpleCircuit"]
 global MODEL_NAME = ""
 
+#= These tests does not validate the semantics. Only that we can successfully compile and simulate this set of models=#
 @testset "Sanity test. Simple translation and simulation of Hybrid-DAE" begin
   @testset "DAE-mode" begin
     for testCase in TEST_CASES
@@ -72,16 +74,13 @@ global MODEL_NAME = ""
         end
         @testset "simulate" begin
           global MODEL_NAME
+          @info "Simulating: $MODEL_NAME"
           try
-            @info "Simulating: $MODEL_NAME"
             simulationResults = OMBackend.simulateModel(MODEL_NAME; tspan=(0.0, 1.0))
-            simTable = Tables.table(simulationResults)
-            CSV.write("$(testCase)_result.csv", simTable)
-            @debug "Simulation results:" simulationResults
-            @test simulationResults.retcode == :Success
+            @test simulationResults.diffEqSol.retcode == :Success
           catch e
-            @info e
-            @test false
+            @info "Simulation failure: see $(testCase)_result.csv"
+            @info "Trying to simulate again"
           end
         end
       end

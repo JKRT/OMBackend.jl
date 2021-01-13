@@ -8,12 +8,11 @@ import .Backend.BDAEUtil
 import .Backend.Causalize
 import ..CodeGeneration
 import OMBackend.ExampleDAEs
-import .FrontendUtil.DAE
-import .FrontendUtil.Prefix
 import .SimulationCode
 import Base.Meta
 import SCode
 import JuliaFormatter
+import Plots
 
 global EXAMPLE_MODELS = Dict("HelloWorld" => OMBackend.ExampleDAEs.helloWorld_DAE
                              , "LotkaVolterra" => OMBackend.ExampleDAEs.lotkaVolterra_DAE
@@ -75,7 +74,7 @@ function translate(frontendDAE::DAE.DAE_LIST, BackendMode = DAE_MODE)::Tuple{Str
     return generateTargetCode(simCode)
   elseif BackendMode == ODE_MODE
     simCode = generateExplicitSimulationCode(bDAE)
-    return generateTargetCode(simCode)
+    return ("Error", :())
   else
     @error "No mode specificed: valid modes are:"
     println("ODE_MODE")
@@ -116,10 +115,11 @@ end
 """
   Transforms BDAE-IR to simulation code for DAE-mode
 """
-function generateExplicitSimulationCode(bDAE::BDAE.BDAEStructure)::SimulationCode.SimCode
+function generateExplicitSimulationCode(bDAE::BDAE.BDAEStructure)
   simCode = SimulationCode.transformToExplicitSimCode(bDAE)
-  @debug BDAE.stringHeading1(simCode, "SIM_CODE: transformed simcode")
-  return simCode
+  @info "Code generation for ODE-mode not yet supported! Exiting.."
+#  @debug BDAE.stringHeading1(simCode, "SIM_CODE: transformed simcode")
+#  return simCode
 end
 
 """
@@ -150,7 +150,6 @@ function generateTargetCode(simCode::SimulationCode.EXPLICIT_SIM_CODE)
   catch
     @info "ODE mode failed"
   end
-  @info "Plotting results"
 end
 
 function writeModelToFile(modelName::String)
@@ -169,11 +168,13 @@ end
 "
 function printModel(modelName::String)
     try
-      model::Expr = COMPILED_MODELS[modelName]
-      modelStr::String = "$model"
-      formattedResults = modelStr #JuliaFormatter.format_text(modelStr;
-                                  #                  remove_extra_newlines = true,
-                                   #                 always_use_return = true)
+      local model::Expr = COMPILED_MODELS[modelName]
+      #= Remove all the redudant blocks from the model =#
+      local strippedModel = CodeGeneration.stripBeginBlocks(model)
+      local modelStr::String = "$strippedModel"
+      formattedResults = JuliaFormatter.format_text(modelStr;
+                                                    remove_extra_newlines = true,
+                                                    always_use_return = true)
       println(formattedResults)
     catch e 
       @error "Model: $(modelName) is not compiled. Available models are: $(availableModels())"
@@ -209,8 +210,22 @@ function simulateModel(modelName::String; tspan=(0.0, 1.0))
   end
 end
 
+"
+  The default plot function of OMBackend.
+  All labels of the variables and the name is given by default
+"
+function plot(sol::CodeGeneration.OMSolution)
+  local nsolution = sol.diffEqSol
+  local t = nsolution.t
+  local rescols = collect(eachcol(transpose(hcat(nsolution.u...))))
+  labels = permutedims(sol.idxToName.vals)
+  Plots.plot(t, rescols; labels=labels)
+end
+
 """
-  Turns on debugging via logging.
+  Turns on logging
+TODO:
+  Make more fine grained
 """
 function turnOnLogging()
   ENV["JULIA_DEBUG"] = "OMBackend"

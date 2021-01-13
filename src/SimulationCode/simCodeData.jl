@@ -69,6 +69,25 @@ struct SIM_CODE <: SimCode
   residualEquations::Array{BDAE.RESIDUAL_EQUATION}
   whenEquations::Array{BDAE.WHEN_EQUATION}
   ifEquations::Array{BDAE.IF_EQUATION}
+  "True if the system that we are solving is singular"
+  isSingular::Bool
+
+  "
+   The match order:
+   Result of assign array, e.g array(j) = equation_i
+  "
+  matchOrder::Array{Int}
+
+    "
+    The merged graph. E.g digraph constructed from matching info.
+    The indicies are the same as above and they are shared.
+    If the system is singular tearing is needed.
+   "
+  equationGraph::LightGraphs.AbstractGraph
+  "
+    The reverse topological sort of the equation-graph
+  "
+  stronglyConnectedComponents::Array
 end
 
 
@@ -112,7 +131,7 @@ struct EXPLICIT_SIM_CODE <: SimCode
     The indicies are the same as above and they are shared.
     If the system is singular tearing is needed.
   "
-  sortedGraph::OrderedDict{Int,Array{Int}}
+  sortedGraph::LightGraphs.AbstractGraph
   "
     The strongly connected components of the sorted graph.
     This information can be used for tearing.

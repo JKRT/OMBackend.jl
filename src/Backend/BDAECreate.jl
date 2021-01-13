@@ -64,7 +64,7 @@ function lower(lst::DAE.DAE_LIST)::BDAE.BDAEStructure
     @match lst begin
       DAE.DAE_LIST(elementLst) => begin
         (variableLst, equationLst) = splitEquationsAndVars(elementLst)
-        (listArray(variableLst), listArray(equationLst))
+        (listArray(listReverse(variableLst)), listArray(listReverse(equationLst)))
       end
     end
   end
