@@ -1,0 +1,22 @@
+name: 'Run Pkg.build'
+description: 'Run the build step in a Julia package'
+author: 'David Anthoff, John Tinnerholm'
+
+branding:
+  icon: 'box'
+  color: 'gray-dark'
+
+runs:
+  using: 'composite'
+  steps:
+  - run: julia --color=yes "$GITHUB_ACTION_PATH"/addRegistries.jl
+    shell: bash
+    env:
+      # We set `JULIA_PKG_SERVER` only for this step to enforce
+      # `Pkg.Registry.add` to use Git.  This way, Pkg.jl can send
+      # the request metadata to pkg.julialang.org when installing
+      # packages via `Pkg.test`.
+      JULIA_PKG_SERVER: ""
+
+  - run: julia --color=yes --project -e 'using Pkg; if VERSION >= v"1.1.0-rc1"; Pkg.build(verbose=true); else Pkg.build(); end'
+    shell: bash
