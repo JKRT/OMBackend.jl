@@ -1,4 +1,4 @@
-![Build Status](https://travis-ci.com/JKRT/OMBackend.jl.svg?token=spA4q6rnAXNpiqHMwpnL&branch=master)
+[![Github Action CI](https://github.com/JKRT/OMBackend.jl/workflows/CI/badge.svg)](https://github.com/JKRT/OMBackend.jl/actions)
 # About OMBackend.jl
 OMBackend.jl is one component of the new OpenModelica Compiler infrastructure for Julia.
 It is able to transform a given Hybrid DAE and simulate it using DifferentialEquations.jl.
