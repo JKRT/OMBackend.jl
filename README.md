@@ -6,7 +6,7 @@ It is able to transform a given Hybrid DAE and simulate it using DifferentialEqu
 Currently only so called DAE-mode is supported, using the Sundials package with the IDA solver. 
 
 # Dependencies
-* Julia 1.5
+* Julia 1.6
 * ExportAll.jl
 * MetaModelica.jl
 * Setfield.jl
