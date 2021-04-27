@@ -284,6 +284,37 @@ function DAECallExpressionToJuliaCallExpression(pathStr::String, expLst::List, s
 end
 
 "
+  TODO: Keeping it simple for now, we assume we only have one argument in the call
+  We handle derivitives seperatly
+"
+function DAECallExpressionToJuliaCallExpression(pathStr::String, expLst::List, simCode::SimulationCode.UNSORTED_SIM_CODE, ht; varPrefix=varPrefix)::Expr
+  @match pathStr begin
+    "der" => begin
+      varName = BDAE.string(listHead(expLst))
+      (index, _) = ht[varName]
+      quote
+        DER($(Symbol(varName)))
+      end
+    end
+    "pre" => begin
+      varName = BDAE.string(listHead(expLst))
+      (index, _) = ht[varName]
+      indexForVar = ht[varName][1]
+      quote 
+        (integrator.u[$(indexForVar)])
+      end
+    end
+    _  =>  begin
+      funcName = Symbol(pathStr)
+      argPart = tuple(map((x) -> expToJuliaExp(x, simCode, varPrefix=varPrefix), expLst)...)
+      quote 
+        $(funcName)($(argPart...))
+      end
+    end
+  end
+end
+
+"
   Removes all comments from a given exp
 "
 function removeComments(ex::Expr)::Expr

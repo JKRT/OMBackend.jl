@@ -48,6 +48,7 @@ import MetaGraphs
 import Reduce
 
 include("./CodeGenerationUtil.jl")
+include("./MDK_CodeGeneration.jl")
 
 """
     The header string with the necessary imports
@@ -124,8 +125,8 @@ function generateCode(simCode::SimulationCode.SIM_CODE)::Tuple{String, Expr}
   local DAE_EQUATION_FUNCTION = quote
     function $(Symbol("$(modelName)DAE_equations"))(res, dx, x, aux, t)
       $(AUX_FUNC_NAME)(dx, x, aux, t)
-      p = aux[1]
       reals = aux[2]
+      p = aux[1]
       $(DAE_EQUATIONS...)
       $(DAE_STATE_UPDATE_VECTOR...)
     end
@@ -374,7 +375,7 @@ function createEquations(equations::Array, simCode::SimulationCode.SIM_CODE)::Ar
   return eqs
 end
 
-function createParameterEquations(parameters::Array, simCode::SimulationCode.SIM_CODE)
+function createParameterEquations(parameters::Array, simCode::SimulationCode.SimCode)
   local parameterEquations::Array = []
   local hT = simCode.crefToSimVarHT
   for param in parameters
@@ -402,7 +403,7 @@ function residualEqtoJulia(eq::BDAE.Equation, simCode::SimulationCode.SIM_CODE, 
   local result::Expr = @match eq begin
     BDAE.RESIDUAL_EQUATION(exp = rhs) => begin
        quote
-        res[$(resNumber)] = $(expToJuliaExp(rhs, simCode;varPrefix="reals"))
+         res[$(resNumber)] = $(expToJuliaExp(rhs, simCode;varPrefix="reals"))
        end
     end
     _ => begin
@@ -613,7 +614,7 @@ end
       Generates the start conditions.
       All Variables default to zero if not specified.
   """
-function getStartConditions(vars::Array, condName::String, simCode::SimulationCode.SIM_CODE)::Expr
+function getStartConditions(vars::Array, condName::String, simCode::SimulationCode.SimCode)::Expr
   local startExprs::Array{Expr} = []
   local residuals = simCode.residualEquations
   local ht::Dict = simCode.crefToSimVarHT

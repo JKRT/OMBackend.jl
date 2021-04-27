@@ -23,6 +23,7 @@ global EXAMPLE_MODELS = Dict("HelloWorld" => OMBackend.ExampleDAEs.helloWorld_DA
 @enum BackendMode begin
   DAE_MODE = 1
   ODE_MODE = 2
+  MODELING_TOOLKIT_MODE = 3
 end
 
 function info()
@@ -66,7 +67,7 @@ Do NOT mutate in other modules!
 """
 global COMPILED_MODELS = Dict()
 
-function translate(frontendDAE::DAE.DAE_LIST, BackendMode = DAE_MODE)::Tuple{String, Expr}
+function translate(frontendDAE::DAE.DAE_LIST; BackendMode = DAE_MODE)::Tuple{String, Expr}
   local bDAE = lower(frontendDAE)
   local simCode
   if BackendMode == DAE_MODE
@@ -75,6 +76,10 @@ function translate(frontendDAE::DAE.DAE_LIST, BackendMode = DAE_MODE)::Tuple{Str
   elseif BackendMode == ODE_MODE
     simCode = generateExplicitSimulationCode(bDAE)
     return ("Error", :())
+  elseif BackendMode == MODELING_TOOLKIT_MODE
+    @info "Experimental: Generates and runs code using modelling toolkit"
+    simCode = generateUnsortedSimulationCode(bDAE)
+    return generateMDKTargetCode(simCode)
   else
     @error "No mode specificed: valid modes are:"
     println("ODE_MODE")
@@ -107,10 +112,18 @@ end
 """
 function generateSimulationCode(bDAE::BDAE.BDAEStructure)::SimulationCode.SimCode
   simCode = SimulationCode.transformToSimCode(bDAE)
-#  @debug BDAE.stringHeading1(simCode, "SIM_CODE: transformed simcode")
+  @debug BDAE.stringHeading1(simCode, "SIM_CODE: transformed simcode")
   return simCode
 end
 
+"""
+  Transforms BDAE-IR to simulation code for MDK mode
+"""
+function generateUnsortedSimulationCode(bDAE::BDAE.BDAEStructure)::SimulationCode.UNSORTED_SIM_CODE
+  simCode = SimulationCode.transformToSimCodeNoSort(bDAE)
+  @debug BDAE.stringHeading1(simCode, "SIM_CODE: transformed simcode")
+  return simCode
+end
 
 """
   Transforms BDAE-IR to simulation code for DAE-mode
@@ -135,6 +148,21 @@ function generateTargetCode(simCode::SimulationCode.SIM_CODE)
   COMPILED_MODELS[modelName] = modelCode
   return (modelName, modelCode)
 end
+
+"""
+  Generates code interfacing DifferentialEquations.jl
+  The resulting code is saved in a dictonary which contains functions that where simulated
+  this session. Returns the generated modelName and corresponding generated code
+"""
+function generateMDKTargetCode(simCode::SimulationCode.UNSORTED_SIM_CODE)
+  #= Target code =#
+  (modelName::String, modelCode::Expr) = CodeGeneration.generateMDKSimulationCode(simCode)
+  @debug "Functions:" modelCode
+  @debug "Model:" modelName
+  COMPILED_MODELS[modelName] = modelCode
+  return (modelName, modelCode)
+end
+
 
 
 """
