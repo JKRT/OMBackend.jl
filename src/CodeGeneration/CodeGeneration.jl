@@ -222,7 +222,7 @@ function generateCode(simCode::SimulationCode.SIM_CODE)::Tuple{String, Expr}
     $(RUNNABLE)
   end
   # Return file content
-  return ("$(modelName)", program)
+  return (modelName, program)
 end
 
 "
@@ -332,12 +332,12 @@ function createSortedEquations(variables::Array, simCode::SimulationCode.SIM_COD
   end
   local residuals = simCode.residualEquations
   #=
-  For state variables we write to dx0. Thus, we are looking for dx0[<index>].
+    For state variables we write to dx0. Thus, we are looking for dx0[<index>].
   =#
   for i in iterationComponents
     variableIdx = MetaGraphs.get_prop(simCode.equationGraph, i, :vID)
     equationIdx = simCode.matchOrder[variableIdx]
-    local equation = removeComments(expToJuliaExp(residuals[equationIdx].exp, simCode; varPrefix = arrayName))
+    local equation = stripComments(expToJuliaExp(residuals[equationIdx].exp, simCode; varPrefix = arrayName))
     local rewrittenEquation::Expr = stripBeginBlocks(arrayToSymbolicVariable(equation))
     local varToSolve = simCode.crefToSimVarHT[ht[variableIdx]][2]
     local varToSolveExpr::Symbol = SimulationCode.isState(varToSolve) ? Symbol("dx_$(variableIdx)") : Symbol("$(arrayName)_$(variableIdx)")
@@ -358,9 +358,13 @@ function createResidualEquations(stateVariables, equations::Array, simCode::Simu
   local ht = simCode.crefToSimVarHT
   for i in 1:length(stateVariables)
     local equationCounter = i
+    #= Get the variable index for this statevariable =#
     local variableIdx = ht[stateVariables[i]][1]
+    #= Look up the correct equation index with this index=#
     local equationIdx = simCode.matchOrder[variableIdx]
+    #= Use this equation=#
     local equation = equations[equationIdx]
+    #= Generate the residual =#
     push!(eqs, residualEqtoJulia(equation, simCode, equationCounter))
   end
   return eqs

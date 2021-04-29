@@ -13,6 +13,7 @@ import Base.Meta
 import SCode
 import JuliaFormatter
 import Plots
+import SciMLBase
 
 global EXAMPLE_MODELS = Dict("HelloWorld" => OMBackend.ExampleDAEs.helloWorld_DAE
                              , "LotkaVolterra" => OMBackend.ExampleDAEs.lotkaVolterra_DAE
@@ -78,7 +79,7 @@ function translate(frontendDAE::DAE.DAE_LIST; BackendMode = DAE_MODE)::Tuple{Str
     return ("Error", :())
   elseif BackendMode == MODELING_TOOLKIT_MODE
     @info "Experimental: Generates and runs code using modelling toolkit"
-    simCode = generateUnsortedSimulationCode(bDAE)
+    simCode = generateSimulationCode(bDAE)
     return generateMDKTargetCode(simCode)
   else
     @error "No mode specificed: valid modes are:"
@@ -149,21 +150,20 @@ function generateTargetCode(simCode::SimulationCode.SIM_CODE)
   return (modelName, modelCode)
 end
 
+
 """
-  Generates code interfacing DifferentialEquations.jl
-  The resulting code is saved in a dictonary which contains functions that where simulated
+  Generates code interfacing ModelingToolkit.jl
+  The resulting code is saved in a table which contains functions that where simulated
   this session. Returns the generated modelName and corresponding generated code
 """
-function generateMDKTargetCode(simCode::SimulationCode.UNSORTED_SIM_CODE)
+function generateMDKTargetCode(simCode::SimulationCode.SIM_CODE)
   #= Target code =#
-  (modelName::String, modelCode::Expr) = CodeGeneration.generateMDKSimulationCode(simCode)
+  (modelName::String, modelCode::Expr) = CodeGeneration.generateMDKCode(simCode)
   @debug "Functions:" modelCode
   @debug "Model:" modelName
   COMPILED_MODELS[modelName] = modelCode
   return (modelName, modelCode)
 end
-
-
 
 """
   Generates code interfacing DifferentialEquations.jl
@@ -192,12 +192,16 @@ function writeModelToFile(modelName::String)
 end
 
 "
-  If specified model exists. Print it to stdout.
+  Prints a model. 
+  If the specified model exists. Print it to stdout.
 "
-function printModel(modelName::String)
+function printModel(modelName::String; keepComments = true)
     try
       local model::Expr = COMPILED_MODELS[modelName]
       #= Remove all the redudant blocks from the model =#
+      if keepComments == false
+        strippedModel = CodeGeneration.stripComments(model)
+      end
       local strippedModel = CodeGeneration.stripBeginBlocks(model)
       local modelStr::String = "$strippedModel"
       formattedResults = JuliaFormatter.format_text(modelStr;
@@ -228,9 +232,10 @@ end
 function simulateModel(modelName::String; tspan=(0.0, 1.0))
   local modelCode::Expr = COMPILED_MODELS[modelName]
   try
+    @eval :(using ModelingToolkit)
     @eval $modelCode
     local modelRunnable = Meta.parse("$(modelName)Simulate($(tspan))")
-    #= Run the model with the supplied tspan. =# 
+    #= Run the model with the supplied tspan. =#
     @eval $modelRunnable
   catch err
     @info "Interactive evaluation failed: $err"
@@ -249,6 +254,16 @@ function plot(sol::CodeGeneration.OMSolution)
   labels = permutedims(sol.idxToName.vals)
   Plots.plot(t, rescols; labels=labels)
 end
+
+
+"
+  An alternative plot function in OMBackend.
+  All labels of the variables and the name is given by default
+"
+function plot(sol)
+  Plots.plot(sol)
+end
+
 
 """
   Turns on logging

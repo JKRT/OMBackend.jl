@@ -287,21 +287,13 @@ end
   TODO: Keeping it simple for now, we assume we only have one argument in the call
   We handle derivitives seperatly
 "
-function DAECallExpressionToJuliaCallExpression(pathStr::String, expLst::List, simCode::SimulationCode.UNSORTED_SIM_CODE, ht; varPrefix=varPrefix)::Expr
+function DAECallExpressionToMDKCallExpression(pathStr::String, expLst::List, simCode::SimulationCode.SimCode, ht; varPrefix=varPrefix)::Expr
   @match pathStr begin
     "der" => begin
       varName = BDAE.string(listHead(expLst))
       (index, _) = ht[varName]
       quote
         DER($(Symbol(varName)))
-      end
-    end
-    "pre" => begin
-      varName = BDAE.string(listHead(expLst))
-      (index, _) = ht[varName]
-      indexForVar = ht[varName][1]
-      quote 
-        (integrator.u[$(indexForVar)])
       end
     end
     _  =>  begin
@@ -317,12 +309,12 @@ end
 "
   Removes all comments from a given exp
 "
-function removeComments(ex::Expr)::Expr
+function stripComments(ex::Expr)::Expr
   filter!(ex.args) do e
     isa(e, LineNumberNode) && return false
     if isa(e, Expr)
       (e::Expr).head === :line && return false
-      removeComments(e::Expr)
+      stripComments(e::Expr)
     end
     return true
   end
@@ -356,7 +348,7 @@ function stripBeginBlocks(e)::Expr
 end
 
 """
-Transforms:
+Transforms:s
   <name>_index -> <name>[index]
 """
 const pattern = r".*_[0-9]+"
@@ -376,3 +368,59 @@ function symbolicVariableToArrayRef(e::Expr)::Expr
   end
 end
 
+"""
+  Utility function, traverses a DAE exp. Variables are saved in the supplied variables array
+"""
+function getVariablesInDAE_Exp(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, variables::Set)
+  local  hashTable = simCode.crefToSimVarHT
+  local int::Int64
+  local real::Float64
+  local bool::Bool
+  local tmpStr::String
+  local cr::DAE.ComponentRef
+  local e1::DAE.Exp
+  local e2::DAE.Exp
+  local e3::DAE.Exp
+  local expl::List{DAE.Exp}
+  local lstexpl::List{List{DAE.Exp}}
+  @match exp begin
+    DAE.BCONST(bool) => quote $bool end
+    DAE.ICONST(int) => quote $int end
+    DAE.RCONST(real) => quote $real end
+    DAE.SCONST(tmpStr) => quote $tmpStr end
+    DAE.CREF(cr, _)  => begin
+      varName = BDAE.string(cr)
+      indexAndVar = hashTable[varName]
+      varKind::SimulationCode.SimVarType = indexAndVar[2].varKind
+      @match varKind begin
+        SimulationCode.STATE(__) || SimulationCode.PARAMETER(__) || SimulationCode.ALG_VARIABLE(__) => begin
+          push!(variables, Symbol(varName))
+        end           
+        _ => begin
+          @error "Unsupported varKind: $(varKind)"
+          throw()
+        end
+      end
+    end
+    DAE.UNARY(operator = op, exp = e1) => begin
+      getVariablesInDAE_Exp(e1, simCode, variables)
+    end
+    DAE.BINARY(exp1 = e1, operator = op, exp2 = e2) || DAE.LBINARY(exp1 = e1, operator = op, exp2 = e2) || DAE.RELATION(exp1 = e1, operator = op, exp2 = e2) => begin
+      getVariablesInDAE_Exp(e1, simCode, variables)
+      getVariablesInDAE_Exp(e2, simCode, variables)        
+    end
+    DAE.LUNARY(operator = op, exp = e1)  => begin
+      getVariablesInDAE_Exp(e1, simCode, variables)
+    end
+    DAE.IFEXP(expCond = e1, expThen = e2, expElse = e3) => begin
+      throw(ErrorException("If expressions not allowed in backend code"))
+    end
+    #= Should not introduce anything new.. =#
+    DAE.CALL(path = Absyn.IDENT(tmpStr), expLst = explst)  => begin
+    end
+    DAE.CAST(ty, exp)  => begin
+      getVariablesInDAE_Exp(exp, simCode, variables)
+    end
+    _ =>  throw(ErrorException("$exp not yet supported"))
+  end
+end
