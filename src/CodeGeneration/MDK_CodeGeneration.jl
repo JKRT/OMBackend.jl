@@ -1,35 +1,14 @@
-using ModelingToolkit
 #=
-# Define some variables
-@parameters t L g
-@variables x(t) y(t) T(t)
-D = Differential(t)
-eqs2 = [0 ~ - D(D(x)) + T*x,
-        D(D(y)) ~ T*y - g,
-        0 ~ x^2 + y^2 - L^2]
-pendulum2 = ODESystem(eqs2, t, [x, y, T], [L, g], name=:pendulum)
-# Turn into a first order differential equation system
-first_order_sys = ModelingToolkit.ode_order_lowering(pendulum2)
-# Perform index reduction to get an Index 1 DAE
-new_sys = dae_index_lowering(first_order_sys)
-u0 = [
-  D(x)    => 0.0,
-  D(y)    => 0.0,
-  x       => 1.0,
-  y       => 0.0,
-  T       => 0.0
-]
-p = [
-    L => 1.0,
-    g => 9.8
-]
-prob_auto = ODEProblem(new_sys,u0,(0.0,10.0),p)
-sol = solve(prob_auto, Rodas5());
+  Author: John Tinnerholm
+
+TODO: Remember the state derivative scheme. What the heck did I mean  with that? 
 =#
+using ModelingToolkit
 """
   Generates simulation code targetting modeling toolkit
 """
 function generateMDKCode(simCode::SimulationCode.SIM_CODE)
+  @debug "Runnning: generateMDKCode"
   local crefToSimVarHT = simCode.crefToSimVarHT
   local equations::Array = []
   local exp::DAE.Exp
@@ -62,9 +41,10 @@ function generateMDKCode(simCode::SimulationCode.SIM_CODE)
   #= Formulate the problem as a DAE Problem=#
   program = quote
     using ModelingToolkit
+    using SymbolicUtils
     using DiffEqBase
-    using DifferentialEquations    
-    function $(Symbol("$(modelName)Simulate"))(tspan = (0.0, 1.0))
+    using DifferentialEquations
+    function $(Symbol("$(modelName)Model"))(tspan = (0.0, 1.0))
         pars = @parameters begin
           $(parVariablesSym...)
           t
@@ -81,6 +61,10 @@ function generateMDKCode(simCode::SimulationCode.SIM_CODE)
       firstOrderSystem = ModelingToolkit.ode_order_lowering(nonLinearSystem)
       reducedSystem = dae_index_lowering(firstOrderSystem)
       problem = ODEProblem(reducedSystem, initialValues, tspan, pars)
+#      solve(problem)
+    end
+    function $(Symbol("$(modelName)Simulate"))(tspan = (0.0, 1.0))
+      problem = $(Symbol("$(modelName)Model"))(tspan)
       solve(problem)
     end
   end
@@ -104,7 +88,7 @@ function createResidualEquationsMDK(stateVariables, equations::Array, simCode::S
 end
 
 "Converts a DAE expression into a Julia expression"
-function expToJuliaExpMDK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuffix=""; varPrefix="x")::Expr
+function expToJuliaExpMDK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuffix=""; varPrefix="x", derSymbol::Bool=false)::Expr
   hashTable = simCode.crefToSimVarHT
   local expr::Expr = begin
     local int::Int64
@@ -165,8 +149,8 @@ function expToJuliaExpMDK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuf
         end
       end
       DAE.BINARY(exp1 = e1, operator = op, exp2 = e2) => begin
-        a = expToJuliaExpMDK(e1, simCode, varPrefix=varPrefix)
-        b = expToJuliaExpMDK(e2, simCode, varPrefix=varPrefix)
+        a = expToJuliaExpMDK(e1, simCode, varPrefix=varPrefix, derSymbol = derSymbol)
+        b = expToJuliaExpMDK(e2, simCode, varPrefix=varPrefix, derSymbol = derSymbol)
         o = DAE_OP_toJuliaOperator(op)
         quote
           $o($(a), $(b))
@@ -174,26 +158,31 @@ function expToJuliaExpMDK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuf
       end
       DAE.LUNARY(operator = op, exp = e1)  => begin
         quote
-          $("(" + BDAE.string(op) + " " + expToJuliaExpMDK(e1, simCode, varPrefix=varPrefix) + ")")
+          $("(" + BDAE.string(op) + " " + expToJuliaExpMDK(e1, simCode, varPrefix=varPrefix, derSymbol = derSymbol) + ")")
         end
       end
       DAE.LBINARY(exp1 = e1, operator = op, exp2 = e2) => begin
         quote 
-          $(expToJuliaExpMDK(e1, simCode, varPrefix=varPrefix) + " " + BDAE.string(op) + " " + expToJuliaExpMDK(e2, simCode, varPrefix=varPrefix))
+          $(expToJuliaExpMDK(e1, simCode, varPrefix=varPrefix, derSymbol = derSymbol) + " " + BDAE.string(op) + " "
+            + expToJuliaExpMDK(e2, simCode, varPrefix=varPrefix, derSymbol = derSymbol))
         end
       end
       DAE.RELATION(exp1 = e1, operator = op, exp2 = e2) => begin
         quote 
           $(expToJuliaExpMDK(e1, simCode,
-                          varPrefix=varPrefix) + " "
-            + BDAE.string(op) + " " + expToJuliaExpMDK(e2, simCode,varPrefix=varPrefix))
+                             varPrefix=varPrefix,derSymbol = derSymbol)
+            + " "
+            + BDAE.string(op)
+            + " "
+            + expToJuliaExpMDK(e2, simCode,varPrefix=varPrefix, derSymbol=derSymbol))
         end
       end
       DAE.IFEXP(expCond = e1, expThen = e2, expElse = e3) => begin
         throw(ErrorException("If expressions not allowed in backend code"))
       end
       DAE.CALL(path = Absyn.IDENT(tmpStr), expLst = explst)  => begin
-        DAECallExpressionToMDKCallExpression(tmpStr, explst, simCode, hashTable, varPrefix=varPrefix)
+        #Call as symbol is really ugly.. please fix me :(
+        DAECallExpressionToMDKCallExpression(tmpStr, explst, simCode, hashTable; varPrefix=varPrefix, derAsSymbol=derSymbol)
       end
       DAE.CAST(ty, exp)  => begin
         quote
@@ -211,24 +200,35 @@ end
   Transforms a given equation into MDK Julia code
 """
 function residualEqtoJuliaMDK(eq::BDAE.Equation, simCode::SimulationCode.SIM_CODE, equationIdx::Int64)::Expr
-  local rhs::DAE.Exp
   local ht = SimulationCode.makeIndexVarNameDict(simCode.matchOrder, simCode.crefToSimVarHT)
+  @debug "Called residual equation to Julia"
   local result::Expr = @match eq begin
-    BDAE.RESIDUAL_EQUATION(exp = rhs) => begin
-      #= Using Reduce to rewrite equations...=#
-      variables = Set([])
+    BDAE.RESIDUAL_EQUATION(exp = daeExp) => begin
+      #= TODO: Using Symbolics to rewrite equations... Same limitations apply here as well=#
       local variableIdx = MetaGraphs.get_prop(simCode.equationGraph, equationIdx, :vID)
       local varToSolve = simCode.crefToSimVarHT[ht[variableIdx]][2]
-      local varToSolveExpr::Symbol = SimulationCode.isState(varToSolve) ? Symbol("der($(varToSolve.name))") : Symbol(varToSolve.name)
-      eq = quote
-        0 = $(expToJuliaExpMDK(rhs, simCode))
+      local derSymbolString = "der_$(varToSolve.name)"
+      local derFunctionString = "der($(varToSolve.name))"
+      local varToSolveExpr::Symbol = SimulationCode.isState(varToSolve) ? Symbol(derSymbolString) : Symbol(varToSolve.name)
+      local daeVariables = getVariablesInDAE_Exp(daeExp, simCode, Set([]))
+      #= Simple quation rewrite..=#
+      eqRewrite = function ()
+        eqExpr = quote
+          using ModelingToolkit
+          @variables begin
+            $(daeVariables...)
+            $(varToSolveExpr)
+          end
+          leq = 0 ~ $(stripBeginBlocks(expToJuliaExpMDK(daeExp, simCode ;derSymbol=true)))
+          Symbolics.solve_for([leq], [$varToSolveExpr]; check = false #=Does not check for linearity.. =#)
+        end
+        local res = @eval $eqExpr
+        return res
       end
-      strippedEq = stripBeginBlocks(eq)
-      reducSol = Reduce.Algebra.solve(strippedEq, varToSolveExpr)[1]
-      #= Replace equality with ~ =#
-      quote
-        $(reducSol.args[1]) ~ $(reducSol.args[2])
-      end
+      evEqExpr = eqRewrite()
+      local sol = :(der($(Symbol(varToSolve.name))) ~ $(Symbolics.tosymbol(evEqExpr[1])))
+      #= Return sol. Assign to results =#
+      sol
     end
     _ => begin
       throw("traversalError for $eq")
@@ -238,10 +238,10 @@ function residualEqtoJuliaMDK(eq::BDAE.Equation, simCode::SimulationCode.SIM_COD
 end
 
 
-"
+"""
     Generates the initial value for the equations
     TODO: Currently unable to generate start condition in order 
-  "
+"""
 function createStartConditionsEquationsMDK(states::Array,
                                         algebraics::Array,
                                         simCode::SimulationCode.SimCode)::Array{Expr}

@@ -1,6 +1,11 @@
 using MetaModelica
 using ExportAll
 using Absyn
+#= For interactive evaluation. =#
+using ModelingToolkit
+#import Symbolics
+using SymbolicUtils
+
 
 import .Backend.BDAE
 import .Backend.BDAECreate
@@ -13,7 +18,6 @@ import Base.Meta
 import SCode
 import JuliaFormatter
 import Plots
-import SciMLBase
 
 global EXAMPLE_MODELS = Dict("HelloWorld" => OMBackend.ExampleDAEs.helloWorld_DAE
                              , "LotkaVolterra" => OMBackend.ExampleDAEs.lotkaVolterra_DAE
@@ -78,7 +82,7 @@ function translate(frontendDAE::DAE.DAE_LIST; BackendMode = DAE_MODE)::Tuple{Str
     simCode = generateExplicitSimulationCode(bDAE)
     return ("Error", :())
   elseif BackendMode == MODELING_TOOLKIT_MODE
-    @info "Experimental: Generates and runs code using modelling toolkit"
+    @debug "Experimental: Generates and runs code using modelling toolkit"
     simCode = generateSimulationCode(bDAE)
     return generateMDKTargetCode(simCode)
   else
@@ -232,14 +236,16 @@ end
 function simulateModel(modelName::String; tspan=(0.0, 1.0))
   local modelCode::Expr = COMPILED_MODELS[modelName]
   try
-    @eval :(using ModelingToolkit)
-    @eval $modelCode
-    local modelRunnable = Meta.parse("$(modelName)Simulate($(tspan))")
+    @eval begin
+      $modelCode
+    end
+#    local modelRunnable = Meta.parse("$(modelName)Simulate($(tspan))")
     #= Run the model with the supplied tspan. =#
-    @eval $modelRunnable
+#    @eval $modelRunnable
   catch err
     @info "Interactive evaluation failed: $err"
-    @info "$modelCode"
+    println("$modelCode")
+    throw(err)
   end
 end
 
@@ -273,3 +279,8 @@ TODO:
 function turnOnLogging()
   ENV["JULIA_DEBUG"] = "OMBackend"
 end
+
+function turnOnLoggingCodeGeneration()
+  ENV["JULIA_DEBUG"] = "CodeGeneration"
+end
+

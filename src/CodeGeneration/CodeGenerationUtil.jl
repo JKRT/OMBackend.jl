@@ -284,16 +284,23 @@ function DAECallExpressionToJuliaCallExpression(pathStr::String, expLst::List, s
 end
 
 "
-  TODO: Keeping it simple for now, we assume we only have one argument in the call
-  We handle derivitives seperatly
+  TODO: Keeping it simple for now, we assume we only have one argument in the call..
+  Also the der as symbol is really ugly..
 "
-function DAECallExpressionToMDKCallExpression(pathStr::String, expLst::List, simCode::SimulationCode.SimCode, ht; varPrefix=varPrefix)::Expr
+function DAECallExpressionToMDKCallExpression(pathStr::String, expLst::List,
+                                              simCode::SimulationCode.SimCode, ht; varPrefix=varPrefix, derAsSymbol=false)::Expr
   @match pathStr begin
     "der" => begin
       varName = BDAE.string(listHead(expLst))
       (index, _) = ht[varName]
-      quote
-        DER($(Symbol(varName)))
+      if derAsSymbol
+        quote
+          $(Symbol("der_$(varName)"))
+        end
+      else
+        quote
+          der($(Symbol(varName)))
+        end
       end
     end
     _  =>  begin
@@ -370,6 +377,7 @@ end
 
 """
   Utility function, traverses a DAE exp. Variables are saved in the supplied variables array
+  (Note that variables here refeers to parameters as well)
 """
 function getVariablesInDAE_Exp(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, variables::Set)
   local  hashTable = simCode.crefToSimVarHT

@@ -28,6 +28,8 @@ Reduce = "93e0c654-6965-5f22-aba9-9c1ae6b3c259"
 SCode = "350d45b0-c210-11e9-3b9e-fdad65bb3d46"
 Setfield = "efcf1570-3423-57d1-acb7-fd33fddbac46"
 Sundials = "c3572dad-4567-51f8-b174-8c6c989267f4"
+SymbolicUtils = "d1185830-fcd6-423d-90d6-eec64667417b"
+Symbolics = "0c5d862f-8b57-4792-8d23-62f2024744c7"
 Tables = "bd369af6-aec1-5ad0-b16a-f7cc5008161c"
 
 [extras]
