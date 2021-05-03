@@ -66,11 +66,17 @@ end
 
 
 """
-Contains expressions of models in memory.
+Contains expressions of models currently in memory.
 Do NOT mutate in other modules!
 //John
 """
 global COMPILED_MODELS = Dict()
+
+""" 
+  Active simulation functions 
+  Do NOT mutate in other modules!
+"""
+global COMPILED_SIMULATION_CODE = Dict()
 
 function translate(frontendDAE::DAE.DAE_LIST; BackendMode = DAE_MODE)::Tuple{String, Expr}
   local bDAE = lower(frontendDAE)
@@ -231,20 +237,26 @@ function availableModels()::String
 end
 
 """
-  Evaluates the in memory representation of a named model
+  Simulates model interactivly. 
+
+TODO:
+    (Currently does a redudant string conversion)
 """
 function simulateModel(modelName::String; tspan=(0.0, 1.0))
   local modelCode::Expr = COMPILED_MODELS[modelName]
+  local modelCodeStr = ""
   try
-    @eval begin
-      $modelCode
-    end
-#    local modelRunnable = Meta.parse("$(modelName)Simulate($(tspan))")
+    modelCodeStr::String = "$modelCode"
+    local parsedModel = Meta.parse.(modelCodeStr)
+    @eval $parsedModel
+    local modelRunnable = Meta.parse("OMBackend.$(modelName)Simulate($(tspan))")
     #= Run the model with the supplied tspan. =#
-#    @eval $modelRunnable
+    @eval Main $modelRunnable
   catch err
     @info "Interactive evaluation failed: $err"
-    println("$modelCode")
+    println(modelCodeStr)
+    @info "Dump of model-code"
+    Base.dump(parsedModel)
     throw(err)
   end
 end

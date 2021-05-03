@@ -4,6 +4,7 @@
 TODO: Remember the state derivative scheme. What the heck did I mean  with that? 
 =#
 using ModelingToolkit
+import OMBackend
 """
   Generates simulation code targetting modeling toolkit
 """
@@ -31,7 +32,7 @@ function generateMDKCode(simCode::SimulationCode.SIM_CODE)
     end
   end
   equations = simCode.residualEquations
-  equations = createResidualEquationsMDK(stateVariables, equations, simCode::SimulationCode.SIM_CODE)
+  equations = createResidualEquationsMDK(stateVariables, algebraicVariables, equations, simCode::SimulationCode.SIM_CODE)
   #= Symbolic names =#
   local stateVariablesSym = [:($(Symbol(v))(t)) for v in stateVariables]
   local algebraicVariablesSym = [Symbol(v) for v in algebraicVariables]
@@ -41,27 +42,24 @@ function generateMDKCode(simCode::SimulationCode.SIM_CODE)
   #= Formulate the problem as a DAE Problem=#
   program = quote
     using ModelingToolkit
-    using SymbolicUtils
     using DiffEqBase
     using DifferentialEquations
     function $(Symbol("$(modelName)Model"))(tspan = (0.0, 1.0))
-        pars = @parameters begin
-          $(parVariablesSym...)
-          t
+      pars = ModelingToolkit.@parameters begin
+        ($(parVariablesSym...), t)
         end
-        vars = @variables begin
-          $(stateVariablesSym...)
-          $(algebraicVariablesSym...)
+      vars = ModelingToolkit.@variables begin
+        ($(stateVariablesSym...), $(algebraicVariablesSym...))
         end
       der = Differential(t)
       eqs = [$(equations...)]
-      nonLinearSystem = ODESystem(eqs, t, vars, pars, name=:($(Symbol($modelName))))
+      nonLinearSystem = ModelingToolkit.ODESystem(eqs, t, vars, pars, name=:($(Symbol($modelName))))
       pars = Dict($(PARAMETER_EQUATIONS...), t => tspan[1])
       initialValues = [$(START_CONDTIONS_EQUATIONS...)]
       firstOrderSystem = ModelingToolkit.ode_order_lowering(nonLinearSystem)
-      reducedSystem = dae_index_lowering(firstOrderSystem)
-      problem = ODEProblem(reducedSystem, initialValues, tspan, pars)
-#      solve(problem)
+      reducedSystem = ModelingToolkit.dae_index_lowering(firstOrderSystem)
+      problem = ModelingToolkit.ODEProblem(reducedSystem, initialValues, tspan, pars)
+      return problem
     end
     function $(Symbol("$(modelName)Simulate"))(tspan = (0.0, 1.0))
       problem = $(Symbol("$(modelName)Model"))(tspan)
@@ -74,7 +72,7 @@ end
 "
  Creates the residual equations in unsorted order
 "
-function createResidualEquationsMDK(stateVariables, equations::Array, simCode::SimulationCode.SIM_CODE)::Array{Expr}
+function createResidualEquationsMDK(stateVariables::Array, algebraicVariables::Array, equations::Array, simCode::SimulationCode.SIM_CODE)::Array{Expr}
   local eqs::Array{Expr} = []
   local ht = simCode.crefToSimVarHT
   local lhsVariables = Set([])
@@ -83,6 +81,18 @@ function createResidualEquationsMDK(stateVariables, equations::Array, simCode::S
     local equationIdx = simCode.matchOrder[variableIdx]
     local equation = equations[equationIdx]
     push!(eqs, residualEqtoJuliaMDK(equation, simCode, equationIdx))
+  end
+  #= Generate algebraic equations=#
+  for var in algebraicVariables
+    @info var 
+    local variableIdx = ht[var][1]
+    local equationIdx = simCode.matchOrder[variableIdx]
+    local equation = equations[equationIdx]
+    local eqDAEExp = equation.exp
+    local eqExp = quote 
+        0 ~ $(stripBeginBlocks(expToJuliaExpMDK(eqDAEExp, simCode ;derSymbol=true)))
+     end
+    push!(eqs, eqExp)
   end
   return eqs
 end
@@ -136,7 +146,7 @@ function expToJuliaExpMDK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuf
               throw()
             end
           end
-        else #= Currently only time is a builtin variabe. Time is represented as t in the generated code =#
+        else #= Currently only time is a builtin variable. Time is represented as t in the generated code =#
           quote
             t
           end
@@ -208,25 +218,32 @@ function residualEqtoJuliaMDK(eq::BDAE.Equation, simCode::SimulationCode.SIM_COD
       local variableIdx = MetaGraphs.get_prop(simCode.equationGraph, equationIdx, :vID)
       local varToSolve = simCode.crefToSimVarHT[ht[variableIdx]][2]
       local derSymbolString = "der_$(varToSolve.name)"
-      local derFunctionString = "der($(varToSolve.name))"
-      local varToSolveExpr::Symbol = SimulationCode.isState(varToSolve) ? Symbol(derSymbolString) : Symbol(varToSolve.name)
+      local solveForState = SimulationCode.isState(varToSolve)
+      local varToSolveExpr::Symbol =  solveForState ? Symbol(derSymbolString) : Symbol(varToSolve.name)
       local daeVariables = getVariablesInDAE_Exp(daeExp, simCode, Set([]))
       #= Simple quation rewrite..=#
       eqRewrite = function ()
         eqExpr = quote
-          using ModelingToolkit
-          @variables begin
+          ModelingToolkit.@variables begin
             $(daeVariables...)
             $(varToSolveExpr)
           end
           leq = 0 ~ $(stripBeginBlocks(expToJuliaExpMDK(daeExp, simCode ;derSymbol=true)))
           Symbolics.solve_for([leq], [$varToSolveExpr]; check = false #=Does not check for linearity.. =#)
         end
-        local res = @eval $eqExpr
+        local res = @eval  $eqExpr
         return res
       end
-      evEqExpr = eqRewrite()
-      local sol = :(der($(Symbol(varToSolve.name))) ~ $(Symbolics.tosymbol(evEqExpr[1])))
+      local evEqExpr = eqRewrite()
+      if solveForState
+        local sol = quote
+          der($(Symbol(varToSolve.name))) ~ $(evEqExpr[1])
+        end
+      else
+        local sol = quote
+          $(Symbol(varToSolve.name)) ~ $(evEqExpr[1])
+        end
+      end
       #= Return sol. Assign to results =#
       sol
     end
@@ -265,20 +282,28 @@ function getStartConditionsMDK(vars::Array, simCode::SimulationCode.SimCode)::Ar
     varName = simVar.name
     local simVarType = simVar.varKind
     local optAttributes::Option{DAE.VariableAttributes} = simVar.attributes
+    #= If no attribute. Let it default to zero =#
     if simVar.attributes == nothing
+      push!(startExprs, :($(Symbol(varName)) => 0.0))
       continue
     end
     () = @match optAttributes begin
       SOME(attributes) => begin
         () = @match (attributes.start, attributes.fixed) begin
+          (SOME(DAE.CREF(start)), SOME(__)) || (SOME(DAE.CREF(start)), _)  => begin
+            push!(startExprs, :($(Symbol("$varName")) => $exp))            
+            #= We have a variable of sorts =#
+            push!(startExprs,
+                  quote
+                  $(Symbol("$varName")) => pars[$(Symbol(start.ident))]
+                  end)
+            ()          
+          end            
           (SOME(start), SOME(fixed)) || (SOME(start), _)  => begin
-            @debug "Start value is:" start
-            try
-              local exp = eval(expToJuliaExpMDK(start, simCode))
-              push!(startExprs, :($(Symbol("$varName")) => $(expToJuliaExpMDK(start, simCode))))
-            catch
-              push!(startExprs, :($(Symbol("$varName")) => pars[$(expToJuliaExpMDK(start, simCode))]))
-            end
+            push!(startExprs,
+                  quote
+                  $(Symbol("$varName")) => $(expToJuliaExpMDK(start, simCode))
+                  end)
             ()
           end
           (NONE(), SOME(fixed)) => begin
@@ -308,7 +333,7 @@ function createParameterEquationsMDK(parameters::Array, simCode::SimulationCode.
     #= Solution for https://github.com/SciML/ModelingToolkit.jl/issues/991 =#
     push!(parameterEquations,
           quote
-          $(LineNumberNode(@__LINE__, "$param"))
+          $(LineNumberNode(@__LINE__, "$param eq"))
           $(Symbol(simVar.name)) => $(expToJuliaExpMDK(bindExp, simCode))
           end
           )

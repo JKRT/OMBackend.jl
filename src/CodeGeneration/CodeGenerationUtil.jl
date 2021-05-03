@@ -182,7 +182,7 @@ function expToJL(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE; varPrefix="x"):
         varName = BDAE.string(listHead(expl))
         (index, type) = hashTable[varName]
         @match tmpStr begin
-          "der" => "dx[$index]  #= der($varName) =#"
+        "der" => "dx[$index]  #= der($varName) =#"
           "pre" => begin
             indexForVar = hashTable[varName][1]
             "(integrator.u[$(indexForVar)])"
@@ -305,7 +305,7 @@ function DAECallExpressionToMDKCallExpression(pathStr::String, expLst::List,
     end
     _  =>  begin
       funcName = Symbol(pathStr)
-      argPart = tuple(map((x) -> expToJuliaExp(x, simCode, varPrefix=varPrefix), expLst)...)
+      argPart = tuple(map((x) -> expToJuliaExpMDK(x, simCode), expLst)...)
       quote 
         $(funcName)($(argPart...))
       end
@@ -317,15 +317,7 @@ end
   Removes all comments from a given exp
 "
 function stripComments(ex::Expr)::Expr
-  filter!(ex.args) do e
-    isa(e, LineNumberNode) && return false
-    if isa(e, Expr)
-      (e::Expr).head === :line && return false
-      stripComments(e::Expr)
-    end
-    return true
-  end
-  return ex
+  return Base.remove_linenums!(ex)
 end
 
 """
