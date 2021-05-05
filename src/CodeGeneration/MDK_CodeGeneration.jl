@@ -196,7 +196,7 @@ function expToJuliaExpMDK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuf
       end
       DAE.CAST(ty, exp)  => begin
         quote
-          $(generateCastExpression(ty, exp, simCode, varPrefix))
+          $(generateCastExpressionMDK(ty, exp, simCode, varPrefix))
         end
       end
       _ =>  throw(ErrorException("$exp not yet supported"))
@@ -334,9 +334,22 @@ function createParameterEquationsMDK(parameters::Array, simCode::SimulationCode.
     push!(parameterEquations,
           quote
           $(LineNumberNode(@__LINE__, "$param eq"))
-          $(Symbol(simVar.name)) => $(expToJuliaExpMDK(bindExp, simCode))
+          $(Symbol(simVar.name)) => float($((expToJuliaExpMDK(bindExp, simCode))))
           end
           )
   end
   return parameterEquations
+end
+
+
+function generateCastExpressionMDK(ty, exp, simCode, varPrefix)
+  return @match ty, exp begin
+    (DAE.T_REAL(__), DAE.ICONST(__)) => float(eval(expToJuliaExpMDK(exp, simCode, varPrefix=varPrefix)))
+    (DAE.T_REAL(__), DAE.CREF(cref)) where typeof(cref.identType) == DAE.T_INTEGER  => begin
+      quote
+        float($(expToJuliaExpMDK(exp, simCode, varPrefix=varPrefix)))
+      end
+    end
+    _ => throw("Cast $ty: for exp: $exp not yet supported in codegen!")
+  end
 end

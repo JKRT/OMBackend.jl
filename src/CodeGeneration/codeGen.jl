@@ -557,7 +557,8 @@ end
 function generateCastExpression(ty, exp, simCode, varPrefix)
   return @match ty, exp begin
     (DAE.T_REAL(__), DAE.ICONST(__)) => float(eval(expToJuliaExp(exp, simCode, varPrefix=varPrefix)))
-    _ => throw("Cast $ty: not yet supported in codegen!")
+    (DAE.T_REAL(__), DAE.CREF(cref)) where typeof(cref.identType) == DAE.T_INTEGER  => float(eval(expToJuliaExp(exp, simCode, varPrefix=varPrefix)))
+    _ => throw("Cast $ty: for exp: $exp not yet supported in codegen!")
   end
 end
 
