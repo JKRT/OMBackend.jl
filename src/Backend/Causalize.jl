@@ -40,6 +40,7 @@ import ..BDAEUtil
 import ..BackendEquation
 import DAE
 import Absyn
+import OMBackend
 
 """
     Variable can be: Variable, Discrete, Constant and Parameters
@@ -51,12 +52,17 @@ function detectStates(dae::BDAE.BDAEStructure)
   BDAEUtil.mapEqSystems(dae, detectStatesEqSystem)
 end
 
+
 """
   Replaces all if expressions with a temporary variable.
   Adds an equation assigning this variable to the set of equations.
 """
 function detectIfExpressions(dae::BDAE.BDAEStructure)
   BDAEUtil.mapEqSystems(dae, detectIfEquationsEqSystem)
+end
+
+function detectAndReplaceArrayVariables(dae::BDAE.BDAEStructure, expandedVariables::Array)
+  BDAEUtil.mapEqSystems(dae, replaceArrayVariables, expandedVariables)
 end
 
 """
@@ -86,6 +92,38 @@ function detectStatesEqSystem(syst::BDAE.EqSystem)::BDAE.EqSystem
 end
 
 """
+Author johti17:
+  Renames expanded array variables
+"""
+function replaceArrayVariables(syst::BDAE.EqSystem, expandedVariables::Array)
+  syst = begin
+    local vars::BDAE.Variables
+    local eqs::Array
+    local arrayCrefs = Dict{String, Bool}([(i.varName.ident, false) for i in expandedVariables])
+    @match syst begin
+      BDAE.EQSYSTEM(vars, eqs) => begin
+        for i in 1:length(eqs)
+          local eq = eqs[i]
+          (eq2, arrayCrefs) = BDAEUtil.traverseEquationExpressions(eq, detectArrayExpression, arrayCrefs)
+          if ! (eq === eq2)
+            @assign syst.orderedEqs[i] = eq2
+          end
+          @debug "arrayCrefs:" arrayCrefs
+        end
+        #= Append the new variables to the list of variables =#
+#        local newVariables = collect(keys(arrayCrefs))
+#        local newEquations = collect(values(arrayCrefs))
+#        @assign syst.orderedEqs = vcat(syst.orderedEqs, newEquations)
+#        @assign syst.orderedVars.varArr = vcat(syst.orderedVars.varArr, newVariables)
+        syst
+      end
+    end
+  end
+  return syst
+end
+
+"""
+johti17:
   Detects if equations.
   Returns new temporary variables and an array of equations
 """
@@ -96,19 +134,16 @@ function detectIfEquationsEqSystem(syst::BDAE.EqSystem)::BDAE.EqSystem
     local tmpVarToElement = Dict{BDAE.VAR, BDAE.IF_EQUATION}()
     @match syst begin
       BDAE.EQSYSTEM(__) => begin
-          for i in 1:length(syst.orderedEqs)
-            local eq = syst.orderedEqs[i]
-            (eq2, dictAndEQ) = BDAEUtil.traverseEquationExpressions(eq,
-                                                                  replaceIfExpressionWithTmpVar,
-                                                                  tmpVarToElement)
-              if ! (eq === eq2)
-                  @assign syst.orderedEqs[i] = eq2
-              end
+        for i in 1:length(syst.orderedEqs)
+          local eq = syst.orderedEqs[i]
+          (eq2, dictAndEQ) = BDAEUtil.traverseEquationExpressions(eq,replaceIfExpressionWithTmpVar, tmpVarToElement)
+          if ! (eq === eq2)
+            @assign syst.orderedEqs[i] = eq2
           end
+        end
         #= Append the new variables to the list of variables =#
         local newVariables = collect(keys(tmpVarToElement))
         local newEquations = collect(values(tmpVarToElement))
-
         @assign syst.orderedEqs = vcat(syst.orderedEqs, newEquations)
         @assign syst.orderedVars.varArr = vcat(syst.orderedVars.varArr, newVariables)
         syst
@@ -123,7 +158,7 @@ let
   Detects if expression.
   We replace the if expression with our temporary variable.
   These variables are assigned in newly created if equations that we add to the tmpVarToElement::Dict.
-Thus we create the mapping
+   We create the mapping:
   tmpVar -> equation it is assigned in
 """
 local tick = 0
@@ -183,6 +218,50 @@ function detectStateExpression(exp::DAE.Exp, stateCrefs::Dict{DAE.ComponentRef, 
 end
 
 
+function detectArrayExpression(exp::DAE.Exp, arrayCrefs::Dict{String, Bool})
+  local cont::Bool
+  local outCrefs = arrayCrefs
+  local newExp::DAE.Exp
+  (newExp, outCrefs, cont) = begin
+    @match exp begin
+      DAE.CREF(matchedComponentRef, ty) where typeof(matchedComponentRef.identType) == DAE.T_ARRAY => begin
+        newExp = if haskey(arrayCrefs, matchedComponentRef.ident)
+          local subscripts = matchedComponentRef.subscriptLst
+          local subscriptStr = ""
+          for s in subscripts
+            subscriptStr  *= OMBackend.latexSymbols["\\_" + string(s)]
+          end
+          local newName = matchedComponentRef.ident + subscriptStr
+          local newCref = DAE.CREF_IDENT(newName, ty, nil)
+          @assign exp.componentRef = newCref
+        else
+          exp
+        end
+        (newExp, outCrefs, true)      
+      end
+      DAE.CALL(Absyn.IDENT("der"), DAE.CREF(matchedComponentRef, ty) <| _ ) where typeof(matchedComponentRef.identType) == DAE.T_ARRAY => begin
+        newExp = if haskey(arrayCrefs, matchedComponentRef.ident)
+          local subscripts = matchedComponentRef.subscriptLst
+          local subscriptStr = ""
+          for s in subscripts
+            subscriptStr  *= OMBackend.latexSymbols["\\_" + string(s)]
+          end
+          local newName = matchedComponentRef.ident + subscriptStr
+          local newCref = DAE.CREF_IDENT(newName, ty, nil)          
+          @assign exp.expLst = list(DAE.CREF(newCref, ty))
+        else
+          exp
+        end
+        (newExp, outCrefs, true)  
+      end
+      _ => begin
+        (exp, outCrefs, true)
+      end
+    end
+  end
+  return (newExp, cont, outCrefs)
+end
+
 """
     kabdelhak:
     Traverses all variables and uses a hashmap to determine if a variable needs
@@ -199,16 +278,45 @@ function updateStates(vars::BDAE.Variables, stateCrefs::Dict{DAE.ComponentRef, B
             local var::BDAE.Var
             @match varArr[i] begin
               var && BDAE.VAR(varName = cref) where (haskey(stateCrefs, cref)) => begin
-                var = @set var.varKind = BDAE.STATE(0, NONE(), true)
-                (var)
+                @assign var.varKind = BDAE.STATE(0, NONE(), true)
+                var
               end
               _ => begin
-                (varArr[i])
+                varArr[i]
               end
             end
           end
         end
-        @set vars.varArr = varArr
+        @assign vars.varArr = varArr
+        (vars)
+      end
+    end
+  end
+end
+
+"""
+  Author: johti17
+
+"""
+function updateArrayCrefs(vars::BDAE.Variables, arrayCrefs::Dict{DAE.ComponentRef, Bool})
+  vars = begin
+    @match vars begin
+      BDAE.VARIABLES(varArr) => begin
+        for i in 1:arrayLength(varArr)
+          varArr[i] = begin
+            local cref::DAE.ComponentRef
+            local var::BDAE.Var
+            @match varArr[i] begin
+              var && BDAE.VAR(varName = cref) where (haskey(arrayCrefs, cref)) => begin
+                var
+              end
+              _ => begin
+                varArr[i]
+              end
+            end
+          end
+        end
+        @assign vars.varArr = varArr
         (vars)
       end
     end
@@ -233,5 +341,64 @@ function makeResidualEquations(syst::BDAE.EqSystem)
   syst = BDAEUtil.mapEqSystemEquations(syst, BackendEquation.makeResidualEquation)
 end
 
-@exportAll()
+"""
+johti17:
+  Expand variables in arrays. 
+  if x is an array of 4 elements it is replaced by 
+  x₁, x₂, x₃, x₄.
+New name is <variable-name>_<index>
+"""
+function expandArrayVariables(bDAE::BDAE.BDAEStructure)::Tuple{BDAE.BDAEStructure, Array}
+  local systems = bDAE.eqs
+  local expandedVars = []
+  local newVars = []
+  for system in systems
+    local orderedVars = system.orderedVars
+    local indexOfExpandedVariables = []
+    for v in orderedVars.varArr
+      if typeof(v.varType) == DAE.T_ARRAY
+        local dims = v.varType.dims
+        local dimIndices = BDAEUtil.getSubscriptAsIntArray(dims)
+        #= We know how many variables we are supposed to generate now. =#
+        local etype = v.varType.ty
+        local varPrototype = v
+        local newVarNames = []
+        for r in dimIndices
+          for i in 1:r
+            local newVarName = string(v.varName) 
+            newVarName *= OMBackend.latexSymbols["\\_" + string(i)]
+            push!(newVarNames, newVarName)
+          end
+        end
+        for vName in newVarNames
+          nV = BDAE.VAR(DAE.CREF_IDENT(vName, etype, nil),
+                            varPrototype.varKind,
+                            varPrototype.varDirection,
+                            etype,
+                            varPrototype.bindExp,
+                            varPrototype.arryDim,
+                            varPrototype.source,
+                            varPrototype.values,
+                            varPrototype.tearingSelectOption,
+                            varPrototype.connectorType,
+                            varPrototype.unreplaceable
+                            )
+          push!(newVars, nV)
+        end
+        push!(expandedVars, v)
+        #= Expanding v=#
+        @debug "Expanding:" v
+        @debug "Expanded into: $(newVarNames)"
+      end      
+    end
+  end
+  #= Expanded variables TODO consider if there are more than one system =#
+  @debug "Expanded variables" string(expandedVars)
+  newOrderedVars = setdiff(bDAE.eqs[1].orderedVars.varArr, expandedVars)
+  newOrderedVars = vcat(newOrderedVars, newVars)
+  @assign bDAE.eqs[1].orderedVars.varArr = newOrderedVars
+  return (bDAE, expandedVars)
+end
+
+  @exportAll()
 end

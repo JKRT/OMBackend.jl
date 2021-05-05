@@ -18,12 +18,15 @@ import Base.Meta
 import SCode
 import JuliaFormatter
 import Plots
+import REPL
 
 global EXAMPLE_MODELS = Dict("HelloWorld" => OMBackend.ExampleDAEs.helloWorld_DAE
                              , "LotkaVolterra" => OMBackend.ExampleDAEs.lotkaVolterra_DAE
                              , "VanDerPol" => OMBackend.ExampleDAEs.vanDerPol_DAE
                              , "BouncingBall" => OMBackend.ExampleDAEs.bouncingBall_DAE
                              , "Influenza" => OMBackend.ExampleDAEs.influenza_DAE)
+
+const latexSymbols = REPL.REPLCompletions.latex_symbols
 #= Settings =#
 @enum BackendMode begin
   DAE_MODE = 1
@@ -41,6 +44,9 @@ function info()
   end
 end
 
+"""
+  If this function is called a DAG representing the equations is plotted to your working directory.
+"""
 function plotGraph(shouldPlot::Bool)
   global PLOT_EQUATION_GRAPH = shouldPlot
 end
@@ -109,11 +115,20 @@ function lower(frontendDAE::DAE.DAE_LIST)::BDAE.BDAEStructure
   #= Create Backend structure from Frontend structure =#
   bDAE = BDAECreate.lower(frontendDAE)
   @debug(BDAEUtil.stringHeading1(bDAE, "translated"));
-  bDAE = Causalize.detectIfExpressions(bDAE)  
+  #= Expand arrays =#
+  (bDAE, expandedVars) = Causalize.expandArrayVariables(bDAE)
+  @debug(BDAEUtil.stringHeading1(bDAE, "Array variables expanded"));
+  #= Expand Array variables in equation system=#
+  bDAE = Causalize.detectAndReplaceArrayVariables(bDAE, expandedVars)
+  @debug(BDAEUtil.stringHeading1(bDAE, "Equation system variables expanded"));
+  #= Transform if expressions to if equations =#
   @debug(BDAEUtil.stringHeading1(bDAE, "if equations transformed"));
+  bDAE = Causalize.detectIfExpressions(bDAE)
+  #= Mark state variables =#
   bDAE = Causalize.detectStates(bDAE)
   @debug(BDAEUtil.stringHeading1(bDAE, "states marked"));
   bDAE = Causalize.residualizeEveryEquation(bDAE)
+  #= =#
   @debug(BDAEUtil.stringHeading1(bDAE, "residuals"));
   return bDAE
 end

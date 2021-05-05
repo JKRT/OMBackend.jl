@@ -65,22 +65,43 @@ function createEqSystem(vars::BDAE.Variables, eqs::Array)
                  BackendEquation.emptyEqns()))
 end
 
+"""
+  Traverse and update a given structure BDAE.BDAEStructure given a traversalOperation and optional arguments
+"""
+function mapEqSystems(dae::BDAE.BDAEStructure, traversalOperation::Function, args...)
+  dae = begin
+    local eqs::Array{BDAE.EqSystem, 1}
+    @match dae begin
+      BDAE.BACKEND_DAE(eqs = eqs) => begin
+        for i in 1:arrayLength(eqs)
+          eqs[i] = traversalOperation(eqs[i], args...)
+        end
+        @assign dae.eqs = eqs
+        (dae)
+      end
+      _ => begin
+        (dae)
+      end
+    end
+  end
+end
+
 function mapEqSystems(dae::BDAE.BDAEStructure, traversalOperation::Function)
-   dae = begin
-     local eqs::Array{BDAE.EqSystem, 1}
-     @match dae begin
-       BDAE.BACKEND_DAE(eqs = eqs) => begin
-         for i in 1:arrayLength(eqs)
-           eqs[i] = traversalOperation(eqs[i])
-         end
-         @assign dae.eqs = eqs
-         (dae)
-       end
-       _ => begin
-         (dae)
-       end
-     end
-   end
+  dae = begin
+    local eqs::Array{BDAE.EqSystem, 1}
+    @match dae begin
+      BDAE.BACKEND_DAE(eqs = eqs) => begin
+        for i in 1:arrayLength(eqs)
+          eqs[i] = traversalOperation(eqs[i])
+        end
+        @assign dae.eqs = eqs
+        (dae)
+      end
+      _ => begin
+        (dae)
+      end
+    end
+  end
 end
 
 function mapEqSystemEquations(syst::BDAE.EqSystem, traversalOperation::Function)
@@ -198,9 +219,6 @@ function isState(kind::BDAE.VarKind)
   return res
 end
 
-
-
-
 """
     kabdelhak:
     Detects if a given expression is a der() call and adds the corresponding
@@ -258,19 +276,40 @@ end
   Author:johti17
   input: Backend Equation, eq
   input: All existing variables
-  output All variable in that specific equation except the state variables
-"
+    output All variable in that specific equation except the state variables
+  "
 function getAllVariablesExceptStates(eq::BDAE.RESIDUAL_EQUATION, vars::Array{BDAE.Var})::Array{DAE.ComponentRef}
-    local componentReferences::List = Util.getAllCrefs(eq.exp)
-    local componentReferencesArr::Array = [componentReferences...]
-    local varNames = [v.varName for v in vars]
-    variablesInEq::Array = []
-    for vn in varNames
-        if vn in componentReferencesArr
-            push!(variablesInEq, vn)
-        end
+  local componentReferences::List = Util.getAllCrefs(eq.exp)
+  local componentReferencesArr::Array = [componentReferences...]
+  local varNames = [v.varName for v in vars]
+  variablesInEq::Array = []
+  for vn in varNames
+    if vn in componentReferencesArr
+      push!(variablesInEq, vn)
     end
-    return variablesInEq
+  end
+  return variablesInEq
+end
+
+function isArray(cref::DAE.ComponentRef)::Bool
+  @match cref begin
+    DAE.OPTIMICA_ATTR_INST_CREF(__) || DAE.WILD(__) => false
+    _ => begin
+      typeof(cref.identType) == DAE.T_ARRAY
+    end    
+  end
+end
+
+function getSubscriptAsIntArray(dims)::Array
+  local dimIndices = []
+  for d in dims
+    if ! (typeof(d) == DAE.DIM_INTEGER)
+      throw("Non integers dimensions for arrays are not supported by OMBackend. Variable was $(string(v))")
+    else
+      push!(dimIndices, d.integer)
+    end
+  end
+  return dimIndices
 end
 
 include("backendDump.jl")
