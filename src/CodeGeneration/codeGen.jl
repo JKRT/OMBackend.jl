@@ -145,7 +145,7 @@ function generateCode(simCode::SimulationCode.SIM_CODE)::Tuple{String, Expr}
                                     typeof(solution.interp),typeof(solution.destats)}(
                                       vars, nothing, nothing, nothing, t, problem, solution.alg,
                                       solution.interp, solution.dense, 0, solution.destats, solution.retcode)
-      ht = $(SimulationCode.makeIndexVarNameDict(simCode.matchOrder, simCode.crefToSimVarHT))
+      ht = $(SimulationCode.makeIndexVarNameUnorderedDict(simCode.matchOrder, simCode.crefToSimVarHT))
       omSolution = OMBackend.CodeGeneration.OMSolution(nsolution, ht)
       return omSolution
     end
@@ -158,7 +158,6 @@ function generateCode(simCode::SimulationCode.SIM_CODE)::Tuple{String, Expr}
     using DifferentialEquations
     using Plots
     using Sundials
-    using DataStructures
     import OMBackend
     $(START_CONDTIONS)
     $(AUX_VARS_FUNCTION)
