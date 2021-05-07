@@ -40,7 +40,7 @@ import ..BDAEUtil
 import ..BackendEquation
 import DAE
 import Absyn
-import OMBackend
+
 
 """
     Variable can be: Variable, Discrete, Constant and Parameters
@@ -226,14 +226,10 @@ function detectArrayExpression(exp::DAE.Exp, arrayCrefs::Dict{String, Bool})
     @match exp begin
       DAE.CREF(matchedComponentRef, ty) where typeof(matchedComponentRef.identType) == DAE.T_ARRAY => begin
         newExp = if haskey(arrayCrefs, matchedComponentRef.ident)
-          local subscripts = matchedComponentRef.subscriptLst
-          local subscriptStr = ""
-          for s in subscripts
-            subscriptStr  *= OMBackend.latexSymbols["\\_" + string(s)]
-          end
-          local newName = matchedComponentRef.ident + subscriptStr
-          local newCref = DAE.CREF_IDENT(newName, ty, nil)
-          @assign exp.componentRef = newCref
+          local subscriptStr::String = BDAEUtil.getSubscriptAsUnicodeString(matchedComponentRef.subscriptLst)
+          local newName::String = matchedComponentRef.ident + subscriptStr
+          local newCref = DAE.CREF_IDENT(newName, ty, nil)          
+          @assign exp = DAE.CREF(newCref, ty)
         else
           exp
         end
@@ -241,11 +237,7 @@ function detectArrayExpression(exp::DAE.Exp, arrayCrefs::Dict{String, Bool})
       end
       DAE.CALL(Absyn.IDENT("der"), DAE.CREF(matchedComponentRef, ty) <| _ ) where typeof(matchedComponentRef.identType) == DAE.T_ARRAY => begin
         newExp = if haskey(arrayCrefs, matchedComponentRef.ident)
-          local subscripts = matchedComponentRef.subscriptLst
-          local subscriptStr = ""
-          for s in subscripts
-            subscriptStr  *= OMBackend.latexSymbols["\\_" + string(s)]
-          end
+          local subscriptStr = BDAEUtil.getSubscriptAsUnicodeString(matchedComponentRef.subscriptLst)          
           local newName = matchedComponentRef.ident + subscriptStr
           local newCref = DAE.CREF_IDENT(newName, ty, nil)          
           @assign exp.expLst = list(DAE.CREF(newCref, ty))
@@ -365,8 +357,8 @@ function expandArrayVariables(bDAE::BDAE.BDAEStructure)::Tuple{BDAE.BDAEStructur
         local newVarNames = []
         for r in dimIndices
           for i in 1:r
-            local newVarName = string(v.varName) 
-            newVarName *= OMBackend.latexSymbols["\\_" + string(i)]
+            local newVarName = string(v.varName)
+            newVarName *= BDAEUtil.getIntAsUnicodeSubscript(i)
             push!(newVarNames, newVarName)
           end
         end

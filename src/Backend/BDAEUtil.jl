@@ -31,17 +31,16 @@
 
 module BDAEUtil
 
-import Absyn
-using MetaModelica
 using ExportAll
+using MetaModelica
 using Setfield
-
-
-import DAE
-import ..Util
 
 import ..BDAE
 import ..BackendEquation
+import OMBackend
+import ..Util
+import Absyn
+import DAE
 
 """
 This function converts an array of variables to the BDAE variable structure
@@ -276,8 +275,8 @@ end
   Author:johti17
   input: Backend Equation, eq
   input: All existing variables
-    output All variable in that specific equation except the state variables
-  "
+  output All variable in that specific equation except the state variables
+"
 function getAllVariablesExceptStates(eq::BDAE.RESIDUAL_EQUATION, vars::Array{BDAE.Var})::Array{DAE.ComponentRef}
   local componentReferences::List = Util.getAllCrefs(eq.exp)
   local componentReferencesArr::Array = [componentReferences...]
@@ -310,6 +309,41 @@ function getSubscriptAsIntArray(dims)::Array
     end
   end
   return dimIndices
+end
+
+function getSubscriptAsUnicodeString(subscriptLst)::String
+  local subscripts = subscriptLst
+  local subscriptStr = ""
+  for s in subscripts
+    @assert(typeof(s) == DAE.INDEX, "DAE.INDEX: is expected for $(s)")
+    #= Here I assume integer index!=#
+    local indexAsInt::Integer = s.exp.integer
+    local result = 0
+    local tmp = 0            
+    subscriptStr *= getIndexAsAUnicodeString(s)
+  end
+  return subscriptStr
+end
+
+function getIndexAsAUnicodeString(idx::DAE.INDEX)
+  local indexAsInt::Integer = idx.exp.integer
+  local subscriptStr = ""
+  return getIntAsUnicodeSubscript(indexAsInt)
+end
+
+"""
+input: 100 
+output \"₁₀₀\"
+"""
+function getIntAsUnicodeSubscript(i::Integer)
+  local subscriptStr = ""
+  while i > 0
+    tmp = i % 10
+    subscriptStr  *= OMBackend.latexSymbols["\\_" + string(tmp)]
+    i =  i ÷ 10
+  end
+  #= Since the code above generates the string in the reverse order it needs to be re reversed=#
+  return reverse(subscriptStr)
 end
 
 include("backendDump.jl")

@@ -32,6 +32,16 @@ const latexSymbols = REPL.REPLCompletions.latex_symbols
   DAE_MODE = 1
   ODE_MODE = 2
   MODELING_TOOLKIT_MODE = 3
+  MODELING_TOOLKIT_DAE_MODE = 4
+end
+
+"""
+  Mode of backend code generation. Do not modify.
+"""
+global MODE = ODE_MODE
+
+function selectBackendTargets(mode::BackendMode)
+  global MODE = mode
 end
 
 function info()
@@ -69,7 +79,6 @@ function runExampleExplicit(modelName::String)
   simulateModel(modelName)
   println("Model now in memory")
 end
-
 
 """
 Contains expressions of models currently in memory.
@@ -205,14 +214,26 @@ function generateTargetCode(simCode::SimulationCode.EXPLICIT_SIM_CODE)
   end
 end
 
-function writeModelToFile(modelName::String)
+function writeModelToFile(modelName::String, filePath::String; keepComments = true, formatFile = true)
   model = COMPILED_MODELS[modelName]
   fileName = "$modelName.jl"
   try
-    formattedModel = JuliaFormatter.format_text(model)
-    CodeGeneration.writeDAE_equationsToFile(modelName, model)
-  catch
+    if keepComments == false
+      strippedModel = CodeGeneration.stripComments(model)
+    end
+    local strippedModel = CodeGeneration.stripBeginBlocks(model)
+    local modelStr::String = "$strippedModel"
+    formattedModel = if formatFile
+      JuliaFormatter.format_text(modelStr,
+                                 remove_extra_newlines = true,
+                                 always_use_return = true)
+    else
+      modelStr
+    end
+    CodeGeneration.writeDAE_equationsToFile(filePath, formattedModel,)
+  catch e
     @info "Failed writing $model to file: $fileName"
+    @error e
   end
 end
 
