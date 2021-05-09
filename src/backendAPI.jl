@@ -19,6 +19,7 @@ import SCode
 import JuliaFormatter
 import Plots
 import REPL
+import OMBackend
 
 global EXAMPLE_MODELS = Dict("HelloWorld" => OMBackend.ExampleDAEs.helloWorld_DAE
                              , "LotkaVolterra" => OMBackend.ExampleDAEs.lotkaVolterra_DAE
@@ -282,6 +283,7 @@ function simulateModel(modelName::String; tspan=(0.0, 1.0))
   local modelCode::Expr = COMPILED_MODELS[modelName]
   local modelCodeStr = ""
   try
+    @eval $(:(import OMBackend))
     modelCodeStr::String = "$modelCode"
     local parsedModel = Meta.parse.(modelCodeStr)
     @eval $parsedModel
@@ -292,7 +294,7 @@ function simulateModel(modelName::String; tspan=(0.0, 1.0))
     @info "Interactive evaluation failed: $err"
     println(modelCodeStr)
     @info "Dump of model-code"
-    Base.dump(parsedModel)
+#    Base.dump(parsedModel) TODO
     throw(err)
   end
 end

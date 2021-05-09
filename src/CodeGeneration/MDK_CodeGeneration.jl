@@ -10,7 +10,7 @@ import OMBackend
   Generates simulation code targetting modeling toolkit
 """
 function generateMDKCode(simCode::SimulationCode.SIM_CODE)
-  if OMBACKEND.MODE == MODELING_TOOLKIT_DAE_MODE
+  if OMBackend.MODE == MODELING_TOOLKIT_DAE_MODE
     DAE_MODE_MDK(simCode::SimulationCode.SIM_CODE)
   else
     ODE_MODE_MDK(simCode::SimulationCode.SIM_CODE)
