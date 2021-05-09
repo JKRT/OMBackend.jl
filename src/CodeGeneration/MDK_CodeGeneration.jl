@@ -72,7 +72,7 @@ function ODE_MODE_MDK(simCode::SimulationCode.SIM_CODE)
     end
     $(Symbol("$(modelName)Model_problem")) = $(Symbol("$(modelName)Model"))()
     function $(Symbol("$(modelName)Simulate"))(tspan = (0.0, 1.0))     
-      solve($(Symbol("$(modelName)Model_problem"), radau5()))
+      solve($(Symbol("$(modelName)Model_problem")))
     end
   end
   return (modelName, program)
