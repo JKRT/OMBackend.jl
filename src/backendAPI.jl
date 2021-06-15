@@ -1,6 +1,11 @@
 using MetaModelica
 using ExportAll
 using Absyn
+#= For interactive evaluation. =#
+using ModelingToolkit
+#import Symbolics
+using SymbolicUtils
+
 
 import .Backend.BDAE
 import .Backend.BDAECreate
@@ -13,16 +18,31 @@ import Base.Meta
 import SCode
 import JuliaFormatter
 import Plots
+import REPL
+import OMBackend
 
 global EXAMPLE_MODELS = Dict("HelloWorld" => OMBackend.ExampleDAEs.helloWorld_DAE
                              , "LotkaVolterra" => OMBackend.ExampleDAEs.lotkaVolterra_DAE
                              , "VanDerPol" => OMBackend.ExampleDAEs.vanDerPol_DAE
                              , "BouncingBall" => OMBackend.ExampleDAEs.bouncingBall_DAE
                              , "Influenza" => OMBackend.ExampleDAEs.influenza_DAE)
+
+const latexSymbols = REPL.REPLCompletions.latex_symbols
 #= Settings =#
 @enum BackendMode begin
   DAE_MODE = 1
   ODE_MODE = 2
+  MODELING_TOOLKIT_MODE = 3
+  MODELING_TOOLKIT_DAE_MODE = 4
+end
+
+"""
+  Mode of backend code generation. Do not modify.
+"""
+global MODE = ODE_MODE
+
+function selectBackendTargets(mode::BackendMode)
+  global MODE = mode
 end
 
 function info()
@@ -35,6 +55,9 @@ function info()
   end
 end
 
+"""
+  If this function is called a DAG representing the equations is plotted to your working directory.
+"""
 function plotGraph(shouldPlot::Bool)
   global PLOT_EQUATION_GRAPH = shouldPlot
 end
@@ -58,15 +81,20 @@ function runExampleExplicit(modelName::String)
   println("Model now in memory")
 end
 
-
 """
-Contains expressions of models in memory.
+Contains expressions of models currently in memory.
 Do NOT mutate in other modules!
 //John
 """
 global COMPILED_MODELS = Dict()
 
-function translate(frontendDAE::DAE.DAE_LIST, BackendMode = DAE_MODE)::Tuple{String, Expr}
+""" 
+  Active simulation functions 
+  Do NOT mutate in other modules!
+"""
+global COMPILED_SIMULATION_CODE = Dict()
+
+function translate(frontendDAE::DAE.DAE_LIST; BackendMode = DAE_MODE)::Tuple{String, Expr}
   local bDAE = lower(frontendDAE)
   local simCode
   if BackendMode == DAE_MODE
@@ -75,6 +103,10 @@ function translate(frontendDAE::DAE.DAE_LIST, BackendMode = DAE_MODE)::Tuple{Str
   elseif BackendMode == ODE_MODE
     simCode = generateExplicitSimulationCode(bDAE)
     return ("Error", :())
+  elseif BackendMode == MODELING_TOOLKIT_MODE
+    @debug "Experimental: Generates and runs code using modelling toolkit"
+    simCode = generateSimulationCode(bDAE)
+    return generateMDKTargetCode(simCode)
   else
     @error "No mode specificed: valid modes are:"
     println("ODE_MODE")
@@ -93,11 +125,20 @@ function lower(frontendDAE::DAE.DAE_LIST)::BDAE.BDAEStructure
   #= Create Backend structure from Frontend structure =#
   bDAE = BDAECreate.lower(frontendDAE)
   @debug(BDAEUtil.stringHeading1(bDAE, "translated"));
-  bDAE = Causalize.detectIfExpressions(bDAE)  
+  #= Expand arrays =#
+  (bDAE, expandedVars) = Causalize.expandArrayVariables(bDAE)
+  @debug(BDAEUtil.stringHeading1(bDAE, "Array variables expanded"));
+  #= Expand Array variables in equation system=#
+  bDAE = Causalize.detectAndReplaceArrayVariables(bDAE, expandedVars)
+  @debug(BDAEUtil.stringHeading1(bDAE, "Equation system variables expanded"));
+  #= Transform if expressions to if equations =#
   @debug(BDAEUtil.stringHeading1(bDAE, "if equations transformed"));
+  bDAE = Causalize.detectIfExpressions(bDAE)
+  #= Mark state variables =#
   bDAE = Causalize.detectStates(bDAE)
   @debug(BDAEUtil.stringHeading1(bDAE, "states marked"));
   bDAE = Causalize.residualizeEveryEquation(bDAE)
+  #= =#
   @debug(BDAEUtil.stringHeading1(bDAE, "residuals"));
   return bDAE
 end
@@ -107,10 +148,18 @@ end
 """
 function generateSimulationCode(bDAE::BDAE.BDAEStructure)::SimulationCode.SimCode
   simCode = SimulationCode.transformToSimCode(bDAE)
-#  @debug BDAE.stringHeading1(simCode, "SIM_CODE: transformed simcode")
+  @debug BDAE.stringHeading1(simCode, "SIM_CODE: transformed simcode")
   return simCode
 end
 
+"""
+  Transforms BDAE-IR to simulation code for MDK mode
+"""
+function generateUnsortedSimulationCode(bDAE::BDAE.BDAEStructure)::SimulationCode.UNSORTED_SIM_CODE
+  simCode = SimulationCode.transformToSimCodeNoSort(bDAE)
+  @debug BDAE.stringHeading1(simCode, "SIM_CODE: transformed simcode")
+  return simCode
+end
 
 """
   Transforms BDAE-IR to simulation code for DAE-mode
@@ -138,6 +187,20 @@ end
 
 
 """
+  Generates code interfacing ModelingToolkit.jl
+  The resulting code is saved in a table which contains functions that where simulated
+  this session. Returns the generated modelName and corresponding generated code
+"""
+function generateMDKTargetCode(simCode::SimulationCode.SIM_CODE)
+  #= Target code =#
+  (modelName::String, modelCode::Expr) = CodeGeneration.generateMDKCode(simCode)
+  @debug "Functions:" modelCode
+  @debug "Model:" modelName
+  COMPILED_MODELS[modelName] = modelCode
+  return (modelName, modelCode)
+end
+
+"""
   Generates code interfacing DifferentialEquations.jl
   The resulting code is saved in a dictonary which contains functions that where simulated
   this session. Returns the generated modelName and corresponding generated code
@@ -152,24 +215,40 @@ function generateTargetCode(simCode::SimulationCode.EXPLICIT_SIM_CODE)
   end
 end
 
-function writeModelToFile(modelName::String)
+function writeModelToFile(modelName::String, filePath::String; keepComments = true, formatFile = true)
   model = COMPILED_MODELS[modelName]
   fileName = "$modelName.jl"
   try
-    formattedModel = JuliaFormatter.format_text(model)
-    CodeGeneration.writeDAE_equationsToFile(modelName, model)
-  catch
+    if keepComments == false
+      strippedModel = CodeGeneration.stripComments(model)
+    end
+    local strippedModel = CodeGeneration.stripBeginBlocks(model)
+    local modelStr::String = "$strippedModel"
+    formattedModel = if formatFile
+      JuliaFormatter.format_text(modelStr,
+                                 remove_extra_newlines = true,
+                                 always_use_return = true)
+    else
+      modelStr
+    end
+    CodeGeneration.writeDAE_equationsToFile(filePath, formattedModel,)
+  catch e
     @info "Failed writing $model to file: $fileName"
+    @error e
   end
 end
 
 "
-  If specified model exists. Print it to stdout.
+  Prints a model. 
+  If the specified model exists. Print it to stdout.
 "
-function printModel(modelName::String)
+function printModel(modelName::String; keepComments = true)
     try
       local model::Expr = COMPILED_MODELS[modelName]
       #= Remove all the redudant blocks from the model =#
+      if keepComments == false
+        strippedModel = CodeGeneration.stripComments(model)
+      end
       local strippedModel = CodeGeneration.stripBeginBlocks(model)
       local modelStr::String = "$strippedModel"
       formattedResults = JuliaFormatter.format_text(modelStr;
@@ -195,18 +274,28 @@ function availableModels()::String
 end
 
 """
-  Evaluates the in memory representation of a named model
+  Simulates model interactivly. 
+
+TODO:
+    (Currently does a redudant string conversion)
 """
 function simulateModel(modelName::String; tspan=(0.0, 1.0))
   local modelCode::Expr = COMPILED_MODELS[modelName]
+  local modelCodeStr = ""
   try
-    @eval $modelCode
-    local modelRunnable = Meta.parse("$(modelName)Simulate($(tspan))")
-    #= Run the model with the supplied tspan. =# 
-    @eval $modelRunnable
+    @eval $(:(import OMBackend))
+    modelCodeStr::String = "$modelCode"
+    local parsedModel = Meta.parse.(modelCodeStr)
+    @eval $parsedModel
+    local modelRunnable = Meta.parse("OMBackend.$(modelName)Simulate($(tspan))")
+    #= Run the model with the supplied tspan. =#
+    @eval Main $modelRunnable
   catch err
     @info "Interactive evaluation failed: $err"
-    @info "$modelCode"
+    println(modelCodeStr)
+    @info "Dump of model-code"
+#    Base.dump(parsedModel) TODO
+    throw(err)
   end
 end
 
@@ -222,6 +311,16 @@ function plot(sol::CodeGeneration.OMSolution)
   Plots.plot(t, rescols; labels=labels)
 end
 
+
+"
+  An alternative plot function in OMBackend.
+  All labels of the variables and the name is given by default
+"
+function plot(sol)
+  Plots.plot(sol)
+end
+
+
 """
   Turns on logging
 TODO:
@@ -230,3 +329,8 @@ TODO:
 function turnOnLogging()
   ENV["JULIA_DEBUG"] = "OMBackend"
 end
+
+function turnOnLoggingCodeGeneration()
+  ENV["JULIA_DEBUG"] = "CodeGeneration"
+end
+

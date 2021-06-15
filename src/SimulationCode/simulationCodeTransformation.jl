@@ -93,6 +93,24 @@ function transformToSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.SIM_CO
                           digraph, stronglyConnectedComponents)
 end
 
+"Transform the given backend dae to simulation code without sorting, matching and merging. "
+function transformToSimCodeNoSort(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.UNSORTED_SIM_CODE
+  local equationSystems::Array = backendDAE.eqs
+  local allOrderedVars::Array{BDAE.Var} = [v for es in equationSystems for v in es.orderedVars.varArr]
+  local allSharedVars::Array{BDAE.Var} = getSharedVariablesLocalsAndGlobals(backendDAE.shared)
+  local allBackendVars = vcat(allOrderedVars, allSharedVars)
+  local simVars::Array{SimulationCode.SIMVAR} = allocateAndCollectSimulationVariables(allBackendVars)
+  # Assign indices and put all variable into an hash table
+  local crefToSimVarHT = createIndices(simVars)
+  local equations = [eq for es in equationSystems for eq in es.orderedEqs]
+  #= Split equations into three parts. Residuals whenEquations and If-equations =#
+  (resEqs,whenEqs,ifEqs) = allocateAndCollectSimulationEquations(equations)
+  #= Sorting/Matching (This is used for the start condtions) =#
+  #= Construct SIM_CODE =#
+  SimulationCode.UNSORTED_SIM_CODE(backendDAE.name, crefToSimVarHT,
+                                   resEqs,whenEqs, ifEqs)
+end
+
 
 """
 John:
