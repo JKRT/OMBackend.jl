@@ -6,18 +6,24 @@ TODO: Make duplicate code better...
 =#
 using ModelingToolkit
 import OMBackend
+
 """
   Generates simulation code targetting modeling toolkit
 """
 function generateMDKCode(simCode::SimulationCode.SIM_CODE)
   if OMBackend.MODE == OMBackend.MODELING_TOOLKIT_DAE_MODE
-    DAE_MODE_MDK(simCode::SimulationCode.SIM_CODE)
+    @error "DAE mode for MTK was removed."
+    #DAE_MODE_MDK(simCode::SimulationCode.SIM_CODE)
   else
-    ODE_MODE_MDK(simCode::SimulationCode.SIM_CODE)
+    ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   end
 end
 
-function ODE_MODE_MDK(simCode::SimulationCode.SIM_CODE)
+"""
+Assumpstions:
+I assume that the systems depend on time...
+"""
+function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   @debug "Runnning: generateMDKCode"
   local crefToSimVarHT = simCode.crefToSimVarHT
   local equations::Array = []
@@ -81,66 +87,6 @@ function ODE_MODE_MDK(simCode::SimulationCode.SIM_CODE)
   return (modelName, program)
 end
 
-function DAE_MODE_MDK(simCode::SimulationCode.SIM_CODE)
-  @debug "Runnning: generateMDKCode"
-  local crefToSimVarHT = simCode.crefToSimVarHT
-  local equations::Array = []
-  local exp::DAE.Exp
-  local modelName::String = simCode.name
-  local parameters::Array = []
-  local stateDerivatives::Array = []
-  local stateMarkings::Array = []
-  local stateVariables::Array = []
-  local algebraicVariables::Array = []
-  for varName in keys(crefToSimVarHT)
-    ixAndVar = crefToSimVarHT[varName]
-    local varType = ixAndVar[2].varKind
-    @match varType  begin
-      SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
-      SimulationCode.STATE(__) => push!(stateVariables, varName)
-      SimulationCode.PARAMETER(__) => push!(parameters, varName)
-      SimulationCode.ALG_VARIABLE(__) => push!(algebraicVariables #= Should be alg if more specialised scheme is used.=#, varName)
-      #=TODO: Do I need to modify this?=#
-      SimulationCode.STATE_DERIVATIVE(__) => push!(stateDerivatives, varName)
-    end
-  end
-  equations = simCode.residualEquations
-  equations = createResidualEquationsMDK(stateVariables, algebraicVariables, equations, simCode::SimulationCode.SIM_CODE)
-  #= Symbolic names =#
-  local stateVariablesSym = [:($(Symbol(v))(t)) for v in stateVariables]
-  local algebraicVariablesSym = [Symbol(v) for v in algebraicVariables]
-  local parVariablesSym = [Symbol(p) for p in parameters]
-  local START_CONDTIONS_EQUATIONS = createStartConditionsEquationsMDK(stateVariables, algebraicVariables, simCode)
-  local PARAMETER_EQUATIONS = createParameterEquationsMDK(parameters, simCode)
-  #= Formulate the problem as a DAE Problem=#
-  program = quote
-    using ModelingToolkit
-    using DiffEqBase
-    using DifferentialEquations
-    function $(Symbol("$(modelName)Model"))(tspan = (0.0, 1.0))
-      pars = ModelingToolkit.@parameters begin
-        ($(parVariablesSym...), t)
-      end
-      vars = ModelingToolkit.@variables begin
-        ($(stateVariablesSym...), $(algebraicVariablesSym...))
-      end
-      der = Differential(t)
-      eqs = [$(equations...)]
-      nonLinearSystem = ModelingToolkit.ODESystem(eqs, t, vars, pars, name=:($(Symbol($modelName))))
-      pars = Dict($(PARAMETER_EQUATIONS...), t => tspan[1])
-      initialValues = [$(START_CONDTIONS_EQUATIONS...)]
-      firstOrderSystem = ModelingToolkit.ode_order_lowering(nonLinearSystem)
-      problem = ModelingToolkit.ODEProblem(firstOrderSystem, initialValues, tspan, pars)
-      return problem
-    end
-    $(Symbol("$(modelName)Model_problem")) = $(Symbol("$(modelName)Model"))()
-    function $(Symbol("$(modelName)Simulate"))(tspan = (0.0, 1.0))     
-      solve($(Symbol("$(modelName)Model_problem")))
-    end
-  end
-  return (modelName, program)
-end
-
 
 "
  Creates the residual equations in unsorted order
@@ -157,7 +103,6 @@ function createResidualEquationsMDK(stateVariables::Array, algebraicVariables::A
   end
   #= Generate algebraic equations=#
   for var in algebraicVariables
-    @info var 
     local variableIdx = ht[var][1]
     local equationIdx = simCode.matchOrder[variableIdx]
     local equation = equations[equationIdx]
@@ -302,7 +247,7 @@ function residualEqtoJuliaMDK(eq::BDAE.Equation, simCode::SimulationCode.SIM_COD
             $(varToSolveExpr)
           end
           leq = 0 ~ $(stripBeginBlocks(expToJuliaExpMDK(daeExp, simCode ;derSymbol=true)))
-          Symbolics.solve_for([leq], [$varToSolveExpr]; check = false #=Does not check for linearity.. =#)
+          Symbolics.solve_for([leq], [$varToSolveExpr]; check = false #= Does not check for linearity!.. =#)
         end
         local res = @eval  $eqExpr
         return res
