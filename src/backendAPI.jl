@@ -21,12 +21,6 @@ import Plots
 import REPL
 import OMBackend
 
-global EXAMPLE_MODELS = Dict("HelloWorld" => OMBackend.ExampleDAEs.helloWorld_DAE
-                             , "LotkaVolterra" => OMBackend.ExampleDAEs.lotkaVolterra_DAE
-                             , "VanDerPol" => OMBackend.ExampleDAEs.vanDerPol_DAE
-                             , "BouncingBall" => OMBackend.ExampleDAEs.bouncingBall_DAE
-                             , "Influenza" => OMBackend.ExampleDAEs.influenza_DAE)
-
 const latexSymbols = REPL.REPLCompletions.latex_symbols
 #= Settings =#
 @enum BackendMode begin
@@ -62,24 +56,6 @@ function plotGraph(shouldPlot::Bool)
   global PLOT_EQUATION_GRAPH = shouldPlot
 end
 
-function runExample(modelName::String)
-  println("Translating Hybrid DAE of: $modelName")
-  translate(EXAMPLE_MODELS[modelName])
-  println("Translation done:")
-  simulateModel(modelName)
-  println("Simulating with default settings:")
-  println("Model now in memory")
-end
-
-
-function runExampleExplicit(modelName::String)
-  println("Translating Hybrid DAE of: $modelName")
-  translate(EXAMPLE_MODELS[modelName], ODE_MODE)
-  println("Translation done:")
-  println("Simulating with default settings:")
-  simulateModel(modelName)
-  println("Model now in memory")
-end
 
 """
 Contains expressions of models currently in memory.
@@ -106,7 +82,7 @@ function translate(frontendDAE::DAE.DAE_LIST; BackendMode = DAE_MODE)::Tuple{Str
   elseif BackendMode == MODELING_TOOLKIT_MODE
     @debug "Experimental: Generates and runs code using modelling toolkit"
     simCode = generateSimulationCode(bDAE)
-    return generateMDKTargetCode(simCode)
+    return generateMTKTargetCode(simCode)
   else
     @error "No mode specificed: valid modes are:"
     println("ODE_MODE")
@@ -153,7 +129,7 @@ function generateSimulationCode(bDAE::BDAE.BDAEStructure)::SimulationCode.SimCod
 end
 
 """
-  Transforms BDAE-IR to simulation code for MDK mode
+  Transforms BDAE-IR to simulation code for MTK mode
 """
 function generateUnsortedSimulationCode(bDAE::BDAE.BDAEStructure)::SimulationCode.UNSORTED_SIM_CODE
   simCode = SimulationCode.transformToSimCodeNoSort(bDAE)
@@ -191,7 +167,7 @@ end
   The resulting code is saved in a table which contains functions that where simulated
   this session. Returns the generated modelName and corresponding generated code
 """
-function generateMDKTargetCode(simCode::SimulationCode.SIM_CODE)
+function generateMTKTargetCode(simCode::SimulationCode.SIM_CODE)
   #= Target code =#
   (modelName::String, modelCode::Expr) = CodeGeneration.generateMDKCode(simCode)
   @debug "Functions:" modelCode
@@ -261,10 +237,9 @@ function printModel(modelName::String; keepComments = true)
     end
 end
 
-
-"
+"""
     Prints compiled models to stdout
-"
+"""
 function availableModels()::String
   str = "Compiled models:\n"
     for m in keys(COMPILED_MODELS)
@@ -277,7 +252,8 @@ end
   Simulates model interactivly. 
 
 TODO:
-    (Currently does a redudant string conversion)
+    (Currently does a redudant string conversion. Regression.)
+    Seems MTK does no longer support interactive simulation as well.
 """
 function simulateModel(modelName::String; tspan=(0.0, 1.0))
   local modelCode::Expr = COMPILED_MODELS[modelName]
