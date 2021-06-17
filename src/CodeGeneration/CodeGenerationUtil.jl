@@ -28,6 +28,7 @@
 * See the full OSMC Public License conditions for more details.
 *
 =#
+
 #=
 # Author: John Tinnerholm (johti17)
 =#
