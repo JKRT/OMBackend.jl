@@ -315,6 +315,8 @@ end
 "
   Creates sorted equations for all supplied variables that are present in the strongly connected components.
   Author: johti17
+TODO:
+  Fix rewriting since reduce is a bit flaky...
 "
 function createSortedEquations(variables::Array, simCode::SimulationCode.SIM_CODE; arrayName::String)::Array{Expr}
   #= Assign the variables according to sorting/matching =#
@@ -330,13 +332,12 @@ function createSortedEquations(variables::Array, simCode::SimulationCode.SIM_COD
     push!(iterationComponents, i)
   end
   local residuals = simCode.residualEquations
-  #=
-  For state variables we write to dx0. Thus, we are looking for dx0[<index>].
-  =#
+  #= For state variables we write to dx0. Thus, we are looking for dx0[<index>]. =#
   for i in iterationComponents
     variableIdx = MetaGraphs.get_prop(simCode.equationGraph, i, :vID)
     equationIdx = simCode.matchOrder[variableIdx]
-    local equation = removeComments(expToJuliaExp(residuals[equationIdx].exp, simCode; varPrefix = arrayName))
+    local expForResidual = residuals[equationIdx].exp
+    local equation = removeComments(expToJuliaExp(expForResidual, simCode; varPrefix = arrayName))
     local rewrittenEquation::Expr = stripBeginBlocks(arrayToSymbolicVariable(equation))
     local varToSolve = simCode.crefToSimVarHT[ht[variableIdx]][2]
     local varToSolveExpr::Symbol = SimulationCode.isState(varToSolve) ? Symbol("dx_$(variableIdx)") : Symbol("$(arrayName)_$(variableIdx)")
@@ -374,6 +375,9 @@ function createEquations(equations::Array, simCode::SimulationCode.SIM_CODE)::Ar
   return eqs
 end
 
+"""
+  Create equations for the parameters
+"""
 function createParameterEquations(parameters::Array, simCode::SimulationCode.SIM_CODE)
   local parameterEquations::Array = []
   local hT = simCode.crefToSimVarHT
