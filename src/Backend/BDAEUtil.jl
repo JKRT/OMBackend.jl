@@ -53,7 +53,7 @@ function convertVarArrayToBDAE_Variables(vars::Array{BDAE.Var})::BDAE.Variables
   return variables
 end
 
-function createEqSystem(vars::BDAE.Variables, eqs::Array)
+function createEqSystem(vars::BDAE.Variables, eqs::Array)::BDAE.EQSYSTEM
   (BDAE.EQSYSTEM(vars,
                  eqs,
                  NONE(),
@@ -65,7 +65,7 @@ function createEqSystem(vars::BDAE.Variables, eqs::Array)
                  BackendEquation.emptyEqns()))
 end
 
-function mapEqSystems(dae::BDAE.BDAEStructure, traversalOperation::Function)
+function mapEqSystems(dae::BDAE.BACKEND_DAE, traversalOperation::Function)
    dae = begin
      local eqs::Array{BDAE.EqSystem, 1}
      @match dae begin
@@ -83,7 +83,7 @@ function mapEqSystems(dae::BDAE.BDAEStructure, traversalOperation::Function)
    end
 end
 
-function mapEqSystemEquations(syst::BDAE.EqSystem, traversalOperation::Function)
+function mapEqSystemEquations(syst::BDAE.EQSYSTEM, traversalOperation::Function)
   syst = begin
     local eqs::Array{BDAE.Equation,1}
     @match syst begin
@@ -99,7 +99,7 @@ function mapEqSystemEquations(syst::BDAE.EqSystem, traversalOperation::Function)
 end
 
 
-function mapEqSystemEquationsNoUpdate(syst::BDAE.EqSystem, traversalOperation::Function, extArg)
+function mapEqSystemEquationsNoUpdate(syst::BDAE.EQSYSTEM, traversalOperation::Function, extArg)
   extArg = begin
     local eqs::Array{BDAE.Equation,1}
     @match syst begin
@@ -113,7 +113,7 @@ function mapEqSystemEquationsNoUpdate(syst::BDAE.EqSystem, traversalOperation::F
   end
 end
 
-function mapEqSystemVariablesNoUpdate(syst::BDAE.EqSystem, traversalOperation::Function, extArg)
+function mapEqSystemVariablesNoUpdate(syst::BDAE.EQSYSTEM, traversalOperation::Function, extArg)
   extArg = begin
     local varArr::Array{BDAE.Var,1}
     @match syst begin

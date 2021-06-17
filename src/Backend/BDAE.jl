@@ -92,72 +92,61 @@ import DAE
 import DoubleEnded
 import SCode
 
-const EqSystems = Array
-
 #=  AdjacencyMatrixes =#
-AdjacencyMatrixElementEntry = Integer
-AdjacencyMatrixElement = List
-AdjacencyMatrix = Array
-AdjacencyMatrixT = AdjacencyMatrix
-AdjacencyMatrixMapping = Tuple
-AdjacencyMatrixElementEnhancedEntry = Tuple
-AdjacencyMatrixElementEnhanced = List
-AdjacencyMatrixEnhanced = Array
-AdjacencyMatrixTEnhanced = AdjacencyMatrixEnhanced
-ExternalObjectClasses = List  #= classes of external objects stored in list =#
-StateSets = List  #= List of StateSets =#
-StrongComponents = List  #= Order of the equations the have to be solved =#
-SymbolicJacobians = List
-SymbolicJacobian = Tuple
-SparsePatternCref = Tuple
-SparsePatternCrefs = List
-SparsePattern = Tuple
+const AdjacencyMatrixElementEntry = Integer
+const AdjacencyMatrixElement = List
+const AdjacencyMatrix = Array
+const AdjacencyMatrixT = AdjacencyMatrix
+const AdjacencyMatrixMapping = Tuple
+const AdjacencyMatrixElementEnhancedEntry = Tuple
+const AdjacencyMatrixElementEnhanced = List
+const AdjacencyMatrixEnhanced = Array
+const AdjacencyMatrixTEnhanced = AdjacencyMatrixEnhanced
+const ExternalObjectClasses = List  #= classes of external objects stored in list =#
+const StateSets = List  #= List of StateSets =#
+const StrongComponents = List  #= Order of the equations the have to be solved =#
+const SymbolicJacobians = List
+const SymbolicJacobian = Tuple
+const SparsePatternCref = Tuple
+const SparsePatternCrefs = List
+const SparsePattern = Tuple
 
 
 const emptySparsePattern = (nil, nil, (nil, nil), 0)::SparsePattern
-
 const SparseColoring = List
-
 const LinearIntegerJacobianRow = List
-
 const LinearIntegerJacobianRhs = Array
-
 const LinearIntegerJacobianIndices = Array
-
 const LinearIntegerJacobian = Tuple
+const InnerEquations = List
+const Constraints = List
 
-InnerEquations = List
-
-Constraints = List  #= Constraints on the solvability of the (casual) tearing set; needed for proper Dynamic Tearing =#
+#= An independent system of equations (and their corresponding variables) =#
+struct EQSYSTEM
+  orderedVars #= ordered Variables, only states and alg. vars =#::Variables
+  orderedEqs #= ordered Equations =#::Array
+  m::Option{Array}
+  mT::Option{Array}
+  mapping #= current type of adjacency matrix, boolean is true if scalar =#::Option{Tuple}
+  matching::Matching
+  stateSets #= the state sets of the system =#::StateSets
+  partitionKind::BaseClockPartitionKind
+  removedEqs #= these are equations that cannot solve for a variable.
+  e.g. assertions, external function calls, algorithm sections without effect =#::Array
+end
 
 #= THE LOWERED DAE consist of variables and equations. The variables are split into
 two lists, one for unknown variables states and algebraic and one for known variables
 constants and parameters.
 The equations are also split into two lists, one with simple equations, a=b, a-b=0, etc., that
 are removed from  the set of equations to speed up calculations. =#
-@Uniontype BDAEStructure begin
-  @Record BACKEND_DAE begin
-    name::String
-    eqs::EqSystems
-    shared::Shared
-  end
+struct BACKEND_DAE
+  name::String
+  eqs::Array{EQSYSTEM}
+  shared::Shared
 end
 
-#= An independent system of equations (and their corresponding variables) =#
-@Uniontype EqSystem begin
-  @Record EQSYSTEM begin
-    orderedVars #= ordered Variables, only states and alg. vars =#::Variables
-    orderedEqs #= ordered Equations =#::Array
-    m::Option{AdjacencyMatrix}
-    mT::Option{AdjacencyMatrixT}
-    mapping #= current type of adjacency matrix, boolean is true if scalar =#::Option{AdjacencyMatrixMapping}
-    matching::Matching
-    stateSets #= the state sets of the system =#::StateSets
-    partitionKind::BaseClockPartitionKind
-    removedEqs #= these are equations that cannot solve for a variable.
-    e.g. assertions, external function calls, algorithm sections without effect =#::Array
-  end
-end
+
 
 #=Clock removed for now=#
 @Uniontype SubClock begin
@@ -208,13 +197,6 @@ end
   @Record SHARED_DUMMY begin
   end
 
-end
-
-@Uniontype InlineData begin
-  @Record INLINE_DATA begin
-    inlineSystems::EqSystems
-    knownVariables::Variables
-  end
 end
 
 @Uniontype BasePartition begin

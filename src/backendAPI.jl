@@ -85,8 +85,8 @@ end
 """
  Transforms given DAE-IR/Hybrid DAE to backend DAE-IR (BDAE-IR)
 """
-function lower(frontendDAE::DAE.DAE_LIST)::BDAE.BDAEStructure
-  local bDAE::BDAE.BDAEStructure
+function lower(frontendDAE::DAE.DAE_LIST)::BDAE.BACKEND_DAE
+  local bDAE::BDAE.BACKEND_DAE
   local simCode::SIM_CODE
   @debug "Length of frontend DAE:" length(frontendDAE.elementLst)
   @assert typeof(listHead(frontendDAE.elementLst)) == DAE.COMP
@@ -105,7 +105,7 @@ end
 """
   Transforms  BDAE-IR to simulation code for DAE-mode
 """
-function generateSimulationCode(bDAE::BDAE.BDAEStructure)::SimulationCode.SimCode
+function generateSimulationCode(bDAE::BDAE.BACKEND_DAE)::SimulationCode.SimCode
   simCode = SimulationCode.transformToSimCode(bDAE)
 #  @debug BDAE.stringHeading1(simCode, "SIM_CODE: transformed simcode")
   return simCode
@@ -115,7 +115,7 @@ end
 """
   Transforms BDAE-IR to simulation code for DAE-mode
 """
-function generateExplicitSimulationCode(bDAE::BDAE.BDAEStructure)
+function generateExplicitSimulationCode(bDAE::BDAE.BACKEND_DAE)
   simCode = SimulationCode.transformToExplicitSimCode(bDAE)
   @info "Code generation for ODE-mode not yet supported! Exiting.."
 #  @debug BDAE.stringHeading1(simCode, "SIM_CODE: transformed simcode")

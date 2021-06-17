@@ -47,7 +47,7 @@ import Absyn
     Traverse all equations and locate the variables that are derived.
     These we mark as states
 """
-function detectStates(dae::BDAE.BDAEStructure)
+function detectStates(dae::BDAE.BACKEND_DAE)
   BDAEUtil.mapEqSystems(dae, detectStatesEqSystem)
 end
 
@@ -55,7 +55,7 @@ end
   Replaces all if expressions with a temporary variable.
   Adds an equation assigning this variable to the set of equations.
 """
-function detectIfExpressions(dae::BDAE.BDAEStructure)
+function detectIfExpressions(dae::BDAE.BACKEND_DAE)
   BDAEUtil.mapEqSystems(dae, detectIfEquationsEqSystem)
 end
 
@@ -66,7 +66,7 @@ end
     Updates all variables with those component references to
     varKind BDAE.STATE()
 """
-function detectStatesEqSystem(syst::BDAE.EqSystem)::BDAE.EqSystem
+function detectStatesEqSystem(syst::BDAE.EQSYSTEM)::BDAE.EQSYSTEM
   syst = begin
     local vars::BDAE.Variables
     local eqs::Array
@@ -89,7 +89,7 @@ end
   Detects if equations.
   Returns new temporary variables and an array of equations
 """
-function detectIfEquationsEqSystem(syst::BDAE.EqSystem)::BDAE.EqSystem
+function detectIfEquationsEqSystem(syst::BDAE.EQSYSTEM)::BDAE.EQSYSTEM
   syst = begin
     local vars::BDAE.Variables
     local eqs::Array
@@ -221,7 +221,7 @@ end
     from the lhs.
     (daeMode)
 """
-function residualizeEveryEquation(dae::BDAE.BDAEStructure)
+function residualizeEveryEquation(dae::BDAE.BACKEND_DAE)
   return BDAEUtil.mapEqSystems(dae, makeResidualEquations)
 end
 
@@ -229,7 +229,7 @@ end
     kabdelhak:
     Traverser for daeMode() to map all equations of an equation system
 """
-function makeResidualEquations(syst::BDAE.EqSystem)
+function makeResidualEquations(syst::BDAE.EQSYSTEM)
   syst = BDAEUtil.mapEqSystemEquations(syst, BackendEquation.makeResidualEquation)
 end
 

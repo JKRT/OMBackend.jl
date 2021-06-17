@@ -51,9 +51,9 @@ import ..Causalize
   equations into simple and nonsimple equations.
   inputs:  lst: DAE.DAE_LIST
   outputs: BDAE.BDAE"""
-function lower(lst::DAE.DAE_LIST)::BDAE.BDAEStructure
-  local outBDAE::BDAE.BDAEStructure
-  local eqSystems::Array{BDAE.EqSystem}
+function lower(lst::DAE.DAE_LIST)::BDAE.BACKEND_DAE
+  local outBDAE::BDAE.BACKEND_DAE
+  local eqSystems::Array{BDAE.EQSYSTEM}
   local varArray::Array{BDAE.Var}
   local eqArray::Array{BDAE.Equation}
   local name = listHead(lst.elementLst).ident
@@ -116,6 +116,9 @@ function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple
         end
         DAE.COMP(__) => begin
           variableLst,equationLst = splitEquationsAndVars(elem.dAElist)
+        end
+        DAE.INITIALEQUATION(__) => begin
+
         end
         _ => begin
           @error "Skipped:" elem
