@@ -67,7 +67,7 @@ end
 """
   Traverse and update a given structure BDAE.BDAEStructure given a traversalOperation and optional arguments
 """
-function mapEqSystems(dae::BDAE.BDAEStructure, traversalOperation::Function, args...)
+function mapEqSystems(dae::BDAE.BACKEND_DAE, traversalOperation::Function, args...)
   dae = begin
     local eqs::Array{BDAE.EqSystem, 1}
     @match dae begin
@@ -85,7 +85,7 @@ function mapEqSystems(dae::BDAE.BDAEStructure, traversalOperation::Function, arg
   end
 end
 
-function mapEqSystems(dae::BDAE.BDAEStructure, traversalOperation::Function)
+function mapEqSystems(dae::BDAE.BACKEND_DAE, traversalOperation::Function)
   dae = begin
     local eqs::Array{BDAE.EqSystem, 1}
     @match dae begin
@@ -218,7 +218,7 @@ function isState(kind::BDAE.VarKind)
   return res
 end
 
-<<<<<<< HEAD
+
 function isWhenEquation(eq::BDAE.Equation)
   @match eq begin
     BDAE.WHEN_EQUATION(__) => true
@@ -226,8 +226,6 @@ function isWhenEquation(eq::BDAE.Equation)
   end
 end
 
-=======
->>>>>>> ff0b7ebcb561adf28e556dec6564fc172a6ed42d
 """
     kabdelhak:
     Detects if a given expression is a der() call and adds the corresponding

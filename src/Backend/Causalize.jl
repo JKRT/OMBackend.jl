@@ -61,7 +61,7 @@ function detectIfExpressions(dae::BDAE.BACKEND_DAE)
   BDAEUtil.mapEqSystems(dae, detectIfEquationsEqSystem)
 end
 
-function detectAndReplaceArrayVariables(dae::BDAE.BDAEStructure, expandedVariables::Array)
+function detectAndReplaceArrayVariables(dae::BDAE.BDAE.BACKEND_DAE, expandedVariables::Array)
   BDAEUtil.mapEqSystems(dae, replaceArrayVariables, expandedVariables)
 end
 
@@ -95,7 +95,7 @@ end
 Author johti17:
   Renames expanded array variables
 """
-function replaceArrayVariables(syst::BDAE.EqSystem, expandedVariables::Array)
+function replaceArrayVariables(syst::BDAE.EQSYSTEM, expandedVariables::Array)
   syst = begin
     local vars::BDAE.Variables
     local eqs::Array
@@ -340,7 +340,7 @@ johti17:
   x₁, x₂, x₃, x₄.
 New name is <variable-name>_<index>
 """
-function expandArrayVariables(bDAE::BDAE.BDAEStructure)::Tuple{BDAE.BDAEStructure, Array}
+function expandArrayVariables(bDAE::BDAE.BACKEND_DAE)::Tuple{BDAE.BACKEND_DAE, Array}
   local systems = bDAE.eqs
   local expandedVars = []
   local newVars = []
