@@ -366,7 +366,11 @@ function Base.string(exp::DAE.Exp)::String
       end
 
       DAE.CREF(cr, _)  => begin
-        string(cr)
+        if isArray(cr)
+          string(cr) + string(cr.subscriptLst)
+        else          
+          string(cr)
+        end
       end
 
       DAE.UNARY(operator = op, exp = e1) => begin
@@ -516,4 +520,17 @@ function lstString(expLst::List{T}, seperator::String)::String where{T}
       end
     end
   end
+end
+
+function Base.string(ss::Cons{DAE.Subscript})::String
+  local str = ""
+  for ix in ss
+    str *= "[$(string(ix))]"
+  end
+  return str
+end
+
+function Base.string(idx::DAE.INDEX)::String
+  local str = string(idx.exp)    
+  return str
 end

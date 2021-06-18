@@ -47,43 +47,75 @@ using Test
 import OMBackend.CodeGeneration.OMSolution
 
 """
-   DAE's to use for the sanity check. 
+  Test translation to backend DAE.
+  Also test simulation from 0.0 to 1.0 seconds. 
+  Does not verify semantics, only checks that the model was simulated correctly.
 """
-global TEST_CASES = ["helloWorld", "lotkaVolterra", "vanDerPol", "simpleMech", "simpleCircuit"]
-global MODEL_NAME = ""
-
-#= These tests does not validate the semantics. Only that we can successfully compile and simulate this set of models=#
-@testset "Sanity test. Simple translation and simulation of Hybrid-DAE" begin
-  @testset "DAE-mode" begin
-    for testCase in TEST_CASES
-      @testset "$testCase" begin
-        @testset "compile" begin
-          global MODEL_NAME
-          frontendDAE::OMBackend.DAE.DAE_LIST = getfield(ExampleDAEs,Symbol("$(testCase)_DAE"))
-          try
-            #= TODO: We should check this with some reference IR =#
-            (MODEL_NAME, modelCode) = OMBackend.translate(frontendDAE)
-            @debug generateFile(testCase, modelCode)
-            @info "Translated: $MODEL_NAME"
-            @test true
-          catch e
-            @info e
-            throw(e)
-            @test false
+function testBackend(TEST_CASES::Array; mode)
+  local MODEL_NAME = ""
+  #= These tests does not validate the semantics. Only that we can successfully compile and simulate this set of models=#
+  @testset "Sanity test. Simple translation and simulation of non-hybrid-DAE" begin
+    @testset "Simple non-hybrid continuous systems" begin
+      for testCase in TEST_CASES
+        @testset "$testCase" begin
+          @testset "Compile" begin
+            frontendDAE::OMBackend.DAE.DAE_LIST = getfield(ExampleDAEs,Symbol("$(testCase)_DAE"))
+            try
+              #= TODO: We should check this with some reference IR =#
+              (MODEL_NAME, modelCode) = OMBackend.translate(frontendDAE; BackendMode = mode)
+              @debug generateFile(testCase, modelCode)
+              @info "Translated: $MODEL_NAME"
+              @test true
+            catch e
+              @info e
+              throw(e)
+              @test false
+            end
           end
-        end
-        @testset "simulate" begin
-          global MODEL_NAME
-          @info "Simulating: $MODEL_NAME"
-          try
-            simulationResults = OMBackend.simulateModel(MODEL_NAME; tspan=(0.0, 1.0))
-            @test simulationResults.diffEqSol.retcode == :Success
-          catch e
-            @info "Simulation failure: see $(testCase)_result.csv"
-            @info "Trying to simulate again"
+          @testset "Simulate" begin
+            @info "Simulating: $MODEL_NAME"
+            try
+              simulationResult = getSimulationResult(OMBackend.simulateModel(MODEL_NAME; tspan=(0.0, 1.0)))
+              @test simulationResult == :Success
+            catch e
+              @info "Simulation failure: see $(testCase)_result.csv"
+              @test false
+            end
           end
         end
       end
     end
   end
 end
+
+"Get the solution code for an OMSolution"
+function getSimulationResult(solution::OMBackend.CodeGeneration.OMSolution)
+  return solution.diffEqSol.retcode
+end
+
+"""
+  Get solution from a \"regular\" solution from DifferentialEquation.jl suite
+"""
+function getSimulationResult(regularSol)
+  return regularSol.retcode
+end
+
+"""
+  Main driver to run the test cases.
+"""
+function runTests()
+  #= DAE's to use for the sanity check. =#
+  TEST_CASES_BASIC = ["helloWorld", "lotkaVolterra", "vanDerPol"]
+  TEST_CASES_ADVANCED = ["simpleMech", "simpleCircuit"]
+  @testset "Backend test" begin
+    @testset "DifferentialEquations.jl Backend tests" begin
+      testBackend(TEST_CASES_BASIC; mode= OMBackend.DAE_MODE)
+      testBackend(TEST_CASES_ADVANCED; mode= OMBackend.DAE_MODE)
+    end
+    @testset "MTK backend test" begin
+      testBackend(TEST_CASES_BASIC; mode= OMBackend.DAE_MODE)
+    end
+  end
+end
+
+runTests()

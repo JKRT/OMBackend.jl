@@ -91,6 +91,18 @@ struct SIM_CODE <: SimCode
 end
 
 
+struct UNSORTED_SIM_CODE <: SimCode
+  name::String
+  "Mapping of names to the corresponding variable"
+  crefToSimVarHT::Dict{String, Tuple{Integer, SimVar}}
+  "Different equations stored within simulation code"
+  residualEquations::Array{BDAE.RESIDUAL_EQUATION}
+  whenEquations::Array{BDAE.WHEN_EQUATION}
+  ifEquations::Array{BDAE.IF_EQUATION}
+end
+
+
+
 """
   This is the explicit representation of SimCode.
   In this representation all residual equations

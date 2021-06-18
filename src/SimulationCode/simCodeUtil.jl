@@ -61,9 +61,22 @@ end
   idx -> var-name.
   Supply matching order and a ht. 
 "
-function makeIndexVarNameDict(matchOrder, variablesHT)::OrderedDict
+function makeIndexVarNameDict(matchOrder, variablesHT)::DataStructures.OrderedDict
   local unknownVariables = filter((x) -> isVariableOrState(x[2].varKind), collect(values(variablesHT)))
-  variableIndexToName::OrderedDict = OrderedDict()
+  variableIndexToName::DataStructures.OrderedDict = DataStructures.OrderedDict()
+  for v in unknownVariables
+    variableIndexToName[v[1]] = v[2].name
+  end
+  return variableIndexToName
+end
+
+"
+  idx -> var-name.
+  Supply matching order and a ht. 
+"
+function makeIndexVarNameUnorderedDict(matchOrder, variablesHT)::Dict
+  local unknownVariables = filter((x) -> isVariableOrState(x[2].varKind), collect(values(variablesHT)))
+  variableIndexToName::Dict = DataStructures.OrderedDict()
   for v in unknownVariables
     variableIndexToName[v[1]] = v[2].name
   end
