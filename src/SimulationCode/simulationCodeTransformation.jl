@@ -77,20 +77,38 @@ function transformToSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.SIM_CO
   local crefToSimVarHT = createIndices(simVars)
   local equations = [eq for es in equationSystems for eq in es.orderedEqs]
   #= Split equations into three parts. Residuals whenEquations and If-equations =#
-  (resEqs,whenEqs,ifEqs) = allocateAndCollectSimulationEquations(equations)
+  (resEqs, whenEqs, ifEqs) = allocateAndCollectSimulationEquations(equations)
   #= Sorting/Matching (This is used for the start condtions) =#
-  local eqVariableMapping = createEquationVariableBidirectionGraph(equations, allBackendVars, crefToSimVarHT)
-  (isSingular::Bool, matchOrder::Array) = GraphAlgorithms.matching(eqVariableMapping, length(eqVariableMapping.keys))
-  local digraph::MetaGraphs.MetaDiGraph = GraphAlgorithms.merge(matchOrder, eqVariableMapping)
-    if OMBackend.PLOT_EQUATION_GRAPH
-      local labels = makeLabels(digraph, matchOrder, crefToSimVarHT)
-      GraphAlgorithms.plotEquationGraph("./digraphOutput$(backendDAE.name).pdf", digraph, labels)
-    end
-  stronglyConnectedComponents::Array = GraphAlgorithms.topological_sort(digraph) 
+  local eqVariableMapping = createEquationVariableBidirectionGraph(resEqs, allBackendVars, crefToSimVarHT)
+  local numberOfVariablesInMapping = length(eqVariableMapping.keys)
+  (isSingular, matchOrder, digraph, stronglyConnectedComponents) =
+    matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping)
   #= Construct SIM_CODE =#
-  SimulationCode.SIM_CODE(backendDAE.name, crefToSimVarHT,
-                          resEqs,whenEqs, ifEqs, isSingular, matchOrder,
-                          digraph, stronglyConnectedComponents)
+  SimulationCode.SIM_CODE(backendDAE.name,
+                          crefToSimVarHT,
+                          resEqs,
+                          #=TODO fix initial equations here =#
+                          [],
+                          whenEqs,
+                          ifEqs,
+                          isSingular,
+                          matchOrder,
+                          digraph,
+                          stronglyConnectedComponents)
+end
+
+"""
+  This function does matching, it also checks for strongly connected components
+"""
+function matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping)::Tuple
+  (isSingular::Bool, matchOrder::Array) = GraphAlgorithms.matching(eqVariableMapping, numberOfVariablesInMapping)
+  local digraph::MetaGraphs.MetaDiGraph = GraphAlgorithms.merge(matchOrder, eqVariableMapping)
+  if OMBackend.PLOT_EQUATION_GRAPH
+    local labels = makeLabels(digraph, matchOrder, crefToSimVarHT)
+    GraphAlgorithms.plotEquationGraph("./digraphOutput$(backendDAE.name).pdf", digraph, labels)
+  end
+  stronglyConnectedComponents::Array = GraphAlgorithms.topological_sort(digraph)
+  return (isSingular, matchOrder, digraph, stronglyConnectedComponents)
 end
 
 

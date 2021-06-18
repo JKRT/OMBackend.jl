@@ -317,6 +317,7 @@ end
   Author: johti17
 TODO:
   Fix rewriting since reduce is a bit flaky...
+  I seem to have written it for match order and not for SCC?
 "
 function createSortedEquations(variables::Array, simCode::SimulationCode.SIM_CODE; arrayName::String)::Array{Expr}
   #= Assign the variables according to sorting/matching =#
@@ -616,7 +617,7 @@ end
 """
       Generates the start conditions.
       All Variables default to zero if not specified.
-  """
+"""
 function getStartConditions(vars::Array, condName::String, simCode::SimulationCode.SIM_CODE)::Expr
   local startExprs::Array{Expr} = []
   local residuals = simCode.residualEquations

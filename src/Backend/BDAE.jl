@@ -164,34 +164,7 @@ end
 #= Data shared for all equation-systems =#
 @Uniontype Shared begin
   @Record SHARED begin
-    #= variables only depending on parameters and constants
-       [TODO: move stuff (like inputs) to localKnownVars] =#
-    globalKnownVars::Variables
-    #= variables only depending on locally constant variables in the simulation step,
-       i.e. states, input variables =#
-    localKnownVars::Variables
-    externalObjects #= External object variables =#::Variables
-    aliasVars #= Data originating from removed simple equations needed to build
-    variables' lookup table (in C output).
-    In that way, double buffering of variables in pre()-buffer, extrapolation
-    buffer and results caching, etc., is avoided, but in C-code output all the
-    data about variables' names, comments, units, etc. is preserved as well as
-    pointer to their values (trajectories). =#::Variables
     initialEqs #= Initial equations =#::Array
-    removedEqs #= these are equations that cannot solve for a variable. for example assertions, external function calls, algorithm sections without effect =#::Array
-    constraints #= constraints (Optimica extension) =#::List{DAE.Constraint}
-    classAttrs #= class attributes (Optimica extension) =#::List{DAE.ClassAttributes}
-    cache #=TODO: Use the Julia cache here=#
-    graph #=TODO use something else then the FCore crap=#
-    functionTree #= functions for Backend =# #=Let's skip this part people=#
-    eventInfo #= eventInfo =#::EventInfo
-    extObjClasses #= classes of external objects, contains constructor & destructor =#::ExternalObjectClasses
-    backendDAEType #= indicate for what the BDAE is used =#::BDAEType
-    symjacs #= Symbolic Jacobians =#::SymbolicJacobians
-    info #= contains extra info that we send around like the model name =#::ExtraInfo
-    partitionsInfo::PartitionsInfo
-    daeModeData #= DAEMode Data =#::BDAEModeData
-    dataReconciliationData::Option{DataReconciliationData}
   end
 
   @Record SHARED_DUMMY begin

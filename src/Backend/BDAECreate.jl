@@ -1,4 +1,4 @@
-#= /*
+#=
 * This file is part of OpenModelica.
 *
 * Copyright (c) 1998-CurrentYear, Open Source Modelica Consortium (OSMC),
@@ -50,21 +50,21 @@ import ..Causalize
   and further divides variables into known and unknown variables and the
   equations into simple and nonsimple equations.
   inputs:  lst: DAE.DAE_LIST
-  outputs: BDAE.BDAE"""
+  outputs: BDAE.BACKEND_DAE"""
 function lower(lst::DAE.DAE_LIST)::BDAE.BACKEND_DAE
   local outBDAE::BDAE.BACKEND_DAE
   local eqSystems::Array{BDAE.EQSYSTEM}
   local varArray::Array{BDAE.Var}
   local eqArray::Array{BDAE.Equation}
   local name = listHead(lst.elementLst).ident
-  (varArray, eqArray) = begin
+  (varArray, eqArray, initialEquations) = begin
     local elementLst::List{DAE.Element}
     local variableLst::List{BDAE.Var}
     local equationLst::List{BDAE.Equation}
     @match lst begin
       DAE.DAE_LIST(elementLst) => begin
-        (variableLst, equationLst) = splitEquationsAndVars(elementLst)
-        (listArray(listReverse(variableLst)), listArray(listReverse(equationLst)))
+        (variableLst, equationLst, initialEquations) = splitEquationsAndVars(elementLst)
+        (listArray(listReverse(variableLst)), listArray(listReverse(equationLst)), initialEquations)
       end
     end
   end
@@ -77,11 +77,14 @@ function lower(lst::DAE.DAE_LIST)::BDAE.BACKEND_DAE
 end
 
 """
-  Splits a given DAE.DAEList into a set of equations and a set of variables
+  Splits a given DAE.DAEList into a set of equations and a set of variables.
+  In addition provides the initial equations for the system.
+TODO: Optimize by using List instead of array.
 """
 function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple
   local variableLst::List{BDAE.Var} = nil
   local equationLst::List{BDAE.Equation} = nil
+  local initialEquationLst::List{BDAE.Equation} = nil
   for elem in elementLst
     _ = begin
       local backendDAE_Var
@@ -115,10 +118,14 @@ function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple
           equationLst = lowerIfEquation(elem) <| equationLst
         end
         DAE.COMP(__) => begin
-          variableLst,equationLst = splitEquationsAndVars(elem.dAElist)
+          variableLst,equationLst,initialEquationLst = splitEquationsAndVars(elem.dAElist)
         end
         DAE.INITIALEQUATION(__) => begin
-
+          initialEquationLst = BDAE.EQUATION(elem.exp1,
+                                             elem.exp2,
+                                             elem.source,
+                                             #=TODO: Below might need to be changed =#
+                                             BDAE.EQ_ATTR_DEFAULT_UNKNOWN) <| initialEquationLst
         end
         _ => begin
           @error "Skipped:" elem
@@ -127,7 +134,7 @@ function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple
       end
     end
   end
-  return (variableLst, equationLst)
+  return (variableLst, equationLst, initialEquationLst)
 end
 
 function lowerWhenEquation(eq::DAE.Element)::BDAE.Equation

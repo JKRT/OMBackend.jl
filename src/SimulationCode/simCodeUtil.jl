@@ -125,6 +125,10 @@ function createIndices(simulationVars::Array{SimulationCode.SIMVAR})::OrderedDic
   return ht
 end
 
+"
+  Given the available residual equations and the set of backend variables 
+  create a bidrection graph between these equations and the variables.
+"
 function createEquationVariableBidirectionGraph(equations, allBackendVars, crefToSimVarHT)::OrderedDict
   local eqCounter::Int = 1
   local varCounter::Int = 1
@@ -134,6 +138,7 @@ function createEquationVariableBidirectionGraph(equations, allBackendVars, crefT
   #= Treat states as solved =#
   nEquations = length(equations)  - length(stateVariables)
   nVariables = length(unknownVariables)
+  #= Assert that the set of known variables has potential equations in which they can be used =#
   @assert(nEquations == nVariables, "The set of variables != set of equations: #Variables: $nVariables, #Equations $nEquations")
   for eq in equations
     #= Fetch all variables beloning to the specific equation =#

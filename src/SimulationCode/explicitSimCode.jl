@@ -42,16 +42,17 @@ function transformToExplicitSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCod
   end
 #= Return explicit simulation code. =#
   return SimulationCode.EXPLICIT_SIM_CODE(backendDAE.name,
-                                         crefToSimVarHT,
-                                         indexToEquation,
-                                         eqVariableMapping,
-                                         reOrderedResiduals,
-                                         whenEqs,
-                                         ifEqs,
-                                         isSingular,
-                                         matchOrder,
-                                         digraph,
-                                         stronglyConnectedComponents)
+                                          crefToSimVarHT,
+                                          indexToEquation,
+                                          eqVariableMapping,
+                                          reOrderedResiduals,
+                                          initialEquations,
+                                          whenEqs,
+                                          ifEqs,
+                                          isSingular,
+                                          matchOrder,
+                                          digraph,
+                                          stronglyConnectedComponents)
 end
 
 function createEquationIndicies(resEqs)

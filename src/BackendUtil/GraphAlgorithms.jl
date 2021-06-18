@@ -133,7 +133,7 @@ function dumpGraphProperties(g::MetaGraphs.MetaDiGraph)
 end
 
 "
-  Topological sort
+  Topological sort 
 "
 function topological_sort(g::LightGraphs.AbstractGraph)::Array
   LightGraphs.topological_sort_by_dfs(g)
@@ -164,7 +164,6 @@ end
 "
  Helper function.
  It is assumed that the dict g is orderd 1->N where 1->N is the indices of the nodes.
-
  input g::OrderedDict
  input n::Int, the number of vertices
  output sccs: The set of strongly connected components

@@ -198,8 +198,12 @@ function isState(kind::BDAE.VarKind)
   return res
 end
 
-
-
+function isWhenEquation(eq::BDAE.Equation)
+  @match eq begin
+    BDAE.WHEN_EQUATION(__) => true
+    _ => false
+  end
+end
 
 """
     kabdelhak:
@@ -224,7 +228,6 @@ function detectStateExpression(exp::DAE.Exp, stateCrefs::Dict{DAE.ComponentRef, 
   end
   return (exp, cont, outCrefs)
 end
-
 
 "
   Author:johti17

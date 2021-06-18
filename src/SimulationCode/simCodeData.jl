@@ -67,17 +67,17 @@ struct SIM_CODE <: SimCode
   crefToSimVarHT::Dict{String, Tuple{Integer, SimVar}}
   "Different equations stored within simulation code"
   residualEquations::Array{BDAE.RESIDUAL_EQUATION}
+  "The Initial equations"
+  initialEquations::Array{BDAE.RESIDUAL_EQUATION}
   whenEquations::Array{BDAE.WHEN_EQUATION}
   ifEquations::Array{BDAE.IF_EQUATION}
   "True if the system that we are solving is singular"
   isSingular::Bool
-
   "
    The match order:
    Result of assign array, e.g array(j) = equation_i
   "
   matchOrder::Array{Int}
-
     "
     The merged graph. E.g digraph constructed from matching info.
     The indicies are the same as above and they are shared.
@@ -113,16 +113,23 @@ struct EXPLICIT_SIM_CODE <: SimCode
   eqVariableMapping::OrderedDict{String, Array{Int}}
 
   "Regular equations are encoded as residuals"
-  residualEquations::Array{BDAE.RESIDUAL_EQUATION}  
+  residualEquations::Array{BDAE.RESIDUAL_EQUATION}
+  "Initial equations"
+  initialEquations::Array{BDAE.RESIDUAL_EQUATION}
+  " When equations "
   whenEquations::Array{BDAE.WHEN_EQUATION}
+  " If Equations "
   ifEquations::Array{BDAE.IF_EQUATION}
+
   "
-   If matching resulted in singularity. 
+   If matching resulted in singularity.
+   True if the system is singular
   "
   isSingular::Bool
   "
     The match order:
     Result of assign array, e.g array(j) = equation_i
+    That is what variable is solved in what equation.
   "
   matchOrder::Array{Int}
 
