@@ -1,3 +1,7 @@
+#=
+  This file contains the code generation for the DifferntialEquations.jl backend. 
+=#
+
 """
 """
 const HEADER_STRING ="
@@ -15,9 +19,9 @@ function writeDAE_equationsToFile(fileName::String, contents::String)
   close(fdesc)
 end
 
-"
+"""
     ODE-mode code generation
-  "
+"""
 function generateCode(simCode::SimulationCode.EXPLICIT_SIM_CODE)
   throw("Not implemented..")
 end
@@ -28,6 +32,7 @@ end
   Returns an expression in memory representing the program and a string
 """
 function generateCode(simCode::SimulationCode.SIM_CODE)::Tuple{String, Expr}
+  global CALLBACK_COUNTER = 0
   local stateVariables::Array = []
   local algVariables::Array = []
   local stateDerivatives::Array = []
@@ -98,6 +103,10 @@ function generateCode(simCode::SimulationCode.SIM_CODE)::Tuple{String, Expr}
 
   local PARAMETER_EQUATIONS = createParameterEquations(parameters, simCode)
   local PARAMETER_VARS = quote
+    """
+    This function contains the auxilary variables of the model under simulation.
+    The auxilary variables consists of paramters at index 1 and real variables at index 2. 
+    """
     function $(Symbol("$(modelName)ParameterVars"))()
       aux = Array{Array{Float64}}(undef, $(2))
       p = Array{Float64}(undef, $(arrayLength(parameters)))
@@ -113,13 +122,14 @@ function generateCode(simCode::SimulationCode.SIM_CODE)::Tuple{String, Expr}
   local SAVE_FUNCTION = createSaveFunction(modelName)
   local CALL_BACK_EQUATIONS = quote
     $(Symbol("saved_values_$(modelName)")) = SavedValues(Float64, Tuple{Float64,Array})
-    function $(Symbol("$(modelName)CallbackSet"))(p)
+    function $(Symbol("$(modelName)CallbackSet"))(aux)
+      local p = aux[1]
       $(LineNumberNode((@__LINE__), "WHEN EQUATIONS"))
       $(WHEN_EQUATIONS...)
       $(LineNumberNode((@__LINE__), "IF EQUATIONS"))
       $(IF_EQUATIONS...)
       $(SAVE_FUNCTION)
-      return CallbackSet($(evaluateCallBackset()))
+      return $(Expr(:call, :CallbackSet, returnCallbackSet()...))
     end
   end
   local RUNNABLE = quote
@@ -206,26 +216,24 @@ function createSaveFunction(modelName)::Expr
       (t, deepcopy(integrator.p[2]))
     end
     $cbSym = SavingCallback(savingFunction, $(Symbol("saved_values_$(modelName)")))
-    return $cbSym
   end
 end
 
-function evaluateCallBackset()::Expr
-  local cbs::Array{Expr} = []
+"""
+  Returns the argument array for the callback set.
+"""
+function returnCallbackSet()::Array
+  local cbs::Array{Symbol} = []
   for t in 1:CALLBACK_COUNTER
-    push!(cbs,
-          quote
-          $(Symbol("cb$(t)"))
-          end)
+    cb = Symbol("cb", t)
+    push!(cbs, cb)
   end
-  expr::Expr = if length(cbs) < 1
-    quote end
+  expr::Array = if length(cbs) < 1
+    []
   else
-    quote
-      $((cbs...))
-    end
+    cbs
   end
-  return expr 
+  return cbs 
 end
 
 function createRealToStateVariableMapping(stateVariables::Array, simCode::SimulationCode.SIM_CODE; toFrom::Tuple=("reals", "x"))::Array{Expr}
@@ -240,7 +248,7 @@ end
 """
       TODO: We use state for everything now...
       Algebraic and state should be initilised in a different way.
-  """
+"""
 function createStartConditionsEquations(algVariables::Array,
                                         stateVariables::Array,
                                         simCode::SimulationCode.SIM_CODE)::Expr
@@ -480,7 +488,7 @@ function expToJuliaExp(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuffix
           false
         end
         if ! builtin
-          #= If we refeer to time, we simply return t instead of a concrete variable =#
+          #= If we refer to time, we  return t instead of a concrete variable =#
           indexAndVar = hashTable[varName]
           varKind::SimulationCode.SimVarType = indexAndVar[2].varKind
           @match varKind begin
@@ -562,9 +570,9 @@ function generateCastExpression(ty, exp, simCode, varPrefix)
 end
 
 """
-      Generates the start conditions.
-      All Variables default to zero if not specified.
-  """
+  Generates the start conditions.
+  All Variables default to zero if not specified.
+"""
 function getStartConditions(vars::Array, condName::String, simCode::SimulationCode.SimCode)::Expr
   local startExprs::Array{Expr} = []
   local residuals = simCode.residualEquations
