@@ -1,3 +1,4 @@
+
 #=
 * This file is part of OpenModelica.
 *
@@ -107,13 +108,16 @@ function runTests()
   #= DAE's to use for the sanity check. =#
   TEST_CASES_BASIC = ["helloWorld", "lotkaVolterra", "vanDerPol"]
   TEST_CASES_ADVANCED = ["simpleMech", "simpleCircuit"]
+  TEST_CASES_HYBRID = ["bouncingBallReals"]
   @testset "Backend test" begin
     @testset "DifferentialEquations.jl Backend tests" begin
       testBackend(TEST_CASES_BASIC; mode= OMBackend.DAE_MODE)
       testBackend(TEST_CASES_ADVANCED; mode= OMBackend.DAE_MODE)
+      #= Currently failing due to  https://github.com/SciML/Sundials.jl/issues/292 and https://github.com/SciML/Sundials.jl/issues/290=#
+      #testBackend(TEST_CASES_HYBRID; mode = OMBackend.DAE_MODE)
     end
     @testset "MTK backend test" begin
-      testBackend(TEST_CASES_BASIC; mode= OMBackend.DAE_MODE)
+      testBackend(TEST_CASES_BASIC; mode= OMBackend.MODELING_TOOLKIT_MODE)
     end
   end
 end
