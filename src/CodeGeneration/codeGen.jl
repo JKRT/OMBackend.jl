@@ -52,10 +52,16 @@ function generateCode(simCode::SimulationCode.SIM_CODE)::Tuple{String, Expr}
       SimulationCode.STATE_DERIVATIVE(__) => push!(stateDerivatives, varName)
     end
   end
+  #= Check if we have state variables =#
+  if isempty(stateVariables)
+    #= 
+       We have no state variables. Change strategy. 
+       System might be either linear or nonlinear, however it is not a system of differential algebraic equations, only algebraic.
+    =#
+    
+  end  
   stateMarkings = createStateMarkings([], stateVariables, simCode)
   #=Start conditions of algebraic and state variables=#
-  #= Discrete events=#
-  #=Continuous events=#
   local START_CONDTIONS_EQUATIONS = createStartConditionsEquations(algVariables, stateVariables, simCode)
   local DAE_STATE_UPDATE_VECTOR_START_COND = createRealToStateVariableMapping(stateVariables, simCode; toFrom = ("x", "reals"))
   @debug("Generating start conditions")
@@ -83,12 +89,13 @@ function generateCode(simCode::SimulationCode.SIM_CODE)::Tuple{String, Expr}
       $(DAE_STATE_UPDATE_VECTOR...)
     end
   end
-
+  
+  #= Create function to handle auxilary variables. That is variables that are not a part of the system that is sent to the solver. =#
   local AUX_VARS_EQUATIONS = createAuxVarEquations(algVariables::Array, stateVariables::Array, simCode::SimulationCode.SIM_CODE)
   local AUX_VARS_FUNCTION = quote
     function $(AUX_FUNC_NAME)(dx, x, aux, t)
-      p = aux[1]
-      reals = aux[2]
+      local p = aux[1]
+      local reals = aux[2]
       $(AUX_VARS_EQUATIONS...)
     end
   end
@@ -132,34 +139,7 @@ function generateCode(simCode::SimulationCode.SIM_CODE)::Tuple{String, Expr}
       return $(Expr(:call, :CallbackSet, returnCallbackSet()...))
     end
   end
-  local RUNNABLE = quote
-    function $(Symbol("$(modelName)Simulate"))(tspan = (0.0, 1.0))
-      $(LineNumberNode((@__LINE__), "Auxilary variables"))   
-      local aux = $(Symbol("$(modelName)ParameterVars"))()
-      (x0, dx0) =$(Symbol("$(modelName)StartConditions"))(aux, tspan[1])
-      local differential_vars = $(Symbol("$(modelName)DifferentialVars"))()
-      #= Pass the residual equations =#
-      local problem = DAEProblem($(Symbol("$(modelName)DAE_equations")), dx0, x0, 
-                           tspan, aux, differential_vars=differential_vars, 
-                           callback=$(Symbol("$(modelName)CallbackSet"))(aux))
-      #= Solve with IDA =#
-      local solution = solve(problem, IDA())
-      #= Convert into OM compatible format =#
-      local savedSol = map(collect, $(Symbol("saved_values_$(modelName)")).saveval)
-      local t = [savedSol[i][1] for i in 1:length(savedSol)]
-      local vars = [savedSol[i][2] for i in 1:length(savedSol)]
-      local T = eltype(eltype(vars))
-      local N = length(aux[2])
-      local nsolution = DAESolution{Float64,N,typeof(vars),Nothing, Nothing, Nothing, typeof(t),
-                                    typeof(problem),typeof(solution.alg),
-                                    typeof(solution.interp),typeof(solution.destats)}(
-                                      vars, nothing, nothing, nothing, t, problem, solution.alg,
-                                      solution.interp, solution.dense, 0, solution.destats, solution.retcode)
-      ht = $(SimulationCode.makeIndexVarNameUnorderedDict(simCode.matchOrder, simCode.crefToSimVarHT))
-      omSolution = OMBackend.CodeGeneration.OMSolution(nsolution, ht)
-      return omSolution
-    end
-  end
+  local RUNNABLE = createRunnable(modelName, simCode)
   @debug("Code-generation done")
   global CALLBACK_COUNTER = 0
   program = quote    
@@ -181,13 +161,42 @@ function generateCode(simCode::SimulationCode.SIM_CODE)::Tuple{String, Expr}
   return (modelName, program)
 end
 
-"
+
+function createRunnable(modelName::String, simCode::SimulationCode.SIM_CODE)
+  quote
+    function $(Symbol("$(modelName)Simulate"))(tspan = (0.0, 1.0))
+      $(LineNumberNode((@__LINE__), "Auxilary variables"))   
+      local aux = $(Symbol("$(modelName)ParameterVars"))()
+      (x0, dx0) =$(Symbol("$(modelName)StartConditions"))(aux, tspan[1])
+      local differential_vars = $(Symbol("$(modelName)DifferentialVars"))()
+      #= Pass the residual equations =#
+      local problem = DAEProblem($(Symbol("$(modelName)DAE_equations")), dx0, x0, 
+                                 tspan, aux, differential_vars=differential_vars, 
+                                 callback=$(Symbol("$(modelName)CallbackSet"))(aux))
+      #= Solve with IDA =#
+      local solution = solve(problem, IDA())
+      #= Convert into OM compatible format =#
+      local savedSol = map(collect, $(Symbol("saved_values_$(modelName)")).saveval)
+      local t = [savedSol[i][1] for i in 1:length(savedSol)]
+      local vars = [savedSol[i][2] for i in 1:length(savedSol)]
+      local T = eltype(eltype(vars))
+      local N = length(aux[2])
+      local nsolution = DAESolution{Float64,N,typeof(vars),Nothing, Nothing, Nothing, typeof(t),
+                                    typeof(problem),typeof(solution.alg),
+                                    typeof(solution.interp),typeof(solution.destats)}(
+                                      vars, nothing, nothing, nothing, t, problem, solution.alg,
+                                      solution.interp, solution.dense, 0, solution.destats, solution.retcode)
+      ht = $(SimulationCode.makeIndexVarNameUnorderedDict(simCode.matchOrder, simCode.crefToSimVarHT))
+      omSolution = OMBackend.CodeGeneration.OMSolution(nsolution, ht)
+      return omSolution
+    end
+  end
+end
+
+
+"""
   This functions creates the update equations for the auxilary variables.
-  Two sets of equations are created.
-  The first  handle the sorted equations of the set of algebraic variables. 
-  The second set of equations handle the 
-   
-"
+"""
 function createAuxVarEquations(algVariables::Array, stateVariables::Array, simCode::SimulationCode.SIM_CODE)::Array{Expr}
   #= Sorted equations for the algebraic variables. =#
   local auxEquations::Array{Expr} = [] 
@@ -255,21 +264,18 @@ function createStartConditionsEquations(algVariables::Array,
   local startEquations = createSortedEquations([algVariables..., stateVariables...], simCode; arrayName = "reals")
   return quote
     $(getStartConditions(algVariables, "reals", simCode))
-    $(getStartConditions(stateVariables, "reals", simCode)) #Should be DX0?
+    $(getStartConditions(stateVariables, "reals", simCode)) #TODO: Should be DX0?
     $(startEquations...)
-  end
-end
-
-function createAlgebraicEquations(algVariables::Array, simCode::SimulationCode.SIM_CODE)
-  local algEquations = createSortedEquations([algVariables...], simCode)
-  return quote
-    $(algEquations...)
   end
 end
 
 "
   Creates sorted equations for all supplied variables that are present in the strongly connected components.
   Author: johti17
+  # Arguments
+- `variables::Array`: Variables involved in the set of equations to be sorted
+- `simCode::SimulationCode.SIM_CODE`: Simulation code
+- `arrayName::String` : The name of the array used in the generated code. 
 "
 function createSortedEquations(variables::Array, simCode::SimulationCode.SIM_CODE; arrayName::String)::Array{Expr}
   #= Assign the variables according to sorting/matching =#
@@ -545,7 +551,7 @@ function expToJuliaExp(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuffix
         end
       end
       DAE.IFEXP(expCond = e1, expThen = e2, expElse = e3) => begin
-        throw(ErrorException("If expressions not allowed in backend code"))
+        throw(ErrorException("If expressions not allowed in backend code. They should have been eliminated by a frontend pass."))
       end
       DAE.CALL(path = Absyn.IDENT(tmpStr), expLst = explst)  => begin
         DAECallExpressionToJuliaCallExpression(tmpStr, explst, simCode, hashTable, varPrefix=varPrefix)

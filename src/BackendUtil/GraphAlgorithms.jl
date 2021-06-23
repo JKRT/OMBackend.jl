@@ -13,7 +13,6 @@ import LightGraphs
 import MetaGraphs
 using GraphPlot
 using Compose
-using Cairo
 using DataStructures
 
 "
