@@ -337,7 +337,6 @@ function getStartConditionsMDK(vars::Array, simCode::SimulationCode.SimCode)::Ar
   return startExprs
 end
 
-
 function createParameterEquationsMDK(parameters::Array, simCode::SimulationCode.SimCode)::Array{Expr}
   local parameterEquations::Array = []
   local hT = simCode.crefToSimVarHT
@@ -351,8 +350,8 @@ function createParameterEquationsMDK(parameters::Array, simCode::SimulationCode.
     #= Solution for https://github.com/SciML/ModelingToolkit.jl/issues/991 =#
     push!(parameterEquations,
           quote
-          $(LineNumberNode(@__LINE__, "$param eq"))
-          $(Symbol(simVar.name)) => float($((expToJuliaExpMDK(bindExp, simCode))))
+            $(LineNumberNode(@__LINE__, "$param eq"))
+            $(Symbol(simVar.name)) => float($((expToJuliaExpMDK(bindExp, simCode))))
           end
           )
   end

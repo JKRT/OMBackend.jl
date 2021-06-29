@@ -1,3 +1,6 @@
+#=
+  This file contains various utility functions related to simulation code.
+=#
 "
 Returns true if simvar is either a algebraic or a state variable
 "
@@ -25,6 +28,9 @@ function isState(simvar::SimVar)::Bool
   end
 end
 
+"""
+  Prints what equation involves which variable.
+"""
 function dumpVariableEqMapping(mapping::OrderedDict)::String
   local dump = "\n"
   local equations = keys(mapping)
@@ -163,6 +169,10 @@ function createEquationVariableBidirectionGraph(equations, allBackendVars, crefT
 end
 
 
+"""
+  Given a set of variables and a ordered dict that maps the component reference 
+  to a simulation code variable returns the indices of these variables.
+"""
 function getIndiciesOfVariables(variables, crefToSimVarHT::OrderedDict{String, Tuple{Integer, SimVar}})::Array
   indicies = []
   for v in variables
@@ -176,4 +186,15 @@ function getIndiciesOfVariables(variables, crefToSimVarHT::OrderedDict{String, T
     end
   end
   return indicies
+end
+
+"""
+  Returns the equation a specfic variable is solved in.
+"""
+function getEquationSolvedIn(variable::V, simCode::SimulationCode.SIM_CODE) where {V}
+  local ht = simCode.crefToSimVarHT
+  local variableIdx = ht[variable][1]
+  local equationIdx = simCode.matchOrder[variableIdx]
+  #= Return the equation at this specific index =#
+  return simCode.residualEquations[equationIdx]
 end

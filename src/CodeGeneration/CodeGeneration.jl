@@ -35,6 +35,7 @@ module CodeGeneration
 using DataStructures
 using MetaModelica
 using Setfield
+using DocStringExtensions
 
 using ..FrontendUtil
 using ..Backend

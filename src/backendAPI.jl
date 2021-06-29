@@ -3,7 +3,6 @@ using ExportAll
 using Absyn
 #= For interactive evaluation. =#
 using ModelingToolkit
-#import Symbolics
 using SymbolicUtils
 
 
@@ -14,6 +13,7 @@ import .Backend.Causalize
 import ..CodeGeneration
 import OMBackend.ExampleDAEs
 import .SimulationCode
+import ..Runtime
 import Base.Meta
 import SCode
 import JuliaFormatter
@@ -27,7 +27,6 @@ const latexSymbols = REPL.REPLCompletions.latex_symbols
   DAE_MODE = 1
   ODE_MODE = 2
   MODELING_TOOLKIT_MODE = 3
-  MODELING_TOOLKIT_DAE_MODE = 4
 end
 
 """
@@ -214,22 +213,26 @@ function writeModelToFile(modelName::String, filePath::String; keepComments = tr
   end
 end
 
-"
+"""
   Prints a model. 
   If the specified model exists. Print it to stdout.
-"
-function printModel(modelName::String; keepComments = true)
+"""
+function printModel(modelName::String; keepComments = true, keepBeginBlocks = true)
     try
       local model::Expr = COMPILED_MODELS[modelName]
+      strippedModel = "$model"
       #= Remove all the redudant blocks from the model =#
       if keepComments == false
         strippedModel = CodeGeneration.stripComments(model)
       end
-      local strippedModel = CodeGeneration.stripBeginBlocks(model)
+      if keepBeginBlocks == false
+        strippedModel = CodeGeneration.stripBeginBlocks(model)
+      end
+      
       local modelStr::String = "$strippedModel"
       formattedResults = JuliaFormatter.format_text(modelStr;
                                                     remove_extra_newlines = true,
-                                                    always_use_return = true)
+                                                    always_use_return = false)
       println(formattedResults)
     catch e 
       @error "Model: $(modelName) is not compiled. Available models are: $(availableModels())"
@@ -279,7 +282,7 @@ end
   The default plot function of OMBackend.
   All labels of the variables and the name is given by default
 "
-function plot(sol::CodeGeneration.OMSolution)
+function plot(sol::Runtime.OMSolution)
   local nsolution = sol.diffEqSol
   local t = nsolution.t
   local rescols = collect(eachcol(transpose(hcat(nsolution.u...))))

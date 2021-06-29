@@ -34,12 +34,6 @@
 =#
 import MacroTools
 
-struct OMSolution
-  "Solution given by DifferentialEquations.jl"
-  diffEqSol
-  "Various metadata for the specific model"
-  idxToName::OrderedDict
-end
 
 """
 Return string containing the OSMC copyright stuff.
