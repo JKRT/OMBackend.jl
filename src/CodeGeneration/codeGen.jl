@@ -4,6 +4,8 @@
 TODO: 
   Add support for if equations 
   Current approach. One separate function for each branch. 
+
+  Author: John Tinnerholm
 =#
 
 """
@@ -12,8 +14,21 @@ TODO:
 const HEADER_STRING ="
   $(copyRightString())"
 
-"Counter for generating callbacks for a model"
-global CALLBACK_COUNTER = 0
+#= To keep track of generated callbacks. =#
+let CALLBACKS = 0
+  global function ADD_CALLBACK()
+    CALLBACKS += 1
+    return CALLBACKS
+  end
+  global function RESET_CALLBACKS()
+    CALLBACKS = 0
+    return CALLBACKS
+  end
+  global function COUNT_CALLBACKS()
+    return CALLBACKS
+  end
+end
+
 
 """
     Write  modelName_DAE_equations() to file.
@@ -56,18 +71,27 @@ function generateCode(simCode::SimulationCode.SIM_CODE)::Tuple{String, Expr}
   end
   #= Check if we have state variables =#
   local systemOfDifferentials = ! isempty(stateVariables)
-  #= Decide on what type of solver we are to generate code for=#
+  #= 
+  Decide on what type of solver we are to generate code for
+  =#
   if systemOfDifferentials
-    (modelName, program) = createHelperFunctionsForSystemOfDifferentialEquations(simCode.name, simCode, stateVariables, algVariables, stateDerivatives, parameters)
+    (modelName, program) =
+      createHelperFunctionsForSystemOfDifferentialEquations(simCode.name,
+                                                            simCode,
+                                                            stateVariables,
+                                                            algVariables,
+                                                            stateDerivatives,
+                                                            parameters)
   else
-    @error "Pure linear system is not supported yet."
+    @error "Systems without differential terms are not yet supported"
   end
   #= Decide what runnable to generate =#
   # Return file content
   return (modelName, program)
 end
 
-function createHelperFunctionsForSystemOfDifferentialEquations(modelName::String, simCode::SimulationCode.SIM_CODE, stateVariables, algVariables, stateDerivatives, parameters)::Tuple{String, Expr}
+function createHelperFunctionsForSystemOfDifferentialEquations(modelName::String, simCode::SimulationCode.SIM_CODE,
+                                                               stateVariables, algVariables, stateDerivatives, parameters)::Tuple{String, Expr}
   stateMarkings = createStateMarkings([], stateVariables, simCode)
   #=Start conditions of algebraic and state variables=#
   local START_CONDTIONS_EQUATIONS = createStartConditionsEquations(algVariables, stateVariables, simCode)
@@ -104,37 +128,11 @@ function createHelperFunctionsForSystemOfDifferentialEquations(modelName::String
       end
     end
   end
-
-  local PARAMETER_EQUATIONS = createParameterEquations(parameters, simCode)
-  local PARAMETER_VARS = quote
-    function $(Symbol("$(modelName)ParameterVars"))()
-      local aux = Array{Array{Float64}}(undef, $(2))
-      local p = Array{Float64}(undef, $(arrayLength(parameters)))
-      local reals = Array{Float64}(undef, $(arrayLength(stateVariables) + arrayLength(algVariables)))
-      aux[1] = p
-      aux[2] = reals
-      $(PARAMETER_EQUATIONS...)
-      return aux
-    end
-  end
-  local WHEN_EQUATIONS = createEquations(simCode.whenEquations, simCode)
-  local IF_EQUATIONS = createEquations(simCode.ifEquations, simCode)
-  local SAVE_FUNCTION = createSaveFunction(modelName)
-  local CALL_BACK_EQUATIONS = quote
-    $(Symbol("saved_values_$(modelName)")) = SavedValues(Float64, Tuple{Float64,Array})
-    function $(Symbol("$(modelName)CallbackSet"))(aux)
-      local p = aux[1]
-      $(LineNumberNode((@__LINE__), "WHEN EQUATIONS"))
-      $(WHEN_EQUATIONS...)
-      $(LineNumberNode((@__LINE__), "IF EQUATIONS"))
-      $(IF_EQUATIONS...)
-      $(SAVE_FUNCTION)
-      return $(Expr(:call, :CallbackSet, returnCallbackSet()...))
-    end
-  end
+  local PARAMETER_FUNCTION = createParameterCode(modelName, parameters, stateVariables, algVariables, simCode)
+  local CALL_BACK_EQUATIONS = createCallbackCode(modelName, simCode)
   local RUNNABLE = createDAERunnable(modelName, simCode)
   @debug("Code-generation done")
-  global CALLBACK_COUNTER = 0
+  RESET_CALLBACKS()
   program = quote    
     $(HEADER_STRING)
     using DiffEqBase
@@ -146,11 +144,44 @@ function createHelperFunctionsForSystemOfDifferentialEquations(modelName::String
     $(AUX_VARS_FUNCTION)
     $(DIFFERENTIAL_VARS_FUNCTION)
     $(DAE_EQUATION_FUNCTION)
-    $(PARAMETER_VARS)
+    $(PARAMETER_FUNCTION)
     $(CALL_BACK_EQUATIONS)
     $(RUNNABLE)
   end
   return (modelName, program)
+end
+
+function createCallbackCode(modelName::N, simCode::S) where {N, S}
+  local WHEN_EQUATIONS = createEquations(simCode.whenEquations, simCode)
+  local IF_EQUATIONS = createEquations(simCode.ifEquations, simCode)
+  local SAVE_FUNCTION = createSaveFunction(modelName)
+  quote
+    $(Symbol("saved_values_$(modelName)")) = SavedValues(Float64, Tuple{Float64,Array})
+    function $(Symbol("$(modelName)CallbackSet"))(aux)
+      local p = aux[1]
+      $(LineNumberNode((@__LINE__), "WHEN EQUATIONS"))
+      $(WHEN_EQUATIONS...)
+      $(LineNumberNode((@__LINE__), "IF EQUATIONS"))
+      $(IF_EQUATIONS...)
+      $(SAVE_FUNCTION)
+      return $(Expr(:call, :CallbackSet, returnCallbackSet()...))
+    end
+  end
+end
+
+function createParameterCode(modelName, parameters, stateVariables, algVariables, simCode)::Expr
+  local PARAMETER_EQUATIONS = createParameterEquations(parameters, simCode)
+  quote
+    function $(Symbol("$(modelName)ParameterVars"))()
+      local aux = Array{Array{Float64}}(undef, $(2))
+      local p = Array{Float64}(undef, $(arrayLength(parameters)))
+      local reals = Array{Float64}(undef, $(arrayLength(stateVariables) + arrayLength(algVariables)))
+      aux[1] = p
+      aux[2] = reals
+      $(PARAMETER_EQUATIONS...)
+      return aux
+    end
+  end
 end
 
 """
@@ -298,8 +329,9 @@ end
   as a shared global for the specific model under compilation.
 """
 function createSaveFunction(modelName)::Expr
-  global CALLBACK_COUNTER += 1
-  local cbSym = Symbol("cb$(CALLBACK_COUNTER)")
+  ADD_CALLBACK()
+  local callbacks = COUNT_CALLBACKS()
+  local cbSym = Symbol("cb$(callbacks)")
   return quote
     savingFunction(u, t, integrator) = let
       (t, deepcopy(integrator.p[2]))
@@ -313,7 +345,7 @@ end
 """
 function returnCallbackSet()::Array
   local cbs::Array{Symbol} = []
-  for t in 1:CALLBACK_COUNTER
+  for t in 1:COUNT_CALLBACKS()
     cb = Symbol("cb", t)
     push!(cbs, cb)
   end
@@ -417,6 +449,9 @@ function createEquations(equations::Array{T}, simCode::SimulationCode.SIM_CODE):
   return eqs
 end
 
+"""
+  Create equations for the parameters.
+"""
 function createParameterEquations(parameters::Array, simCode::SimulationCode.SimCode)
   local parameterEquations::Array = []
   local hT = simCode.crefToSimVarHT
@@ -440,7 +475,10 @@ end
 """
  $(SIGNATURES)
 """
-function eqToJulia(eq::BDAE.RESIDUAL_EQUATION, simCode::SimulationCode.SIM_CODE, arrayIdx::Int64; eqLhsName::String, eqRhsName::String)::Expr
+function eqToJulia(eq::BDAE.RESIDUAL_EQUATION, simCode::SimulationCode.SIM_CODE,
+                   arrayIdx::Int64;
+                   eqLhsName::String,
+                   eqRhsName::String)::Expr
   quote 
     $(Symbol((eqLhsName)))[$arrayIdx] = $(expToJuliaExp(eq.exp, simCode; varPrefix = eqRhsName))
   end
@@ -454,57 +492,33 @@ end
  how many callbacks we currently have.
 """
 function eqToJulia(eq::BDAE.Equation, simCode::SimulationCode.SIM_CODE, arrayIdx::Int64)::Expr
-  local rhs::DAE.Exp
-  @match eq begin
-    #= Handle Modelica when equations=#
-    BDAE.WHEN_EQUATION(_, wEq, _) => begin
-      local whenStmts = createWhenStatements(wEq.whenStmtLst, simCode, prefix="integrator.u")
-      local cond = prepForZeroCrossing(wEq.condition)
-      global CALLBACK_COUNTER += 1
-      quote
-        function $(Symbol("condition$(CALLBACK_COUNTER)"))(x,t,integrator) 
-          $(expToJuliaExp(cond, simCode))
-        end
-        function $(Symbol("affect$(CALLBACK_COUNTER)!"))(integrator)
-          $(whenStmts...)
-        end
-        $(Symbol("cb$(CALLBACK_COUNTER)")) = ContinuousCallback($(Symbol("condition$(CALLBACK_COUNTER)")), 
-                                                                $(Symbol("affect$(CALLBACK_COUNTER)!")),
-                                                                rootfind=true, save_positions=(false, false),
-                                                                affect_neg! = $(Symbol("affect$(CALLBACK_COUNTER)!")),)
-      end
+  @error "Unknown equation"
+end
+
+function eqToJulia(eq::BDAE.IF_EQUATION, simCode::SimulationCode.SIM_CODE, arrayIdx::Int64)::Expr
+  @error "IF equations are being reworked"
+end
+
+"""
+  This function creates a representation of a when equation in Julia.
+"""
+function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arrayIdx::Int64)::Expr
+  local wEq = eq.whenEquation
+  local whenStmts = createWhenStatements(wEq.whenStmtLst, simCode, prefix="integrator.u")
+  local cond = prepForZeroCrossing(wEq.condition)
+  ADD_CALLBACK()
+  local callbacks = COUNT_CALLBACKS()
+  quote
+    function $(Symbol("condition$(callbacks)"))(x,t,integrator) 
+      $(expToJuliaExp(cond, simCode))
     end
-    #= Handle if equations=#
-    BDAE.IF_EQUATION(conds, trueEqs, falseEqs) => begin
-      global CALLBACK_COUNTER += 1
-      f(x) = eqToJulia(x, simCode, arrayIdx; eqLhs = eqLhs, eqRhs = "integrator.u")
-      local condsJL = tuple(map((x) -> expToJuliaExp(x, simCode; varPrefix="x"), conds)...)
-      local trueEqJL = map(f, trueEqs)
-      local falseEqJL = map(f, falseEqs)
-      quote 
-        function $(Symbol("condition$(CALLBACK_COUNTER)"))(x,t,integrator)
-          Bool(floor($(condsJL...)))
-        end
-        function $(Symbol("affect$(CALLBACK_COUNTER)!"))(integrator)
-          $(trueEqJL...)
-        end
-        $(Symbol("cb$(CALLBACK_COUNTER)")) = ContinuousCallback(Symbol("condition$(CALLBACK_COUNTER)"),
-                                                                Symbol("affect$(CALLBACK_COUNTER)!"))
-        $(global CALLBACK_COUNTER += 1)
-        function $(Symbol("condition$(CALLBACK_COUNTER)"))(x,t,integrator)
-          ! Bool(floor($(condsJL...)))
-        end
-        function $(Symbol("affect$(CALLBACK_COUNTER)!"))(integrator)
-          $(falseEqJL...)
-        end
-        createSymbol("cb$(CALLBACK_COUNTER)") = ContinuousCallback(
-          Symbol("condition$(CALLBACK_COUNTER)"),
-          Symbol("affect$(CALLBACK_COUNTER)!"))
-      end
+    function $(Symbol("affect$(callbacks)!"))(integrator)
+      $(whenStmts...)
     end
-    _ => begin
-      throw("Error when generating code for $eq")
-    end
+    $(Symbol("cb$(callbacks)")) = ContinuousCallback($(Symbol("condition$(callbacks)")), 
+                                                            $(Symbol("affect$(callbacks)!")),
+                                                            rootfind=true, save_positions=(false, false),
+                                                            affect_neg! = $(Symbol("affect$(callbacks)!")),)
   end
 end
 

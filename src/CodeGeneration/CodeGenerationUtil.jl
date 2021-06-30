@@ -74,16 +74,16 @@ function copyRightString()
 end
 
 
-"
-  TODO: John
+"""
+johti17
     Transform a condition into a zero crossing function.
     For instance y > 10 -> y - 10
-
+TODO:
     Assumes a Real-Expression.
     Also assume that relation expressions are written as <= That is we go from positive 
     to negative.. 
     Fix this.
-"
+"""
 function prepForZeroCrossing(conditonalExpression::DAE.Exp)
   res = @match conditonalExpression begin
     DAE.BINARY(exp1 = e1, operator = op, exp2 = e2) => begin
