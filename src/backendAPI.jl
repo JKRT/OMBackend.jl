@@ -25,7 +25,7 @@ const latexSymbols = REPL.REPLCompletions.latex_symbols
 #= Settings =#
 @enum BackendMode begin
   DAE_MODE = 1
-  ODE_MODE = 2
+  ODE_MODE = 2 #Currently not in operation
   MODELING_TOOLKIT_MODE = 3
 end
 
@@ -66,9 +66,6 @@ function translate(frontendDAE::DAE.DAE_LIST; BackendMode = DAE_MODE)::Tuple{Str
   if BackendMode == DAE_MODE
     simCode = generateSimulationCode(bDAE)
     return generateTargetCode(simCode)
-  elseif BackendMode == ODE_MODE
-    simCode = generateExplicitSimulationCode(bDAE)
-    return ("Error", :())
   elseif BackendMode == MODELING_TOOLKIT_MODE
     @debug "Experimental: Generates and runs code using modelling toolkit"
     simCode = generateSimulationCode(bDAE)
@@ -164,21 +161,6 @@ function generateMTKTargetCode(simCode::SimulationCode.SIM_CODE)
   @debug "Model:" modelName
   COMPILED_MODELS[modelName] = modelCode
   return (modelName, modelCode)
-end
-
-"""
-  Generates code interfacing DifferentialEquations.jl
-  The resulting code is saved in a dictonary which contains functions that where simulated
-  this session. Returns the generated modelName and corresponding generated code
-"""
-function generateTargetCode(simCode::SimulationCode.EXPLICIT_SIM_CODE)
-  #= Target code =#
-  @info "Code generation for explicit simcode is not yet supported"
-  try
-    (modelName, modelCode) = CodeGeneration.generateCode(simCode)
-  catch
-    @info "ODE mode failed"
-  end
 end
 
 function writeModelToFile(modelName::String, filePath::String; keepComments = true, formatFile = true)

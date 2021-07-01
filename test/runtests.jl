@@ -45,7 +45,7 @@ using OMBackend
 using OMBackend.ExampleDAEs
 using Test
 
-import OMBackend.CodeGeneration.OMSolution
+import OMBackend.Runtime.OMSolution
 
 """
   Test translation to backend DAE.

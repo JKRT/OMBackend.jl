@@ -34,7 +34,6 @@ struct PARAMETER <: SimVarType
   bindExp::Option{DAE.Exp}
 end
 
-
 """
 Abstract type for a simulation variable
 """
@@ -43,15 +42,15 @@ abstract type SimVar end
 """
 Variable data type used for code generation
 """
-struct SIMVAR <: SimVar
+struct SIMVAR{T0 <: String, T1 <: Option{Int}, T2 <: SimVarType, T3 <: Option{DAE.VariableAttributes}} <: SimVar
   "Readable name of variable"
-  name :: String
+  name::T0
   "Index of variable, 0 based, type based"
-  index::Option{Integer}
+  index::T1
   "Kind of variable, one of SimulationCode.SimVarType"
-  varKind::SimVarType
+  varKind::T2
   "Variable attributes. Same as in DAE"
-  attributes::Option{DAE.VariableAttributes}
+  attributes::T3
 end
 
 "Abstract type for simulation code"
@@ -61,33 +60,43 @@ abstract type SimCode end
   Root data structure containing information required for code generation to
   generate simulation code for a Modelica model.
 """
-struct SIM_CODE <: SimCode
-  name::String
+struct SIM_CODE{T0<:String,
+                T1<:AbstractDict{String, Tuple{Integer, SimVar}},
+                T2<:Vector{BDAE.RESIDUAL_EQUATION},
+                T4<:Vector{BDAE.WHEN_EQUATION},
+                T5<:Vector{BDAE.IF_EQUATION},
+                T6<:Bool,
+                T7<:Vector{Int},
+                T8<:LightGraphs.AbstractGraph,
+                T9<:Vector{Int}} <: SimCode
+  name::T0
   "Mapping of names to the corresponding variable"
-  crefToSimVarHT::Dict{String, Tuple{Integer, SimVar}}
+  crefToSimVarHT::T1
   "Different equations stored within simulation code"
-  residualEquations::Array{BDAE.RESIDUAL_EQUATION}
+  residualEquations::T2
   "The Initial equations"
-  initialEquations::Array{BDAE.RESIDUAL_EQUATION}
-  whenEquations::Array{BDAE.WHEN_EQUATION}
-  ifEquations::Array{BDAE.IF_EQUATION}
+  initialEquations::T2
+  "When equations"
+  whenEquations::T4
+  "If Equations"
+  ifEquations::T5
   "True if the system that we are solving is singular"
-  isSingular::Bool
+  isSingular::T6
   "
    The match order:
    Result of assign array, e.g array(j) = equation_i
   "
-  matchOrder::Array{Int}
+  matchOrder::T7
     "
     The merged graph. E.g digraph constructed from matching info.
     The indicies are the same as above and they are shared.
     If the system is singular tearing is needed.
    "
-  equationGraph::LightGraphs.AbstractGraph
+  equationGraph::T8
   "
     The reverse topological sort of the equation-graph
   "
-  stronglyConnectedComponents::Array
+  stronglyConnectedComponents::T9
 end
 
 
@@ -99,61 +108,4 @@ struct UNSORTED_SIM_CODE <: SimCode
   residualEquations::Array{BDAE.RESIDUAL_EQUATION}
   whenEquations::Array{BDAE.WHEN_EQUATION}
   ifEquations::Array{BDAE.IF_EQUATION}
-end
-
-
-
-"""
-  This is the explicit representation of SimCode.
-  In this representation all residual equations
-  are sorted horisontally and vertically.
-  This representation is selected if we do not use DAE-Mode
-
-"""
-struct EXPLICIT_SIM_CODE <: SimCode
-  "Name of the model"
-  name::String
-  "
-   Mapping of names to the corresponding variable.
-   Each variable has a unique index.
-   The purpose of this mapping is to have aliases for each unique index.
-   We also need to keep track of each simulation variable.
-  "
-  nameToVar::OrderedDict{String, Tuple{Integer, SimVar}}
-  indexToEquation::OrderedDict{Int, BDAE.RESIDUAL_EQUATION}
-  "Equation <-> Variable graph (Bidirectional)"
-  eqVariableMapping::OrderedDict{String, Array{Int}}
-
-  "Regular equations are encoded as residuals"
-  residualEquations::Array{BDAE.RESIDUAL_EQUATION}
-  "Initial equations"
-  initialEquations::Array{BDAE.RESIDUAL_EQUATION}
-  " When equations "
-  whenEquations::Array{BDAE.WHEN_EQUATION}
-  " If Equations "
-  ifEquations::Array{BDAE.IF_EQUATION}
-
-  "
-   If matching resulted in singularity.
-   True if the system is singular
-  "
-  isSingular::Bool
-  "
-    The match order:
-    Result of assign array, e.g array(j) = equation_i
-    That is what variable is solved in what equation.
-  "
-  matchOrder::Array{Int}
-
-  "
-    The merged graph. E.g digraph constructed from matching info.
-    The indicies are the same as above and they are shared.
-    If the system is singular tearing is needed.
-  "
-  sortedGraph::LightGraphs.AbstractGraph
-  "
-    The strongly connected components of the sorted graph.
-    This information can be used for tearing.
-  "
-  stronglyConnectedComponents::Array
 end

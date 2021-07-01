@@ -39,13 +39,6 @@ function writeDAE_equationsToFile(fileName::String, contents::String)
   close(fdesc)
 end
 
-"""
-    ODE-mode code generation
-"""
-function generateCode(simCode::SimulationCode.EXPLICIT_SIM_CODE)
-  throw("Not implemented..")
-end
-
 
 """
   Generate Julia code from SimCode.

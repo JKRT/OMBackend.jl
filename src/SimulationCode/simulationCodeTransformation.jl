@@ -77,7 +77,8 @@ function transformToSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.SIM_CO
   local crefToSimVarHT = createIndices(simVars)
   local equations = [eq for es in equationSystems for eq in es.orderedEqs]
   #= Split equations into three parts. Residuals whenEquations and If-equations =#
-  (resEqs, whenEqs, ifEqs) = allocateAndCollectSimulationEquations(equations)
+  (resEqs::Vector{BDAE.RESIDUAL_EQUATION}, whenEqs::Vector{BDAE.WHEN_EQUATION}, ifEqs::Vector{BDAE.IF_EQUATION}) =
+    allocateAndCollectSimulationEquations(equations)
   #= Sorting/Matching (This is used for the start condtions) =#
   local eqVariableMapping = createEquationVariableBidirectionGraph(resEqs, allBackendVars, crefToSimVarHT)
   local numberOfVariablesInMapping = length(eqVariableMapping.keys)
@@ -88,7 +89,7 @@ function transformToSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.SIM_CO
                           crefToSimVarHT,
                           resEqs,
                           #=TODO fix initial equations here =#
-                          [],
+                          BDAE.RESIDUAL_EQUATION[],
                           whenEqs,
                           ifEqs,
                           isSingular,
@@ -111,30 +112,11 @@ function matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVar
   return (isSingular, matchOrder, digraph, stronglyConnectedComponents)
 end
 
-"Transform the given backend dae to simulation code without sorting, matching and merging. "
-function transformToSimCodeNoSort(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.UNSORTED_SIM_CODE
-  local equationSystems::Array = backendDAE.eqs
-  local allOrderedVars::Array{BDAE.Var} = [v for es in equationSystems for v in es.orderedVars.varArr]
-  local allSharedVars::Array{BDAE.Var} = getSharedVariablesLocalsAndGlobals(backendDAE.shared)
-  local allBackendVars = vcat(allOrderedVars, allSharedVars)
-  local simVars::Array{SimulationCode.SIMVAR} = allocateAndCollectSimulationVariables(allBackendVars)
-  # Assign indices and put all variable into an hash table
-  local crefToSimVarHT = createIndices(simVars)
-  local equations = [eq for es in equationSystems for eq in es.orderedEqs]
-  #= Split equations into three parts. Residuals whenEquations and If-equations =#
-  (resEqs,whenEqs,ifEqs) = allocateAndCollectSimulationEquations(equations)
-  #= Sorting/Matching (This is used for the start condtions) =#
-  #= Construct SIM_CODE =#
-  SimulationCode.UNSORTED_SIM_CODE(backendDAE.name, crefToSimVarHT,
-                                   resEqs,whenEqs, ifEqs)
-end
-
-
 """
 John:
   Splits a given set of equations into different types
 """
-function allocateAndCollectSimulationEquations(equations)::Tuple
+function allocateAndCollectSimulationEquations(equations::T)::Tuple where {T}
   isRe(eq) = typeof(eq) == BDAE.RESIDUAL_EQUATION
   isWhen(eq) = typeof(eq) == BDAE.WHEN_EQUATION
   isIf(eq) = typeof(eq) == BDAE.IF_EQUATION
