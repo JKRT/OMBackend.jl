@@ -29,15 +29,6 @@ const latexSymbols = REPL.REPLCompletions.latex_symbols
   MODELING_TOOLKIT_MODE = 3
 end
 
-"""
-  Mode of backend code generation. Do not modify.
-"""
-global MODE = ODE_MODE
-
-function selectBackendTargets(mode::BackendMode)
-  global MODE = mode
-end
-
 function info()
   println("OMBackend.jl")
   println("A Julia backend for the Equation Oriented Language Modelica!")
