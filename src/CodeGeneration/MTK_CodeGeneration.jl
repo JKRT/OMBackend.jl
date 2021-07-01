@@ -11,12 +11,7 @@ import OMBackend
   Generates simulation code targetting modeling toolkit
 """
 function generateMDKCode(simCode::SimulationCode.SIM_CODE)
-  if OMBackend.MODE == OMBackend.MODELING_TOOLKIT_DAE_MODE
-    @error "DAE mode for MTK was removed."
-    #DAE_MODE_MDK(simCode::SimulationCode.SIM_CODE)
-  else
-    ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
-  end
+  ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
 end
 
 """

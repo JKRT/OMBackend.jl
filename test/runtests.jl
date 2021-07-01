@@ -90,7 +90,7 @@ function testBackend(TEST_CASES::Array; mode)
 end
 
 "Get the solution code for an OMSolution"
-function getSimulationResult(solution::OMBackend.CodeGeneration.OMSolution)
+function getSimulationResult(solution::OMBackend.Runtime.OMSolution)
   return solution.diffEqSol.retcode
 end
 

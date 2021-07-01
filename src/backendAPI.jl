@@ -72,8 +72,8 @@ function translate(frontendDAE::DAE.DAE_LIST; BackendMode = DAE_MODE)::Tuple{Str
     return generateMTKTargetCode(simCode)
   else
     @error "No mode specificed: valid modes are:"
-    println("ODE_MODE")
     println("DAE_MODE")
+    println("ModelingToolkit_MODE")
   end
 end
 
