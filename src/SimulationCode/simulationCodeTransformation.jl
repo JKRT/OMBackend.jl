@@ -65,7 +65,7 @@ end
 
 """
   Transform BDAE-Structure to SimulationCode.SIM_CODE
-  TODO: We only handle one equation system for now
+  We only handle one equation system for now
 """
 function transformToSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.SIM_CODE
   local equationSystems::Array = backendDAE.eqs
@@ -79,11 +79,17 @@ function transformToSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.SIM_CO
   #= Split equations into three parts. Residuals whenEquations and If-equations =#
   (resEqs::Vector{BDAE.RESIDUAL_EQUATION}, whenEqs::Vector{BDAE.WHEN_EQUATION}, ifEqs::Vector{BDAE.IF_EQUATION}) =
     allocateAndCollectSimulationEquations(equations)
-  #= Sorting/Matching (This is used for the start condtions) =#
+  #= Sorting/Matching for the set of residual equations (This is used for the start condtions) =#
   local eqVariableMapping = createEquationVariableBidirectionGraph(resEqs, allBackendVars, crefToSimVarHT)
   local numberOfVariablesInMapping = length(eqVariableMapping.keys)
   (isSingular, matchOrder, digraph, stronglyConnectedComponents) =
     matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping)
+  #= 
+    The set of if equations needs to be handled in a separate way. 
+    Each branch might contain a separate section of variables etc that needs to be sorted and processed. 
+    !!It is assumed that the frontend have checked each branch for balance at this point!!
+  =#
+  simCodeBranches::Vector{SIM_CODE_IF_EQUATION} = constructSimCodeIFEquations(ifEqs, resEqs, allBackendVars, crefToSimVarHT)
   #= Construct SIM_CODE =#
   SimulationCode.SIM_CODE(backendDAE.name,
                           crefToSimVarHT,
@@ -91,11 +97,52 @@ function transformToSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.SIM_CO
                           #=TODO fix initial equations here =#
                           BDAE.RESIDUAL_EQUATION[],
                           whenEqs,
-                          ifEqs,
+                          simCodeBranches,
                           isSingular,
                           matchOrder,
                           digraph,
                           stronglyConnectedComponents)
+end
+
+"""
+  Given a set of BDAE IF_EQUATIONS. 
+  Constructs the set of simulation code if equations.
+  Each if equation can be seen as a small basic block graph.
+Currently we merge the other residual equation with the equations of one branch.
+"""
+function constructSimCodeIFEquations(ifEquations::Vector{BDAE.IF_EQUATION},
+                                     resEqs::Vector{BDAE.RESIDUAL_EQUATION},
+                                     allBackendVars, crefToSimVarHT)::Vector{SIM_CODE_IF_EQUATION}
+  simCodeIfEquations = SIM_CODE_IF_EQUATION[]
+  for ifEquation in ifEquations
+    #= Enumerate the branches of the if equation =#
+    #= Handle if and else if branches=#
+    local conditions = ifEquation.conditions
+    local condition
+    local equations
+    local target
+    local isSingular
+    local matchOrder
+    local equationGraph
+    local sccs
+    local branches::Vector{SIM_CODE_BRANCH} = SIM_CODE_BRANCH[]
+    for conditionIdx in 1:length(conditions)
+      condition = listGet(conditions, conditionIdx)
+      #= Merge the given residual equations with the equations of this particular branch. =#
+      equations = listAppend(listGet(ifEquation.eqnstrue, conditionIdx), arrayList(resEqs))
+      target = conditionIdx + 1
+      local eqVariableMapping = createEquationVariableBidirectionGraph(equations, allBackendVars, crefToSimVarHT)
+      #= Match and get the strongly connected components =#
+      local numberOfVariablesInMapping = length(eqVariableMapping.keys)
+      (isSingular, matchOrder, digraph, stronglyConnectedComponents) =
+        matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping)
+      #= Add the branch to the collection. =#
+      branch = SIM_CODE_BRANCH(condition, equations, identifier, target, isSingular, matchOrder, digraph, stronglyConnectedComponents)
+      push!(branches, branch)
+    end
+    push!(simCodeIfEquations, branches)
+  end
+  return simCodeIfEquations
 end
 
 """

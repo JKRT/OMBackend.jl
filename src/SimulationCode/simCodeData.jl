@@ -53,8 +53,46 @@ struct SIMVAR{T0 <: String, T1 <: Option{Int}, T2 <: SimVarType, T3 <: Option{DA
   attributes::T3
 end
 
-"Abstract type for simulation code"
+""" Abstract type for different variants of simulation code """
 abstract type SimCode end
+
+
+"""
+  Abstract type for control flow constructs for simulation code
+"""
+abstract type SimCodeConstruct end
+
+"""
+  Represents a branch in simulation code. 
+  Contains a single condition, a set of inner equations and a set of possible targets.
+  Since each branch potentially contains a set of equations information exist so that the code in each branch can be 
+  matched (Similar to the larger system )
+"""
+struct SIM_CODE_BRANCH{T1 <: Bool,
+                       T2 <: Vector{BDAE.RESIDUAL_EQUATION},
+                       T3 <: Int, #= Integer code Each branch has one target (next) The ID of one branch is target - 1=#
+                       T4 <: Bool,
+                       T5 <: Vector{Int},
+                       T6 <: LightGraphs.AbstractGraph,
+                       T7 <: Vector{Int}} <: SimCodeConstruct
+  condition::T1
+  equations::T2
+  identifier::T3
+  targets::T3
+  isSingular::T4
+  matchOrder::T5
+  equationGraph::T6
+  sccs::T7
+end
+
+"""
+A representation of a simcode IF Equation. 
+Similar to the main simcode module it contains information to make construct a causal representation easier.
+"""
+struct SIM_CODE_IF_EQUATION{Branches <: Vector{SIM_CODE_BRANCH}} <: SimCodeConstruct
+  ifEquationBranches::Branches
+end
+
 
 """
   Root data structure containing information required for code generation to
@@ -63,8 +101,12 @@ abstract type SimCode end
 struct SIM_CODE{T0<:String,
                 T1<:AbstractDict{String, Tuple{Integer, SimVar}},
                 T2<:Vector{BDAE.RESIDUAL_EQUATION},
+                #= When equations are discret events (In the sense they occur once, the condition is continusly checked. ) =#
                 T4<:Vector{BDAE.WHEN_EQUATION},
-                T5<:Vector{BDAE.IF_EQUATION},
+                #=
+                  If equations are represented via a vector of possible branches in which the code can operate. 
+                  Similar to basic blocks =#
+                T5<:Vector{SIM_CODE_IF_EQUATION},
                 T6<:Bool,
                 T7<:Vector{Int},
                 T8<:LightGraphs.AbstractGraph,
@@ -78,7 +120,7 @@ struct SIM_CODE{T0<:String,
   initialEquations::T2
   "When equations"
   whenEquations::T4
-  "If Equations"
+  "If Equations (Simulation code branches). Each branch contains a condition a set of residual equations and a set of targets"
   ifEquations::T5
   "True if the system that we are solving is singular"
   isSingular::T6

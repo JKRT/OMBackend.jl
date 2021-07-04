@@ -116,15 +116,6 @@ function generateSimulationCode(bDAE::BDAE.BACKEND_DAE)::SimulationCode.SimCode
 end
 
 """
-  Transforms BDAE-IR to simulation code for MTK mode
-"""
-function generateUnsortedSimulationCode(bDAE::BDAE.BDAEStructure)::SimulationCode.UNSORTED_SIM_CODE
-  simCode = SimulationCode.transformToSimCodeNoSort(bDAE)
-  @debug BDAE.stringHeading1(simCode, "SIM_CODE: transformed simcode")
-  return simCode
-end
-
-"""
   Transforms BDAE-IR to simulation code for DAE-mode
 """
 function generateExplicitSimulationCode(bDAE::BDAE.BACKEND_DAE)

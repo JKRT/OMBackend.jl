@@ -58,7 +58,6 @@ function createEqSystem(vars::BDAE.Variables, eqs::Array)::BDAE.EQSYSTEM
                  NONE(),
                  NONE(),
                  NONE(),
-                 BDAE.NO_MATCHING(),
                  nil,
                  BDAE.UNKNOWN_PARTITION(),
                  BackendEquation.emptyEqns()))
@@ -238,7 +237,8 @@ function detectStateExpression(exp::DAE.Exp, stateCrefs::Dict{DAE.ComponentRef, 
     local state::DAE.ComponentRef
     @match exp begin
       DAE.CALL(Absyn.IDENT("der"), DAE.CREF(state) <| _ ) => begin
-        #= add state with boolean value that does not matter, it is later onlBDAE.BACKEND_DAE(eqs = eqs)y checked if it exists at all =#
+        #= Adds a state with boolean value that does not matter, 
+           it is later  BDAE.BACKEND_DAE(eqs = eqs) checked if it exists at all =#
         outCrefs[state] = true
         (outCrefs, true)
       end
@@ -250,12 +250,25 @@ function detectStateExpression(exp::DAE.Exp, stateCrefs::Dict{DAE.ComponentRef, 
   return (exp, cont, outCrefs)
 end
 
-"
+#=TODO. Did I do something stupid down below here.. ?=#
+
+function countAllUniqueVariablesInSetOfEquations(eqs::Vector{RES_EQ}, vars::Vector{VAR}) where {RES_EQ, VAR}
+  vars = Set()
+  for eq in eqs
+    varsForEq = getAllVariables(eq, vars)
+    for v in varsForEq
+      push!(vars, v)
+    end
+  end
+  return length(vars)
+end
+
+"""
   Author:johti17
   input: Backend Equation, eq
   input: All existing variables
   output All variable in that specific equation
-"
+"""
 function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Array{BDAE.Var})::Array{DAE.ComponentRef}
   local componentReferences::List = Util.getAllCrefs(eq.exp)
   local stateCrefs = Dict{DAE.ComponentRef, Bool}()
@@ -277,13 +290,12 @@ function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Array{BDAE.Var})::Arr
   return variablesInEq
 end
 
-
-"
+"""
   Author:johti17
   input: Backend Equation, eq
   input: All existing variables
   output All variable in that specific equation except the state variables
-"
+"""
 function getAllVariablesExceptStates(eq::BDAE.RESIDUAL_EQUATION, vars::Array{BDAE.Var})::Array{DAE.ComponentRef}
   local componentReferences::List = Util.getAllCrefs(eq.exp)
   local componentReferencesArr::Array = [componentReferences...]

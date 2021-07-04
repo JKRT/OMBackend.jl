@@ -144,13 +144,14 @@ function createIndices(simulationVars::Array{SimulationCode.SIMVAR})::OrderedDic
   return ht
 end
 
-"
+"""
   Given the available residual equations and the set of backend variables 
-  create a bidrection graph between these equations and the variables.
-"
-function createEquationVariableBidirectionGraph(equations, allBackendVars, crefToSimVarHT)::OrderedDict
-  local eqCounter::Int = 1
-  local varCounter::Int = 1
+  create a bidrection graph between these equations and the supplied variables.
+"""
+function createEquationVariableBidirectionGraph(equations::RES_T,
+                                                allBackendVars::VECTOR_VAR,
+                                                crefToSimVarHT)::OrderedDict where{RES_T, VECTOR_VAR}
+  local eqCounter::Int = 0
   local variableEqMapping = OrderedDict()
   local unknownVariables = filter((x) -> BDAEUtil.isVariable(x.varKind), allBackendVars)
   local stateVariables = filter((x) -> BDAEUtil.isState(x.varKind), allBackendVars)
@@ -158,12 +159,11 @@ function createEquationVariableBidirectionGraph(equations, allBackendVars, crefT
   nEquations = length(equations)  - length(stateVariables)
   nVariables = length(unknownVariables)
   #= Assert that the set of known variables has potential equations in which they can be used =#
-  @assert(nEquations == nVariables, "The set of variables != set of equations: #Variables: $nVariables, #Equations $nEquations")
   for eq in equations
-    #= Fetch all variables beloning to the specific equation =#
+    #= Fetch all variables belonging to the specific equation =#
+    eqCounter += 1
     variablesForEq = Backend.BDAEUtil.getAllVariables(eq, allBackendVars)
     variableEqMapping["e$(eqCounter)"] = sort(getIndiciesOfVariables(variablesForEq, crefToSimVarHT))
-    eqCounter += 1
   end
   return variableEqMapping
 end

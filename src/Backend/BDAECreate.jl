@@ -81,7 +81,7 @@ end
   In addition provides the initial equations for the system.
 TODO: Optimize by using List instead of array.
 """
-function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple
+function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple{List, List, List}
   local variableLst::List{BDAE.Var} = nil
   local equationLst::List{BDAE.Equation} = nil
   local initialEquationLst::List{BDAE.Equation} = nil
@@ -137,7 +137,7 @@ function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple
   return (variableLst, equationLst, initialEquationLst)
 end
 
-function lowerWhenEquation(eq::DAE.Element)::BDAE.Equation
+function lowerWhenEquation(eq::DAE.Element)::BDAE.WHEN_EQUATION
   local whenOperatorLst::List{BDAE.WhenOperator} = nil
   local whenEquation::BDAE.WhenEquation
   local elseOption::Option{BDAE.WhenEquation} = NONE()
@@ -193,24 +193,24 @@ function createWhenOperators(elementLst::List{DAE.Element},lst::List{BDAE.WhenOp
 end
 
 """
-  Transform a DAE if-equation into a backend if equation
+  Transform a DAE if-equation into a BDAE if-equation
 """
-function lowerIfEquation(eq::DAE.Element)::Backend.Equation
+function lowerIfEquation(eq::IF_EQ)::BDAE.IF_EQUATION where {IF_EQ}
   local trueEquations::List{List{BDAE.Equation}} = nil
-  local tmpTrue::List{DAE.Equation}
-  local falseEquations::List{DAE.Equation}
+  local tmpTrue::List{BDAE.Equation}
+  local falseEquations::List
   for lst in eq.equations2
-    (_, tmpTrue) = splitEquationsAndVars(lst)
+    (_, tmpTrue, _) = splitEquationsAndVars(lst)
     trueEquations = tmpTrue <| trueEquations
   end
   trueEquations = listReverse(trueEquations)
-  (_, falseEquations) = splitEquationsAndVars(eq.equations3)
-
+  (_, falseEquations, _) = splitEquationsAndVars(eq.equations3)
   return BDAE.IF_EQUATION(eq.condition1,
-                                trueEquations,
-                                falseEquations,
-                                eq.source,
-                                BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
+                          trueEquations,
+                          falseEquations,
+                          eq.source,
+                          BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
+
 end
 
 @exportAll()

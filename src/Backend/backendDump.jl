@@ -32,7 +32,7 @@
 
 using MetaModelica
 
-const HEAD_LINE = "#############################################"::String
+const HEAD_LINE = "############################################"::String
 const DOUBLE_LINE = "============================================"::String
 const LINE = "---------------------------------------------"::String
 
@@ -61,7 +61,7 @@ function heading3(heading::String)::String
   str = heading + ":\n" + LINE + "\n"
 end
 
-function Base.string(dae::BDAE.BDAEStructure)::String
+function Base.string(dae::BDAE.BACKEND_DAE)::String
   str::String = ""
   for i in 1:arrayLength(dae.eqs)
     str = str + stringHeading2(dae.eqs[i], "EqSystem " + Base.string(i)) + "\n"
@@ -148,7 +148,34 @@ function Base.string(varKind::BDAE.VarKind)::String
   end
 end
 
-function Base.string(eq::BDAE.Equation)::String
+function Base.string(lst::List{BDAE.Equation})
+  res = "List: {"
+  for eq in lst
+    res *= string(eq) * ","
+  end
+  res *= "}"
+  return res
+end
+
+function Base.string(lstlst::List{List{BDAE.Equation}})
+  res = "List: {"
+  for lst in lstlst
+    res *= string(lst) * ","
+  end
+  res *= "}"
+  return res
+end
+
+function Base.string(exprs::List{DAE.Exp})
+  res = "List: {"
+  for exp in exprs
+    res *= string(exp) * ","
+  end
+  res *= "}"
+  return res
+end
+
+function Base.string(eq::BDAE.Equation)
   str = begin
     local lhs::DAE.Exp
     local rhs::DAE.Exp
@@ -174,25 +201,29 @@ function Base.string(eq::BDAE.Equation)::String
       BDAE.IF_EQUATION(__) => begin
         local strTmp::String
         local conditions::List{DAE.Exp}
-        local condition::DAE.Exp
-        local trueEquations::List{BDAE.Equation}
         local trueEquation::BDAE.Equation
         local ifEq = eq
-        conditions = ifEq.conditions
-        trueEquations  = ifEq.eqnstrue
-        local condStr::String = ""
+        local conditions = ifEq.conditions
+        local trueEquations = ifEq.eqnstrue
+        local strTmp = ""
+        counter = 1
         for cond in conditions
-            condStr += string(cond)
-        end
-        strTmp = "if " + condStr + " then\n"
-        for teq in trueEquations
-            strTmp += string(teq)
-        end
+          local condStr = string(cond)
+          if counter == 1
+            strTmp *= "if " + condStr + " then\n"
+          else
+            strTmp *= "else if " + condStr + " then\n"
+          end
+          for teq in listGet(trueEquations, counter)
+            strTmp *= string(teq)
+          end
+          counter += 1
+        end        
         strTmp += "else\n"
         for feq in ifEq.eqnsfalse
           strTmp += string(feq)
         end
-        strTmp += "\n end"
+        strTmp += "end"
       end
     end
   end
