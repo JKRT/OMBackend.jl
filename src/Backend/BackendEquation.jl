@@ -86,11 +86,7 @@ function makeResidualIfEquation(eqn::BDAE.IF_EQUATION)::BDAE.IF_EQUATION
     for eq in eqBranch
       tmp = makeResidualEquation(eq) <| tmp
     end
-    @info tmp
-#    @info "Before" * string(trueEquations2)
     trueEquations2 = tmp <| trueEquations2
-    
-#    @info "After"
   end
   for eq in falseEquations
     falseEquations2 = makeResidualEquation(eq) <| falseEquations2

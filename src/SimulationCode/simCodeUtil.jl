@@ -158,7 +158,11 @@ function createEquationVariableBidirectionGraph(equations::RES_T,
   #= Treat states as solved =#
   nEquations = length(equations)  - length(stateVariables)
   nVariables = length(unknownVariables)
-  #= Assert that the set of known variables has potential equations in which they can be used =#
+  #= 
+  TODO:
+  Assert that the set of known variables has potential equations in which they can be used 
+  (Introduction of IF equations made this operation more complicated)
+  =#
   for eq in equations
     #= Fetch all variables belonging to the specific equation =#
     eqCounter += 1

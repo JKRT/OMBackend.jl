@@ -172,6 +172,18 @@ function traverseEquationExpressions(eq::BDAE.Equation,
          @assign eq.exp = rhs;
          (eq, extArg)
        end
+       BDAE.IF_EQUATION(__) => begin
+         for eqLst in eq.eqnstrue
+           for equation in eqLst
+             traverseEquationExpressions(equation, traversalOperation, extArg)
+           end
+         end
+         for equation in eq.eqnsfalse
+           traverseEquationExpressions(equation, traversalOperation, extArg)
+         end        
+         #         throw("Failed to traverse if equation!")
+         (eq, extArg)
+       end
        _ => begin
          (eq, extArg)
        end

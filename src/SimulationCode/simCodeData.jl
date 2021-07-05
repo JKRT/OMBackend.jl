@@ -68,7 +68,7 @@ abstract type SimCodeConstruct end
   Since each branch potentially contains a set of equations information exist so that the code in each branch can be 
   matched (Similar to the larger system )
 """
-struct SIM_CODE_BRANCH{T1 <: Bool,
+struct SIM_CODE_BRANCH{T1 <: DAE.Exp,
                        T2 <: Vector{BDAE.RESIDUAL_EQUATION},
                        T3 <: Int, #= Integer code Each branch has one target (next) The ID of one branch is target - 1=#
                        T4 <: Bool,
@@ -86,11 +86,11 @@ struct SIM_CODE_BRANCH{T1 <: Bool,
 end
 
 """
-A representation of a simcode IF Equation. 
-Similar to the main simcode module it contains information to make construct a causal representation easier.
+  A representation of a simcode IF Equation. 
+  Similar to the main simcode module it contains information to make construct a causal representation easier.
 """
 struct SIM_CODE_IF_EQUATION{Branches <: Vector{SIM_CODE_BRANCH}} <: SimCodeConstruct
-  ifEquationBranches::Branches
+  branches::Branches
 end
 
 

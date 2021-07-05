@@ -29,7 +29,6 @@ let CALLBACKS = 0
   end
 end
 
-
 """
     Write  modelName_DAE_equations() to file.
 """
@@ -38,7 +37,6 @@ function writeDAE_equationsToFile(fileName::String, contents::String)
   write(fdesc, contents)
   close(fdesc)
 end
-
 
 """
   Generate Julia code from SimCode.
@@ -62,7 +60,9 @@ function generateCode(simCode::SimulationCode.SIM_CODE)::Tuple{String, Expr}
       SimulationCode.STATE_DERIVATIVE(__) => push!(stateDerivatives, varName)
     end
   end
-  #= Check if we have state variables =#
+  #= 
+    Check if we have state variables
+  =#
   local systemOfDifferentials = ! isempty(stateVariables)
   #= 
   Decide on what type of solver we are to generate code for
@@ -76,7 +76,8 @@ function generateCode(simCode::SimulationCode.SIM_CODE)::Tuple{String, Expr}
                                                             stateDerivatives,
                                                             parameters)
   else
-    @error "Systems without differential terms are not yet supported"
+    @error "Systems without differential terms are not yet supported.\n Current system:\n 
+    \nAlgebraic variables: $(algVariables) \n state variables: $(stateVariables)\n Parameters: $(parameters)"
   end
   #= Decide what runnable to generate =#
   # Return file content
