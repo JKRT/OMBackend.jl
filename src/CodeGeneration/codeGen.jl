@@ -43,7 +43,6 @@ end
   Returns an expression in memory representing the program and a string
 """
 function generateCode(simCode::SimulationCode.SIM_CODE)::Tuple{String, Expr}
-  global CALLBACK_COUNTER = 0
   local stateVariables::Array = []
   local algVariables::Array = []
   local stateDerivatives::Array = []
@@ -76,16 +75,20 @@ function generateCode(simCode::SimulationCode.SIM_CODE)::Tuple{String, Expr}
                                                             stateDerivatives,
                                                             parameters)
   else
-    @error "Systems without differential terms are not yet supported.\n Current system:\n 
-    \nAlgebraic variables: $(algVariables) \n state variables: $(stateVariables)\n Parameters: $(parameters)"
+    msg = "Systems without differential terms are not yet supported.\n Current system:\n \nAlgebraic variables: $(algVariables) \n state variables: $(stateVariables)\n Parameters: $(parameters)"
+    @error msg
   end
   #= Decide what runnable to generate =#
   # Return file content
   return (modelName, program)
 end
 
-function createHelperFunctionsForSystemOfDifferentialEquations(modelName::String, simCode::SimulationCode.SIM_CODE,
-                                                               stateVariables, algVariables, stateDerivatives, parameters)::Tuple{String, Expr}
+function createHelperFunctionsForSystemOfDifferentialEquations(modelName::String,
+                                                               simCode::SimulationCode.SIM_CODE,
+                                                               stateVariables,
+                                                               algVariables,
+                                                               stateDerivatives,
+                                                               parameters)::Tuple{String, Expr}
   stateMarkings = createStateMarkings([], stateVariables, simCode)
   #=Start conditions of algebraic and state variables=#
   local START_CONDTIONS_EQUATIONS = createStartConditionsEquations(algVariables, stateVariables, simCode)
@@ -107,14 +110,14 @@ function createHelperFunctionsForSystemOfDifferentialEquations(modelName::String
                                                  auxFuncSymbol,
                                                  stateVariables,
                                                  simCode.residualEquations,
+                                                 simCode.ifEquations,
                                                  simCode;
                                                  eqLhsName = "res", eqRhsName = "reals")
   #= 
     Create function to handle auxilary variables. 
     That is variables that are not a part of the system that is sent to the solver. 
   =#
-  local AUX_VARS_FUNCTION = createAuxEquationCode(auxFuncSymbol, algVariables,simCode.residualEquations, simCode
-                                                  ;eqLhsName = "reals")
+  local AUX_VARS_FUNCTION = createAuxEquationCode(auxFuncSymbol, algVariables,simCode.residualEquations, simCode; eqLhsName = "reals")
   local DIFFERENTIAL_VARS_FUNCTION = quote
     begin
       function $(Symbol("$(modelName)DifferentialVars"))()
@@ -127,6 +130,10 @@ function createHelperFunctionsForSystemOfDifferentialEquations(modelName::String
   local RUNNABLE = createDAERunnable(modelName, simCode)
   @debug("Code-generation done")
   RESET_CALLBACKS()
+  #= 
+    The state machine is used to select the active mode 
+    0 is the default mode.
+  =#
   program = quote    
     $(HEADER_STRING)
     using DiffEqBase
@@ -134,6 +141,7 @@ function createHelperFunctionsForSystemOfDifferentialEquations(modelName::String
     using Plots
     using Sundials
     import OMBackend
+    const Mode = [0]
     $(START_CONDTIONS)
     $(AUX_VARS_FUNCTION)
     $(DIFFERENTIAL_VARS_FUNCTION)
@@ -147,7 +155,11 @@ end
 
 function createCallbackCode(modelName::N, simCode::S) where {N, S}
   local WHEN_EQUATIONS = createEquations(simCode.whenEquations, simCode)
-  local IF_EQUATIONS = createEquations(simCode.ifEquations, simCode)
+  #= 
+    For if equations we create zero crossing functions (Based on the conditions). 
+    The body of these equations are evaluated in the main body of the solver itself.
+  =#
+  local IF_EQUATIONS = createIfEquationCallbacks(simCode.ifEquations, simCode)
   local SAVE_FUNCTION = createSaveFunction(modelName)
   quote
     $(Symbol("saved_values_$(modelName)")) = SavedValues(Float64, Tuple{Float64,Array})
@@ -185,14 +197,16 @@ end
 """
 function createSolverCode(functionName::Symbol,
                           auxFuncSymbol::Symbol,
-                          variables::Array{V},
-                          residuals::Array{R}, simCode::SimulationCode.SIM_CODE;
-                          eqLhsName, eqRhsName)::Expr where {V, R}
+                          variables::Vector{V},
+                          residuals::Vector{R},
+                          ifEquations::Vector{IF_EQ},
+                          simCode::SimulationCode.SIM_CODE;
+                          eqLhsName, eqRhsName)::Expr where {V, R, IF_EQ}
   local UPDATE_VECTOR = createRealToStateVariableMapping(variables, simCode)
   #= Creates the equations =#
   local EQUATIONS = createEquations(variables, residuals, simCode; eqLhsName = eqLhsName, eqRhsName)
+#  local IF_EQUATIONS = createEquations(variables, ifEquations, simCode; eqLhsName = eqLhsName, eqRhsName)
   local modelName = simCode.name
-  #= Stupid else if. If someone can write this more elegant please submit a PR:) It is possible =#
   quote
     function $(functionName)(res, dx, x, aux, t)
       $(auxFuncSymbol)(res, dx, x, aux, t)
@@ -417,12 +431,17 @@ function createSortedEquations(variables::Array, simCode::SimulationCode.SIM_COD
 end
 
 """
-  Create equation for a set of variables V and a set of equations E.
+  Create equation for a set of variables V and a set of residual equations, E.
   Equations are only created if V ∈ E.
 """
-function createEquations(variables::Array{V}, equations::Array{E},
-                         simCode::SimulationCode.SIM_CODE; eqLhsName::String, eqRhsName::String)::Array{Expr} where {V, E}
-  local eqs::Array{Expr} = []
+function createEquations(variables::Array{V}, equations::Array{BDAE.RESIDUAL_EQUATION}, simCode::SimulationCode.SIM_CODE;
+                         eqLhsName::String, eqRhsName::String) where {V}
+  #= Check if we have any equations =#
+  if isempty(equations)
+    return Expr[]
+  end
+  #= Generate the sorted set of equations and variables =#
+  local eqs::Vector{Expr} = Expr[]
   for (equationCounter, variable) in enumerate(variables)
     local equation = SimulationCode.getEquationSolvedIn(variable, simCode)
     local eqJL::Expr = eqToJulia(equation, simCode, equationCounter; eqLhsName = eqLhsName, eqRhsName = eqRhsName)
@@ -431,11 +450,33 @@ function createEquations(variables::Array{V}, equations::Array{E},
   return eqs
 end
 
+
+function createEquations(variables::Vector{V},
+                         equations::Vector{SimulationCode.IF_EQUATION},
+                         simCode::SimulationCode.SIM_CODE;
+                         eqLhsName::String, eqRhsName::String)::Expr where {V}
+  local if_eqs::Vector{Expr} = Expr[]
+  for if_eq in equations    
+    res = quote
+      if mode[0] == if_eq.condition
+        createEquations(variables,
+                        if_eq.equations,
+                        simCode,
+                        eqLhsName,
+                        eqRhsName)
+      end
+    end
+    push!(if_eqs, res)
+  end
+  return if_eqs
+end
+
+
 """
  Create a set for all equations T. 
 """
 function createEquations(equations::Array{T}, simCode::SimulationCode.SIM_CODE)::Array{Expr} where T
-  local eqs::Array{Expr} = []
+  local eqs::Array{Expr} = Expr[]
   for (equationCounter, eq) in enumerate(equations)
     local eqJL::Expr = eqToJulia(eq, simCode, equationCounter)
     push!(eqs, eqJL)
@@ -469,10 +510,8 @@ end
 """
  $(SIGNATURES)
 """
-function eqToJulia(eq::BDAE.RESIDUAL_EQUATION, simCode::SimulationCode.SIM_CODE,
-                   arrayIdx::Int64;
-                   eqLhsName::String,
-                   eqRhsName::String)::Expr
+
+function eqToJulia(eq::BDAE.RESIDUAL_EQUATION, simCode::SimulationCode.SIM_CODE, arrayIdx::Int64; eqLhsName::String, eqRhsName::String)
   quote 
     $(Symbol((eqLhsName)))[$arrayIdx] = $(expToJuliaExp(eq.exp, simCode; varPrefix = eqRhsName))
   end
@@ -485,16 +524,62 @@ end
  If callbacks are to be generated increase the internal variable, callback counter representing
  how many callbacks we currently have.
 """
-function eqToJulia(eq::BDAE.Equation, simCode::SimulationCode.SIM_CODE, arrayIdx::Int64)::Expr
-  @error "Unknown equation"
+function eqToJulia(eq::BDAE.Equation, simCode::SimulationCode.SIM_CODE, arrayIdx::Int64)
+  throw("Unknown equation")
 end
 
-function eqToJulia(eq::BDAE.IF_EQUATION, simCode::SimulationCode.SIM_CODE, arrayIdx::Int64)::Expr
+function createIfEquationCallbacks(ifEqs::Vector{SimulationCode.IF_EQUATION}, simCode::SimulationCode.SIM_CODE)
+  res = []
+  @error "TODO: Size of ifEqs: $(length(ifEqs))"
+  for eq in ifEqs
+    push!(res, createIfEqCallback(eq, simCode))
+  end
+  if isempty(res)
+    return res
+  end
+  return res[1]
+end
+
+"""
+    Converts a SIMCODE.IF_EQUATION into a Julia representation.
+    Note that this only creates the callback for the particular equation (Not the branching logic).
+    The residuals belonging to the statements are created independently.
+"""
+function createIfEqCallback(ifEq::SimulationCode.IF_EQUATION, simCode::SimulationCode.SIM_CODE)
   @error "IF equations are being reworked"
+  exprs = Expr[]
+  branches = ifEq.branches
+  for branch in branches
+    ADD_CALLBACK()
+    local callbacks = COUNT_CALLBACKS()
+    #=TODO: 
+    Continuous callback if the equation is a part of the system that is solved. 
+    If not some other type should be generated.
+    The type should be decided depending on the kind of variable involved in the condition.
+    =#
+    local cond = branch.condition
+    local res = quote
+      function $(Symbol("condition$(callbacks)"))(x,t,integrator) 
+        $(expToJuliaExp(cond, simCode))
+        @info "Callback with $(branch.identifier)"
+      end
+      #= Active this branc =#
+      function $(Symbol("affect$(callbacks)!"))(integrator)
+        global mode[1] = $(branch.identifier)
+      end
+    $(Symbol("cb$(callbacks)")) = ContinuousCallback($(Symbol("condition$(callbacks)")), 
+                                                     $(Symbol("affect$(callbacks)!")),
+                                                     rootfind=true, save_positions=(true, true),
+                                                     affect_neg! = $(Symbol("affect$(callbacks)!")),)
+    end
+    push!(exprs, res)
+  end
+  return exprs
 end
 
 """
   This function creates a representation of a when equation in Julia.
+  This function shall be called in the process of constructing the different callbacks.
 """
 function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arrayIdx::Int64)::Expr
   local wEq = eq.whenEquation
@@ -511,7 +596,7 @@ function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arr
     end
     $(Symbol("cb$(callbacks)")) = ContinuousCallback($(Symbol("condition$(callbacks)")), 
                                                             $(Symbol("affect$(callbacks)!")),
-                                                            rootfind=true, save_positions=(false, false),
+                                                            rootfind=true, save_positions=(true, true),
                                                             affect_neg! = $(Symbol("affect$(callbacks)!")),)
   end
 end
@@ -615,8 +700,10 @@ function expToJuliaExp(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuffix
         end
       end
       DAE.LUNARY(operator = op, exp = e1)  => begin
+        lhs = expToJuliaExp(e1, simCode, varPrefix=varPrefix)
+        o = DAE_OP_toJuliaOperator(op)
         quote
-          $("(" + BDAE.string(op) + " " + expToJuliaExp(e1, simCode, varPrefix=varPrefix) + ")")
+          $o($(lhs))
         end
       end
       DAE.LBINARY(exp1 = e1, operator = op, exp2 = e2) => begin
@@ -625,14 +712,16 @@ function expToJuliaExp(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuffix
         end
       end
       DAE.RELATION(exp1 = e1, operator = op, exp2 = e2) => begin
+        lhs = expToJuliaExp(e1, simCode, varPrefix=varPrefix)
+        o = DAE_OP_toJuliaOperator(op)
+        rhs = expToJuliaExp(e2, simCode, varPrefix=varPrefix)
         quote 
-          $(expToJuliaExp(e1, simCode,
-                          varPrefix=varPrefix) + " "
-            + BDAE.string(op) + " " + expToJuliaExp(e2, simCode,varPrefix=varPrefix))
+          $o($(lhs), $(rhs))
         end
       end
       DAE.IFEXP(expCond = e1, expThen = e2, expElse = e3) => begin
-        throw(ErrorException("If expressions not allowed in backend code. They should have been eliminated by a frontend pass."))
+        throw(ErrorException("If expressions not allowed in backend code. 
+                              They should have been eliminated by a previous backend  pass."))
       end
       DAE.CALL(path = Absyn.IDENT(tmpStr), expLst = explst)  => begin
         DAECallExpressionToJuliaCallExpression(tmpStr, explst, simCode, hashTable, varPrefix=varPrefix)

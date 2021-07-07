@@ -60,7 +60,7 @@ abstract type SimCode end
 """
   Abstract type for control flow constructs for simulation code
 """
-abstract type SimCodeConstruct end
+abstract type Construct end
 
 """
   Represents a branch in simulation code. 
@@ -68,13 +68,13 @@ abstract type SimCodeConstruct end
   Since each branch potentially contains a set of equations information exist so that the code in each branch can be 
   matched (Similar to the larger system )
 """
-struct SIM_CODE_BRANCH{T1 <: DAE.Exp,
+struct BRANCH{T1 <: DAE.Exp,
                        T2 <: Vector{BDAE.RESIDUAL_EQUATION},
                        T3 <: Int, #= Integer code Each branch has one target (next) The ID of one branch is target - 1=#
                        T4 <: Bool,
                        T5 <: Vector{Int},
                        T6 <: LightGraphs.AbstractGraph,
-                       T7 <: Vector{Int}} <: SimCodeConstruct
+                       T7 <: Vector{Int}} <: Construct
   condition::T1
   equations::T2
   identifier::T3
@@ -89,7 +89,7 @@ end
   A representation of a simcode IF Equation. 
   Similar to the main simcode module it contains information to make construct a causal representation easier.
 """
-struct SIM_CODE_IF_EQUATION{Branches <: Vector{SIM_CODE_BRANCH}} <: SimCodeConstruct
+struct IF_EQUATION{Branches <: Vector{BRANCH}} <: Construct
   branches::Branches
 end
 
@@ -106,7 +106,7 @@ struct SIM_CODE{T0<:String,
                 #=
                   If equations are represented via a vector of possible branches in which the code can operate. 
                   Similar to basic blocks =#
-                T5<:Vector{SIM_CODE_IF_EQUATION},
+                T5<:Vector{IF_EQUATION},
                 T6<:Bool,
                 T7<:Vector{Int},
                 T8<:LightGraphs.AbstractGraph,

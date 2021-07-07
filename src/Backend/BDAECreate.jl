@@ -205,12 +205,12 @@ function lowerIfEquation(eq::IF_EQ)::BDAE.IF_EQUATION where {IF_EQ}
   end
   trueEquations = listReverse(trueEquations)
   (_, falseEquations, _) = splitEquationsAndVars(eq.equations3)
-  return BDAE.IF_EQUATION(eq.condition1,
-                          trueEquations,
-                          falseEquations,
-                          eq.source,
-                          BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
-
+  res = BDAE.IF_EQUATION(eq.condition1,
+                         trueEquations,
+                         falseEquations,
+                         eq.source,
+                         BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
+  return res
 end
 
 @exportAll()

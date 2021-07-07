@@ -73,10 +73,10 @@ function transformToSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.SIM_CO
     Each branch might contain a separate section of variables etc that needs to be sorted and processed. 
     !!It is assumed that the frontend have checked each branch for balance at this point!!
   =#
-  simCodeIfEquations::Vector{SIM_CODE_IF_EQUATION} = constructSimCodeIFEquations(ifEqs,
-                                                                                 resEqs,
-                                                                                 allBackendVars,
-                                                                                 crefToSimVarHT)
+  simCodeIfEquations::Vector{IF_EQUATION} = constructSimCodeIFEquations(ifEqs,
+                                                                        resEqs,
+                                                                        allBackendVars,
+                                                                        crefToSimVarHT)
   #= Construct SIM_CODE =#
   SimulationCode.SIM_CODE(backendDAE.name,
                           crefToSimVarHT,
@@ -102,9 +102,10 @@ Possible rework the identifier scheme.
 function constructSimCodeIFEquations(BDAE_ifEquations::Vector{BDAE.IF_EQUATION},
                                      resEqs::Vector{BDAE.RESIDUAL_EQUATION},
                                      allBackendVars::Vector,
-                                     crefToSimVarHT)::Vector{SIM_CODE_IF_EQUATION}
-  simCodeIfEquations::Vector{SIM_CODE_IF_EQUATION} = SIM_CODE_IF_EQUATION[]
+                                     crefToSimVarHT)::Vector{IF_EQUATION}
+  simCodeIfEquations::Vector{IF_EQUATION} = IF_EQUATION[]
   for BDAE_ifEquation in BDAE_ifEquations
+    @error string(BDAE_ifEquation)
     #= Enumerate the branches of the if equation =#
     #= Handle if and else if branches=#
     local conditions = BDAE_ifEquation.conditions
@@ -115,7 +116,7 @@ function constructSimCodeIFEquations(BDAE_ifEquations::Vector{BDAE.IF_EQUATION},
     local matchOrder
     local equationGraph
     local sccs
-    local branches::Vector{SIM_CODE_BRANCH} = SIM_CODE_BRANCH[]
+    local branches::Vector{BRANCH} = BRANCH[]
     local lastConditionIdx = 0
     for conditionIdx in 1:length(conditions)
       condition = listGet(conditions, conditionIdx)
@@ -130,14 +131,14 @@ function constructSimCodeIFEquations(BDAE_ifEquations::Vector{BDAE.IF_EQUATION},
       (isSingular, matchOrder, digraph, stronglyConnectedComponents) =
         matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping)
       #= Add the branch to the collection. =#
-      branch = SIM_CODE_BRANCH(condition,
-                               equations,
-                               identifier,
-                               target,
-                               isSingular,
-                               matchOrder,
-                               digraph,
-                               stronglyConnectedComponents)
+      branch = BRANCH(condition,
+                      equations,
+                      identifier,
+                      target,
+                      isSingular,
+                      matchOrder,
+                      digraph,
+                      stronglyConnectedComponents)
       push!(branches, branch)
       lastConditionIdx = conditionIdx
     end
@@ -162,16 +163,16 @@ function constructSimCodeIFEquations(BDAE_ifEquations::Vector{BDAE.IF_EQUATION},
     local numberOfVariablesInMapping = length(eqVariableMapping.keys)
     (isSingular, matchOrder, digraph, stronglyConnectedComponents) =
       matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping)
-    branch = SIM_CODE_BRANCH(condition,
-                             equations,
-                             identifier,
-                             target,
-                             isSingular,
-                             matchOrder,
-                             digraph,
-                             stronglyConnectedComponents)
+    branch = BRANCH(condition,
+                    equations,
+                    identifier,
+                    target,
+                    isSingular,
+                    matchOrder,
+                    digraph,
+                    stronglyConnectedComponents)
     push!(branches, branch)    
-    ifEq = SIM_CODE_IF_EQUATION(branches)
+    ifEq = IF_EQUATION(branches)
     push!(simCodeIfEquations, ifEq)
   end
   return simCodeIfEquations
