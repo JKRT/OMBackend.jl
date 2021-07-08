@@ -77,20 +77,20 @@ end
 """
 johti17
     Transform a condition into a zero crossing function.
-    For instance y > 10 -> y - 10
+    For instance y < 10 -> y - 10
 TODO:
     Assumes a Real-Expression.
     Also assume that relation expressions are written as <= That is we go from positive 
     to negative.. 
     Fix this.
 """
-function prepForZeroCrossing(conditonalExpression::DAE.Exp)
+function transformToZeroCrossingCondition(conditonalExpression::DAE.Exp)
   res = @match conditonalExpression begin
     DAE.BINARY(exp1 = e1, operator = op, exp2 = e2) => begin
       DAE.BINARY(lhs, DAE.SUB(DAE.T_REAL_DEFAULT), rhs)
     end
     DAE.LUNARY(operator = op, exp = e1)  => begin
-      DAE.BINARY(e1, DAE.SUB(DAE.T_REAL_DEFAULT), e2)
+      DAE.UNARY(DAE.SUB(DAE.T_REAL_DEFAULT), e1)
     end
     DAE.LBINARY(exp1 = e1, operator = op, exp2 = e2) => begin
       DAE.BINARY(e1, DAE.SUB(DAE.T_REAL_DEFAULT), e2)
@@ -105,10 +105,19 @@ function prepForZeroCrossing(conditonalExpression::DAE.Exp)
   return res
 end
 
+"""
+  Flattens a vector of expressions.
+"""
+function flattenExprs(eqs::Vector{Expr})
+  quote
+    $(eqs...)
+  end
+end
 
-"
- Conver DAE.Exp into a Julia string. 
-"
+
+"""
+ Convert DAE.Exp into a Julia string. 
+"""
 function expToJL(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE; varPrefix="x")::String
   hashTable = simCode.crefToSimVarHT
   str = begin

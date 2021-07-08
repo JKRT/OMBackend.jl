@@ -98,6 +98,7 @@ end
 Currently we merge the other residual equation with the equations of one branch.
 TODO:
 Possible rework the identifier scheme.
+Unique identifier, static variable?
 """
 function constructSimCodeIFEquations(BDAE_ifEquations::Vector{BDAE.IF_EQUATION},
                                      resEqs::Vector{BDAE.RESIDUAL_EQUATION},
@@ -138,7 +139,8 @@ function constructSimCodeIFEquations(BDAE_ifEquations::Vector{BDAE.IF_EQUATION},
                       isSingular,
                       matchOrder,
                       digraph,
-                      stronglyConnectedComponents)
+                      stronglyConnectedComponents,
+                      crefToSimVarHT)
       push!(branches, branch)
       lastConditionIdx = conditionIdx
     end
@@ -153,12 +155,11 @@ function constructSimCodeIFEquations(BDAE_ifEquations::Vector{BDAE.IF_EQUATION},
     if listEmpty(BDAE_ifEquation.eqnsfalse)
       break
     end
-    condition = DAE.LUNARY(DAE.NOT(condition.operator.ty), condition)
-    equations = listArray(listAppend(BDAE_ifEquation.eqnsfalse,
-                                     arrayList(resEqs)))
+    condition = DAE.SCONST("ELSE_BRANCH")
+    equations = listArray(listAppend(BDAE_ifEquation.eqnsfalse, arrayList(resEqs)))
     lastConditionIdx += 1
     target = lastConditionIdx + 1
-    identifier = lastConditionIdx
+    identifier = ELSE_BRANCH #= Indicate else =#
     local eqVariableMapping = createEquationVariableBidirectionGraph(equations, allBackendVars, crefToSimVarHT)
     local numberOfVariablesInMapping = length(eqVariableMapping.keys)
     (isSingular, matchOrder, digraph, stronglyConnectedComponents) =
@@ -170,7 +171,8 @@ function constructSimCodeIFEquations(BDAE_ifEquations::Vector{BDAE.IF_EQUATION},
                     isSingular,
                     matchOrder,
                     digraph,
-                    stronglyConnectedComponents)
+                    stronglyConnectedComponents,
+                    crefToSimVarHT)
     push!(branches, branch)    
     ifEq = IF_EQUATION(branches)
     push!(simCodeIfEquations, ifEq)

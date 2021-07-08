@@ -39,6 +39,8 @@ Abstract type for a simulation variable
 """
 abstract type SimVar end
 
+const ELSE_BRANCH = -1
+
 """
 Variable data type used for code generation
 """
@@ -69,20 +71,23 @@ abstract type Construct end
   matched (Similar to the larger system )
 """
 struct BRANCH{T1 <: DAE.Exp,
-                       T2 <: Vector{BDAE.RESIDUAL_EQUATION},
-                       T3 <: Int, #= Integer code Each branch has one target (next) The ID of one branch is target - 1=#
-                       T4 <: Bool,
-                       T5 <: Vector{Int},
-                       T6 <: LightGraphs.AbstractGraph,
-                       T7 <: Vector{Int}} <: Construct
+              T2 <: Vector{BDAE.RESIDUAL_EQUATION},
+              T3 <: Int, #= Integer code Each branch has one target (next) The ID of one branch is target - 1=#
+              T4 <: Bool,
+              T5 <: Vector{Int},
+              T6 <: LightGraphs.AbstractGraph,
+              T7 <: Vector{Int},
+              T8 <: AbstractDict{String, Tuple{Integer, SimVar}}} <: Construct
+  
   condition::T1
-  equations::T2
-  identifier::T3
+  residualEquations::T2
+  identifier::T3 #= A value of -1 indicates that this branch is an else branch =#
   targets::T3
   isSingular::T4
   matchOrder::T5
   equationGraph::T6
   sccs::T7
+  crefToSimVarHT::T8
 end
 
 """

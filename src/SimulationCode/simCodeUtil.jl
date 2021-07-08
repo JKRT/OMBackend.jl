@@ -193,12 +193,14 @@ function getIndiciesOfVariables(variables, crefToSimVarHT::OrderedDict{String, T
 end
 
 """
-  Returns the equation a specfic variable is solved in.
+  Returns the residual equation a specfic variable is solved in.
+  We search for this equation among the residuals in the context.
+  The context should be either the top level simcode or a specific branch of some if equation.
 """
-function getEquationSolvedIn(variable::V, simCode::SimulationCode.SIM_CODE) where {V}
-  local ht = simCode.crefToSimVarHT
+function getEquationSolvedIn(variable::V, context::C) where {V, HT, C}
+  local ht = context.crefToSimVarHT
   local variableIdx = ht[variable][1]
-  local equationIdx = simCode.matchOrder[variableIdx]
+  local equationIdx = context.matchOrder[variableIdx]
   #= Return the equation at this specific index =#
-  return simCode.residualEquations[equationIdx]
+  return context.residualEquations[equationIdx]
 end
