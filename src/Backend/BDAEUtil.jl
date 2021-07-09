@@ -1,7 +1,7 @@
 #= /*
 * This file is part of OpenModelica.
 *
-* Copyright (c) 1998-CurrentYear, Open Source Modelica Consortium (OSMC),
+* Copyright (c) 1998-CurrentYear, Open Source Modelica Consortiurm (OSMC),
 * c/o Linköpings universitet, Department of Computer and Information Science,
 * SE-58183 Linköping, Sweden.
 *
@@ -180,8 +180,7 @@ function traverseEquationExpressions(eq::BDAE.Equation,
          end
          for equation in eq.eqnsfalse
            traverseEquationExpressions(equation, traversalOperation, extArg)
-         end        
-         #         throw("Failed to traverse if equation!")
+         end
          (eq, extArg)
        end
        _ => begin

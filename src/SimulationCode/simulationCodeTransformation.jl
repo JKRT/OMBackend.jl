@@ -106,7 +106,6 @@ function constructSimCodeIFEquations(BDAE_ifEquations::Vector{BDAE.IF_EQUATION},
                                      crefToSimVarHT)::Vector{IF_EQUATION}
   simCodeIfEquations::Vector{IF_EQUATION} = IF_EQUATION[]
   for BDAE_ifEquation in BDAE_ifEquations
-    @error string(BDAE_ifEquation)
     #= Enumerate the branches of the if equation =#
     #= Handle if and else if branches=#
     local conditions = BDAE_ifEquation.conditions

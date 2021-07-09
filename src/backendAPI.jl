@@ -26,7 +26,7 @@ const latexSymbols = REPL.REPLCompletions.latex_symbols
 @enum BackendMode begin
   DAE_MODE = 1
   ODE_MODE = 2 #Currently not in operation
-  MODELING_TOOLKIT_MODE = 3
+  MTK_MODE = 3
 end
 
 function info()
@@ -52,13 +52,12 @@ Contains expressions of models currently in memory.
 Do NOT mutate in other modules!
 //John
 """
-global COMPILED_MODELS = Dict()
+const COMPILED_MODELS = Dict()
 
 """ 
-  Active simulation functions 
-  Do NOT mutate in other modules!
+  MTK models
 """
-global COMPILED_SIMULATION_CODE = Dict()
+const COMPILED_MODELS_MTK = Dict()
 
 function translate(frontendDAE::DAE.DAE_LIST; BackendMode = DAE_MODE)::Tuple{String, Expr}
   local bDAE = lower(frontendDAE)
@@ -66,7 +65,7 @@ function translate(frontendDAE::DAE.DAE_LIST; BackendMode = DAE_MODE)::Tuple{Str
   if BackendMode == DAE_MODE
     simCode = generateSimulationCode(bDAE)
     return generateTargetCode(simCode)
-  elseif BackendMode == MODELING_TOOLKIT_MODE
+  elseif BackendMode == MTK_MODE
     @debug "Experimental: Generates and runs code using modelling toolkit"
     simCode = generateSimulationCode(bDAE)
     return generateMTKTargetCode(simCode)
@@ -111,7 +110,7 @@ end
 """
 function generateSimulationCode(bDAE::BDAE.BACKEND_DAE)::SimulationCode.SimCode
   simCode = SimulationCode.transformToSimCode(bDAE)
-  @debug BDAE.stringHeading1(simCode, "SIM_CODE: transformed simcode")
+  @debug BDAEUtil.stringHeading1(simCode, "SIM_CODE: transformed simcode")
   return simCode
 end
 
@@ -150,7 +149,7 @@ function generateMTKTargetCode(simCode::SimulationCode.SIM_CODE)
   (modelName::String, modelCode::Expr) = CodeGeneration.generateMDKCode(simCode)
   @debug "Functions:" modelCode
   @debug "Model:" modelName
-  COMPILED_MODELS[modelName] = modelCode
+  COMPILED_MODELS_MTK[modelName] = modelCode
   return (modelName, modelCode)
 end
 
@@ -208,10 +207,16 @@ end
     Prints compiled models to stdout
 """
 function availableModels()::String
-  str = "Compiled models:\n"
+  str = "Compiled models (DAE-MODE):\n"
     for m in keys(COMPILED_MODELS)
       str *= "  $m\n"
     end
+
+  str = "Compiled models (MTK-MODE):\n"
+    for m in keys(COMPILED_MODELS_MTK)
+      str *= "  $m\n"
+    end
+  
   return str
 end
 
@@ -222,23 +227,44 @@ TODO:
     (Currently does a redudant string conversion. Regression.)
     Seems MTK does no longer support interactive simulation as well.
 """
-function simulateModel(modelName::String; tspan=(0.0, 1.0))
-  local modelCode::Expr = COMPILED_MODELS[modelName]
-  local modelCodeStr = ""
-  try
-    @eval $(:(import OMBackend))
-    modelCodeStr::String = "$modelCode"
-    local parsedModel = Meta.parse.(modelCodeStr)
-    @eval $parsedModel
-    local modelRunnable = Meta.parse("OMBackend.$(modelName)Simulate($(tspan))")
-    #= Run the model with the supplied tspan. =#
-    @eval Main $modelRunnable
-  catch err
-    @info "Interactive evaluation failed: $err"
-    println(modelCodeStr)
-    @info "Dump of model-code"
-#    Base.dump(parsedModel) TODO
-    throw(err)
+function simulateModel(modelName::String; MODE = DAE_MODE ,tspan=(0.0, 1.0))
+  local modelCode::Expr
+  if MODE === DAE_MODE
+    modelCode = COMPILED_MODELS[modelName]
+    try
+      @eval $(:(import OMBackend))
+      @eval $modelCode
+      local modelRunnable = Meta.parse("OMBackend.$(modelName)Simulate($(tspan))")
+      #= Run the model with the supplied tspan. =#
+      @eval Main $modelRunnable
+    catch err
+      @info "Interactive evaluation failed: $err"
+      println(modelCodeStr)
+      @info "Dump of model-code"
+      #    Base.dump(parsedModel) TODO
+      throw(err)
+    end
+  elseif MODE == MTK_MODE
+    #= This does a redudant string conversion for now due to modeling toolkit being as is...=#
+    modelCode = COMPILED_MODELS_MTK[modelName]
+    local modelCodeStr = ""
+    try
+      @eval $(:(import OMBackend))
+      modelCodeStr::String = "$modelCode"
+      local parsedModel = Meta.parse.(modelCodeStr)
+      @eval $parsedModel
+      local modelRunnable = Meta.parse("OMBackend.$(modelName)Simulate($(tspan))")
+      #= Run the model with the supplied tspan. =#
+      @eval Main $modelRunnable
+    catch err
+      @info "Interactive evaluation failed: $err"
+      println(modelCodeStr)
+      @info "Dump of model-code"
+      #    Base.dump(parsedModel) TODO
+      throw(err)
+    end
+  else
+    throw("Unsupported mode")
   end
 end
 
@@ -266,14 +292,7 @@ end
 
 """
   Turns on logging
-TODO:
-  Make more fine grained
 """
-function turnOnLogging()
-  ENV["JULIA_DEBUG"] = "OMBackend"
+function turnOnLogging(mod = "OMBackend"::String)
+  ENV["JULIA_DEBUG"] = mod
 end
-
-function turnOnLoggingCodeGeneration()
-  ENV["JULIA_DEBUG"] = "CodeGeneration"
-end
-

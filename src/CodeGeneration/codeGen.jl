@@ -481,7 +481,6 @@ function createIfEquation(variables::Vector{V},
                           if_eq::SimulationCode.IF_EQUATION,
                           simCode::SimulationCode.SIM_CODE;
                           eqLhsName::String, eqRhsName::String) where {V}
-  @error "DBG: Creates a single if equation"
   local data = Expr[]
   local branches = if_eq.branches
   #= If empty opt out =#
@@ -510,7 +509,7 @@ function createIfEquation(variables::Vector{V},
     end
   end
   #= We have a number of elseif branches > 0 =#
-  local eq = flattenExprs(createEquations(variables, branches[1].residualEquations, branches[1]; eqLhsName = eqLhsName, eqRhsName = eqRhsName))
+  eq = flattenExprs(createEquations(variables, branches[1].residualEquations, branches[1]; eqLhsName = eqLhsName, eqRhsName = eqRhsName))
   local ifElseList::Expr = Expr(:if, :(Mode[1] == $(branches[1].identifier)), eq)
   #= Create the elseif branches for this if equation. 
   The else if branches are indexed with i + 1 since the first index is contained by the if equation =#
@@ -521,7 +520,7 @@ function createIfEquation(variables::Vector{V},
     #= Append the expression to the back =#
     iter = iter.args[end]
   end
-  eq = flattenExprs(createEquations(variables, branches[nBranches].residualEquations, branches[nBranches]; eqLhsName = eqLhsName, eqRhsName = eqRhsName))
+  eq = flattenExprs(createEquations(variables, branches[end].residualEquations, branches[nBranches]; eqLhsName = eqLhsName, eqRhsName = eqRhsName))
   push!(iter.args, eq)
   #=Done!=#
   res = ifElseList
@@ -589,7 +588,6 @@ end
 
 function createIfEquationCallbacks(ifEqs::Vector{SimulationCode.IF_EQUATION}, simCode::SimulationCode.SIM_CODE)
   res = []
-  @error "DBG: Size of ifEqs: $(length(ifEqs))"
   for eq in ifEqs
     push!(res, createIfEqCallback(eq, simCode))
   end
@@ -606,7 +604,6 @@ end
     along with the residuals for each branch. 
 """
 function createIfEqCallback(ifEq::SimulationCode.IF_EQUATION, simCode::SimulationCode.SIM_CODE)
-  @error "IF equations are being reworked"
   exprs = Expr[]
   branches = ifEq.branches
   for branch in branches
@@ -624,7 +621,6 @@ function createIfEqCallback(ifEq::SimulationCode.IF_EQUATION, simCode::Simulatio
     local cond = transformToZeroCrossingCondition(branch.condition)
     local res = quote
       function $(Symbol("condition$(callbacks)"))(x,t,integrator) 
-        @info "Callback"
         $(expToJuliaExp(cond, simCode))
       end
       #= Active this branc =#

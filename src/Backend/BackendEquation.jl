@@ -74,7 +74,10 @@ function makeResidualEquation(eqn::BDAE.Equation)
   end
 end
 
-""" Transform the sub-equations of an if-equation into residuals"""
+"""
+johti17: 
+  Transforms the sub-equations of an if-equation into residuals
+"""
 function makeResidualIfEquation(eqn::BDAE.IF_EQUATION)::BDAE.IF_EQUATION
   local trueEquations::List{List{BDAE.Equation}} = eqn.eqnstrue
   local falseEquations::List{BDAE.Equation} = eqn.eqnsfalse
@@ -91,7 +94,7 @@ function makeResidualIfEquation(eqn::BDAE.IF_EQUATION)::BDAE.IF_EQUATION
   for eq in falseEquations
     falseEquations2 = makeResidualEquation(eq) <| falseEquations2
   end
-  return BDAE.IF_EQUATION(eqn.conditions, trueEquations2, falseEquations2, eqn.source, eqn.attr)
+  return BDAE.IF_EQUATION(eqn.conditions, listReverse(trueEquations2), listReverse(falseEquations2), eqn.source, eqn.attr)
 end
 
 """

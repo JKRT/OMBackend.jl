@@ -69,7 +69,7 @@ function Base.string(dae::BDAE.BACKEND_DAE)::String
   return str
 end
 
-function Base.string(eq::BDAE.EqSystem)::String
+function Base.string(eq::BDAE.EQSYSTEM)::String
   str::String = ""
   str = str + heading3("Variables") + BDAEUtil.mapEqSystemVariablesNoUpdate(eq, stringTraverse, "") + "\n"
   str = str + heading3("Equations") + BDAEUtil.mapEqSystemEquationsNoUpdate(eq, stringTraverse, "") + "\n"
@@ -215,6 +215,7 @@ function Base.string(eq::BDAE.Equation)
             strTmp *= "else if " + condStr + " then\n"
           end
           for teq in listGet(trueEquations, counter)
+#            @error "In dump if" teq
             strTmp *= string(teq)
           end
           counter += 1

@@ -77,9 +77,9 @@ function lower(lst::DAE.DAE_LIST)::BDAE.BACKEND_DAE
 end
 
 """
-  Splits a given DAE.DAEList into a set of equations and a set of variables.
+  Splits a given DAE.DAEList and converts it into a set of BDAE equations and BDAE variables.
   In addition provides the initial equations for the system.
-TODO: Optimize by using List instead of array.
+  TODO: Optimize by using List instead of array.
 """
 function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple{List, List, List}
   local variableLst::List{BDAE.Var} = nil

@@ -336,9 +336,9 @@ end
 """
 johti17:
   Expand variables in arrays. 
-  if x is an array of 4 elements it is replaced by 
+ if x = [x₁, x₂, x₃, x₄] is an array of 4 elements it is replaced by 
   x₁, x₂, x₃, x₄.
-New name is <variable-name>_<index>
+ The new name for each component is <variable-name>_<index>
 """
 function expandArrayVariables(bDAE::BDAE.BACKEND_DAE)::Tuple{BDAE.BACKEND_DAE, Array}
   local systems = bDAE.eqs
