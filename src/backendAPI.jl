@@ -180,9 +180,14 @@ end
   Prints a model. 
   If the specified model exists. Print it to stdout.
 """
-function printModel(modelName::String; keepComments = true, keepBeginBlocks = true)
-    try
-      local model::Expr = COMPILED_MODELS[modelName]
+function printModel(modelName::String; MTK = false, keepComments = true, keepBeginBlocks = true)
+  try
+    local model::Expr
+    model =  if !MTK
+      COMPILED_MODELS[modelName]
+    else
+      COMPILED_MODELS_MTK[modelName]
+    end
       strippedModel = "$model"
       #= Remove all the redudant blocks from the model =#
       if keepComments == false
@@ -246,9 +251,9 @@ function simulateModel(modelName::String; MODE = DAE_MODE ,tspan=(0.0, 1.0))
     end
   elseif MODE == MTK_MODE
     #= This does a redudant string conversion for now due to modeling toolkit being as is...=#
-    modelCode = COMPILED_MODELS_MTK[modelName]
-    local modelCodeStr = ""
     try
+      modelCode = COMPILED_MODELS_MTK[modelName]
+      local modelCodeStr = ""
       @eval $(:(import OMBackend))
       modelCodeStr::String = "$modelCode"
       local parsedModel = Meta.parse.(modelCodeStr)

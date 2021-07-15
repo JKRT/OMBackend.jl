@@ -183,12 +183,27 @@ function traverseEquationExpressions(eq::BDAE.Equation,
          end
          (eq, extArg)
        end
+#       BDAE.WHEN_EQUATION(__) => begin
+#         (newCond, extArg) = Util.traverseExpTopDown(eq.condition, traversalOperation, extArg)
+#         lst = traverseWhenEquation(eq.whenEquation, traversalOperation, extArg)
+#       end
        _ => begin
          (eq, extArg)
        end
      end
    end
 end
+
+# function traverseWhenEquation(whenEq, traversalOperation, extArg)
+#   for stmt in whenStmtlst
+#     @match stmt => begin
+#       BDAE.REINIT(__) => begin
+        
+#         newExp = Util.traverseExpTopDown(stmt.value, traversalOperation, extArg)
+#       end
+#     end
+#   end
+# end
 
 """
 Directly maps the DAE type to the BDAE type.
