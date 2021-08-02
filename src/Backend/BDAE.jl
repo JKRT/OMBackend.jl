@@ -512,7 +512,7 @@ end
   end
 
   @Record REINIT begin
-    stateVar #= State variable to reinit =#::DAE.ComponentRef
+    stateVar #= State variable to reinit =#::DAE.CREF #=I changed this to cref to unify exp traversal -johti17 =#
     value #= Value after reinit =#::DAE.Exp
     source #= origin of equation =#::DAE.ElementSource
   end
@@ -552,11 +552,10 @@ end
   end
 end
 
-MatchingOptions = Tuple
-
-StructurallySingularSystemHandlerArg = Tuple  #= StateOrder,ConstraintEqns,Eqn->EqnsIndxes,EqnIndex->Eqns,NrOfEqnsbeforeIndexReduction =#
-
-ConstraintEquations = Array
+const MatchingOptions = Tuple
+#= StateOrder,ConstraintEqns,Eqn->EqnsIndxes,EqnIndex->Eqns,NrOfEqnsbeforeIndexReduction =#
+const StructurallySingularSystemHandlerArg = Tuple
+const ConstraintEquations = Array
 
 @Uniontype StateOrder begin
   @Record STATEORDER begin

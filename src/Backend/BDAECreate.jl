@@ -174,7 +174,7 @@ function createWhenOperators(elementLst::List{DAE.Element},lst::List{BDAE.WhenOp
         createWhenOperators(rest, acc)
       end
       DAE.REINIT(componentRef = cref, exp = e1, source = source) <| rest => begin
-        acc = BDAE.REINIT(cref, e1, source) <| lst
+        acc = BDAE.REINIT(#=BDAE uses an exp here instead of a cref=# DAE.CREF(cref, cref.identType), e1, source) <| lst
         createWhenOperators(rest, acc)
       end
       DAE.NORETCALL(exp = e1, source = source) <| rest => begin

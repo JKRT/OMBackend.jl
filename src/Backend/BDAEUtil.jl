@@ -147,6 +147,8 @@ function mapEqSystemVariablesNoUpdate(syst::BDAE.EQSYSTEM, traversalOperation::F
   return extArg
 end
 
+"""
+"""
 function traverseEquationExpressions(eq::BDAE.Equation,
                                      traversalOperation::Function,
                                      extArg::T)::Tuple{BDAE.Equation,T} where{T}
@@ -183,10 +185,15 @@ function traverseEquationExpressions(eq::BDAE.Equation,
          end
          (eq, extArg)
        end
-#       BDAE.WHEN_EQUATION(__) => begin
-#         (newCond, extArg) = Util.traverseExpTopDown(eq.condition, traversalOperation, extArg)
-#         lst = traverseWhenEquation(eq.whenEquation, traversalOperation, extArg)
-#       end
+       BDAE.WHEN_EQUATION(__) => begin
+         local whenEquation = eq.whenEquation
+         (newCond, extArg) = Util.traverseExpTopDown(whenEquation.condition, traversalOperation, extArg)
+         @assign eq.whenEquation.condition = newCond
+         lst = traverseWhenEquation!(whenEquation, traversalOperation, extArg)
+         @assign eq.whenEquation.whenStmtLst = lst
+         #= TODO: Handle elsewhen =#
+         (eq, extArg)
+       end
        _ => begin
          (eq, extArg)
        end
@@ -194,16 +201,31 @@ function traverseEquationExpressions(eq::BDAE.Equation,
    end
 end
 
-# function traverseWhenEquation(whenEq, traversalOperation, extArg)
-#   for stmt in whenStmtlst
-#     @match stmt => begin
-#       BDAE.REINIT(__) => begin
-        
-#         newExp = Util.traverseExpTopDown(stmt.value, traversalOperation, extArg)
-#       end
-#     end
-#   end
-# end
+"""
+  Traverses when equations. 
+  Note, currently only BDAE.REINIT is implemented.
+"""
+function traverseWhenEquation!(whenEq, traversalOperation, extArg)
+  local lst2 = []
+  for i in 1:listLength(whenEq.whenStmtLst)
+    stmt = listGet(whenEq.whenStmtLst, i)
+    @match stmt begin
+      BDAE.REINIT(__) => begin       
+        (var, extArg) = Util.traverseExpTopDown(stmt.stateVar, traversalOperation, extArg)
+        (value, extArg) = Util.traverseExpTopDown(stmt.value, traversalOperation, extArg)
+        @assign stmt.stateVar = var
+        @assign stmt.value = value
+        push!(lst2, stmt)
+      end
+      _ => begin
+        throw(stmt * " is not implemented yet!")
+      end
+    end
+  end
+  @debug "lst2: $(lst2)"
+  @debug "whenEq.whenStmtLst: $(whenEq.whenStmtLst)"
+  return arrayList(lst2)
+end
 
 """
 Directly maps the DAE type to the BDAE type.

@@ -205,7 +205,7 @@ function detectStateExpression(exp::DAE.Exp, stateCrefs::Dict{DAE.ComponentRef, 
     @match exp begin
       DAE.CALL(Absyn.IDENT("der"), DAE.CREF(state) <| _ ) => begin
         #= Add state with boolean value that does not matter, 
-           it is later onlBDAE.BACKEND_DAE(eqs = eqs)y checked if it exists at all =#
+        it is later only BDAE.BACKEND_DAE(eqs = eqs) checked if it exists at all  =#
         outCrefs[state] = true
         (outCrefs, true)
       end
@@ -229,13 +229,14 @@ function detectArrayExpression(exp::DAE.Exp, arrayCrefs::Dict{String, Bool})
           local subscriptStr::String = BDAEUtil.getSubscriptAsUnicodeString(matchedComponentRef.subscriptLst)
           local newName::String = matchedComponentRef.ident + subscriptStr
           local newCref = DAE.CREF_IDENT(newName, ty, nil)          
-          @assign exp = DAE.CREF(newCref, ty)
+          DAE.CREF(newCref, ty)
         else
           exp
         end
         (newExp, outCrefs, true)      
       end
-      DAE.CALL(Absyn.IDENT("der"), DAE.CREF(matchedComponentRef, ty) <| _ ) where typeof(matchedComponentRef.identType) == DAE.T_ARRAY => begin
+      DAE.CALL(Absyn.IDENT(__),
+               DAE.CREF(matchedComponentRef, ty) <| _ ) ||  where typeof(matchedComponentRef.identType) == DAE.T_ARRAY => begin
         newExp = if haskey(arrayCrefs, matchedComponentRef.ident)
           local subscriptStr = BDAEUtil.getSubscriptAsUnicodeString(matchedComponentRef.subscriptLst)          
           local newName = matchedComponentRef.ident + subscriptStr
