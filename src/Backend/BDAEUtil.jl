@@ -75,10 +75,10 @@ function mapEqSystems(dae::BDAE.BACKEND_DAE, traversalOperation::Function, args.
           eqs[i] = traversalOperation(eqs[i], args...)
         end
         @assign dae.eqs = eqs
-        (dae)
+        dae
       end
       _ => begin
-        (dae)
+        dae
       end
     end
   end
@@ -111,12 +111,11 @@ function mapEqSystemEquations(syst::BDAE.EQSYSTEM, traversalOperation::Function)
           eqs[i] = traversalOperation(eqs[i])
         end
         @assign syst.orderedEqs = eqs
-        (syst)
+        syst
       end
     end
   end
 end
-
 
 function mapEqSystemEquationsNoUpdate(syst::BDAE.EQSYSTEM, traversalOperation::Function, extArg)
   extArg = begin
@@ -126,7 +125,7 @@ function mapEqSystemEquationsNoUpdate(syst::BDAE.EQSYSTEM, traversalOperation::F
         for i in 1:arrayLength(eqs)
           extArg = traversalOperation(eqs[i], extArg)
         end
-        (extArg)
+        extArg
       end
     end
   end
@@ -148,6 +147,8 @@ function mapEqSystemVariablesNoUpdate(syst::BDAE.EQSYSTEM, traversalOperation::F
 end
 
 """
+  Traverse a given equation using a traversalOperation.
+  Mutates the given equation.
 """
 function traverseEquationExpressions(eq::BDAE.Equation,
                                      traversalOperation::Function,
@@ -202,29 +203,24 @@ function traverseEquationExpressions(eq::BDAE.Equation,
 end
 
 """
-  Traverses when equations. 
+  Traverses BDAE.WHEN_EQUATION equations.
   Note, currently only BDAE.REINIT is implemented.
 """
 function traverseWhenEquation!(whenEq, traversalOperation, extArg)
-  local lst2 = []
-  for i in 1:listLength(whenEq.whenStmtLst)
-    stmt = listGet(whenEq.whenStmtLst, i)
+  newWhenStmtLst = list()
+  for stmt in whenEq.whenStmtLst
     @match stmt begin
-      BDAE.REINIT(__) => begin       
-        (var, extArg) = Util.traverseExpTopDown(stmt.stateVar, traversalOperation, extArg)
+      BDAE.REINIT(__) => begin
+        (stateVar, extArg) = Util.traverseExpTopDown(stmt.stateVar, traversalOperation, extArg)
         (value, extArg) = Util.traverseExpTopDown(stmt.value, traversalOperation, extArg)
-        @assign stmt.stateVar = var
-        @assign stmt.value = value
-        push!(lst2, stmt)
+        newWhenStmtLst = BDAE.REINIT(stateVar, value, stmt.source) <| newWhenStmtLst
       end
       _ => begin
         throw(stmt * " is not implemented yet!")
       end
     end
   end
-  @debug "lst2: $(lst2)"
-  @debug "whenEq.whenStmtLst: $(whenEq.whenStmtLst)"
-  return arrayList(lst2)
+  return listReverse(newWhenStmtLst)
 end
 
 """
@@ -285,7 +281,7 @@ function detectStateExpression(exp::DAE.Exp, stateCrefs::Dict{DAE.ComponentRef, 
     local state::DAE.ComponentRef
     @match exp begin
       DAE.CALL(Absyn.IDENT("der"), DAE.CREF(state) <| _ ) => begin
-        #= Adds a state with boolean value that does not matter, 
+        #= Adds a state with boolean value that does not matter,
            it is later  BDAE.BACKEND_DAE(eqs = eqs) checked if it exists at all =#
         outCrefs[state] = true
         (outCrefs, true)
@@ -362,7 +358,7 @@ function isArray(cref::DAE.ComponentRef)::Bool
     DAE.OPTIMICA_ATTR_INST_CREF(__) || DAE.WILD(__) => false
     _ => begin
       typeof(cref.identType) == DAE.T_ARRAY
-    end    
+    end
   end
 end
 
@@ -386,7 +382,7 @@ function getSubscriptAsUnicodeString(subscriptLst)::String
     #= Here I assume integer index!=#
     local indexAsInt::Integer = s.exp.integer
     local result = 0
-    local tmp = 0            
+    local tmp = 0
     subscriptStr *= getIndexAsAUnicodeString(s)
   end
   return subscriptStr
@@ -399,7 +395,7 @@ function getIndexAsAUnicodeString(idx::DAE.INDEX)
 end
 
 """
-input: 100 
+input: 100
 output \"₁₀₀\"
 """
 function getIntAsUnicodeSubscript(i::Integer)

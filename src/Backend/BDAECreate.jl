@@ -174,7 +174,15 @@ function createWhenOperators(elementLst::List{DAE.Element},lst::List{BDAE.WhenOp
         createWhenOperators(rest, acc)
       end
       DAE.REINIT(componentRef = cref, exp = e1, source = source) <| rest => begin
-        acc = BDAE.REINIT(#=BDAE uses an exp here instead of a cref=# DAE.CREF(cref, cref.identType), e1, source) <| lst
+        #= BDAE uses an exp here instead of a cref =#
+        expTy = if typeof(cref.identType) == DAE.T_ARRAY
+          #= If we are refeering to an array it is the content of the array that is the type of the exp. =#
+          cref.identType.ty #= Note this would be wrong if we would consider other compound types. =#
+        else
+          cref.identType #=OK it is the type of the component reference directly=#
+        end
+        local crefExp = DAE.CREF(cref, expTy)
+        acc = BDAE.REINIT(crefExp, e1, source) <| lst
         createWhenOperators(rest, acc)
       end
       DAE.NORETCALL(exp = e1, source = source) <| rest => begin

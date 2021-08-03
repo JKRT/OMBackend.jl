@@ -218,31 +218,42 @@ function detectStateExpression(exp::DAE.Exp, stateCrefs::Dict{DAE.ComponentRef, 
 end
 
 
+"""
+  Detects if an expression is of type array.
+  If it is the case return that expression, 
+  else if it is not the case return the original exp.
+"""
 function detectArrayExpression(exp::DAE.Exp, arrayCrefs::Dict{String, Bool})
   local cont::Bool
   local outCrefs = arrayCrefs
   local newExp::DAE.Exp
+  @debug "detectArrayExpression for $(exp)"
   (newExp, outCrefs, cont) = begin
     @match exp begin
       DAE.CREF(matchedComponentRef, ty) where typeof(matchedComponentRef.identType) == DAE.T_ARRAY => begin
         newExp = if haskey(arrayCrefs, matchedComponentRef.ident)
           local subscriptStr::String = BDAEUtil.getSubscriptAsUnicodeString(matchedComponentRef.subscriptLst)
           local newName::String = matchedComponentRef.ident + subscriptStr
-          local newCref = DAE.CREF_IDENT(newName, ty, nil)          
+          local newCref = DAE.CREF_IDENT(newName, ty, nil)
+          @debug "Replaced the expression. New type is $(ty)"
           DAE.CREF(newCref, ty)
         else
+          @debug "Did not replace the expression"
           exp
         end
         (newExp, outCrefs, true)      
       end
+      #= Any call that contains an array should be replaced. =#
       DAE.CALL(Absyn.IDENT(__),
-               DAE.CREF(matchedComponentRef, ty) <| _ ) ||  where typeof(matchedComponentRef.identType) == DAE.T_ARRAY => begin
+               DAE.CREF(matchedComponentRef, ty) <| _ ) where typeof(matchedComponentRef.identType) == DAE.T_ARRAY => begin
         newExp = if haskey(arrayCrefs, matchedComponentRef.ident)
           local subscriptStr = BDAEUtil.getSubscriptAsUnicodeString(matchedComponentRef.subscriptLst)          
           local newName = matchedComponentRef.ident + subscriptStr
           local newCref = DAE.CREF_IDENT(newName, ty, nil)          
-          @assign exp.expLst = list(DAE.CREF(newCref, ty))
+          @debug "Replaced the call expression"
+          DAE.CALL(exp.path, list(DAE.CREF(newCref, ty)), exp.attr)
         else
+          @debug "Did not replace the call expression"
           exp
         end
         (newExp, outCrefs, true)  
