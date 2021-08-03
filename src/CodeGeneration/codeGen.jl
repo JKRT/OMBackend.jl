@@ -164,7 +164,9 @@ function createCallbackCode(modelName::N, simCode::S) where {N, S}
   quote
     $(Symbol("saved_values_$(modelName)")) = SavedValues(Float64, Tuple{Float64,Array})
     function $(Symbol("$(modelName)CallbackSet"))(aux)
+      #= These are the location of the parameters and auxilary real variables respectivly =#
       local p = aux[1]
+      local reals = aux[2] 
       $(LineNumberNode((@__LINE__), "WHEN EQUATIONS"))
       $(WHEN_EQUATIONS...)
       $(LineNumberNode((@__LINE__), "IF EQUATIONS"))
@@ -671,8 +673,8 @@ end
 
 
 """
- Creates Julia code for the set of whenStatements in the when equation.
- There are some constructs that may only occur in a when equations. 
+   Creates Julia code for the set of whenStatements in the when equation.
+   There are some constructs that may only occur in a when equations. 
 """
 function createWhenStatements(whenStatements::List, simCode::SimulationCode.SIM_CODE; prefix="x")::Array{Expr}
   local res::Array{Expr} = []
@@ -680,16 +682,29 @@ function createWhenStatements(whenStatements::List, simCode::SimulationCode.SIM_
   for wStmt in  whenStatements
     @match wStmt begin
       BDAE.ASSIGN(__) => begin
-        push!(res, quote
-              $(expToJuliaExp(wStmt.left, simCode, varPrefix=prefix)) = $(expToJuliaExp(wStmt.right, simCode, varPrefix=prefix))
-              end)
+        (index, var) = simCode.crefToSimVarHT[BDAE.string(wStmt.left)]
+        if typeof(var.varKind) === SimulationCode.STATE
+          push!(res, quote
+                $(expToJuliaExp(wStmt.left, simCode, varPrefix=prefix)) = $(expToJuliaExp(wStmt.right, simCode, varPrefix=prefix))
+                end)
+        elseif typeof(var.varKind) === SimulationCode.ALG_VARIABLE #=TODO also check type=#
+          push!(res, quote
+                $(expToJuliaExp(wStmt.left, simCode, varPrefix="reals")) = $(expToJuliaExp(wStmt.right, simCode, varPrefix=prefix))
+                end)
+        else
+          throw("Unimplemented branch")          
+        end
       end
       #= Handles reinit =#
       BDAE.REINIT(__) => begin
-        (index, type) = simCode.crefToSimVarHT[BDAE.string(wStmt.stateVar)]
-        push!(res, quote 
-              integrator.u[$(index)] = $(expToJuliaExp(wStmt.value, simCode, varPrefix=prefix))
-              end)
+        (index, var) = simCode.crefToSimVarHT[BDAE.string(wStmt.stateVar)]
+        if typeof(var.varKind) === SimulationCode.STATE
+          push!(res, quote 
+                integrator.u[$(index)] = $(expToJuliaExp(wStmt.value, simCode, varPrefix=prefix))
+                end)
+        else
+          throw("Unimplemented branch for: $(var.varKind)")
+        end
       end
       _ => ErrorException("$whenStatements in @__FUNCTION__ not supported")
     end
@@ -807,10 +822,27 @@ function expToJuliaExp(exp::DAE.Exp, context::C, varSuffix=""; varPrefix="x")::E
   return expr
 end
 
+"""
+  Generates code for DAE cast expressions
+"""
 function generateCastExpression(ty, exp, simCode, varPrefix)
   return @match ty, exp begin
-    (DAE.T_REAL(__), DAE.ICONST(__)) => float(eval(expToJuliaExp(exp, simCode, varPrefix=varPrefix)))
-    (DAE.T_REAL(__), DAE.CREF(cref)) where typeof(cref.identType) == DAE.T_INTEGER  => float(eval(expToJuliaExp(exp, simCode, varPrefix=varPrefix)))
+    (DAE.T_REAL(__), DAE.ICONST(__)) => begin
+      quote
+        float($(expToJuliaExp(exp, simCode, varPrefix=varPrefix)))
+      end
+    end
+    (DAE.T_REAL(__), DAE.CREF(cref)) where typeof(cref.identType) === DAE.T_INTEGER => begin
+      quote
+        float($(expToJuliaExp(exp, simCode, varPrefix=varPrefix)))
+      end
+    end
+    #= Conversion to a float other alternatives, =#
+    (DAE.T_REAL(__), _) => begin
+      quote
+        float($(expToJuliaExp(exp, simCode, varPrefix=varPrefix)))
+      end
+    end
     _ => throw("Cast $ty: for exp: $exp not yet supported in codegen!")
   end
 end
