@@ -117,7 +117,7 @@ function runTests()
       #testBackend(TEST_CASES_HYBRID; mode = OMBackend.DAE_MODE)
     end
     @testset "MTK backend test" begin
-      testBackend(TEST_CASES_BASIC; mode= OMBackend.MODELING_TOOLKIT_MODE)
+      testBackend(TEST_CASES_BASIC; mode= OMBackend.MTK_MODE)
     end
   end
 end
