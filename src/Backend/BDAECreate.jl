@@ -77,11 +77,11 @@ function lower(lst::DAE.DAE_LIST)::BDAE.BACKEND_DAE
 end
 
 """
-  Splits a given DAE.DAEList into a set of equations and a set of variables.
+  Splits a given DAE.DAEList and converts it into a set of BDAE equations and BDAE variables.
   In addition provides the initial equations for the system.
-TODO: Optimize by using List instead of array.
+  TODO: Optimize by using List instead of array.
 """
-function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple
+function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple{List, List, List}
   local variableLst::List{BDAE.Var} = nil
   local equationLst::List{BDAE.Equation} = nil
   local initialEquationLst::List{BDAE.Equation} = nil
@@ -137,7 +137,7 @@ function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple
   return (variableLst, equationLst, initialEquationLst)
 end
 
-function lowerWhenEquation(eq::DAE.Element)::BDAE.Equation
+function lowerWhenEquation(eq::DAE.Element)::BDAE.WHEN_EQUATION
   local whenOperatorLst::List{BDAE.WhenOperator} = nil
   local whenEquation::BDAE.WhenEquation
   local elseOption::Option{BDAE.WhenEquation} = NONE()
@@ -174,7 +174,15 @@ function createWhenOperators(elementLst::List{DAE.Element},lst::List{BDAE.WhenOp
         createWhenOperators(rest, acc)
       end
       DAE.REINIT(componentRef = cref, exp = e1, source = source) <| rest => begin
-        acc = BDAE.REINIT(cref, e1, source) <| lst
+        #= BDAE uses an exp here instead of a cref =#
+        expTy = if typeof(cref.identType) == DAE.T_ARRAY
+          #= If we are refeering to an array it is the content of the array that is the type of the exp. =#
+          cref.identType.ty #= Note this would be wrong if we would consider other compound types. =#
+        else
+          cref.identType #=OK it is the type of the component reference directly=#
+        end
+        local crefExp = DAE.CREF(cref, expTy)
+        acc = BDAE.REINIT(crefExp, e1, source) <| lst
         createWhenOperators(rest, acc)
       end
       DAE.NORETCALL(exp = e1, source = source) <| rest => begin
@@ -193,24 +201,24 @@ function createWhenOperators(elementLst::List{DAE.Element},lst::List{BDAE.WhenOp
 end
 
 """
-  Transform a DAE if-equation into a backend if equation
+  Transform a DAE if-equation into a BDAE if-equation
 """
-function lowerIfEquation(eq::DAE.Element)::Backend.Equation
+function lowerIfEquation(eq::IF_EQ)::BDAE.IF_EQUATION where {IF_EQ}
   local trueEquations::List{List{BDAE.Equation}} = nil
-  local tmpTrue::List{DAE.Equation}
-  local falseEquations::List{DAE.Equation}
+  local tmpTrue::List{BDAE.Equation}
+  local falseEquations::List
   for lst in eq.equations2
-    (_, tmpTrue) = splitEquationsAndVars(lst)
+    (_, tmpTrue, _) = splitEquationsAndVars(lst)
     trueEquations = tmpTrue <| trueEquations
   end
   trueEquations = listReverse(trueEquations)
-  (_, falseEquations) = splitEquationsAndVars(eq.equations3)
-
-  return BDAE.IF_EQUATION(eq.condition1,
-                                trueEquations,
-                                falseEquations,
-                                eq.source,
-                                BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
+  (_, falseEquations, _) = splitEquationsAndVars(eq.equations3)
+  res = BDAE.IF_EQUATION(eq.condition1,
+                         trueEquations,
+                         falseEquations,
+                         eq.source,
+                         BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
+  return res
 end
 
 @exportAll()

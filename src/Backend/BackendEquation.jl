@@ -54,7 +54,7 @@ end
     Transform a single equation to residual form by subtracting the rhs from
     the lhs
 """
-function makeResidualEquation(eqn::BDAE.Equation)::BDAE.Equation
+function makeResidualEquation(eqn::BDAE.Equation)
   eqn = begin
     local lhs::DAE.Exp
     local rhs::DAE.Exp
@@ -74,19 +74,27 @@ function makeResidualEquation(eqn::BDAE.Equation)::BDAE.Equation
   end
 end
 
-" Transform the sub-equations of an if-equation into residuals"
-function makeResidualIfEquation(eqn::BDAE.IF_EQUATION)::BDAE.Equation
-    local trueEquations::List{BDAE.Equation} = eqn.eqnstrue
-    local falseEquations::List{BDAE.Equation} = eqn.eqnsfalse
-    local trueEquations2::List{BDAE.Equation} = nil
-    local falseEquations2::List{BDAE.Equation} = nil
-    for eq in trueEquations
-      trueEquations2 = makeResidualEquation(eq) <| trueEquations2
+"""
+johti17: 
+  Transforms the sub-equations of an if-equation into residuals
+"""
+function makeResidualIfEquation(eqn::BDAE.IF_EQUATION)::BDAE.IF_EQUATION
+  local trueEquations::List{List{BDAE.Equation}} = eqn.eqnstrue
+  local falseEquations::List{BDAE.Equation} = eqn.eqnsfalse
+  local trueEquations2::List{List{BDAE.Equation}} = nil
+  local falseEquations2::List{BDAE.Equation} = nil
+  #= Each true equation is one branch, so a double loop is needed. =#
+  for eqBranch in trueEquations
+    tmp::List{BDAE.Equation} = nil
+    for eq in eqBranch
+      tmp = makeResidualEquation(eq) <| tmp
     end
-    for eq in falseEquations
-      falseEquations2 = makeResidualEquation(eq) <| falseEquations2
-    end
-    return BDAE.IF_EQUATION(eqn.conditions, trueEquations2, falseEquations2, eqn.source, eqn.attr)
+    trueEquations2 = tmp <| trueEquations2
+  end
+  for eq in falseEquations
+    falseEquations2 = makeResidualEquation(eq) <| falseEquations2
+  end
+  return BDAE.IF_EQUATION(eqn.conditions, listReverse(trueEquations2), listReverse(falseEquations2), eqn.source, eqn.attr)
 end
 
 """

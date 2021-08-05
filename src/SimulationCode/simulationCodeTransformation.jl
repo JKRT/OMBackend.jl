@@ -29,22 +29,6 @@
 *
 =#
 
-"""
-  Collect variables from array of BDAE.Var:
-  Save the name and it's kind of each variable.
-  Index will be set to NONE.
-"""
-function collectVariables(allBackendVars::Array{BDAE.Var})
-  local numberOfVars::Integer = length(allBackendVars)
-  local simVars::Array = Array{SimulationCode.SimVar}(undef, numberOfVars)
-  for (i, backendVar) in enumerate(allBackendVars)
-    local simVarName::String = bDAEIdentToSimCodeVarName(backendVar)
-    local simVarKind::SimulationCode.SimVarType = bDAEVarKindToSimCodeVarKind(backendVar)
-    simVars[i] = SimulationCode.SIMVAR(simVarName, NONE(), simVarKind, backendVar.values)
-  end
-  return simVars
-end
-
 function bDAEVarKindToSimCodeVarKind(backendVar::BDAE.Var)::SimulationCode.SimVarType
   varKind = @match backendVar.varKind begin
     BDAE.STATE(__) => SimulationCode.STATE()
@@ -65,7 +49,7 @@ end
 
 """
   Transform BDAE-Structure to SimulationCode.SIM_CODE
-  TODO: We only handle one equation system for now
+  We only handle one equation system for now
 """
 function transformToSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.SIM_CODE
   local equationSystems::Array = backendDAE.eqs
@@ -79,11 +63,20 @@ function transformToSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.SIM_CO
   #= Split equations into three parts. Residuals whenEquations and If-equations =#
   (resEqs::Vector{BDAE.RESIDUAL_EQUATION}, whenEqs::Vector{BDAE.WHEN_EQUATION}, ifEqs::Vector{BDAE.IF_EQUATION}) =
     allocateAndCollectSimulationEquations(equations)
-  #= Sorting/Matching (This is used for the start condtions) =#
+  #= Sorting/Matching for the set of residual equations (This is used for the start condtions) =#
   local eqVariableMapping = createEquationVariableBidirectionGraph(resEqs, allBackendVars, crefToSimVarHT)
   local numberOfVariablesInMapping = length(eqVariableMapping.keys)
   (isSingular, matchOrder, digraph, stronglyConnectedComponents) =
     matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping)
+  #= 
+    The set of if equations needs to be handled in a separate way. 
+    Each branch might contain a separate section of variables etc that needs to be sorted and processed. 
+    !!It is assumed that the frontend have checked each branch for balance at this point!!
+  =#
+  simCodeIfEquations::Vector{IF_EQUATION} = constructSimCodeIFEquations(ifEqs,
+                                                                        resEqs,
+                                                                        allBackendVars,
+                                                                        crefToSimVarHT)
   #= Construct SIM_CODE =#
   SimulationCode.SIM_CODE(backendDAE.name,
                           crefToSimVarHT,
@@ -91,11 +84,99 @@ function transformToSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.SIM_CO
                           #=TODO fix initial equations here =#
                           BDAE.RESIDUAL_EQUATION[],
                           whenEqs,
-                          ifEqs,
+                          simCodeIfEquations,
                           isSingular,
                           matchOrder,
                           digraph,
                           stronglyConnectedComponents)
+end
+
+"""
+  Given a set of BDAE IF_EQUATIONS. 
+  Constructs the set of simulation-code if-equations.
+  Each if equation can be seen as a small basic block graph.
+Currently we merge the other residual equation with the equations of one branch.
+TODO:
+Possible rework the identifier scheme.
+Unique identifier, static variable?
+"""
+function constructSimCodeIFEquations(BDAE_ifEquations::Vector{BDAE.IF_EQUATION},
+                                     resEqs::Vector{BDAE.RESIDUAL_EQUATION},
+                                     allBackendVars::Vector,
+                                     crefToSimVarHT)::Vector{IF_EQUATION}
+  simCodeIfEquations::Vector{IF_EQUATION} = IF_EQUATION[]
+  for BDAE_ifEquation in BDAE_ifEquations
+    #= Enumerate the branches of the if equation =#
+    #= Handle if and else if branches=#
+    local conditions = BDAE_ifEquation.conditions
+    local condition
+    local equations
+    local target
+    local isSingular
+    local matchOrder
+    local equationGraph
+    local sccs
+    local branches::Vector{BRANCH} = BRANCH[]
+    local lastConditionIdx = 0
+    for conditionIdx in 1:length(conditions)
+      condition = listGet(conditions, conditionIdx)
+      #= Merge the given residual equations with the equations of this particular branch. =#
+      equations::Vector{BDAE.RESIDUAL_EQUATION} = listArray(listAppend(listGet(BDAE_ifEquation.eqnstrue, conditionIdx),
+                                                                       arrayList(resEqs)))
+      target = conditionIdx + 1
+      identifier = conditionIdx
+      local eqVariableMapping = createEquationVariableBidirectionGraph(equations, allBackendVars, crefToSimVarHT)
+      #= Match and get the strongly connected components =#
+      local numberOfVariablesInMapping = length(eqVariableMapping.keys)
+      (isSingular, matchOrder, digraph, stronglyConnectedComponents) =
+        matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping)
+      #= Add the branch to the collection. =#
+      branch = BRANCH(condition,
+                      equations,
+                      identifier,
+                      target,
+                      isSingular,
+                      matchOrder,
+                      digraph,
+                      stronglyConnectedComponents,
+                      crefToSimVarHT)
+      push!(branches, branch)
+      lastConditionIdx = conditionIdx
+    end
+    #=
+     The procedure above added the code for the elseif branches. 
+      It is also possible that we have an else branch.
+      The else branch is located in the false equations.
+      The condition for the else branch to be inactive is active 
+      if all preceeding branches failed to evaluate to true.
+    =#
+    #= Check if we have an else if not we are done.=#
+    if listEmpty(BDAE_ifEquation.eqnsfalse)
+      break
+    end
+    condition = DAE.SCONST("ELSE_BRANCH")
+    equations = listArray(listAppend(BDAE_ifEquation.eqnsfalse, arrayList(resEqs)))
+    lastConditionIdx += 1
+    target = lastConditionIdx + 1
+    identifier = ELSE_BRANCH #= Indicate else =#
+    local eqVariableMapping = createEquationVariableBidirectionGraph(equations, allBackendVars, crefToSimVarHT)
+    local numberOfVariablesInMapping = length(eqVariableMapping.keys)
+    (isSingular, matchOrder, digraph, stronglyConnectedComponents) =
+      matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping)
+    branch = BRANCH(condition,
+                    equations,
+                    identifier,
+                    target,
+                    isSingular,
+                    matchOrder,
+                    digraph,
+                    stronglyConnectedComponents,
+                    crefToSimVarHT)
+    push!(branches, branch)    
+    ifEq = IF_EQUATION(branches)
+    push!(simCodeIfEquations, ifEq)
+  end
+  return simCodeIfEquations
 end
 
 """
@@ -136,4 +217,22 @@ end
 
 function allocateAndCollectSimulationVariables(bDAEVariables::Array{BDAE.Var})
   collectVariables(bDAEVariables)
+end
+
+
+
+"""
+  Collect variables from array of BDAE.Var:
+  Save the name and it's kind of each variable.
+  Index will be set to NONE.
+"""
+function collectVariables(allBackendVars::Array{BDAE.Var})
+  local numberOfVars::Integer = length(allBackendVars)
+  local simVars::Array = Array{SimulationCode.SimVar}(undef, numberOfVars)
+  for (i, backendVar) in enumerate(allBackendVars)
+    local simVarName::String = bDAEIdentToSimCodeVarName(backendVar)
+    local simVarKind::SimulationCode.SimVarType = bDAEVarKindToSimCodeVarKind(backendVar)
+    simVars[i] = SimulationCode.SIMVAR(simVarName, NONE(), simVarKind, backendVar.values)
+  end
+  return simVars
 end

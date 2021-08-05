@@ -1,7 +1,7 @@
 #= /*
 * This file is part of OpenModelica.
 *
-* Copyright (c) 1998-CurrentYear, Open Source Modelica Consortium (OSMC),
+* Copyright (c) 1998-CurrentYear, Open Source Modelica Consortiurm (OSMC),
 * c/o Linköpings universitet, Department of Computer and Information Science,
 * SE-58183 Linköping, Sweden.
 *
@@ -58,7 +58,6 @@ function createEqSystem(vars::BDAE.Variables, eqs::Array)::BDAE.EQSYSTEM
                  NONE(),
                  NONE(),
                  NONE(),
-                 BDAE.NO_MATCHING(),
                  nil,
                  BDAE.UNKNOWN_PARTITION(),
                  BackendEquation.emptyEqns()))
@@ -76,10 +75,10 @@ function mapEqSystems(dae::BDAE.BACKEND_DAE, traversalOperation::Function, args.
           eqs[i] = traversalOperation(eqs[i], args...)
         end
         @assign dae.eqs = eqs
-        (dae)
+        dae
       end
       _ => begin
-        (dae)
+        dae
       end
     end
   end
@@ -112,12 +111,11 @@ function mapEqSystemEquations(syst::BDAE.EQSYSTEM, traversalOperation::Function)
           eqs[i] = traversalOperation(eqs[i])
         end
         @assign syst.orderedEqs = eqs
-        (syst)
+        syst
       end
     end
   end
 end
-
 
 function mapEqSystemEquationsNoUpdate(syst::BDAE.EQSYSTEM, traversalOperation::Function, extArg)
   extArg = begin
@@ -127,7 +125,7 @@ function mapEqSystemEquationsNoUpdate(syst::BDAE.EQSYSTEM, traversalOperation::F
         for i in 1:arrayLength(eqs)
           extArg = traversalOperation(eqs[i], extArg)
         end
-        (extArg)
+        extArg
       end
     end
   end
@@ -148,6 +146,10 @@ function mapEqSystemVariablesNoUpdate(syst::BDAE.EQSYSTEM, traversalOperation::F
   return extArg
 end
 
+"""
+  Traverse a given equation using a traversalOperation.
+  Mutates the given equation.
+"""
 function traverseEquationExpressions(eq::BDAE.Equation,
                                      traversalOperation::Function,
                                      extArg::T)::Tuple{BDAE.Equation,T} where{T}
@@ -173,11 +175,57 @@ function traverseEquationExpressions(eq::BDAE.Equation,
          @assign eq.exp = rhs;
          (eq, extArg)
        end
+       BDAE.IF_EQUATION(__) => begin
+         for eqLst in eq.eqnstrue
+           for equation in eqLst
+             traverseEquationExpressions(equation, traversalOperation, extArg)
+           end
+         end
+         for equation in eq.eqnsfalse
+           traverseEquationExpressions(equation, traversalOperation, extArg)
+         end
+         (eq, extArg)
+       end
+       BDAE.WHEN_EQUATION(__) => begin
+         local whenEquation = eq.whenEquation
+         (newCond, extArg) = Util.traverseExpTopDown(whenEquation.condition, traversalOperation, extArg)
+         @assign eq.whenEquation.condition = newCond
+         lst = traverseWhenEquation!(whenEquation, traversalOperation, extArg)
+         @assign eq.whenEquation.whenStmtLst = lst
+         #= TODO: Handle elsewhen =#
+         (eq, extArg)
+       end
        _ => begin
          (eq, extArg)
        end
      end
    end
+end
+
+"""
+  Traverses BDAE.WHEN_EQUATION equations.
+  Note, currently only BDAE.REINIT is implemented.
+"""
+function traverseWhenEquation!(whenEq, traversalOperation, extArg)
+  newWhenStmtLst = list()
+  for stmt in whenEq.whenStmtLst
+    @match stmt begin
+      BDAE.REINIT(__) => begin
+        (stateVar, extArg) = Util.traverseExpTopDown(stmt.stateVar, traversalOperation, extArg)
+        (value, extArg) = Util.traverseExpTopDown(stmt.value, traversalOperation, extArg)
+        newWhenStmtLst = BDAE.REINIT(stateVar, value, stmt.source) <| newWhenStmtLst
+      end
+      BDAE.ASSIGN(__) => begin
+        (lhs, extArg) = Util.traverseExpTopDown(stmt.left, traversalOperation, extArg)
+        (rhs, extArg) = Util.traverseExpTopDown(stmt.right, traversalOperation, extArg)
+        newWhenStmtLst = BDAE.ASSIGN(lhs, rhs, stmt.source) <| newWhenStmtLst
+      end
+      _ => begin
+        throw(string(stmt) * " is not implemented yet!")
+      end
+    end
+  end
+  return listReverse(newWhenStmtLst)
 end
 
 """
@@ -238,7 +286,8 @@ function detectStateExpression(exp::DAE.Exp, stateCrefs::Dict{DAE.ComponentRef, 
     local state::DAE.ComponentRef
     @match exp begin
       DAE.CALL(Absyn.IDENT("der"), DAE.CREF(state) <| _ ) => begin
-        #= add state with boolean value that does not matter, it is later onlBDAE.BACKEND_DAE(eqs = eqs)y checked if it exists at all =#
+        #= Adds a state with boolean value that does not matter,
+           it is later  BDAE.BACKEND_DAE(eqs = eqs) checked if it exists at all =#
         outCrefs[state] = true
         (outCrefs, true)
       end
@@ -250,12 +299,25 @@ function detectStateExpression(exp::DAE.Exp, stateCrefs::Dict{DAE.ComponentRef, 
   return (exp, cont, outCrefs)
 end
 
-"
+#=TODO. Did I do something stupid down below here.. ?=#
+
+function countAllUniqueVariablesInSetOfEquations(eqs::Vector{RES_EQ}, vars::Vector{VAR}) where {RES_EQ, VAR}
+  vars = Set()
+  for eq in eqs
+    varsForEq = getAllVariables(eq, vars)
+    for v in varsForEq
+      push!(vars, v)
+    end
+  end
+  return length(vars)
+end
+
+"""
   Author:johti17
   input: Backend Equation, eq
   input: All existing variables
   output All variable in that specific equation
-"
+"""
 function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Array{BDAE.Var})::Array{DAE.ComponentRef}
   local componentReferences::List = Util.getAllCrefs(eq.exp)
   local stateCrefs = Dict{DAE.ComponentRef, Bool}()
@@ -277,13 +339,12 @@ function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Array{BDAE.Var})::Arr
   return variablesInEq
 end
 
-
-"
+"""
   Author:johti17
   input: Backend Equation, eq
   input: All existing variables
   output All variable in that specific equation except the state variables
-"
+"""
 function getAllVariablesExceptStates(eq::BDAE.RESIDUAL_EQUATION, vars::Array{BDAE.Var})::Array{DAE.ComponentRef}
   local componentReferences::List = Util.getAllCrefs(eq.exp)
   local componentReferencesArr::Array = [componentReferences...]
@@ -302,7 +363,7 @@ function isArray(cref::DAE.ComponentRef)::Bool
     DAE.OPTIMICA_ATTR_INST_CREF(__) || DAE.WILD(__) => false
     _ => begin
       typeof(cref.identType) == DAE.T_ARRAY
-    end    
+    end
   end
 end
 
@@ -326,7 +387,7 @@ function getSubscriptAsUnicodeString(subscriptLst)::String
     #= Here I assume integer index!=#
     local indexAsInt::Integer = s.exp.integer
     local result = 0
-    local tmp = 0            
+    local tmp = 0
     subscriptStr *= getIndexAsAUnicodeString(s)
   end
   return subscriptStr
@@ -339,7 +400,7 @@ function getIndexAsAUnicodeString(idx::DAE.INDEX)
 end
 
 """
-input: 100 
+input: 100
 output \"₁₀₀\"
 """
 function getIntAsUnicodeSubscript(i::Integer)

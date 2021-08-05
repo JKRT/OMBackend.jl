@@ -35,14 +35,14 @@
   two lists, one for unknown variables states and algebraic and one for known variables
   constants and parameters.
   The equations are also split into two lists, one with simple equations, a=b, a-b=0, etc., that
-  are removed from  the set of equations to speed up calculations."""
+  are removed from the set of equations to speed up calculations.
+"""
 module BDAE
 
 using MetaModelica
 using ExportAll
 
 #= Predeclaration of mutable recursive types =#
-@UniontypeDecl BDAEStructure
 @UniontypeDecl EqSystem
 @UniontypeDecl SubClock
 @UniontypeDecl BaseClockPartitionKind
@@ -66,7 +66,7 @@ using ExportAll
 @UniontypeDecl WhenEquation
 @UniontypeDecl WhenOperator
 @UniontypeDecl ExternalObjectClass
-@UniontypeDecl Matching
+
 @UniontypeDecl IndexReduction
 @UniontypeDecl EquationConstraints
 @UniontypeDecl StateOrder
@@ -128,7 +128,6 @@ struct EQSYSTEM
   m::Option{Array}
   mT::Option{Array}
   mapping #= current type of adjacency matrix, boolean is true if scalar =#::Option{Tuple}
-  matching::Matching
   stateSets #= the state sets of the system =#::StateSets
   partitionKind::BaseClockPartitionKind
   removedEqs #= these are equations that cannot solve for a variable.
@@ -199,34 +198,6 @@ end
   @Record EXTRA_INFO begin
     description #= the model description string =#::String
     fileNamePrefix #= the model name to be used in the dumps =#::String
-  end
-end
-
-#= BDAEType to indicate different types of BDAEs.
-For example for simulation, initialization, Jacobian, algebraic loops etc. =#
-@Uniontype BDAEType begin
-  @Record SIMULATION begin
-  end
-
-  @Record JACOBIAN begin
-  end
-
-  @Record ALGEQSYSTEM begin
-  end
-
-  @Record ARRAYSYSTEM begin
-  end
-
-  @Record PARAMETERSYSTEM begin
-  end
-
-  @Record INITIALSYSTEM begin
-  end
-
-  @Record INLINESYSTEM begin
-  end
-
-  @Record DAEMODESYSTEM begin
   end
 end
 
@@ -503,10 +474,10 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
     source #= origin of equation =#::DAE.ElementSource
     attr::EquationAttributes
   end
-
+  #= If equation. Each condition correspond to one branch has it's own conditions =#
   @Record IF_EQUATION begin
     conditions #= Condition =#::List{DAE.Exp}
-    eqnstrue #= Equations of true branch =#::List{Equation}
+    eqnstrue #= Equations of true branch =#::List{List{Equation}}
     eqnsfalse #= Equations of false branch =#::List{Equation}
     source #= origin of equation =#::DAE.ElementSource
     attr::EquationAttributes
@@ -541,7 +512,7 @@ end
   end
 
   @Record REINIT begin
-    stateVar #= State variable to reinit =#::DAE.ComponentRef
+    stateVar #= State variable to reinit =#::DAE.CREF #=I changed this to cref to unify exp traversal -johti17 =#
     value #= Value after reinit =#::DAE.Exp
     source #= origin of equation =#::DAE.ElementSource
   end
@@ -573,27 +544,6 @@ end
   end
 end
 
-@Uniontype Matching begin
-  @Record NO_MATCHING begin
-
-  end
-
-  @Record MATCHING begin
-
-    ass1 #= ass[varindx]=eqnindx =#::Array{Integer}
-    ass2 #= ass[eqnindx]=varindx =#::Array{Integer}
-    comps::StrongComponents
-  end
-end
-
-@Uniontype IndexReduction begin
-  @Record INDEX_REDUCTION begin
-  end
-
-  @Record NO_INDEX_REDUCTION begin
-  end
-end
-
 @Uniontype EquationConstraints begin
   @Record ALLOW_UNDERCONSTRAINED begin
   end
@@ -602,11 +552,10 @@ end
   end
 end
 
-MatchingOptions = Tuple
-
-StructurallySingularSystemHandlerArg = Tuple  #= StateOrder,ConstraintEqns,Eqn->EqnsIndxes,EqnIndex->Eqns,NrOfEqnsbeforeIndexReduction =#
-
-ConstraintEquations = Array
+const MatchingOptions = Tuple
+#= StateOrder,ConstraintEqns,Eqn->EqnsIndxes,EqnIndex->Eqns,NrOfEqnsbeforeIndexReduction =#
+const StructurallySingularSystemHandlerArg = Tuple
+const ConstraintEquations = Array
 
 @Uniontype StateOrder begin
   @Record STATEORDER begin

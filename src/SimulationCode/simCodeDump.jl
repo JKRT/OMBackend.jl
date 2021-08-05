@@ -54,8 +54,8 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String)
 end
 
 function Base.string(simCode::SimulationCode.SIM_CODE)::String
-  str = stringHeading3(simCode.crefToSimVarHT, "SimCodeVars")
-  str = str + heading3("SimCodeEquations")
+  str = BDAEUtil.stringHeading3(simCode.crefToSimVarHT, "SimCodeVars")
+  str = str + BDAEUtil.heading3("SimCodeEquations")
   for eq in simCode.residualEquations
     str = str + string(eq)
   end
