@@ -653,7 +653,7 @@ end
 """
 function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arrayIdx::Int64)::Expr
   local wEq = eq.whenEquation
-  local whenStmts = createWhenStatements(wEq.whenStmtLst, simCode, prefix="integrator.u")
+  local whenStmts = createWhenStatements(wEq.whenStmtLst, simCode)
   local cond = transformToZeroCrossingCondition(wEq.condition)
   ADD_CALLBACK()
   local callbacks = COUNT_CALLBACKS()
@@ -666,7 +666,7 @@ function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arr
     end
     $(Symbol("cb$(callbacks)")) = ContinuousCallback($(Symbol("condition$(callbacks)")), 
                                                             $(Symbol("affect$(callbacks)!")),
-                                                            rootfind=true, save_positions=(false, false),
+                                                            rootfind=true, save_positions=(true, true),
                                                             affect_neg! = $(Symbol("affect$(callbacks)!")),)
   end
 end
@@ -676,7 +676,7 @@ end
    Creates Julia code for the set of whenStatements in the when equation.
    There are some constructs that may only occur in a when equations. 
 """
-function createWhenStatements(whenStatements::List, simCode::SimulationCode.SIM_CODE; prefix="x")::Array{Expr}
+function createWhenStatements(whenStatements::List, simCode::SimulationCode.SIM_CODE)::Array{Expr}
   local res::Array{Expr} = []
   @debug "Calling createWhenStatements with: $whenStatements"
   for wStmt in  whenStatements
@@ -685,11 +685,11 @@ function createWhenStatements(whenStatements::List, simCode::SimulationCode.SIM_
         (index, var) = simCode.crefToSimVarHT[BDAE.string(wStmt.left)]
         if typeof(var.varKind) === SimulationCode.STATE
           push!(res, quote
-                $(expToJuliaExp(wStmt.left, simCode, varPrefix=prefix)) = $(expToJuliaExp(wStmt.right, simCode, varPrefix=prefix))
+                $(expToJuliaExp(wStmt.left, simCode, varPrefix="integrator.u")) = $(expToJuliaExp(wStmt.right, simCode))
                 end)
         elseif typeof(var.varKind) === SimulationCode.ALG_VARIABLE #=TODO also check type=#
           push!(res, quote
-                $(expToJuliaExp(wStmt.left, simCode, varPrefix="reals")) = $(expToJuliaExp(wStmt.right, simCode, varPrefix=prefix))
+                $(expToJuliaExp(wStmt.left, simCode, varPrefix="reals")) = $(expToJuliaExp(wStmt.right, simCode))
                 end)
         else
           throw("Unimplemented branch")          
@@ -700,7 +700,7 @@ function createWhenStatements(whenStatements::List, simCode::SimulationCode.SIM_
         (index, var) = simCode.crefToSimVarHT[BDAE.string(wStmt.stateVar)]
         if typeof(var.varKind) === SimulationCode.STATE
           push!(res, quote 
-                integrator.u[$(index)] = $(expToJuliaExp(wStmt.value, simCode, varPrefix=prefix))
+                integrator.u[$(index)] = $(expToJuliaExp(wStmt.value, simCode))
                 end)
         else
           throw("Unimplemented branch for: $(var.varKind)")

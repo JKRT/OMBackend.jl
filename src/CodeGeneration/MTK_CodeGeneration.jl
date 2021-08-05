@@ -83,9 +83,9 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
 end
 
 
-"
+"""
  Creates the residual equations in unsorted order
-"
+"""
 function createResidualEquationsMDK(stateVariables::Array, algebraicVariables::Array, equations::Array, simCode::SimulationCode.SIM_CODE)::Array{Expr}
   local eqs::Array{Expr} = []
   local ht = simCode.crefToSimVarHT
