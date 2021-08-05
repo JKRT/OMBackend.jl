@@ -262,9 +262,7 @@ function simulateModel(modelName::String; MODE = DAE_MODE ,tspan=(0.0, 1.0))
       #= Run the model with the supplied tspan. =#
       @eval Main $modelRunnable
     catch err
-      @info "Interactive evaluation failed: $err"
-      println(modelCodeStr)
-      @info "Dump of model-code"
+      @info "Interactive evaluation failed: $err with mode: $(MODE)"
       #    Base.dump(parsedModel) TODO
       throw(err)
     end
