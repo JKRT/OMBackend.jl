@@ -146,7 +146,7 @@ end
 """
 function generateMTKTargetCode(simCode::SimulationCode.SIM_CODE)
   #= Target code =#
-  (modelName::String, modelCode::Expr) = CodeGeneration.generateMDKCode(simCode)
+  (modelName::String, modelCode::Expr) = CodeGeneration.generateMTKCode(simCode)
   @debug "Functions:" modelCode
   @debug "Model:" modelName
   COMPILED_MODELS_MTK[modelName] = modelCode
@@ -227,10 +227,7 @@ end
 
 """
   Simulates model interactivly. 
-
-TODO:
-    (Currently does a redudant string conversion. Regression.)
-    Seems MTK does no longer support interactive simulation as well.
+  
 """
 function simulateModel(modelName::String; MODE = DAE_MODE ,tspan=(0.0, 1.0))
   local modelCode::Expr
@@ -251,9 +248,9 @@ function simulateModel(modelName::String; MODE = DAE_MODE ,tspan=(0.0, 1.0))
     end
   elseif MODE == MTK_MODE
     #= This does a redudant string conversion for now due to modeling toolkit being as is...=#
-    try
       modelCode = COMPILED_MODELS_MTK[modelName]
       local modelCodeStr = ""
+    try
       @eval $(:(import OMBackend))
       modelCodeStr::String = "$modelCode"
       local parsedModel = Meta.parse.(modelCodeStr)
@@ -263,7 +260,8 @@ function simulateModel(modelName::String; MODE = DAE_MODE ,tspan=(0.0, 1.0))
       @eval Main $modelRunnable
     catch err
       @info "Interactive evaluation failed: $err with mode: $(MODE)"
-      #    Base.dump(parsedModel) TODO
+      @info err
+      #= Base.dump(parsedModel) =#
       throw(err)
     end
   else

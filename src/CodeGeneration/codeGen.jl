@@ -153,14 +153,23 @@ function createHelperFunctionsForSystemOfDifferentialEquations(modelName::String
   return (modelName, program)
 end
 
-function createCallbackCode(modelName::N, simCode::S) where {N, S}
+"""
+  Creates runnable code for the different callbacks.
+  By default a saving function is generated.
+  This function can be disabled by setting the named argument 
+  generateSaveFunction to false.
+"""
+function createCallbackCode(modelName::N, simCode::S; generateSaveFunction = true) where {N, S}
   local WHEN_EQUATIONS = createEquations(simCode.whenEquations, simCode)
   #= 
     For if equations we create zero crossing functions (Based on the conditions). 
     The body of these equations are evaluated in the main body of the solver itself.
   =#
   local IF_EQUATIONS = createIfEquationCallbacks(simCode.ifEquations, simCode)
-  local SAVE_FUNCTION = createSaveFunction(modelName)
+  local SAVE_FUNCTION = if generateSaveFunction
+    createSaveFunction(modelName)
+  else    
+  end
   quote
     $(Symbol("saved_values_$(modelName)")) = SavedValues(Float64, Tuple{Float64,Array})
     function $(Symbol("$(modelName)CallbackSet"))(aux)
@@ -181,7 +190,7 @@ function createParameterCode(modelName, parameters, stateVariables, algVariables
   local PARAMETER_EQUATIONS = createParameterEquations(parameters, simCode)
   quote
     function $(Symbol("$(modelName)ParameterVars"))()
-      local aux = Array{Array{Float64}}(undef, $(2))
+      local aux = Array{Array{Float64}}(undef, 2)
       local p = Array{Float64}(undef, $(arrayLength(parameters)))
       local reals = Array{Float64}(undef, $(arrayLength(stateVariables) + arrayLength(algVariables)))
       aux[1] = p
@@ -345,7 +354,7 @@ function createSaveFunction(modelName)::Expr
   local cbSym = Symbol("cb$(callbacks)")
   return quote
     savingFunction(u, t, integrator) = let
-      (t, deepcopy(integrator.p[2]))
+      (t, deepcopy(integrator.p))
     end
     $cbSym = SavingCallback(savingFunction, $(Symbol("saved_values_$(modelName)")))
   end

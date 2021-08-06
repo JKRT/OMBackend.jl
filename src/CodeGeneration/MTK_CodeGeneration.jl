@@ -10,7 +10,7 @@ import OMBackend
 """
   Generates simulation code targetting modeling toolkit
 """
-function generateMDKCode(simCode::SimulationCode.SIM_CODE)
+function generateMTKCode(simCode::SimulationCode.SIM_CODE)
   ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
 end
 
@@ -19,7 +19,8 @@ Assumpstions:
 I assume that the systems depend on time...
 """
 function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
-  @debug "Runnning: generateMDKCode"
+  @debug "Runnning: generateMTKCode"
+  RESET_CALLBACKS()
   local crefToSimVarHT = simCode.crefToSimVarHT
   local equations::Array = []
   local exp::DAE.Exp
@@ -45,40 +46,63 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   equations = createResidualEquationsMDK(stateVariables, algebraicVariables, equations, simCode::SimulationCode.SIM_CODE)
   #= Symbolic names =#
   local stateVariablesSym = [:($(Symbol(v))(t)) for v in stateVariables]
-  local algebraicVariablesSym = [Symbol(v) for v in algebraicVariables]
+  local algebraicVariablesSym = [:($(Symbol(v))(t)) for v in algebraicVariables]
   local parVariablesSym = [Symbol(p) for p in parameters]
   local START_CONDTIONS_EQUATIONS = createStartConditionsEquationsMDK(stateVariables, algebraicVariables, simCode)
-  local PARAMETER_EQUATIONS = createParameterEquationsMDK(parameters, simCode)
-  #= Formulate the problem as a DAE Problem=#
+  local PARAMETER_EQUATIONS = createParameterEquationsMTK(parameters, simCode)
+  local PARAMETER_RAW_ARRAY = createParameterArray(parameters, simCode)
+  local CALL_BACK_EQUATIONS = createCallbackCode(modelName, simCode)
+  RESET_CALLBACKS()
+  #= 
+    Formulate the problem as a DAE Problem.
+    For this variant we keep t on its own line 
+    https://github.com/SciML/ModelingToolkit.jl/issues/998
+  =#
   program = quote
     using ModelingToolkit
     using DiffEqBase
     using DifferentialEquations
     function $(Symbol("$(modelName)Model"))(tspan = (0.0, 1.0))
-      pars = ModelingToolkit.@parameters begin
-        ($(parVariablesSym...), t)
+      @variables t
+      parameters = ModelingToolkit.@parameters begin
+        ($(parVariablesSym...))
       end
       vars = ModelingToolkit.@variables begin
         ($(stateVariablesSym...), $(algebraicVariablesSym...))
       end
       der = Differential(t)
       eqs = [$(equations...)]
-      nonLinearSystem = ModelingToolkit.ODESystem(eqs, t, vars, pars, name=:($(Symbol($modelName))))
-      pars = Dict($(PARAMETER_EQUATIONS...), t => tspan[1])
+      nonLinearSystem = ModelingToolkit.ODESystem(eqs, t, vars, parameters, name=:($(Symbol($modelName))))
+      pars = Dict($(PARAMETER_EQUATIONS...))
       initialValues = [$(START_CONDTIONS_EQUATIONS...)]
       firstOrderSystem = ModelingToolkit.ode_order_lowering(nonLinearSystem)
       reducedSystem = ModelingToolkit.dae_index_lowering(firstOrderSystem)
-      problem = ModelingToolkit.ODEProblem(reducedSystem, initialValues, tspan, pars)
+      #= 
+      These arrays are introduced to handle the bolted on event handling using callbacks. 
+      The callback handling for MTK is subject of change should hybrid system be implemented for MTK.
+      =#
+      local event_p = $(PARAMETER_RAW_ARRAY)
+      local event_vars = Vector{Float64}(undef, $(arrayLength(stateVariablesSym)))
+      local aux = Array{Array{Float64}}(undef, 2)
+      aux[1] = event_p
+      aux[2] = event_vars
+      problem = ModelingToolkit.ODEProblem(reducedSystem,
+                                           initialValues,
+                                           tspan,
+                                           pars,
+                                           callback=$(Symbol("$(modelName)CallbackSet"))(aux))
       return problem
     end
     $(Symbol("$(modelName)Model_problem")) = $(Symbol("$(modelName)Model"))()
-    function $(Symbol("$(modelName)Simulate"))(tspan = (0.0, 1.0))     
+    function $(Symbol("$(modelName)Simulate"))(tspan)     
       solve($(Symbol("$(modelName)Model_problem")), tspan=tspan)
     end
-    function $(Symbol("$(modelName)Simulate"))(tspan = (0.0, 1.0);solver=Tsit5())     
+    function $(Symbol("$(modelName)Simulate"))(tspan = (0.0, 1.0); solver=Rodas5())
       solve($(Symbol("$(modelName)Model_problem")), tspan=tspan, solver)
     end
+    $(CALL_BACK_EQUATIONS)
   end
+  
   return (modelName, program)
 end
 
@@ -94,7 +118,7 @@ function createResidualEquationsMDK(stateVariables::Array, algebraicVariables::A
     local variableIdx = ht[stateVariables[i]][1]
     local equationIdx = simCode.matchOrder[variableIdx]
     local equation = equations[equationIdx]
-    push!(eqs, residualEqtoJuliaMDK(equation, simCode, equationIdx))
+    push!(eqs, residualEqtoJuliaMTK(equation, simCode, equationIdx))
   end
   #= Generate algebraic equations=#
   for var in algebraicVariables
@@ -209,7 +233,7 @@ function expToJuliaExpMDK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuf
       end
       DAE.CAST(ty, exp)  => begin
         quote
-          $(generateCastExpressionMDK(ty, exp, simCode, varPrefix))
+          $(generateCastExpression(ty, exp, simCode, varPrefix))
         end
       end
       _ =>  throw(ErrorException("$exp not yet supported"))
@@ -220,9 +244,10 @@ end
 
 
 """
-  Transforms a given equation into MDK Julia code
+  Transforms a given equation into MTK Julia code.
+  This function uses Symbolics to rewrite the equation into a matching format for MTK.
 """
-function residualEqtoJuliaMDK(eq::BDAE.Equation, simCode::SimulationCode.SIM_CODE, equationIdx::Int64)::Expr
+function residualEqtoJuliaMTK(eq::BDAE.Equation, simCode::SimulationCode.SIM_CODE, equationIdx::Int64)::Expr
   local ht = SimulationCode.makeIndexVarNameDict(simCode.matchOrder, simCode.crefToSimVarHT)
   @debug "Called residual equation to Julia"
   local result::Expr = @match eq begin
@@ -230,7 +255,7 @@ function residualEqtoJuliaMDK(eq::BDAE.Equation, simCode::SimulationCode.SIM_COD
       #= TODO: Using Symbolics to rewrite equations... Same limitations apply here as well=#
       local variableIdx = MetaGraphs.get_prop(simCode.equationGraph, equationIdx, :vID)
       local varToSolve = simCode.crefToSimVarHT[ht[variableIdx]][2]
-      local derSymbolString = "der_$(varToSolve.name)"
+      local derSymbolString = "der_" * varToSolve.name
       local solveForState = SimulationCode.isState(varToSolve)
       local varToSolveExpr::Symbol =  solveForState ? Symbol(derSymbolString) : Symbol(varToSolve.name)
       local daeVariables = getVariablesInDAE_Exp(daeExp, simCode, Set([]))
@@ -244,7 +269,7 @@ function residualEqtoJuliaMDK(eq::BDAE.Equation, simCode::SimulationCode.SIM_COD
           leq = 0 ~ $(stripBeginBlocks(expToJuliaExpMDK(daeExp, simCode ;derSymbol=true)))
           Symbolics.solve_for([leq], [$varToSolveExpr]; check = false #= Does not check for linearity!.. =#)
         end
-        local res = @eval  $eqExpr
+        local res = @eval $eqExpr
         return res
       end
       local evEqExpr = eqRewrite()
@@ -332,7 +357,10 @@ function getStartConditionsMDK(vars::Array, simCode::SimulationCode.SimCode)::Ar
   return startExprs
 end
 
-function createParameterEquationsMDK(parameters::Array, simCode::SimulationCode.SimCode)::Array{Expr}
+"""
+  Creates parameters on a MTK parameters compatible format.   
+"""
+function createParameterEquationsMTK(parameters::Array, simCode::SimulationCode.SimCode)::Array{Expr}
   local parameterEquations::Array = []
   local hT = simCode.crefToSimVarHT
   for param in parameters
@@ -354,14 +382,25 @@ function createParameterEquationsMDK(parameters::Array, simCode::SimulationCode.
 end
 
 
-function generateCastExpressionMDK(ty, exp, simCode, varPrefix)
-  return @match ty, exp begin
-    (DAE.T_REAL(__), DAE.ICONST(__)) => float(eval(expToJuliaExpMDK(exp, simCode, varPrefix=varPrefix)))
-    (DAE.T_REAL(__), DAE.CREF(cref)) where typeof(cref.identType) == DAE.T_INTEGER  => begin
-      quote
-        float($(expToJuliaExpMDK(exp, simCode, varPrefix=varPrefix)))
-      end
+"""
+  Creates a parameter array.
+  A parameter array is an array containing the values of the parameters sorted by index.
+  The index here is the index assigned by the code generator earlier in the lowering
+  of the hybrid DAE.
+"""
+function createParameterArray(parameters::Vector{T}, simCode::SIM_T) where {T, SIM_T}
+  local paramArray = []
+  local hT = simCode.crefToSimVarHT
+  for param in parameters
+    (index, simVar) = hT[param]
+    local simVarType::SimulationCode.SimVarType = simVar.varKind
+    bindExp = @match simVarType begin
+      SimulationCode.PARAMETER(bindExp = SOME(exp)) => exp
+      _ => ErrorException("Unknown SimulationCode.SimVarType for parameter.")
     end
-    _ => throw("Cast $ty: for exp: $exp not yet supported in codegen!")
+    #= Solution for https://github.com/SciML/ModelingToolkit.jl/issues/991 =#
+    parValue = eval((expToJuliaExpMDK(bindExp, simCode)))
+    push!(paramArray, float(parValue))
   end
+  return paramArray
 end
