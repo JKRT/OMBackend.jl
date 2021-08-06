@@ -693,13 +693,13 @@ function createWhenStatements(whenStatements::List, simCode::SimulationCode.SIM_
       BDAE.ASSIGN(__) => begin
         (index, var) = simCode.crefToSimVarHT[BDAE.string(wStmt.left)]
         if typeof(var.varKind) === SimulationCode.STATE
-          push!(res, quote
-                $(expToJuliaExp(wStmt.left, simCode, varPrefix="integrator.u")) = $(expToJuliaExp(wStmt.right, simCode))
-                end)
+          exp1 = expToJuliaExp(wStmt.left, simCode, varPrefix="integrator.u")
+          exp2 = expToJuliaExp(wStmt.right, simCode)
+          push!(res, :($(exp1) = $(exp2)))
         elseif typeof(var.varKind) === SimulationCode.ALG_VARIABLE #=TODO also check type=#
-          push!(res, quote
-                $(expToJuliaExp(wStmt.left, simCode, varPrefix="reals")) = $(expToJuliaExp(wStmt.right, simCode))
-                end)
+          exp1 = expToJuliaExp(wStmt.left, simCode, varPrefix="reals")
+          exp2 = expToJuliaExp(wStmt.right, simCode)
+          push!(res, :($(exp1) = $(exp2)))
         else
           throw("Unimplemented branch")          
         end

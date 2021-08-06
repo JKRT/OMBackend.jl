@@ -291,7 +291,7 @@ end
   TODO: Keeping it simple for now, we assume we only have one argument in the call..
   Also the der as symbol is really ugly..
 "
-function DAECallExpressionToMDKCallExpression(pathStr::String, expLst::List,
+function DAECallExpressionToMTKCallExpression(pathStr::String, expLst::List,
                                               simCode::SimulationCode.SimCode, ht; varPrefix=varPrefix, derAsSymbol=false)::Expr
   @match pathStr begin
     "der" => begin
@@ -309,7 +309,7 @@ function DAECallExpressionToMDKCallExpression(pathStr::String, expLst::List,
     end
     _  =>  begin
       funcName = Symbol(pathStr)
-      argPart = tuple(map((x) -> expToJuliaExpMDK(x, simCode), expLst)...)
+      argPart = tuple(map((x) -> expToJuliaExpMTK(x, simCode), expLst)...)
       quote 
         $(funcName)($(argPart...))
       end
@@ -373,7 +373,7 @@ end
 
 """
   Utility function, traverses a DAE exp. Variables are saved in the supplied variables array
-  (Note that variables here refeers to parameters as well)
+  (Note that variables here refers to parameters as well)
 """
 function getVariablesInDAE_Exp(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, variables::Set)
   local  hashTable = simCode.crefToSimVarHT
@@ -388,10 +388,11 @@ function getVariablesInDAE_Exp(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, v
   local expl::List{DAE.Exp}
   local lstexpl::List{List{DAE.Exp}}
   @match exp begin
-    DAE.BCONST(bool) => quote $bool end
-    DAE.ICONST(int) => quote $int end
-    DAE.RCONST(real) => quote $real end
-    DAE.SCONST(tmpStr) => quote $tmpStr end
+    #= These are not varaiables, so we simply return what we have collected thus far. =#
+    DAE.BCONST(bool) => variables
+    DAE.ICONST(int) => variables
+    DAE.RCONST(real) => variables
+    DAE.SCONST(tmpStr) => variables
     DAE.CREF(cr, _)  => begin
       varName = BDAE.string(cr)
       indexAndVar = hashTable[varName]

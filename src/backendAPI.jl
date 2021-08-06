@@ -252,8 +252,9 @@ function simulateModel(modelName::String; MODE = DAE_MODE ,tspan=(0.0, 1.0))
       local modelCodeStr = ""
     try
       @eval $(:(import OMBackend))
-      modelCodeStr::String = "$modelCode"
-      local parsedModel = Meta.parse.(modelCodeStr)
+      strippedModel = CodeGeneration.stripBeginBlocks(modelCode)
+      modelCodeStr::String = "$strippedModel"
+      local parsedModel = Meta.parse(modelCodeStr)
       @eval $parsedModel
       local modelRunnable = Meta.parse("OMBackend.$(modelName)Simulate($(tspan))")
       #= Run the model with the supplied tspan. =#
@@ -261,7 +262,8 @@ function simulateModel(modelName::String; MODE = DAE_MODE ,tspan=(0.0, 1.0))
     catch err
       @info "Interactive evaluation failed: $err with mode: $(MODE)"
       @info err
-      #= Base.dump(parsedModel) =#
+      println(modelCodeStr)
+      @info modelCodeStr
       throw(err)
     end
   else
