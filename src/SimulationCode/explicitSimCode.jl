@@ -22,10 +22,12 @@ function transformToExplicitSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCod
   local eqVariableMapping = createEquationVariableBidirectionGraph(equations, allBackendVars, crefToSimVarHT)
   (isSingular::Bool, matchOrder::Array) = GraphAlgorithms.matching(eqVariableMapping, length(eqVariableMapping.keys))
   digraph = GraphAlgorithms.merge(matchOrder, eqVariableMapping)
-  if OMBackend.PLOT_EQUATION_GRAPH
+  #  if OMBackend.PLOT_EQUATION_GRAPH
+
+  @info "Hello"
     local labels = makeLabels(digraph, matchOrder, crefToSimVarHT)
     GraphAlgorithms.plotEquationGraph("./digraphOutput$(backendDAE.name).pdf", digraph, labels)
-  end
+#  end
   stronglyConnectedComponents::Array = GraphAlgorithms.topological_sort(digraph) 
   #= Reorder the residuals =#
   reOrderedResiduals = []
@@ -40,7 +42,7 @@ function transformToExplicitSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCod
     @error "Unresolved algebraic loop"
     throw()
   end
-#= Return explicit simulation code. =#
+  #= Return explicit simulation code. =#
   return SimulationCode.EXPLICIT_SIM_CODE(backendDAE.name,
                                           crefToSimVarHT,
                                           indexToEquation,

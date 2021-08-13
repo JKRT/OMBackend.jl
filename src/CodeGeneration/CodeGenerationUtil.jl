@@ -393,9 +393,13 @@ function getVariablesInDAE_Exp(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, v
     DAE.ICONST(int) => variables
     DAE.RCONST(real) => variables
     DAE.SCONST(tmpStr) => variables
+    DAE.CREF(cr, _) where BDAE.string(cr)=="time" => begin
+      push!(variables, Symbol("t"))
+    end
     DAE.CREF(cr, _)  => begin
       varName = BDAE.string(cr)
       indexAndVar = hashTable[varName]
+      push!(variables, Symbol(varName))
       varKind::SimulationCode.SimVarType = indexAndVar[2].varKind
       @match varKind begin
         SimulationCode.STATE(__) || SimulationCode.PARAMETER(__) || SimulationCode.ALG_VARIABLE(__) => begin
@@ -428,4 +432,22 @@ function getVariablesInDAE_Exp(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, v
     end
     _ =>  throw(ErrorException("$exp not yet supported"))
   end
+end
+
+function isCycleInSCCs(sccs)
+  for sc in sccs
+    if length(sc) > 1
+      return true
+    end
+  end
+  return false
+end
+
+function getCycleInSCCs(sccs)
+  for sc in sccs
+    if length(sc) > 1
+      return sc
+    end
+  end
+  return []
 end

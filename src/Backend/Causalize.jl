@@ -246,18 +246,18 @@ function detectArrayExpression(exp::DAE.Exp, arrayCrefs::Dict{String, Bool})
       #= Any call that contains an array should be replaced. =#
       DAE.CALL(Absyn.IDENT(__),
                DAE.CREF(matchedComponentRef, ty) <| _ ) where typeof(matchedComponentRef.identType) == DAE.T_ARRAY => begin
-        newExp = if haskey(arrayCrefs, matchedComponentRef.ident)
-          local subscriptStr = BDAEUtil.getSubscriptAsUnicodeString(matchedComponentRef.subscriptLst)          
-          local newName = matchedComponentRef.ident + subscriptStr
-          local newCref = DAE.CREF_IDENT(newName, ty, nil)          
-          @debug "Replaced the call expression"
-          DAE.CALL(exp.path, list(DAE.CREF(newCref, ty)), exp.attr)
-        else
-          @debug "Did not replace the call expression"
-          exp
-        end
-        (newExp, outCrefs, true)  
-      end
+                 newExp = if haskey(arrayCrefs, matchedComponentRef.ident)
+                   local subscriptStr = BDAEUtil.getSubscriptAsUnicodeString(matchedComponentRef.subscriptLst)          
+                   local newName = matchedComponentRef.ident + subscriptStr
+                   local newCref = DAE.CREF_IDENT(newName, ty, nil)          
+                   @debug "Replaced the call expression"
+                   DAE.CALL(exp.path, list(DAE.CREF(newCref, ty)), exp.attr)
+                 else
+                   @debug "Did not replace the call expression"
+                   exp
+                 end
+                 (newExp, outCrefs, true)  
+               end
       _ => begin
         (exp, outCrefs, true)
       end

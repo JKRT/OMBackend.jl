@@ -11,6 +11,7 @@ module GraphAlgorithms
 
 import LightGraphs
 import MetaGraphs
+import Cairo
 using GraphPlot
 using Compose
 using DataStructures
@@ -138,20 +139,35 @@ function topological_sort(g::LightGraphs.AbstractGraph)::Array
   LightGraphs.topological_sort_by_dfs(g)
 end
 
+function stronglyConnectedComponents(g::LightGraphs.AbstractGraph)::Array
+  LightGraphs.strongly_connected_components_kosaraju(g)
+end
+
 
 "
     Plots the given equation graph
 "
 function plotEquationGraph(filePath::String, g::LightGraphs.AbstractGraph, labels, dims = (64cm, 64cm)::Tuple)
   plot = gplot(g, nodelabel=labels,
-                nodefillc="blue",
-                nodelabelc="white",
-                edgestrokec="black",
-                layout=spring_layout)
+               nodefillc="blue",
+               nodelabelc="white",
+               edgestrokec="black",
+               layout=spring_layout)
   draw(Compose.PDF(filePath, dims...), plot)
 end
 
+function plotEquationGraph(filePath::String, g::LightGraphs.AbstractGraph, dims = (64cm, 64cm)::Tuple)
+  plot = gplot(g,
+               nodefillc="blue",
+               nodelabelc="white",
+               edgestrokec="black",
+               layout=spring_layout)
+  draw(Compose.PDF(filePath, dims...), plot)
+end
 
+function connected_components(g::LightGraphs.AbstractGraph)
+  LightGraphs.connected_components(g)
+end
 "
   Author: John Tinnerholm
   Tarjans algorithm

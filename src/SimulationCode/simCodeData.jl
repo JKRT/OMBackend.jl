@@ -115,7 +115,7 @@ struct SIM_CODE{T0<:String,
                 T6<:Bool,
                 T7<:Vector{Int},
                 T8<:LightGraphs.AbstractGraph,
-                T9<:Vector{Int}} <: SimCode
+                T9<:Vector} <: SimCode
   name::T0
   "Mapping of names to the corresponding variable"
   crefToSimVarHT::T1

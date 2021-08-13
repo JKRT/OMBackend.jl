@@ -67,7 +67,7 @@ function transformToSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.SIM_CO
   local eqVariableMapping = createEquationVariableBidirectionGraph(resEqs, allBackendVars, crefToSimVarHT)
   local numberOfVariablesInMapping = length(eqVariableMapping.keys)
   (isSingular, matchOrder, digraph, stronglyConnectedComponents) =
-    matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping)
+    matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping, crefToSimVarHT)
   #= 
     The set of if equations needs to be handled in a separate way. 
     Each branch might contain a separate section of variables etc that needs to be sorted and processed. 
@@ -129,7 +129,7 @@ function constructSimCodeIFEquations(BDAE_ifEquations::Vector{BDAE.IF_EQUATION},
       #= Match and get the strongly connected components =#
       local numberOfVariablesInMapping = length(eqVariableMapping.keys)
       (isSingular, matchOrder, digraph, stronglyConnectedComponents) =
-        matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping)
+        matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping, crefToSimVarHT)
       #= Add the branch to the collection. =#
       branch = BRANCH(condition,
                       equations,
@@ -162,7 +162,7 @@ function constructSimCodeIFEquations(BDAE_ifEquations::Vector{BDAE.IF_EQUATION},
     local eqVariableMapping = createEquationVariableBidirectionGraph(equations, allBackendVars, crefToSimVarHT)
     local numberOfVariablesInMapping = length(eqVariableMapping.keys)
     (isSingular, matchOrder, digraph, stronglyConnectedComponents) =
-      matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping)
+      matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping, crefToSimVarHT)
     branch = BRANCH(condition,
                     equations,
                     identifier,
@@ -182,19 +182,19 @@ end
 """
   This function does matching, it also checks for strongly connected components
 """
-function matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping)::Tuple
+function matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping, crefToSimVarHT)::Tuple
   (isSingular::Bool, matchOrder::Array) = GraphAlgorithms.matching(eqVariableMapping, numberOfVariablesInMapping)
   local digraph::MetaGraphs.MetaDiGraph = GraphAlgorithms.merge(matchOrder, eqVariableMapping)
-  if OMBackend.PLOT_EQUATION_GRAPH
-    local labels = makeLabels(digraph, matchOrder, crefToSimVarHT)
-    GraphAlgorithms.plotEquationGraph("./digraphOutput$(backendDAE.name).pdf", digraph, labels)
-  end
-  stronglyConnectedComponents::Array = GraphAlgorithms.topological_sort(digraph)
+  #  if OMBackend.PLOT_EQUATION_GRAPH
+  #  local labels = makeLabels(digraph, matchOrder, crefToSimVarHT)
+  GraphAlgorithms.plotEquationGraph("./digraphOutput.pdf", digraph)
+  #  end
+  stronglyConnectedComponents::Array = GraphAlgorithms.stronglyConnectedComponents(digraph)
   return (isSingular, matchOrder, digraph, stronglyConnectedComponents)
 end
 
 """
-John:
+  John:
   Splits a given set of equations into different types
 """
 function allocateAndCollectSimulationEquations(equations::T)::Tuple where {T}

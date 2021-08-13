@@ -27,29 +27,66 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   local modelName::String = simCode.name
   local parameters::Array = []
   local stateDerivatives::Array = []
-  local stateMarkings::Array = []
   local stateVariables::Array = []
   local algebraicVariables::Array = []
   local discreteVariables::Vector = []
+  #= Loop arrays=#
+  local stateDerivativesLoop::Array = []
+  local stateVariablesLoop::Array = []
+  local algebraicVariablesLoop::Array = []
+  local discreteVariablesLoop::Vector = []
+  
+  isCycles = isCycleInSCCs(simCode.stronglyConnectedComponents)
+  #= 
+  We have a cycle! 
+  =#
+  loop = if isCycles
+    getCycleInSCCs(simCode.stronglyConnectedComponents)
+  else
+    []
+  end
+  
   for varName in keys(crefToSimVarHT)
     (idx, var) = crefToSimVarHT[varName]
-    local varType = var.varKind
-    @match varType  begin
-      SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
-      SimulationCode.STATE(__) => push!(stateVariables, varName)
-      SimulationCode.PARAMETER(__) => push!(parameters, varName)
-      SimulationCode.ALG_VARIABLE(__) => begin
-        if idx in simCode.matchOrder
-          push!(algebraicVariables, varName)
-        else #= We have a variable that is not contained in continious system =#
-          #= Treat discrete variables separate =#
-          push!(discreteVariables, varName)
+    if simCode.matchOrder[idx] in loop
+      local varType = var.varKind
+      @match varType  begin
+        SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
+        SimulationCode.STATE(__) => push!(stateVariablesLoop, varName)
+        SimulationCode.PARAMETER(__) => push!(parameters, varName)
+        SimulationCode.ALG_VARIABLE(__) => begin
+          if idx in simCode.matchOrder
+            push!(algebraicVariablesLoop, varName)
+          else #= We have a variable that is not contained in continious system =#
+            #= Treat discrete variables separate =#
+            push!(discreteVariablesLoop, varName)
+          end
         end
+        #=TODO: Do I need to modify this?=#
+        SimulationCode.STATE_DERIVATIVE(__) => push!(stateDerivativesLoop, varName)
       end
-      #=TODO: Do I need to modify this?=#
-      SimulationCode.STATE_DERIVATIVE(__) => push!(stateDerivatives, varName)
+    else #= Someplace else=#
+      @info "Not in loop $idx. $var"
+      local varType = var.varKind
+      @match varType  begin
+        SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
+        SimulationCode.STATE(__) => push!(stateVariables, varName)
+        SimulationCode.PARAMETER(__) => push!(parameters, varName)
+        SimulationCode.ALG_VARIABLE(__) => begin
+          if idx in simCode.matchOrder
+            push!(algebraicVariables, varName)
+          else #= We have a variable that is not contained in continious system =#
+            #= Treat discrete variables separate =#
+            push!(discreteVariables, varName)
+          end
+        end
+        #=TODO: Do I need to modify this?=#
+        SimulationCode.STATE_DERIVATIVE(__) => push!(stateDerivatives, varName)
+      end
     end
   end
+
+  #= Create equations for variables not in a loop + parameters and stuff=#
   local equations = createResidualEquationsMTK(stateVariables,
                                          algebraicVariables,
                                          simCode.residualEquations,
@@ -66,6 +103,15 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   local algebraicVariablesSym = [:($(Symbol(v))(t)) for v in algebraicVariables]
   local discreteVariablesSym = [:($(Symbol(v))) for v in discreteVariables]
   RESET_CALLBACKS()
+  #= Create loop variables and the loop itself=#
+  local equations_loop = createResidualEquationsMTK(stateVariablesLoop,
+                                         algebraicVariablesLoop,
+                                         simCode.residualEquations,
+                                         simCode::SimulationCode.SIM_CODE)
+  local algebraicVariablesSymLoop = [:($(Symbol(v))) for v in algebraicVariablesLoop]
+  local stateVariablesSymLoop = [:($(Symbol(v))) for v in stateVariablesLoop]
+  local START_CONDTIONS_EQUATIONS_LOOP = createStartConditionsEquationsMTK(stateVariablesLoop, algebraicVariablesLoop, simCode)
+
   #= 
     Formulate the problem as a DAE Problem.
     For this variant we keep t on its own line 
@@ -75,10 +121,26 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
     using ModelingToolkit
     using DiffEqBase
     using DifferentialEquations
+    #= t for time=#
+    function algebraicLoop_$(Symbol("$(modelName)Model"))(t)
+      parameters = ModelingToolkit.@parameters begin
+        ($(parVariablesSym...), $(discreteVariablesSym...))
+      end
+      vars = ModelingToolkit.@variables begin
+        ($(stateVariablesSymLoop...), $(algebraicVariablesSymLoop...))
+      end
+      eqs = [$(equations_loop...)]
+      nonLinearSystem = ModelingToolkit.NonlinearSystem(eqs, vars, parameters, name=:($(Symbol($modelName))))
+      initialValues = [$(START_CONDTIONS_EQUATIONS_LOOP...)]
+      pars = Dict($(PARAMETER_EQUATIONS...), $(DISCRETE_START_VALUES...))
+      nonLinearProblem = ModelingToolkit.NonlinearProblem(nonLinearSystem, initialValues, pars)
+      return nonLinearProblem
+    end
+    
     function $(Symbol("$(modelName)Model"))(tspan = (0.0, 1.0))
       @variables t
       parameters = ModelingToolkit.@parameters begin
-        ($(parVariablesSym...), $(discreteVariablesSym...))
+        ($(parVariablesSym...), $(discreteVariablesSym...), $(algebraicVariablesSymLoop...))
       end
       #= 
       Only variables that are present in the equation system later should be a part of the variables in the MTK system.
@@ -90,7 +152,7 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
       der = Differential(t)
       eqs = [$(equations...)]
       nonLinearSystem = ModelingToolkit.ODESystem(eqs, t, vars, parameters, name=:($(Symbol($modelName))))
-      pars = Dict($(PARAMETER_EQUATIONS...), $(DISCRETE_START_VALUES...))
+      pars = Dict($(PARAMETER_EQUATIONS...), $(DISCRETE_START_VALUES...), $(START_CONDTIONS_EQUATIONS_LOOP...))
       #= Initial values for the continious system. =#
       initialValues = [$(START_CONDTIONS_EQUATIONS...)]
       firstOrderSystem = ModelingToolkit.ode_order_lowering(nonLinearSystem)
