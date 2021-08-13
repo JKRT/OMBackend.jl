@@ -82,7 +82,7 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
       end
       #= 
       Only variables that are present in the equation system later should be a part of the variables in the MTK system.
-      This means that certain algebraic variables should not be listed among the variables.
+      This means that certain algebraic variables should not be listed among the variables (These are the discrete variables).
       =#
       vars = ModelingToolkit.@variables begin
         ($(stateVariablesSym...), $(algebraicVariablesSym...))
@@ -99,7 +99,7 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
       These arrays are introduced to handle the bolted on event handling using callbacks. 
       The callback handling for MTK is subject of change should hybrid system be implemented for MTK.
       =#
-      local event_p = $(PARAMETER_RAW_ARRAY)
+      local event_p = [$(PARAMETER_RAW_ARRAY...)]
       local discreteVars = collect(values(Dict([$(DISCRETE_START_VALUES...)])))
       local event_vars = vcat(collect(values(Dict([$(START_CONDTIONS_EQUATIONS...)]))),
                               #=Discrete variables=# discreteVars)
@@ -452,9 +452,16 @@ function createParameterArray(parameters::Vector{T}, simCode::SIM_T) where {T, S
       SimulationCode.PARAMETER(bindExp = SOME(exp)) => exp
       _ => ErrorException("Unknown SimulationCode.SimVarType for parameter.")
     end
-    #= Solution for https://github.com/SciML/ModelingToolkit.jl/issues/991 =#
-    parValue = eval((expToJuliaExpMTK(bindExp, simCode)))
-    push!(paramArray, float(parValue))
+    #= Evaluate the parameters. If it is a variable, and can't be evaluated look it up in the parameter dictonary. =#
+    local parValue    
+    try
+      #= The boundvalue is known =#
+      val = eval(expToJuliaExpMTK(bindExp, simCode))
+      parValue = :($(val))
+    catch #=If the bound value is a more complex expression. =#
+      parValue = :(0) #pars[Num($(param))]) (More complex parameters are yet to be used in the benchmark..)
+    end
+    push!(paramArray, parValue)
   end
   return paramArray
 end

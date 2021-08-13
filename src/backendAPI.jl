@@ -153,8 +153,17 @@ function generateMTKTargetCode(simCode::SimulationCode.SIM_CODE)
   return (modelName, modelCode)
 end
 
-function writeModelToFile(modelName::String, filePath::String; keepComments = true, formatFile = true)
-  model = COMPILED_MODELS[modelName]
+"""
+  Writes a model to file by default the file is formatted and comments are kept.
+"""
+function writeModelToFile(modelName::String, filePath::String; keepComments = true, formatFile = true, mode = DAE_MODE)
+  if mode === DAE_MODE
+    model = COMPILED_MODELS[modelName]
+  elseif mode === MTK_MODE
+    model = COMPILED_MODELS_MTK[modelName]
+  else
+    throw("Unsupported mode in writeModelToFile. Mode was: $mode")
+  end
   fileName = "$modelName.jl"
   try
     if keepComments == false
