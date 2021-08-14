@@ -248,7 +248,6 @@ function createAuxEquationCode(functionName::Symbol, variables::Array{V},
   end  
 end
 
-
 function createDAERunnable(modelName::String, simCode::SimulationCode.SIM_CODE)
   quote
     function $(Symbol("$(modelName)Simulate"))(tspan = (0.0, 1.0))
