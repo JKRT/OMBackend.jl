@@ -666,16 +666,16 @@ function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arr
   ADD_CALLBACK()
   local callbacks = COUNT_CALLBACKS()
   quote
-    function $(Symbol("condition$(callbacks)"))(x,t,integrator) 
+    $(Symbol("condition$(callbacks)")) = (x,t,integrator) -> begin
       $(expToJuliaExp(cond, simCode))
     end
-    function $(Symbol("affect$(callbacks)!"))(integrator)
+  $(Symbol("affect$(callbacks)!")) = (integrator) -> begin
       $(whenStmts...)
     end
     $(Symbol("cb$(callbacks)")) = ContinuousCallback($(Symbol("condition$(callbacks)")), 
                                                             $(Symbol("affect$(callbacks)!")),
                                                             rootfind=true, save_positions=(true, true),
-                                                            affect_neg! = $(Symbol("affect$(callbacks)!")),)
+                                                     affect_neg! = $(Symbol("affect$(callbacks)!")),)
   end
 end
 

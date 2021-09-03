@@ -80,7 +80,7 @@ function stringTraverse(in, str)::String
 end
 
 function Base.string(var::BDAE.Var)::String
-  str = var.varName.ident + " | " + string(var.varKind)
+  str = string(var.varType) * " " * string(var.varName) * " | " * string(var.varKind)
   str *= begin
     local exp::DAE.Exp
     @match var.bindExp begin
@@ -215,7 +215,6 @@ function Base.string(eq::BDAE.Equation)
             strTmp *= "else if " + condStr + " then\n"
           end
           for teq in listGet(trueEquations, counter)
-#            @error "In dump if" teq
             strTmp *= string(teq)
           end
           counter += 1

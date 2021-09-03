@@ -3,6 +3,7 @@
 
 TODO: Remember the state derivative scheme. What the heck did I mean  with that? 
 TODO: Make duplicate code better...
+TODO: Make this into it's own module
 =#
 using ModelingToolkit
 import OMBackend
@@ -235,7 +236,7 @@ function ODE_MODE_MTK_LOOP(simCode::SimulationCode.SIM_CODE)
   local stateVariablesSymLoop = [:($(Symbol(v))) for v in stateVariablesLoop]
   local START_CONDTIONS_EQUATIONS_LOOP = createStartConditionsEquationsMTK(stateVariablesLoop, algebraicVariablesLoop, simCode)
   #= 
-  Formulate the problem as a DAE Problem.
+  Formulate the problem as a DAE Problem.ac
   For this variant we keep t on its own line 
   https://github.com/SciML/ModelingToolkit.jl/issues/998
   =#
@@ -322,9 +323,7 @@ function createResidualEquationsMTK(stateVariables::Array, algebraicVariables::A
       local equationIdx = simCode.matchOrder[variableIdx]
       local equation = equations[equationIdx]
       local eqDAEExp = equation.exp
-      local eqExp = quote 
-        0 ~ $(stripBeginBlocks(expToJuliaExpMTK(eqDAEExp, simCode ;derSymbol=true)))
-      end
+      local eqExp = :(0 ~ $(stripBeginBlocks(expToJuliaExpMTK(eqDAEExp, simCode ;derSymbol=true))))
       push!(eqs, eqExp)
     end
   end
@@ -396,9 +395,7 @@ function expToJuliaExpMTK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuf
         a = expToJuliaExpMTK(e1, simCode, varPrefix=varPrefix, derSymbol = derSymbol)
         b = expToJuliaExpMTK(e2, simCode, varPrefix=varPrefix, derSymbol = derSymbol)
         o = DAE_OP_toJuliaOperator(op)
-        quote
-          $o($(a), $(b))
-        end
+        :($o($(a), $(b)))
       end
       DAE.LUNARY(operator = op, exp = e1)  => begin
         quote
