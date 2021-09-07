@@ -87,7 +87,7 @@ struct BRANCH{T1 <: DAE.Exp,
   matchOrder::T5
   equationGraph::T6
   sccs::T7
-  crefToSimVarHT::T8
+  stringToSimVarHT::T8
 end
 
 """
