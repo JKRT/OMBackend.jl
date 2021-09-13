@@ -38,7 +38,12 @@ function bDAEVarKindToSimCodeVarKind(backendVar::BDAE.Var)::SimulationCode.SimVa
   end
 end
 
-function bDAEIdentToSimCodeVarName(backendVar::BDAE.Var)
+"""
+`BDAE_identifierToVarString(backendVar::BDAE.Var)`
+Converts a `BDAE.Var` to a simcode string, for use in variable names. 
+The . separator is replaced with 3 `_`
+"""
+function BDAE_identifierToVarString(backendVar::BDAE.Var)
   local varName::DAE.ComponentRef = backendVar.varName
   @match varName begin
     DAE.CREF_IDENT(__) => string(varName)
@@ -52,6 +57,7 @@ end
   We only handle one equation system for now
 """
 function transformToSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.SIM_CODE
+  #= Fetch the different components of the model.=#
   local equationSystems::Array = backendDAE.eqs
   local allOrderedVars::Array{BDAE.Var} = [v for es in equationSystems for v in es.orderedVars.varArr]
   local allSharedVars::Array{BDAE.Var} = getSharedVariablesLocalsAndGlobals(backendDAE.shared)
@@ -186,8 +192,8 @@ function matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVar
   (isSingular::Bool, matchOrder::Array) = GraphAlgorithms.matching(eqVariableMapping, numberOfVariablesInMapping)
   local digraph::MetaGraphs.MetaDiGraph = GraphAlgorithms.merge(matchOrder, eqVariableMapping)
   #  if OMBackend.PLOT_EQUATION_GRAPH
-  #  local labels = makeLabels(digraph, matchOrder, stringToSimVarHT)
-  GraphAlgorithms.plotEquationGraph("./digraphOutput.pdf", digraph)
+  local labels = makeLabels(digraph, matchOrder, stringToSimVarHT)
+  GraphAlgorithms.plotEquationGraph("./digraphOutput.pdf", digraph, labels)
   #  end
   stronglyConnectedComponents::Array = GraphAlgorithms.stronglyConnectedComponents(digraph)
   return (isSingular, matchOrder, digraph, stronglyConnectedComponents)
@@ -198,9 +204,9 @@ end
   Splits a given set of equations into different types
 """
 function allocateAndCollectSimulationEquations(equations::T)::Tuple where {T}
-  isRe(eq) = typeof(eq) == BDAE.RESIDUAL_EQUATION
-  isWhen(eq) = typeof(eq) == BDAE.WHEN_EQUATION
-  isIf(eq) = typeof(eq) == BDAE.IF_EQUATION
+  local isRe(eq) = typeof(eq) == BDAE.RESIDUAL_EQUATION
+  local isWhen(eq) = typeof(eq) == BDAE.WHEN_EQUATION
+  local isIf(eq) = typeof(eq) == BDAE.IF_EQUATION
   (filter(isRe, equations), filter(isWhen, equations), filter(isIf, equations))
 end
 
@@ -230,7 +236,7 @@ function collectVariables(allBackendVars::Array{BDAE.Var})
   local numberOfVars::Integer = length(allBackendVars)
   local simVars::Array = Array{SimulationCode.SimVar}(undef, numberOfVars)
   for (i, backendVar) in enumerate(allBackendVars)
-    local simVarName::String = bDAEIdentToSimCodeVarName(backendVar)
+    local simVarName::String = BDAE_identifierToVarString(backendVar)
     local simVarKind::SimulationCode.SimVarType = bDAEVarKindToSimCodeVarKind(backendVar)
     simVars[i] = SimulationCode.SIMVAR(simVarName, NONE(), simVarKind, backendVar.values)
   end

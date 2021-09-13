@@ -23,7 +23,7 @@ end
 function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   @debug "Runnning: generateMTKCode"
   RESET_CALLBACKS()
-  local crefToSimVarHT = simCode.crefToSimVarHT
+  local stringToSimVarHT = simCode.stringToSimVarHT
   local equations::Array = []
   local exp::DAE.Exp
   local modelName::String = simCode.name
@@ -32,8 +32,8 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   local stateVariables::Array = []
   local algebraicVariables::Array = []
   local discreteVariables::Vector = []  
-  for varName in keys(crefToSimVarHT)
-    (idx, var) = crefToSimVarHT[varName]
+  for varName in keys(stringToSimVarHT)
+    (idx, var) = stringToSimVarHT[varName]
     local varType = var.varKind
     local varType = var.varKind
     @match varType  begin
@@ -41,14 +41,16 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
       SimulationCode.STATE(__) => push!(stateVariables, varName)
       SimulationCode.PARAMETER(__) => push!(parameters, varName)
       SimulationCode.ALG_VARIABLE(__) => begin
-        if idx in simCode.matchOrder
+        #=TODO: seems to be unable to find variables in some cases... 
+        should there be an and here? Keep track of variables that are also involved in if structures=#
+        if idx in simCode.matchOrder 
           push!(algebraicVariables, varName)
         else #= We have a variable that is not contained in continious system =#
           #= Treat discrete variables separate =#
           push!(discreteVariables, varName)
         end
       end
-      #=TODO: Do I need to modify this?=#
+      #=TODO:johti17 Do I need to modify this?=#
       SimulationCode.STATE_DERIVATIVE(__) => push!(stateDerivatives, varName)
     end
   end
@@ -59,6 +61,7 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
                                                simCode.residualEquations,
                                                simCode::SimulationCode.SIM_CODE)
   local parVariablesSym = [Symbol(p) for p in parameters]
+  @info "Our parameters where:" parameters
   local START_CONDTIONS_EQUATIONS = createStartConditionsEquationsMTK(stateVariables, algebraicVariables, simCode)
   local DISCRETE_START_VALUES = getStartConditionsMTK(discreteVariables, simCode)
   local PARAMETER_EQUATIONS = createParameterEquationsMTK(parameters, simCode)
@@ -67,8 +70,11 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   local CALL_BACK_EQUATIONS = createCallbackCode(modelName, simCode; generateSaveFunction = true)
   #= Symbolic names =#
   local stateVariablesSym = [:($(Symbol(v))(t)) for v in stateVariables]
+  @debug "Our states where:" stateVariables
   local algebraicVariablesSym = [:($(Symbol(v))(t)) for v in algebraicVariables]
+  @debug "Our algebraic variables:" algebraicVariables
   local discreteVariablesSym = [:($(Symbol(v))) for v in discreteVariables]
+  @debug "Our discrete variables" discreteVariablesSym
   RESET_CALLBACKS()
 
   #= 
@@ -76,12 +82,14 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   For this variant we keep t on its own line 
   https://github.com/SciML/ModelingToolkit.jl/issues/998
   =#
+  #=If our model name is separated by . replace it with __ =#
+  local MODEL_NAME = replace(modelName, "." => "__") 
   program = quote
     using ModelingToolkit
     using DiffEqBase
     using DifferentialEquations
     
-    function $(Symbol("$(modelName)Model"))(tspan = (0.0, 1.0))
+    function $(Symbol(MODEL_NAME * "Model"))(tspan = (0.0, 1.0))
       @variables t
       parameters = ModelingToolkit.@parameters begin
         ($(parVariablesSym...), $(discreteVariablesSym...))
@@ -117,16 +125,16 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
                                            initialValues,
                                            tspan,
                                            pars,
-                                           callback=$(Symbol("$(modelName)CallbackSet"))(aux))
+                                           callback=$(Symbol("$(MODEL_NAME)CallbackSet"))(aux))
       return problem
     end
     $(CALL_BACK_EQUATIONS)
-    $(Symbol("$(modelName)Model_problem")) = $(Symbol("$(modelName)Model"))()
-    function $(Symbol("$(modelName)Simulate"))(tspan)     
-      solve($(Symbol("$(modelName)Model_problem")), tspan=tspan)
+    $(Symbol("$(MODEL_NAME)Model_problem")) = $(Symbol("$(MODEL_NAME)Model"))()
+    function $(Symbol("$(MODEL_NAME)Simulate"))(tspan)     
+      solve($(Symbol("$(MODEL_NAME)Model_problem")), tspan=tspan)
     end
-    function $(Symbol("$(modelName)Simulate"))(tspan = (0.0, 1.0); solver=Rodas5())
-      solve($(Symbol("$(modelName)Model_problem")), tspan=tspan, solver)
+    function $(Symbol("$(MODEL_NAME)Simulate"))(tspan = (0.0, 1.0); solver=Rodas5())
+      solve($(Symbol("$(MODEL_NAME)Model_problem")), tspan=tspan, solver)
     end
   end
   
@@ -141,7 +149,7 @@ end
 function ODE_MODE_MTK_LOOP(simCode::SimulationCode.SIM_CODE)
   @debug "Runnning: generateMTKCode"
   RESET_CALLBACKS()
-  local crefToSimVarHT = simCode.crefToSimVarHT
+  local stringToSimVarHT = simCode.stringToSimVarHT
   local equations::Array = []
   local exp::DAE.Exp
   local modelName::String = simCode.name
@@ -161,8 +169,8 @@ function ODE_MODE_MTK_LOOP(simCode::SimulationCode.SIM_CODE)
   =#
   loop = getCycleInSCCs(simCode.stronglyConnectedComponents)
   
-  for varName in keys(crefToSimVarHT)
-    (idx, var) = crefToSimVarHT[varName]
+  for varName in keys(stringToSimVarHT)
+    (idx, var) = stringToSimVarHT[varName]
     if simCode.matchOrder[idx] in loop
       local varType = var.varKind
       @match varType  begin
@@ -302,7 +310,7 @@ end
 """
 function createResidualEquationsMTK(stateVariables::Array, algebraicVariables::Array, equations::Array, simCode::SimulationCode.SIM_CODE)::Array{Expr}
   local eqs::Array{Expr} = []
-  local ht = simCode.crefToSimVarHT
+  local ht = simCode.stringToSimVarHT
   local lhsVariables = Set([])
   for i in 1:length(stateVariables)
     local variableIdx = ht[stateVariables[i]][1]
@@ -332,7 +340,7 @@ end
 
 "Converts a DAE expression into a Julia expression"
 function expToJuliaExpMTK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuffix=""; varPrefix="x", derSymbol::Bool=false)::Expr
-  hashTable = simCode.crefToSimVarHT
+  hashTable = simCode.stringToSimVarHT
   local expr::Expr = begin
     local int::Int64
     local real::Float64
@@ -350,7 +358,7 @@ function expToJuliaExpMTK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuf
       DAE.RCONST(real) => quote $real end
       DAE.SCONST(tmpStr) => quote $tmpStr end
       DAE.CREF(cr, _)  => begin
-        varName = BDAE.string(cr)
+        varName = SimulationCode.string(cr)
         builtin = if varName == "time"
           true
         else
@@ -399,12 +407,12 @@ function expToJuliaExpMTK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuf
       end
       DAE.LUNARY(operator = op, exp = e1)  => begin
         quote
-          $("(" + BDAE.string(op) + " " + expToJuliaExpMTK(e1, simCode, varPrefix=varPrefix, derSymbol = derSymbol) + ")")
+          $("(" + SimulationCode.string(op) + " " + expToJuliaExpMTK(e1, simCode, varPrefix=varPrefix, derSymbol = derSymbol) + ")")
         end
       end
       DAE.LBINARY(exp1 = e1, operator = op, exp2 = e2) => begin
         quote 
-          $(expToJuliaExpMTK(e1, simCode, varPrefix=varPrefix, derSymbol = derSymbol) + " " + BDAE.string(op) + " "
+          $(expToJuliaExpMTK(e1, simCode, varPrefix=varPrefix, derSymbol = derSymbol) + " " + SimulationCode.string(op) + " "
             + expToJuliaExpMTK(e2, simCode, varPrefix=varPrefix, derSymbol = derSymbol))
         end
       end
@@ -413,7 +421,7 @@ function expToJuliaExpMTK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuf
           $(expToJuliaExpMTK(e1, simCode,
                              varPrefix=varPrefix,derSymbol = derSymbol)
             + " "
-            + BDAE.string(op)
+            + SimulationCode.string(op)
             + " "
             + expToJuliaExpMTK(e2, simCode,varPrefix=varPrefix, derSymbol=derSymbol))
         end
@@ -468,13 +476,13 @@ end
   This function uses Symbolics to rewrite the equation into a matching format for MTK.
 """
 function residualEqtoJuliaMTK(eq::BDAE.Equation, simCode::SimulationCode.SIM_CODE, equationIdx::Int64)::Expr
-  local ht = SimulationCode.makeIndexVarNameDict(simCode.matchOrder, simCode.crefToSimVarHT)
+  local ht = SimulationCode.makeIndexVarNameDict(simCode.matchOrder, simCode.stringToSimVarHT)
   @debug "Called residual equation to Julia"
   local result::Expr = @match eq begin
     BDAE.RESIDUAL_EQUATION(exp = daeExp) => begin
       #= TODO: Using Symbolics to rewrite equations... Same limitations apply here as well=#
       local variableIdx = MetaGraphs.get_prop(simCode.equationGraph, equationIdx, :vID)
-      local varToSolve = simCode.crefToSimVarHT[ht[variableIdx]][2]
+      local varToSolve = simCode.stringToSimVarHT[ht[variableIdx]][2]
       local derSymbolString = "der_" * varToSolve.name
       local solveForState = SimulationCode.isState(varToSolve)
       local varToSolveExpr::Symbol =  solveForState ? Symbol(derSymbolString) : Symbol(varToSolve.name)
@@ -530,7 +538,7 @@ end
 function getStartConditionsMTK(vars::Array, simCode::SimulationCode.SimCode)::Array{Expr}
   local startExprs::Array{Expr} = []
   local residuals = simCode.residualEquations
-  local ht::Dict = simCode.crefToSimVarHT
+  local ht::Dict = simCode.stringToSimVarHT
   if length(vars) == 0
     return []
   end
@@ -581,7 +589,7 @@ end
 """
 function createParameterEquationsMTK(parameters::Array, simCode::SimulationCode.SimCode)::Array{Expr}
   local parameterEquations::Array = []
-  local hT = simCode.crefToSimVarHT
+  local hT = simCode.stringToSimVarHT
   for param in parameters
     (index, simVar) = hT[param]
     local simVarType::SimulationCode.SimVarType = simVar.varKind
@@ -609,7 +617,7 @@ end
 """
 function createParameterArray(parameters::Vector{T}, simCode::SIM_T) where {T, SIM_T}
   local paramArray = []
-  local hT = simCode.crefToSimVarHT
+  local hT = simCode.stringToSimVarHT
   for param in parameters
     (index, simVar) = hT[param]
     local simVarType::SimulationCode.SimVarType = simVar.varKind

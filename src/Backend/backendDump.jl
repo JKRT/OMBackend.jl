@@ -1,4 +1,4 @@
-#= /*
+#=
 * This file is part of OpenModelica.
 *
 * Copyright (c) 1998-CurrentYear, Open Source Modelica Consortium (OSMC),
@@ -28,6 +28,8 @@
 * See the full OSMC Public License conditions for more details.
 *
 =#
+
+#= This file contains functions to translate backend structures into a Julia string representation. =#
 
 
 using MetaModelica
@@ -270,20 +272,24 @@ function Base.string(whenOp::BDAE.WhenOperator)::String
   end
 end
 
-"need to add subscripts and other cases!"
-function Base.string(cr::DAE.ComponentRef)::String
+""" 
+  `Base.string(cr::DAE.ComponentRef; seprator=".")` 
+   Converts a `DAE.ComponentRef` to a Julia string.
+TODO: Discuss separators. A different one should maybe be used..
+"""
+function Base.string(cr::DAE.ComponentRef; separator="_")
   str = begin
     local ident::String
     local cref::DAE.ComponentRef
     @match cr begin
       DAE.CREF_QUAL(ident = ident, componentRef = cref) => begin
-        (ident + "." + string(cref))
+        ident * separator * string(cref)
       end
       DAE.CREF_IDENT(ident = ident) => begin
-        (ident)
+        ident
       end
       DAE.CREF_ITER(ident = ident) => begin
-        (ident)
+        ident
       end
     end
   end

@@ -153,6 +153,7 @@ function generateTargetCode(simCode::SimulationCode.SIM_CODE)
   (modelName::String, modelCode::Expr) = CodeGeneration.generateCode(simCode)
   @debug "Functions:" modelCode
   @debug "Model:" modelName
+  modelName = replace(modelName, "." => "__")
   COMPILED_MODELS[modelName] = modelCode
   return (modelName, modelCode)
 end
@@ -169,6 +170,7 @@ function generateMTKTargetCode(simCode::SimulationCode.SIM_CODE)
   (modelName::String, modelCode::Expr) = CodeGeneration.generateMTKCode(simCode)
   @debug "Functions:" modelCode
   @debug "Model:" modelName
+  modelName = replace(modelName, "." => "__")
   COMPILED_MODELS_MTK[modelName] = modelCode
   return (modelName, modelCode)
 end
@@ -259,6 +261,8 @@ end
   Simulates model interactivly.
 """
 function simulateModel(modelName::String; MODE = DAE_MODE ,tspan=(0.0, 1.0))
+  #= Strings containing . need to be in a format suitable for Julia =#
+  modelName = replace(modelName, "." => "__")
   local modelCode::Expr
   if MODE === DAE_MODE
     modelCode = COMPILED_MODELS[modelName]

@@ -41,7 +41,7 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String)
 
   print("SimCodeVars" + "\n")
   print(BDAE.LINE + "\n")
-  BDAE.dictPrettyPrint(simCode.crefToSimVarHT)
+  BDAE.dictPrettyPrint(simCode.stringToSimVarHT)
   print("\n")
 
   print("SimCode residual equations" + "\n")
@@ -54,10 +54,28 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String)
 end
 
 function Base.string(simCode::SimulationCode.SIM_CODE)::String
-  str = BDAEUtil.stringHeading3(simCode.crefToSimVarHT, "SimCodeVars")
+  str = BDAEUtil.stringHeading3(simCode.stringToSimVarHT, "SimCodeVars")
   str = str + BDAEUtil.heading3("SimCodeEquations")
   for eq in simCode.residualEquations
     str = str + string(eq)
   end
   return str + "\n"
+end
+
+"""
+ Converts a ```backendVar::BDAE.Var``` to the simcode format.
+"""
+function string(backendVar::BDAE.Var)
+  BDAE.string(varName; separator = "___")
+end
+
+function Base.string(cr::DAE.ComponentRef)
+  BDAE.string(cr; separator = "_")
+end
+
+"""
+  This function just forwards the call to BDAE
+"""
+function string(element)
+  BDAE.string(element)
 end

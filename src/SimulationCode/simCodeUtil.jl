@@ -45,28 +45,35 @@ function dumpVariableEqMapping(mapping::OrderedDict)::String
   return dump
 end
 
-"
+"""
 input digraph
 input variablesHT
   cref -> variable information dictonary.
 output 
   An array of labels for a directed graph g.
-"
+"""
 function makeLabels(digraph, matchOrder, variablesHT)
   variableIndexToName::OrderedDict = makeIndexVarNameDict(matchOrder, variablesHT)
   labels = []
   for i in 1:length(matchOrder)
-    variableIdx = MetaGraphs.get_prop(digraph, i, :vID)
-    equationIdx = matchOrder[variableIdx]
-    push!(labels, "e$(equationIdx)|$(variableIndexToName[variableIdx])|index_$(i)")
+    try
+      variableIdx = MetaGraphs.get_prop(digraph, i, :vID)
+      equationIdx = matchOrder[variableIdx]
+      idxToName = variableIndexToName[variableIdx]
+      push!(labels, "e$(equationIdx)|$(idxToName)|index_$(i)")
+    catch #= For instance the case when a vertex v does not have a prop =#
+      idxToName = variableIndexToName[i]
+      push!(labels, "e$(NONE)|$(idxToName)|index_$(i)")
+    end
   end
   return labels
 end
 
-"
+
+"""
   idx -> var-name.
   Supply matching order and a ht. 
-"
+"""
 function makeIndexVarNameDict(matchOrder, variablesHT)::DataStructures.OrderedDict
   local unknownVariables = filter((x) -> isVariableOrState(x[2].varKind), collect(values(variablesHT)))
   variableIndexToName::DataStructures.OrderedDict = DataStructures.OrderedDict()
@@ -76,10 +83,10 @@ function makeIndexVarNameDict(matchOrder, variablesHT)::DataStructures.OrderedDi
   return variableIndexToName
 end
 
-"
+"""
   idx -> var-name.
   Supply matching order and a ht. 
-"
+"""
 function makeIndexVarNameUnorderedDict(matchOrder, variablesHT)::Dict
   local unknownVariables = filter((x) -> isVariableOrState(x[2].varKind), collect(values(variablesHT)))
   variableIndexToName::Dict = DataStructures.OrderedDict()
@@ -100,6 +107,7 @@ end
 
 
 """
+author: johti17 & Andreas
    This functions create and assigns indices for variables
    Thus Construct the table that maps variable name to the actual variable.
 It executes the following steps:
@@ -150,7 +158,7 @@ end
 """
 function createEquationVariableBidirectionGraph(equations::RES_T,
                                                 allBackendVars::VECTOR_VAR,
-                                                crefToSimVarHT)::OrderedDict where{RES_T, VECTOR_VAR}
+                                                stringToSimVarHT)::OrderedDict where{RES_T, VECTOR_VAR}
   local eqCounter::Int = 0
   local variableEqMapping = OrderedDict()
   local unknownVariables = filter((x) -> BDAEUtil.isVariable(x.varKind), allBackendVars)
@@ -167,7 +175,7 @@ function createEquationVariableBidirectionGraph(equations::RES_T,
     #= Fetch all variables belonging to the specific equation =#
     eqCounter += 1
     variablesForEq = Backend.BDAEUtil.getAllVariables(eq, allBackendVars)
-    variableEqMapping["e$(eqCounter)"] = sort(getIndiciesOfVariables(variablesForEq, crefToSimVarHT))
+    variableEqMapping["e$(eqCounter)"] = sort(getIndiciesOfVariables(variablesForEq, stringToSimVarHT))
   end
   return variableEqMapping
 end
@@ -177,10 +185,10 @@ end
   Given a set of variables and a ordered dict that maps the component reference 
   to a simulation code variable returns the indices of these variables.
 """
-function getIndiciesOfVariables(variables, crefToSimVarHT::OrderedDict{String, Tuple{Integer, SimVar}})::Array
-  indicies = []
+function getIndiciesOfVariables(variables, stringToSimVarHT::OrderedDict{String, Tuple{Integer, SimVar}})::Array
+  local indicies = Int[]
   for v in variables
-    candidate = crefToSimVarHT[string(v)]
+    candidate = stringToSimVarHT[string(v)]
     if isAlgebraic(candidate[2]) #Just add algebraic variables
       push!(indicies, candidate[1])
     elseif isState(candidate[2])
@@ -198,7 +206,7 @@ end
   The context should be either the top level simcode or a specific branch of some if equation.
 """
 function getEquationSolvedIn(variable::V, context::C) where {V, HT, C}
-  local ht = context.crefToSimVarHT
+  local ht = context.stringToSimVarHT
   local variableIdx = ht[variable][1]
   local equationIdx = context.matchOrder[variableIdx]
   #= Return the equation at this specific index =#

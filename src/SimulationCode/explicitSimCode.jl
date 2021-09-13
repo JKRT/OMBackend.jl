@@ -10,7 +10,7 @@ function transformToExplicitSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCod
   local allSharedVars::Array{BDAE.Var} = getSharedVariablesLocalsAndGlobals(backendDAE.shared)
   local allBackendVars::Array{BDAE.Var} = vcat(allOrderedVars, allSharedVars)
   local simVars::Array{SimulationCode.SIMVAR} = allocateAndCollectSimulationVariables(allBackendVars)
-  local crefToSimVarHT::OrderedDict = createIndices(simVars)
+  local stringToSimVarHT::OrderedDict = createIndices(simVars)
   local equations = [eq for es in equationSystems for eq in es.orderedEqs]
   #= Split equations into three parts. Residuals whenEquations and If-equations =#
   (resEqs,whenEqs,ifEqs) = allocateAndCollectSimulationEquations(equations)
@@ -19,13 +19,13 @@ function transformToExplicitSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCod
   @assert(length(ifEqs) == 0, "WHEN EQUATION NOT YET SUPPORTED IN EXPLICIT CODE GEN")
   local indexToEquation::OrderedDict = createEquationIndicies(resEqs)
   #= Create equation <-> variable mapping =#
-  local eqVariableMapping = createEquationVariableBidirectionGraph(equations, allBackendVars, crefToSimVarHT)
+  local eqVariableMapping = createEquationVariableBidirectionGraph(equations, allBackendVars, stringToSimVarHT)
   (isSingular::Bool, matchOrder::Array) = GraphAlgorithms.matching(eqVariableMapping, length(eqVariableMapping.keys))
   digraph = GraphAlgorithms.merge(matchOrder, eqVariableMapping)
   #  if OMBackend.PLOT_EQUATION_GRAPH
 
   @info "Hello"
-    local labels = makeLabels(digraph, matchOrder, crefToSimVarHT)
+    local labels = makeLabels(digraph, matchOrder, stringToSimVarHT)
     GraphAlgorithms.plotEquationGraph("./digraphOutput$(backendDAE.name).pdf", digraph, labels)
 #  end
   stronglyConnectedComponents::Array = GraphAlgorithms.topological_sort(digraph) 
@@ -44,7 +44,7 @@ function transformToExplicitSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCod
   end
   #= Return explicit simulation code. =#
   return SimulationCode.EXPLICIT_SIM_CODE(backendDAE.name,
-                                          crefToSimVarHT,
+                                          stringToSimVarHT,
                                           indexToEquation,
                                           eqVariableMapping,
                                           reOrderedResiduals,
@@ -79,11 +79,11 @@ end
 
 
 
-function dumpInfoOfSort(matchOrder, reverseTopologicalSort, crefToSimVarHT)
+function dumpInfoOfSort(matchOrder, reverseTopologicalSort, stringToSimVarHT)
   #= Tearing could be added here =#
   @info "Strongly connected components!" reverseTopologicalSort
   @info "Equation solving order:"
-  ht = makeIndexVarNameDict(matchOrder, crefToSimVarHT)
+  ht = makeIndexVarNameDict(matchOrder, stringToSimVarHT)
   #= Print predefined variables=#
   for i in 1:length(matchOrder)
     if matchOrder[i] == 0
