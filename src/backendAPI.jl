@@ -77,6 +77,25 @@ function translate(frontendDAE::DAE.DAE_LIST; BackendMode = DAE_MODE)::Tuple{Str
 end
 
 """
+`function dumpInitialSystem(frontendDAE::DAE.DAE_LIST)`
+ Dumps a textual representation of the initial system.
+"""
+function dumpInitialSystem(frontendDAE::DAE.DAE_LIST)::String
+  str =  "Length of frontend DAE:" * string(length(frontendDAE.elementLst)) * "\n"
+  bDAE = BDAECreate.lower(frontendDAE)
+  str *= BDAEUtil.stringHeading1(bDAE, "translated")
+  return str
+end
+
+"""
+`function printInitialSystem(frontendDAE::DAE.DAE_LIST)`
+ Dumps a textual representation of the initial system.
+"""
+function printInitialSystem(frontendDAE::DAE.DAE_LIST)
+  print(dumpInitialSystem(frontendDAE::DAE.DAE_LIST))
+end
+
+"""
  Transforms given DAE-IR/Hybrid DAE to backend DAE-IR (BDAE-IR)
 """
 function lower(frontendDAE::DAE.DAE_LIST)::BDAE.BACKEND_DAE
@@ -134,27 +153,39 @@ function generateTargetCode(simCode::SimulationCode.SIM_CODE)
   (modelName::String, modelCode::Expr) = CodeGeneration.generateCode(simCode)
   @debug "Functions:" modelCode
   @debug "Model:" modelName
+  modelName = replace(modelName, "." => "__")
   COMPILED_MODELS[modelName] = modelCode
   return (modelName, modelCode)
 end
 
 
 """
+`generateMTKTargetCode(simCode::SimulationCode.SIM_CODE)`
   Generates code interfacing ModelingToolkit.jl
   The resulting code is saved in a table which contains functions that where simulated
   this session. Returns the generated modelName and corresponding generated code
 """
 function generateMTKTargetCode(simCode::SimulationCode.SIM_CODE)
   #= Target code =#
-  (modelName::String, modelCode::Expr) = CodeGeneration.generateMDKCode(simCode)
+  (modelName::String, modelCode::Expr) = CodeGeneration.generateMTKCode(simCode)
   @debug "Functions:" modelCode
   @debug "Model:" modelName
+  modelName = replace(modelName, "." => "__")
   COMPILED_MODELS_MTK[modelName] = modelCode
   return (modelName, modelCode)
 end
 
-function writeModelToFile(modelName::String, filePath::String; keepComments = true, formatFile = true)
-  model = COMPILED_MODELS[modelName]
+"""
+  Writes a model to file by default the file is formatted and comments are kept.
+"""
+function writeModelToFile(modelName::String, filePath::String; keepComments = true, formatFile = true, mode = DAE_MODE)
+  if mode === DAE_MODE
+    model = COMPILED_MODELS[modelName]
+  elseif mode === MTK_MODE
+    model = COMPILED_MODELS_MTK[modelName]
+  else
+    throw("Unsupported mode in writeModelToFile. Mode was: $mode")
+  end
   fileName = "$modelName.jl"
   try
     if keepComments == false
@@ -209,7 +240,7 @@ function printModel(modelName::String; MTK = false, keepComments = true, keepBeg
 end
 
 """
-    Prints compiled models to stdout
+    Prints available compiled models to stdout
 """
 function availableModels()::String
   str = "Compiled models (DAE-MODE):\n"
@@ -226,13 +257,12 @@ function availableModels()::String
 end
 
 """
-  Simulates model interactivly. 
-
-TODO:
-    (Currently does a redudant string conversion. Regression.)
-    Seems MTK does no longer support interactive simulation as well.
+`simulateModel(modelName::String; MODE = DAE_MODE ,tspan=(0.0, 1.0))`
+  Simulates model interactivly.
 """
 function simulateModel(modelName::String; MODE = DAE_MODE ,tspan=(0.0, 1.0))
+  #= Strings containing . need to be in a format suitable for Julia =#
+  modelName = replace(modelName, "." => "__")
   local modelCode::Expr
   if MODE === DAE_MODE
     modelCode = COMPILED_MODELS[modelName]
@@ -251,21 +281,22 @@ function simulateModel(modelName::String; MODE = DAE_MODE ,tspan=(0.0, 1.0))
     end
   elseif MODE == MTK_MODE
     #= This does a redudant string conversion for now due to modeling toolkit being as is...=#
-    try
       modelCode = COMPILED_MODELS_MTK[modelName]
       local modelCodeStr = ""
+    try
       @eval $(:(import OMBackend))
-      modelCodeStr::String = "$modelCode"
-      local parsedModel = Meta.parse.(modelCodeStr)
+      strippedModel = CodeGeneration.stripBeginBlocks(modelCode)
+      modelCodeStr::String = "$strippedModel"
+      local parsedModel = Meta.parse(modelCodeStr)
       @eval $parsedModel
       local modelRunnable = Meta.parse("OMBackend.$(modelName)Simulate($(tspan))")
       #= Run the model with the supplied tspan. =#
       @eval Main $modelRunnable
     catch err
-      @info "Interactive evaluation failed: $err"
+      @info "Interactive evaluation failed: $err with mode: $(MODE)"
+      @info err
       println(modelCodeStr)
-      @info "Dump of model-code"
-      #    Base.dump(parsedModel) TODO
+      @info modelCodeStr
       throw(err)
     end
   else
@@ -274,6 +305,7 @@ function simulateModel(modelName::String; MODE = DAE_MODE ,tspan=(0.0, 1.0))
 end
 
 "
+`plot(sol::Runtime.OMSolution)`
   The default plot function of OMBackend.
   All labels of the variables and the name is given by default
 "
@@ -287,6 +319,7 @@ end
 
 
 "
+`function plot(sol)`
   An alternative plot function in OMBackend.
   All labels of the variables and the name is given by default
 "
@@ -296,7 +329,8 @@ end
 
 
 """
-  Turns on logging
+`turnOnLogging(mod = "OMBackend"::String)`\n
+Turns on logging. An optional parameter `mod` can be used to specify which model should be logged for more granuality.
 """
 function turnOnLogging(mod = "OMBackend"::String)
   ENV["JULIA_DEBUG"] = mod

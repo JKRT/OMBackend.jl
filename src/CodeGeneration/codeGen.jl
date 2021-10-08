@@ -47,9 +47,9 @@ function generateCode(simCode::SimulationCode.SIM_CODE)::Tuple{String, Expr}
   local algVariables::Array = []
   local stateDerivatives::Array = []
   local parameters::Array = []
-  local crefToSimVarHT = simCode.crefToSimVarHT
-  for varName in keys(crefToSimVarHT)
-    ixAndVar = crefToSimVarHT[varName]
+  local stringToSimVarHT = simCode.stringToSimVarHT
+  for varName in keys(stringToSimVarHT)
+    ixAndVar = stringToSimVarHT[varName]
     local varType = ixAndVar[2].varKind
     @match varType  begin
       SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
@@ -153,17 +153,27 @@ function createHelperFunctionsForSystemOfDifferentialEquations(modelName::String
   return (modelName, program)
 end
 
-function createCallbackCode(modelName::N, simCode::S) where {N, S}
+"""
+  Creates runnable code for the different callbacks.
+  By default a saving function is generated.
+  This function can be disabled by setting the named argument 
+  generateSaveFunction to false.
+"""
+function createCallbackCode(modelName::N, simCode::S; generateSaveFunction = true) where {N, S}
   local WHEN_EQUATIONS = createEquations(simCode.whenEquations, simCode)
   #= 
     For if equations we create zero crossing functions (Based on the conditions). 
     The body of these equations are evaluated in the main body of the solver itself.
   =#
   local IF_EQUATIONS = createIfEquationCallbacks(simCode.ifEquations, simCode)
-  local SAVE_FUNCTION = createSaveFunction(modelName)
+  local SAVE_FUNCTION = if generateSaveFunction
+    createSaveFunction(modelName)
+  else    
+  end
+  local MODEL_NAME = replace(modelName, "." => "__")
   quote
     $(Symbol("saved_values_$(modelName)")) = SavedValues(Float64, Tuple{Float64,Array})
-    function $(Symbol("$(modelName)CallbackSet"))(aux)
+    function $(Symbol("$(MODEL_NAME)CallbackSet"))(aux)
       #= These are the location of the parameters and auxilary real variables respectivly =#
       local p = aux[1]
       local reals = aux[2] 
@@ -181,7 +191,7 @@ function createParameterCode(modelName, parameters, stateVariables, algVariables
   local PARAMETER_EQUATIONS = createParameterEquations(parameters, simCode)
   quote
     function $(Symbol("$(modelName)ParameterVars"))()
-      local aux = Array{Array{Float64}}(undef, $(2))
+      local aux = Array{Array{Float64}}(undef, 2)
       local p = Array{Float64}(undef, $(arrayLength(parameters)))
       local reals = Array{Float64}(undef, $(arrayLength(stateVariables) + arrayLength(algVariables)))
       aux[1] = p
@@ -239,7 +249,6 @@ function createAuxEquationCode(functionName::Symbol, variables::Array{V},
   end  
 end
 
-
 function createDAERunnable(modelName::String, simCode::SimulationCode.SIM_CODE)
   quote
     function $(Symbol("$(modelName)Simulate"))(tspan = (0.0, 1.0))
@@ -264,7 +273,7 @@ function createDAERunnable(modelName::String, simCode::SimulationCode.SIM_CODE)
                                     typeof(solution.interp),typeof(solution.destats)}(
                                       vars, nothing, nothing, nothing, t, problem, solution.alg,
                                       solution.interp, solution.dense, 0, solution.destats, solution.retcode)
-      ht = $(SimulationCode.makeIndexVarNameUnorderedDict(simCode.matchOrder, simCode.crefToSimVarHT))
+      ht = $(SimulationCode.makeIndexVarNameUnorderedDict(simCode.matchOrder, simCode.stringToSimVarHT))
       omSolution = OMBackend.Runtime.OMSolution(nsolution, ht)
       return omSolution
     end
@@ -301,7 +310,7 @@ function createLinearRunnable(modelName::String, simCode::SimulationCode.SIM_COD
                                     typeof(solution.interp),typeof(solution.destats)}(
                                       vars, nothing, nothing, nothing, t, problem, solution.alg,
                                       solution.interp, solution.dense, 0, solution.destats, solution.retcode)
-      ht = $(SimulationCode.makeIndexVarNameUnorderedDict(simCode.matchOrder, simCode.crefToSimVarHT))
+      ht = $(SimulationCode.makeIndexVarNameUnorderedDict(simCode.matchOrder, simCode.stringToSimVarHT))
       omSolution = OMBackend.Runtime.OMSolution(nsolution, ht)
       return omSolution
     end
@@ -329,7 +338,7 @@ end
 function createStateMarkings(algVariables::Array, stateVariables::Array, simCode::SimulationCode.SIM_CODE)::Array{Bool}
   local stateMarkings::Array = [false for i in 1:length(stateVariables) + length(algVariables)]
   for sName in stateVariables
-    stateMarkings[simCode.crefToSimVarHT[sName][1]] = true
+    stateMarkings[simCode.stringToSimVarHT[sName][1]] = true
   end
   return stateMarkings
 end
@@ -345,7 +354,7 @@ function createSaveFunction(modelName)::Expr
   local cbSym = Symbol("cb$(callbacks)")
   return quote
     savingFunction(u, t, integrator) = let
-      (t, deepcopy(integrator.p[2]))
+      (t, deepcopy(integrator.p))
     end
     $cbSym = SavingCallback(savingFunction, $(Symbol("saved_values_$(modelName)")))
   end
@@ -371,7 +380,7 @@ end
 function createRealToStateVariableMapping(stateVariables::Array, simCode::SimulationCode.SIM_CODE; toFrom::Tuple=("reals", "x"))::Array{Expr}
   local daeStateUpdateVector::Array = []
   for svName in stateVariables
-    local varIdx = simCode.crefToSimVarHT[svName][1]
+    local varIdx = simCode.stringToSimVarHT[svName][1]
     push!(daeStateUpdateVector, :($(Symbol(toFrom[1]))[$varIdx] = $(Symbol(toFrom[2]))[$varIdx]))
   end
   return daeStateUpdateVector
@@ -403,8 +412,8 @@ end
 "
 function createSortedEquations(variables::Array, simCode::SimulationCode.SIM_CODE; arrayName::String)::Array{Expr}
   #= Assign the variables according to sorting/matching =#
-  local ht = SimulationCode.makeIndexVarNameDict(simCode.matchOrder, simCode.crefToSimVarHT)
-  local vIndicesSupplied = [simCode.crefToSimVarHT[v][1] for v in variables]
+  local ht = SimulationCode.makeIndexVarNameDict(simCode.matchOrder, simCode.stringToSimVarHT)
+  local vIndicesSupplied = [simCode.stringToSimVarHT[v][1] for v in variables]
   local iterationComponents = []
   local sortedEquations = []
   for i in simCode.matchOrder
@@ -423,7 +432,7 @@ function createSortedEquations(variables::Array, simCode::SimulationCode.SIM_COD
     equationIdx = simCode.matchOrder[variableIdx]
     local equation = stripComments(expToJuliaExp(residuals[equationIdx].exp, simCode; varPrefix = arrayName))
     local rewrittenEquation::Expr = stripBeginBlocks(arrayToSymbolicVariable(equation))
-    local varToSolve = simCode.crefToSimVarHT[ht[variableIdx]][2]
+    local varToSolve = simCode.stringToSimVarHT[ht[variableIdx]][2]
     local varToSolveExpr::Symbol = SimulationCode.isState(varToSolve) ? Symbol("dx_$(variableIdx)") : Symbol("$(arrayName)_$(variableIdx)")
     #= Solve equation symbolically (Or numerically) =#
     local reduceSolution::Expr = Reduce.Algebra.solve(rewrittenEquation, varToSolveExpr)[1]
@@ -547,7 +556,7 @@ end
 """
 function createParameterEquations(parameters::Array, simCode::SimulationCode.SimCode)
   local parameterEquations::Array = []
-  local hT = simCode.crefToSimVarHT
+  local hT = simCode.stringToSimVarHT
   for param in parameters
     (index, simVar) = hT[param]
     local simVarType::SimulationCode.SimVarType = simVar.varKind
@@ -658,16 +667,16 @@ function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arr
   ADD_CALLBACK()
   local callbacks = COUNT_CALLBACKS()
   quote
-    function $(Symbol("condition$(callbacks)"))(x,t,integrator) 
+    $(Symbol("condition$(callbacks)")) = (x,t,integrator) -> begin
       $(expToJuliaExp(cond, simCode))
     end
-    function $(Symbol("affect$(callbacks)!"))(integrator)
+  $(Symbol("affect$(callbacks)!")) = (integrator) -> begin
       $(whenStmts...)
     end
     $(Symbol("cb$(callbacks)")) = ContinuousCallback($(Symbol("condition$(callbacks)")), 
                                                             $(Symbol("affect$(callbacks)!")),
                                                             rootfind=true, save_positions=(true, true),
-                                                            affect_neg! = $(Symbol("affect$(callbacks)!")),)
+                                                     affect_neg! = $(Symbol("affect$(callbacks)!")),)
   end
 end
 
@@ -682,22 +691,21 @@ function createWhenStatements(whenStatements::List, simCode::SimulationCode.SIM_
   for wStmt in  whenStatements
     @match wStmt begin
       BDAE.ASSIGN(__) => begin
-        (index, var) = simCode.crefToSimVarHT[BDAE.string(wStmt.left)]
+        (index, var) = simCode.stringToSimVarHT[SimulationCode.string(wStmt.left)]
         if typeof(var.varKind) === SimulationCode.STATE
-          push!(res, quote
-                $(expToJuliaExp(wStmt.left, simCode, varPrefix="integrator.u")) = $(expToJuliaExp(wStmt.right, simCode))
-                end)
+          exp1 = expToJuliaExp(wStmt.left, simCode, varPrefix="integrator.u")
+          exp2 = expToJuliaExp(wStmt.right, simCode)
+          push!(res, :($(exp1) = $(exp2)))
         elseif typeof(var.varKind) === SimulationCode.ALG_VARIABLE #=TODO also check type=#
-          push!(res, quote
-                $(expToJuliaExp(wStmt.left, simCode, varPrefix="reals")) = $(expToJuliaExp(wStmt.right, simCode))
-                end)
+          exp1 = expToJuliaExp(wStmt.left, simCode, varPrefix="reals")
+          exp2 = expToJuliaExp(wStmt.right, simCode)
+          push!(res, :($(exp1) = $(exp2)))
         else
-          throw("Unimplemented branch")          
         end
       end
       #= Handles reinit =#
       BDAE.REINIT(__) => begin
-        (index, var) = simCode.crefToSimVarHT[BDAE.string(wStmt.stateVar)]
+        (index, var) = simCode.stringToSimVarHT[SimulationCode.string(wStmt.stateVar)]
         if typeof(var.varKind) === SimulationCode.STATE
           push!(res, quote 
                 integrator.u[$(index)] = $(expToJuliaExp(wStmt.value, simCode))
@@ -720,7 +728,7 @@ The context can be any type that contains a set of residual equations.
 
 """
 function expToJuliaExp(exp::DAE.Exp, context::C, varSuffix=""; varPrefix="x")::Expr where {C}
-  hashTable = context.crefToSimVarHT
+  hashTable = context.stringToSimVarHT
   local expr::Expr = begin
     local int::Int64
     local real::Float64
@@ -738,7 +746,7 @@ function expToJuliaExp(exp::DAE.Exp, context::C, varSuffix=""; varPrefix="x")::E
       DAE.RCONST(real) => quote $real end
       DAE.SCONST(tmpStr) => quote $tmpStr end
       DAE.CREF(cr, _)  => begin
-        varName = BDAE.string(cr)
+        varName = SimulationCode.string(cr)
         builtin = if varName == "time"
           true
         else
@@ -793,7 +801,7 @@ function expToJuliaExp(exp::DAE.Exp, context::C, varSuffix=""; varPrefix="x")::E
       end
       DAE.LBINARY(exp1 = e1, operator = op, exp2 = e2) => begin
         quote 
-          $(expToJuliaExp(e1, context, varPrefix=varPrefix) + " " + BDAE.string(op) + " " + expToJuliaExp(e2, simCode, varPrefix=varPrefix))
+          $(expToJuliaExp(e1, context, varPrefix=varPrefix) + " " + SimulationCode.string(op) + " " + expToJuliaExp(e2, simCode, varPrefix=varPrefix))
         end
       end
       DAE.RELATION(exp1 = e1, operator = op, exp2 = e2) => begin
@@ -854,7 +862,7 @@ end
 function getStartConditions(vars::Array, condName::String, simCode::SimulationCode.SimCode)::Expr
   local startExprs::Array{Expr} = []
   local residuals = simCode.residualEquations
-  local ht::Dict = simCode.crefToSimVarHT
+  local ht::Dict = simCode.stringToSimVarHT
   if length(vars) == 0
     return quote
     end

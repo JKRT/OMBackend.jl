@@ -243,21 +243,94 @@ function detectArrayExpression(exp::DAE.Exp, arrayCrefs::Dict{String, Bool})
         end
         (newExp, outCrefs, true)      
       end
-      #= Any call that contains an array should be replaced. =#
+      DAE.CALL(Absyn.IDENT("sum"),
+               DAE.CREF(matchedComponentRef, ty) <| _ ) where typeof(matchedComponentRef.identType) == DAE.T_ARRAY => begin
+                 @debug "We are in sum"
+                 newExp = if haskey(arrayCrefs, matchedComponentRef.ident)
+                   local subscriptStr = BDAEUtil.getSubscriptAsUnicodeString(matchedComponentRef.subscriptLst)          
+                   local newName = matchedComponentRef.ident + subscriptStr
+                   local newCref = DAE.CREF_IDENT(newName, ty, nil)          
+                   @debug "Replaced the call "     
+                   dimLen = listLength(ty.dims)
+                   @assert(dimLen == 1)
+                   len = listHead(ty.dims).integer
+                   arrType = ty.ty
+                   #=Add adds=#
+                   ident = BDAEUtil.getIntAsUnicodeSubscript(1)
+                   local tmp = DAE.CREF(DAE.CREF_IDENT("x$(ident)", arrType, nil), arrType)
+                   i = 2
+                   for _ in 2:len
+                     ident = BDAEUtil.getIntAsUnicodeSubscript(i)
+                     tmp = DAE.BINARY(DAE.CREF(DAE.CREF_IDENT("x$(ident)", arrType, nil), arrType), DAE.ADD(arrType), tmp)
+                     i += 1
+                   end
+                   #DAE.CALL(exp.path, list(DAE.CREF(newCref, ty)), exp.attr)
+                   tmp
+                 else
+                   @debug "Did not replace the call expression"
+                   exp
+                 end
+                 (newExp, outCrefs, true)  
+               end
+      DAE.CALL(Absyn.IDENT("product"),
+               DAE.CREF(matchedComponentRef, ty) <| _ ) where typeof(matchedComponentRef.identType) == DAE.T_ARRAY => begin
+                 @debug "We are in sum"
+                 newExp = if haskey(arrayCrefs, matchedComponentRef.ident)
+                   local subscriptStr = BDAEUtil.getSubscriptAsUnicodeString(matchedComponentRef.subscriptLst)          
+                   local newName = matchedComponentRef.ident + subscriptStr
+                   local newCref = DAE.CREF_IDENT(newName, ty, nil)          
+                   @debug "Replaced the call "
+                   dimLen = listLength(ty.dims)
+                   @assert(dimLen == 1)
+                   len = listHead(ty.dims).integer
+                   arrType = ty.ty
+                   #=Add adds=#
+                   ident = BDAEUtil.getIntAsUnicodeSubscript(1)
+                   local tmp = DAE.CREF(DAE.CREF_IDENT("x$(ident)", arrType, nil), arrType)
+                   i = 2
+                   for _ in 2:len
+                     ident = BDAEUtil.getIntAsUnicodeSubscript(i)
+                     tmp = DAE.BINARY(DAE.CREF(DAE.CREF_IDENT("x$(ident)", arrType, nil), arrType), DAE.MUL(arrType), tmp)
+                     i += 1
+                   end
+                   #DAE.CALL(exp.path, list(DAE.CREF(newCref, ty)), exp.attr)
+                   tmp
+                 else
+                   @debug "Did not replace the call expression"
+                   exp
+                 end
+                 (newExp, outCrefs, true)  
+               end
+      DAE.CALL(Absyn.IDENT("exp"),
+               DAE.CREF(matchedComponentRef, ty) <| _ ) where typeof(matchedComponentRef.identType) == DAE.T_ARRAY => begin
+                 fail()
+                 newExp = if haskey(arrayCrefs, matchedComponentRef.ident)
+                   local subscriptStr = BDAEUtil.getSubscriptAsUnicodeString(matchedComponentRef.subscriptLst)          
+                   local newName = matchedComponentRef.ident + subscriptStr
+                   local newCref = DAE.CREF_IDENT(newName, ty, nil)          
+                   @debug "Replaced the call expression"
+                   DAE.CALL(exp.path, list(DAE.CREF(newCref, ty)), exp.attr)
+                 else
+                   @debug "Did not replace the call expression"
+                   exp
+                 end
+                 (newExp, outCrefs, true)  
+               end
+      #= Any other call that contains an array should be replaced. =#
       DAE.CALL(Absyn.IDENT(__),
                DAE.CREF(matchedComponentRef, ty) <| _ ) where typeof(matchedComponentRef.identType) == DAE.T_ARRAY => begin
-        newExp = if haskey(arrayCrefs, matchedComponentRef.ident)
-          local subscriptStr = BDAEUtil.getSubscriptAsUnicodeString(matchedComponentRef.subscriptLst)          
-          local newName = matchedComponentRef.ident + subscriptStr
-          local newCref = DAE.CREF_IDENT(newName, ty, nil)          
-          @debug "Replaced the call expression"
-          DAE.CALL(exp.path, list(DAE.CREF(newCref, ty)), exp.attr)
-        else
-          @debug "Did not replace the call expression"
-          exp
-        end
-        (newExp, outCrefs, true)  
-      end
+                 newExp = if haskey(arrayCrefs, matchedComponentRef.ident)
+                   local subscriptStr = BDAEUtil.getSubscriptAsUnicodeString(matchedComponentRef.subscriptLst)          
+                   local newName = matchedComponentRef.ident + subscriptStr
+                   local newCref = DAE.CREF_IDENT(newName, ty, nil)          
+                   @debug "Replaced the call expression"
+                   DAE.CALL(exp.path, list(DAE.CREF(newCref, ty)), exp.attr)
+                 else
+                   @debug "Did not replace the call expression"
+                   exp
+                 end
+                 (newExp, outCrefs, true)  
+               end
       _ => begin
         (exp, outCrefs, true)
       end

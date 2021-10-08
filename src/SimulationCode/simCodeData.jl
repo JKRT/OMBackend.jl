@@ -87,7 +87,7 @@ struct BRANCH{T1 <: DAE.Exp,
   matchOrder::T5
   equationGraph::T6
   sccs::T7
-  crefToSimVarHT::T8
+  stringToSimVarHT::T8
 end
 
 """
@@ -115,10 +115,10 @@ struct SIM_CODE{T0<:String,
                 T6<:Bool,
                 T7<:Vector{Int},
                 T8<:LightGraphs.AbstractGraph,
-                T9<:Vector{Int}} <: SimCode
+                T9<:Vector} <: SimCode
   name::T0
   "Mapping of names to the corresponding variable"
-  crefToSimVarHT::T1
+  stringToSimVarHT::T1
   "Different equations stored within simulation code"
   residualEquations::T2
   "The Initial equations"
@@ -150,7 +150,7 @@ end
 struct UNSORTED_SIM_CODE <: SimCode
   name::String
   "Mapping of names to the corresponding variable"
-  crefToSimVarHT::Dict{String, Tuple{Integer, SimVar}}
+  stringToSimVarHT::Dict{String, Tuple{Integer, SimVar}}
   "Different equations stored within simulation code"
   residualEquations::Array{BDAE.RESIDUAL_EQUATION}
   whenEquations::Array{BDAE.WHEN_EQUATION}

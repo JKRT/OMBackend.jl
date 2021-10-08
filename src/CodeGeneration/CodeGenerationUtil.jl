@@ -119,7 +119,7 @@ end
  Convert DAE.Exp into a Julia string. 
 """
 function expToJL(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE; varPrefix="x")::String
-  hashTable = simCode.crefToSimVarHT
+  hashTable = simCode.stringToSimVarHT
   str = begin
     local int::ModelicaInteger
     local real::ModelicaReal
@@ -138,7 +138,7 @@ function expToJL(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE; varPrefix="x"):
       DAE.BCONST(bool)  => string(bool)
       DAE.ENUM_LITERAL((Absyn.IDENT(str), int))  => str + "()" + string(int) + ")"
       DAE.CREF(cr, _)  => begin
-        varName = BDAE.string(cr)
+        varName = SimulationCode.string(cr)
         builtin = if varName == "time"
           true
         else
@@ -160,19 +160,19 @@ function expToJL(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE; varPrefix="x"):
         end
       end
       DAE.UNARY(operator = op, exp = e1) => begin
-        ("(" + BDAE.string(op) + " " + expToJL(e1, simCode) + ")")
+        ("(" + SimulationCode.string(op) + " " + expToJL(e1, simCode) + ")")
       end
       DAE.BINARY(exp1 = e1, operator = op, exp2 = e2) => begin
-        (expToJL(e1, simCode, varPrefix=varPrefix) + " " + BDAE.string(op) + " " + expToJL(e2, simCode, varPrefix=varPrefix))
+        (expToJL(e1, simCode, varPrefix=varPrefix) + " " + SimulationCode.string(op) + " " + expToJL(e2, simCode, varPrefix=varPrefix))
       end
       DAE.LUNARY(operator = op, exp = e1)  => begin
-        ("(" + BDAE.string(op) + " " + expToJL(e1, simCode, varPrefix=varPrefix) + ")")
+        ("(" + SimulationCode.string(op) + " " + expToJL(e1, simCode, varPrefix=varPrefix) + ")")
       end
       DAE.LBINARY(exp1 = e1, operator = op, exp2 = e2) => begin
-        (expToJL(e1, simCode, varPrefix=varPrefix) + " " + BDAE.string(op) + " " + expToJL(e2, simCode, varPrefix=varPrefix))
+        (expToJL(e1, simCode, varPrefix=varPrefix) + " " + SimulationCode.string(op) + " " + expToJL(e2, simCode, varPrefix=varPrefix))
       end
       DAE.RELATION(exp1 = e1, operator = op, exp2 = e2) => begin
-        (expToJL(e1, simCode, varPrefix=varPrefix) + " " + BDAE.string(op) + " " + expToJL(e2, simCode,varPrefix=varPrefix))
+        (expToJL(e1, simCode, varPrefix=varPrefix) + " " + SimulationCode.string(op) + " " + expToJL(e2, simCode,varPrefix=varPrefix))
       end
       #=TODO?=#
       DAE.IFEXP(expCond = e1, expThen = e2, expElse = e3) => begin
@@ -183,7 +183,7 @@ function expToJL(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE; varPrefix="x"):
           TODO: Keeping it simple for now, we assume we only have one argument in the call
           We handle derivitives seperatly
         =#
-        varName = BDAE.string(listHead(expl))
+        varName = SimulationCode.string(listHead(expl))
         (index, type) = hashTable[varName]
         @match tmpStr begin
         "der" => "dx[$index]  #= der($varName) =#"
@@ -263,14 +263,14 @@ end
 function DAECallExpressionToJuliaCallExpression(pathStr::String, expLst::List, simCode, ht; varPrefix=varPrefix)::Expr
   @match pathStr begin
     "der" => begin
-      varName = BDAE.string(listHead(expLst))
+      varName = SimulationCode.string(listHead(expLst))
       (index, _) = ht[varName]
       quote
         dx[$(index)] #= der($varName) =#
       end
     end
     "pre" => begin
-      varName = BDAE.string(listHead(expLst))
+      varName = SimulationCode.string(listHead(expLst))
       (index, _) = ht[varName]
       indexForVar = ht[varName][1]
       quote 
@@ -291,11 +291,11 @@ end
   TODO: Keeping it simple for now, we assume we only have one argument in the call..
   Also the der as symbol is really ugly..
 "
-function DAECallExpressionToMDKCallExpression(pathStr::String, expLst::List,
+function DAECallExpressionToMTKCallExpression(pathStr::String, expLst::List,
                                               simCode::SimulationCode.SimCode, ht; varPrefix=varPrefix, derAsSymbol=false)::Expr
   @match pathStr begin
     "der" => begin
-      varName = BDAE.string(listHead(expLst))
+      varName = SimulationCode.string(listHead(expLst))
       (index, _) = ht[varName]
       if derAsSymbol
         quote
@@ -309,7 +309,7 @@ function DAECallExpressionToMDKCallExpression(pathStr::String, expLst::List,
     end
     _  =>  begin
       funcName = Symbol(pathStr)
-      argPart = tuple(map((x) -> expToJuliaExpMDK(x, simCode), expLst)...)
+      argPart = tuple(map((x) -> expToJuliaExpMTK(x, simCode), expLst)...)
       quote 
         $(funcName)($(argPart...))
       end
@@ -373,10 +373,10 @@ end
 
 """
   Utility function, traverses a DAE exp. Variables are saved in the supplied variables array
-  (Note that variables here refeers to parameters as well)
+  (Note that variables here refers to parameters as well)
 """
 function getVariablesInDAE_Exp(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, variables::Set)
-  local  hashTable = simCode.crefToSimVarHT
+  local  hashTable = simCode.stringToSimVarHT
   local int::Int64
   local real::Float64
   local bool::Bool
@@ -388,13 +388,18 @@ function getVariablesInDAE_Exp(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, v
   local expl::List{DAE.Exp}
   local lstexpl::List{List{DAE.Exp}}
   @match exp begin
-    DAE.BCONST(bool) => quote $bool end
-    DAE.ICONST(int) => quote $int end
-    DAE.RCONST(real) => quote $real end
-    DAE.SCONST(tmpStr) => quote $tmpStr end
+    #= These are not varaiables, so we simply return what we have collected thus far. =#
+    DAE.BCONST(bool) => variables
+    DAE.ICONST(int) => variables
+    DAE.RCONST(real) => variables
+    DAE.SCONST(tmpStr) => variables
+    DAE.CREF(cr, _) where SimulationCode.string(cr)=="time" => begin
+      push!(variables, Symbol("t"))
+    end
     DAE.CREF(cr, _)  => begin
-      varName = BDAE.string(cr)
+      varName = SimulationCode.string(cr)
       indexAndVar = hashTable[varName]
+      push!(variables, Symbol(varName))
       varKind::SimulationCode.SimVarType = indexAndVar[2].varKind
       @match varKind begin
         SimulationCode.STATE(__) || SimulationCode.PARAMETER(__) || SimulationCode.ALG_VARIABLE(__) => begin
@@ -421,10 +426,29 @@ function getVariablesInDAE_Exp(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, v
     end
     #= Should not introduce anything new.. =#
     DAE.CALL(path = Absyn.IDENT(tmpStr), expLst = explst)  => begin
+      variables
     end
     DAE.CAST(ty, exp)  => begin
       getVariablesInDAE_Exp(exp, simCode, variables)
     end
     _ =>  throw(ErrorException("$exp not yet supported"))
   end
+end
+
+function isCycleInSCCs(sccs)
+  for sc in sccs
+    if length(sc) > 1
+      return true
+    end
+  end
+  return false
+end
+
+function getCycleInSCCs(sccs)
+  for sc in sccs
+    if length(sc) > 1
+      return sc
+    end
+  end
+  return []
 end
