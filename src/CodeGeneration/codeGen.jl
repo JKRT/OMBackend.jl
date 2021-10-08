@@ -636,12 +636,10 @@ function createIfEqCallback(ifEq::SimulationCode.IF_EQUATION, simCode::Simulatio
       end
       #= Active this branc =#
       function $(Symbol("affect$(callbacks)!"))(integrator)
-        @info "Branch activated"
         global Mode[1] = $(branch.identifier)
       end
       #= Deactive this branch =#
       function $(Symbol("affect_neg$(callbacks)!"))(integrator)
-        @info "Branch deactivated"
         global Mode[1] = 0
       end
 

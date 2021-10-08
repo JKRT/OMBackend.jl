@@ -4,6 +4,7 @@
 TODO: Remember the state derivative scheme. What the heck did I mean  with that? 
 TODO: Make duplicate code better...
 TODO: Make this into it's own module
+TODO: Fix the redudant string conversion scheme
 =#
 using ModelingToolkit
 import OMBackend
@@ -61,7 +62,6 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
                                                simCode.residualEquations,
                                                simCode::SimulationCode.SIM_CODE)
   local parVariablesSym = [Symbol(p) for p in parameters]
-  @info "Our parameters where:" parameters
   local START_CONDTIONS_EQUATIONS = createStartConditionsEquationsMTK(stateVariables, algebraicVariables, simCode)
   local DISCRETE_START_VALUES = getStartConditionsMTK(discreteVariables, simCode)
   local PARAMETER_EQUATIONS = createParameterEquationsMTK(parameters, simCode)

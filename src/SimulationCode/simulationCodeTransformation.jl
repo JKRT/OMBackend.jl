@@ -192,8 +192,9 @@ function matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVar
   (isSingular::Bool, matchOrder::Array) = GraphAlgorithms.matching(eqVariableMapping, numberOfVariablesInMapping)
   local digraph::MetaGraphs.MetaDiGraph = GraphAlgorithms.merge(matchOrder, eqVariableMapping)
   if OMBackend.PLOT_EQUATION_GRAPH
+    @info "Dumping the equation graph"
     local labels = makeLabels(digraph, matchOrder, stringToSimVarHT)
-    GraphAlgorithms.plotEquationGraph("./digraphOutput.pdf", digraph, labels)
+    GraphAlgorithms.plotEquationGraphPNG("./digraphOutput.png", digraph, labels)
   end
   stronglyConnectedComponents::Array = GraphAlgorithms.stronglyConnectedComponents(digraph)
   return (isSingular, matchOrder, digraph, stronglyConnectedComponents)

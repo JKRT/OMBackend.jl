@@ -148,27 +148,27 @@ function stronglyConnectedComponents(g::LightGraphs.AbstractGraph)::Array
 end
 
 
-"
-    Plots the given equation graph
-"
-function plotEquationGraph(filePath::String, g::LightGraphs.AbstractGraph, labels, dims = (64cm, 64cm)::Tuple)
+"""
+    Plots the given equation graph as a png
+"""
+function plotEquationGraphPNG(filePath::String, g::LightGraphs.AbstractGraph, labels, dims = (64cm, 64cm)::Tuple)
   plot = gplot(g,
                nodelabel=labels,
                nodefillc="blue",
-               nodelabelc="black",
+               nodelabelc="white",
                edgestrokec="black",
                layout=spring_layout)
   draw(Compose.PNG(filePath, dims...), plot)
 end
 
-function plotEquationGraph(filePath::String, g::LightGraphs.AbstractGraph, dims = (64cm, 64cm)::Tuple)
-  plot = gplot(g,
-               nodefillc="blue",
-               nodelabelc="white",
-               edgestrokec="black",
-               layout=spring_layout)
-  draw(Compose.PDF(filePath, dims...), plot)
-end
+# function plotEquationGraph(filePath::String, g::LightGraphs.AbstractGraph, dims = (64cm, 64cm)::Tuple)
+#   plot = gplot(g,
+#                nodefillc="blue",
+#                nodelabelc="white",
+#                edgestrokec="black",
+#                layout=spring_layout)
+#   draw(Compose.PDF(filePath, dims...), plot)
+# end
 
 function connected_components(g::LightGraphs.AbstractGraph)
   LightGraphs.connected_components(g)
