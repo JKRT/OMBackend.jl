@@ -424,9 +424,10 @@ function getVariablesInDAE_Exp(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, v
     DAE.IFEXP(expCond = e1, expThen = e2, expElse = e3) => begin
       throw(ErrorException("If expressions not allowed in backend code"))
     end
-    #= Should not introduce anything new.. =#
+    #= Should not introduce anything new..  I am a idiot - John 2021=#
     DAE.CALL(path = Absyn.IDENT(tmpStr), expLst = explst)  => begin
-      variables
+      #TODO only assumes one argument
+      getVariablesInDAE_Exp(listHead(explst), simCode, variables)
     end
     DAE.CAST(ty, exp)  => begin
       getVariablesInDAE_Exp(exp, simCode, variables)

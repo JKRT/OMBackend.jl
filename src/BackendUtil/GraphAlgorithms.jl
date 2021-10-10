@@ -23,10 +23,13 @@ using DataStructures
         dict, adjacency list representation of the equation-variable graph
         n, the number of unknown and equations.
   output:
-         assign::Array. assign(j) = i, where j is a variable and i the equation in which it is assigned.
-         isSingular::Boolean,          Boolean indicating if the system is singular or not.
+         assign::Array. assign[j] = i,
+         where j is a variable and i the equation in which it is assigned.
+         isSingular::Boolean,
+         Boolean indicating if the system is singular or not.
 """
 function matching(dict::DataStructures.OrderedDict, n::Int)
+  @info dict
   #= Global arrays for bookkeeping =#
   local assign = [0 for i in 1:n]
   local vMark = Bool[false for i in 1:n]
@@ -85,7 +88,7 @@ Author: John Tinnerholm
 function merge(matchOrder::Vector, graph::OrderedDict)::MetaGraphs.MetaDiGraph  "Remove function for arrays.."
   function remove!(a, item)
     deleteat!(a, findall(x->x==item, a))
-  end 
+  end
   #= 
     Convert the given map into an array representation.
     Similar format to the assign matrix but represent the dependencies 

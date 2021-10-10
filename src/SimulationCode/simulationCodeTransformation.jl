@@ -186,10 +186,11 @@ function constructSimCodeIFEquations(BDAE_ifEquations::Vector{BDAE.IF_EQUATION},
 end
 
 """
-  This function does matching, it also checks for strongly connected components
+  This function does matching, it also checks for strongly connected components.
 """
 function matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT)::Tuple
   (isSingular::Bool, matchOrder::Array) = GraphAlgorithms.matching(eqVariableMapping, numberOfVariablesInMapping)
+  #= The merge algortihm takes a matching and produces a resulting digraph =#
   local digraph::MetaGraphs.MetaDiGraph = GraphAlgorithms.merge(matchOrder, eqVariableMapping)
   if OMBackend.PLOT_EQUATION_GRAPH
     @info "Dumping the equation graph"

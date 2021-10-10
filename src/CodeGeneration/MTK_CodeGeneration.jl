@@ -4,21 +4,18 @@
 TODO: Remember the state derivative scheme. What the heck did I mean  with that? 
 TODO: Make duplicate code better...
 TODO: Make this into it's own module
-TODO: Fix the redudant string conversion scheme
+TODO: Fix the redundant string conversion scheme
 =#
 using ModelingToolkit
 import OMBackend
 
 """
-  Generates simulation code targetting modeling toolkit
+  Generates simulation code targetting modeling toolkit.
+  Loop code removed was on old branch.
 """
 function generateMTKCode(simCode::SimulationCode.SIM_CODE)
   isCycles = isCycleInSCCs(simCode.stronglyConnectedComponents)
-  if isCycles
-    ODE_MODE_MTK_LOOP(simCode::SimulationCode.SIM_CODE)
-  else
-    ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
-  end
+  ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
 end
 
 function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
@@ -56,6 +53,10 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
     end
   end
 
+  @info simCode.matchOrder
+  @info "Our states where:" stateVariables
+  @info "Our discrete variables" discreteVariables
+  @info "Our algebraic variables:" algebraicVariables
   #= Create equations for variables not in a loop + parameters and stuff=#
   local equations = createResidualEquationsMTK(stateVariables,
                                                algebraicVariables,
@@ -70,11 +71,9 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   local CALL_BACK_EQUATIONS = createCallbackCode(modelName, simCode; generateSaveFunction = true)
   #= Symbolic names =#
   local stateVariablesSym = [:($(Symbol(v))(t)) for v in stateVariables]
-  @debug "Our states where:" stateVariables
   local algebraicVariablesSym = [:($(Symbol(v))(t)) for v in algebraicVariables]
-  @debug "Our algebraic variables:" algebraicVariables
   local discreteVariablesSym = [:($(Symbol(v))) for v in discreteVariables]
-  @debug "Our discrete variables" discreteVariablesSym
+
   RESET_CALLBACKS()
 
   #= 
@@ -139,183 +138,22 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   end
   
   return (modelName, program)
-
+  
 end
 
 """
- This generates code targetting modeling toolkit (but separates algebraic loops from the rest of the system).
- Discrete variables are treated as parameters 
-"""
-function ODE_MODE_MTK_LOOP(simCode::SimulationCode.SIM_CODE)
-  @debug "Runnning: generateMTKCode"
-  RESET_CALLBACKS()
-  local stringToSimVarHT = simCode.stringToSimVarHT
-  local equations::Array = []
-  local exp::DAE.Exp
-  local modelName::String = simCode.name
-  local parameters::Array = []
-  local stateDerivatives::Array = []
-  local stateVariables::Array = []
-  local algebraicVariables::Array = []
-  local discreteVariables::Vector = []
-  #= Loop arrays=#
-  local stateDerivativesLoop::Array = []
-  local stateVariablesLoop::Array = []
-  local algebraicVariablesLoop::Array = []
-  local discreteVariablesLoop::Vector = []
-  
-  #= 
-  We have a cycle! 
-  =#
-  loop = getCycleInSCCs(simCode.stronglyConnectedComponents)
-  
-  for varName in keys(stringToSimVarHT)
-    (idx, var) = stringToSimVarHT[varName]
-    if simCode.matchOrder[idx] in loop
-      local varType = var.varKind
-      @match varType  begin
-        SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
-        SimulationCode.STATE(__) => push!(stateVariablesLoop, varName)
-        SimulationCode.PARAMETER(__) => push!(parameters, varName)
-        SimulationCode.ALG_VARIABLE(__) => begin
-          if idx in simCode.matchOrder
-            push!(algebraicVariablesLoop, varName)
-          else #= We have a variable that is not contained in continious system =#
-            #= Treat discrete variables separate =#
-            push!(discreteVariablesLoop, varName)
-          end
-        end
-        #=TODO: Do I need to modify this?=#
-        SimulationCode.STATE_DERIVATIVE(__) => push!(stateDerivativesLoop, varName)
-      end
-    else #= Someplace else=#
-      @info "Not in loop $idx. $var"
-      local varType = var.varKind
-      @match varType  begin
-        SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
-        SimulationCode.STATE(__) => push!(stateVariables, varName)
-        SimulationCode.PARAMETER(__) => push!(parameters, varName)
-        SimulationCode.ALG_VARIABLE(__) => begin
-          if idx in simCode.matchOrder
-            push!(algebraicVariables, varName)
-          else #= We have a variable that is not contained in continious system =#
-            #= Treat discrete variables separate =#
-            push!(discreteVariables, varName)
-          end
-        end
-        #=TODO: Do I need to modify this?=#
-        SimulationCode.STATE_DERIVATIVE(__) => push!(stateDerivatives, varName)
-      end
-    end
-  end
-  local allVariables = vcat(stateVariables, algebraicVariables, stateVariablesLoop, algebraicVariablesLoop)
-  #= Create equations for variables not in a loop + parameters and stuff=#
-  local equations = createSortedEquations(stateVariables,
-                                          simCode; arrayName = "u")
-  local parVariablesSym = [Symbol(p) for p in parameters]  
-  local START_CONDTIONS_EQUATIONS = getStartConditions(allVariables, "reals", simCode)
-  
-  local DISCRETE_START_VALUES = getStartConditionsMTK(discreteVariables, simCode)
-  local PARAMETER_EQUATIONS = createParameterEquationsMTK(parameters, simCode)
-  local PARAMETER_RAW_ARRAY = createParameterArray(parameters, simCode)
-  #= Create callback equations. For MTK we disable the saving function for now. =#
-  local CALL_BACK_EQUATIONS = createCallbackCode(modelName, simCode; generateSaveFunction = true)
-  #= Symbolic names =#
-  
-  local stateVariablesSym = [:($(Symbol(v))(t)) for v in stateVariables]
-  local algebraicVariablesSym = [:($(Symbol(v))(t)) for v in algebraicVariables]
-
-  local stateVariablesSymNoT = [:($(Symbol(v))) for v in stateVariables]
-  local algebraicVariablesSymNoT = [:($(Symbol(v))) for v in algebraicVariables]
-
-  DUMMY_EQUATION_OUTSIDE_LOOP = Expr[]
-  for v in vcat(stateVariablesSymNoT, algebraicVariablesSymNoT)
-    push!(DUMMY_EQUATION_OUTSIDE_LOOP, :($v ~ $v))
-  end
-  
-  local discreteVariablesSym = [:($(Symbol(v))) for v in discreteVariables]
-  RESET_CALLBACKS()
-  #= Create loop variables and the loop itself=#
-  local equations_loop = createResidualEquationsMTK(stateVariablesLoop,
-                                                    algebraicVariablesLoop,
-                                                    simCode.residualEquations,
-                                                    simCode::SimulationCode.SIM_CODE)
-  local algebraicVariablesSymLoop = [:($(Symbol(v))) for v in algebraicVariablesLoop]
-  local stateVariablesSymLoop = [:($(Symbol(v))) for v in stateVariablesLoop]
-  local START_CONDTIONS_EQUATIONS_LOOP = createStartConditionsEquationsMTK(stateVariablesLoop, algebraicVariablesLoop, simCode)
-  #= 
-  Formulate the problem as a DAE Problem.ac
-  For this variant we keep t on its own line 
-  https://github.com/SciML/ModelingToolkit.jl/issues/998
-  =#
-  program = quote
-    using ModelingToolkit
-    using DiffEqBase
-    using DifferentialEquations
-    using NLsolve
-    #= t for time=#
-    function $(Symbol(modelName, "AlgebraicLoop"))()
-      parameters = ModelingToolkit.@parameters begin
-        ($(parVariablesSym...), $(discreteVariablesSym...), t)
-      end
-      vars = ModelingToolkit.@variables begin
-        ($(stateVariablesSym...), $(stateVariablesSymLoop...), $(algebraicVariablesSymLoop...))
-      end
-      eqs = [$(equations_loop...), $(DUMMY_EQUATION_OUTSIDE_LOOP...)]
-      nonLinearSystem = ModelingToolkit.NonlinearSystem(eqs, vars, parameters, name=:($(Symbol($modelName))))
-      return nonLinearSystem
-    end
-
-    function makeNLProblem()
-      loop = $(Symbol(modelName, "AlgebraicLoop"))()
-      nlsys_function = generate_function(loop, expression=Val{false})[2]
-    end
-    $(Symbol(modelName, "NonLinearFunction")) = makeNLProblem()
-    function $(Symbol("$(modelName)Model_ODE"))(dx, x, aux, t)
-      p = aux[1]
-      u = aux[2]
-      func!(res, u) = $(Symbol(modelName, "NonLinearFunction"))(res, u, vcat(p,[t]))
-      sol = nlsolve(func!, u, ftol=1e-8; method = :newton)
-      aux[2] = sol.zero
-      #= Equations goes here =#
-      $(equations...)
-    end
-    function $(Symbol("$(modelName)Model_problem"))(tspan)
-      aux = [[$(PARAMETER_RAW_ARRAY...)], fill(0.0, $(length(allVariables)))]
-      pars = aux[1]
-      reals = aux[2]
-      $(START_CONDTIONS_EQUATIONS)
-      x = fill(0.0, $(length(stateVariables)))
-      dx = fill(0.0, $(length(stateVariables)))
-      odeF = $(Symbol("$(modelName)Model_ODE"))
-      ODEProblem(odeF, x, tspan, aux)
-    end
-    
-    $(CALL_BACK_EQUATIONS)
-    $(Symbol("$(modelName)Model_problemInstance")) = $(Symbol("$(modelName)Model_problem"))((0.0,1.))
-    function $(Symbol("$(modelName)Simulate"))(tspan)     
-      solve($(Symbol("$(modelName)Model_problemInstance")), tspan=tspan)
-    end
-    function $(Symbol("$(modelName)Simulate"))(tspan = (0.0, 1.0); solver=Tsit5())
-      solve($(Symbol("$(modelName)Model_problemInstance")), tspan=tspan, solver)
-    end
-  end
-  
-  return (modelName, program)
-end
-
-
-"""
-   Creates the residual equations in unsorted order
-"""
+     Creates the residual equations in unsorted order
+  """
 function createResidualEquationsMTK(stateVariables::Array, algebraicVariables::Array, equations::Array, simCode::SimulationCode.SIM_CODE)::Array{Expr}
   local eqs::Array{Expr} = []
   local ht = simCode.stringToSimVarHT
   local lhsVariables = Set([])
+  local usedEquations = []
   for i in 1:length(stateVariables)
     local variableIdx = ht[stateVariables[i]][1]
     local equationIdx = simCode.matchOrder[variableIdx]
     local equation = equations[equationIdx]
+    push!(usedEquations, equationIdx)
     push!(eqs, residualEqtoJuliaMTK(equation, simCode, equationIdx))
   end
   #= 
@@ -325,15 +163,15 @@ function createResidualEquationsMTK(stateVariables::Array, algebraicVariables::A
   This sitaution is assumed to have been checked statically prior to this by the frontend.
   If there is no equation for which a algebraic variable is not solved we ignore it. 
   =#
-  for var in algebraicVariables
-    local variableIdx = ht[var][1]
-    if variableIdx in simCode.matchOrder
-      local equationIdx = simCode.matchOrder[variableIdx]
-      local equation = equations[equationIdx]
-      local eqDAEExp = equation.exp
-      local eqExp = :(0 ~ $(stripBeginBlocks(expToJuliaExpMTK(eqDAEExp, simCode ;derSymbol=true))))
-      push!(eqs, eqExp)
-    end
+  local totalEquations = [i for i in 1:length(equations)]
+  local remainingEquations = setdiff(totalEquations, usedEquations)
+  #= Additional note. MTK does not require algebraic equations to follow a specific format.
+  So we can just generate our remaining equations =#
+  for eqIdx in remainingEquations
+    local equation = equations[eqIdx]
+    local eqDAEExp = equation.exp
+    local eqExp = :(0 ~ $(stripBeginBlocks(expToJuliaExpMTK(eqDAEExp, simCode ;derSymbol=false))))
+    push!(eqs, eqExp)
   end
   return eqs
 end
@@ -485,8 +323,16 @@ function residualEqtoJuliaMTK(eq::BDAE.Equation, simCode::SimulationCode.SIM_COD
       local varToSolve = simCode.stringToSimVarHT[ht[variableIdx]][2]
       local derSymbolString = "der_" * varToSolve.name
       local solveForState = SimulationCode.isState(varToSolve)
+      #= If we solve for state we solve for der_<var-name>=#
+      #= Why did I do this. Ask Lennart! =#
       local varToSolveExpr::Symbol =  solveForState ? Symbol(derSymbolString) : Symbol(varToSolve.name)
+#      local varToSolveExpr::Symbol = Symbol(varToSolve.name)
+      #= These are the variables present in this specific equation. =#
       local daeVariables = getVariablesInDAE_Exp(daeExp, simCode, Set([]))
+      @info "DBG:"
+      @info daeVariables
+      @info "Trying to solve:" varToSolveExpr
+      @info "In the following dae exp: $(string(daeExp))"
       #= Simple quation rewrite..=#
       eqRewrite = function ()
         eqExpr = quote
@@ -510,6 +356,7 @@ function residualEqtoJuliaMTK(eq::BDAE.Equation, simCode::SimulationCode.SIM_COD
           $(Symbol(varToSolve.name)) ~ $(evEqExpr[1])
         end
       end
+      @info "Resulting equation:" sol
       #= Return sol. Assign to results =#
       sol
     end
@@ -522,8 +369,8 @@ end
 
 
 """
-    Generates the initial value for the equations
-    TODO: Currently unable to generate start condition in order 
+  Generates the initial value for the equations
+  TODO: Currently unable to generate start condition in order 
 """
 function createStartConditionsEquationsMTK(states::Array,
                                         algebraics::Array,

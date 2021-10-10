@@ -163,6 +163,7 @@ function createEquationVariableBidirectionGraph(equations::RES_T,
   local variableEqMapping = OrderedDict()
   local unknownVariables = filter((x) -> BDAEUtil.isVariable(x.varKind), allBackendVars)
   local stateVariables = filter((x) -> BDAEUtil.isState(x.varKind), allBackendVars)
+  local algebraicAndStateVariables = vcat(unknownVariables, stateVariables)
   #= Treat states as solved =#
   nEquations = length(equations)  - length(stateVariables)
   nVariables = length(unknownVariables)
@@ -170,11 +171,12 @@ function createEquationVariableBidirectionGraph(equations::RES_T,
   TODO:
   Assert that the set of known variables has potential equations in which they can be used 
   (Introduction of IF equations made this operation more complicated)
+  Assumed to have been checked by the frontend?
   =#
   for eq in equations
     #= Fetch all variables belonging to the specific equation =#
     eqCounter += 1
-    variablesForEq = Backend.BDAEUtil.getAllVariables(eq, allBackendVars)
+    variablesForEq = Backend.BDAEUtil.getAllVariables(eq, algebraicAndStateVariables)
     variableEqMapping["e$(eqCounter)"] = sort(getIndiciesOfVariables(variablesForEq, stringToSimVarHT))
   end
   return variableEqMapping

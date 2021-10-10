@@ -313,18 +313,20 @@ function countAllUniqueVariablesInSetOfEquations(eqs::Vector{RES_EQ}, vars::Vect
 end
 
 """
-  Author:johti17
+  Author: johti17
   input: Backend Equation, eq
   input: All existing variables
   output All variable in that specific equation
 """
-function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Array{BDAE.Var})::Array{DAE.ComponentRef}
+function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Vector{BDAE.Var})::Vector{DAE.ComponentRef}
   local componentReferences::List = Util.getAllCrefs(eq.exp)
+  @info "Component references: $(string(componentReferences))" 
   local stateCrefs = Dict{DAE.ComponentRef, Bool}()
   (_, stateElements)  = traverseEquationExpressions(eq, detectStateExpression, stateCrefs)
+  @info stateElements
   local stateElementArray = collect(keys(stateElements))
-  local componentReferencesNotStates::Array = [componentReferences...]
-  local componentReferencesArr::Array = [componentReferences..., stateElementArray...]
+  local componentReferencesNotStates = [componentReferences...]
+  local componentReferencesArr = [componentReferences..., stateElementArray...]
   variablesInEq::Array = []
   for var in vars
     local vn = var.varName
@@ -333,9 +335,9 @@ function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Array{BDAE.Var})::Arr
     elseif vn in stateElementArray
       push!(variablesInEq, vn)
     else
-      continue
     end
   end
+  @info "Variables in eq: $(string(variablesInEq)) for eq: $(string(eq))"
   return variablesInEq
 end
 
