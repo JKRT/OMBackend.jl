@@ -9,7 +9,7 @@ model Pendulum
   Real vx;
   Real vy;
  /* Model specific variables */
-  Real phi;
+  Real phi (start = 1.);
   Real phid;
 equation
   der(phi) = phid;
