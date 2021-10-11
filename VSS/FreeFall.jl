@@ -3,11 +3,14 @@
         using DiffEqBase
         using DifferentialEquations
         function FreeFallModel(tspan = (0.0, 1.0))
-            @variables t        #= C:\Users\johti17\Projects\Programming\JuliaPackages\OM.jl\OMBackend.jl\src\CodeGeneration\MTK_CodeGeneration.jl:92 =#
-            parameters = ModelingToolkit.@parameters(()) #= C:\Users\johti17\Projects\Programming\JuliaPackages\OM.jl\OMBackend.jl\src\CodeGeneration\MTK_CodeGeneration.jl:93 =#
-            vars = ModelingToolkit.@variables((x(t), y(t), vx(t), vy(t))) #= C:\Users\johti17\Projects\Programming\JuliaPackages\OM.jl\OMBackend.jl\src\CodeGeneration\MTK_CodeGeneration.jl:100 =#
+            @variables t
+            parameters = ModelingToolkit.@parameters(()) 
+            vars = ModelingToolkit.@variables((x(t), y(t), vx(t), vy(t)))
             der = Differential(t)
-            eqs = [der(x) ~ vx, der(y) ~ vy, der(vx) ~ 0.0, der(vy) ~ -9.81]
+            eqs = [der(x) ~ vx, 
+                   der(y) ~ vy, 
+                   der(vx) ~ 0.0, 
+                   der(vy) ~ -9.81]
             nonLinearSystem = ModelingToolkit.ODESystem(
                 eqs,
                 t,
@@ -37,7 +40,7 @@
             )
             return problem
         end
-        begin
+        
             saved_values_FreeFall = SavedValues(Float64, Tuple{Float64,Array})
             function FreeFallCallbackSet(aux)
                 local p = aux[1]
@@ -51,7 +54,7 @@
                 end
                 return CallbackSet(cb1)
             end
-        end
+        
         FreeFallModel_problem = FreeFallModel()
         function FreeFallSimulate(tspan)
             return solve(FreeFallModel_problem, tspan = tspan)
