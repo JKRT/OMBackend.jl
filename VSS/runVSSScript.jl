@@ -43,7 +43,7 @@ function flattenFreeFall()
   translateModelsMTK(tst, F)
 end
 
-#flattenFreeFall()
+flattenFreeFall()
 flattenPendulum()
 
 OMBackend.writeModelToFile("FreeFall", "FreeFall.jl"; keepComments = false, formatFile = true, mode = OMBackend.MTK_MODE)

@@ -29,7 +29,6 @@ using DataStructures
          Boolean indicating if the system is singular or not.
 """
 function matching(dict::DataStructures.OrderedDict, n::Int)
-  @info dict
   #= Global arrays for bookkeeping =#
   local assign = [0 for i in 1:n]
   local vMark = Bool[false for i in 1:n]
@@ -127,9 +126,9 @@ function merge(matchOrder::Vector, graph::OrderedDict)::MetaGraphs.MetaDiGraph  
   return g
 end
 
-"
+"""
   Dumps the properties of a given MetaDiGraph.
-"
+"""
 function dumpGraphProperties(g::MetaGraphs.MetaDiGraph)
   local nVertices = LightGraphs.vertices(g).stop
   local str = "Meta properties of the graph:\n"
@@ -139,9 +138,9 @@ function dumpGraphProperties(g::MetaGraphs.MetaDiGraph)
   return str
 end
 
-"
+"""
   Topological sort 
-"
+"""
 function topological_sort(g::LightGraphs.AbstractGraph)::Array
   LightGraphs.topological_sort_by_dfs(g)
 end
@@ -164,6 +163,7 @@ function plotEquationGraphPNG(filePath::String, g::LightGraphs.AbstractGraph, la
   draw(Compose.PNG(filePath, dims...), plot)
 end
 
+#= TODO the old pdf alternative.. =#
 # function plotEquationGraph(filePath::String, g::LightGraphs.AbstractGraph, dims = (64cm, 64cm)::Tuple)
 #   plot = gplot(g,
 #                nodefillc="blue",

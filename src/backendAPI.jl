@@ -63,11 +63,11 @@ function translate(frontendDAE::DAE.DAE_LIST; BackendMode = DAE_MODE)::Tuple{Str
   local bDAE = lower(frontendDAE)
   local simCode
   if BackendMode == DAE_MODE
-    simCode = generateSimulationCode(bDAE)
+    simCode = generateSimulationCode(bDAE; mode = DAE_MODE)
     return generateTargetCode(simCode)
   elseif BackendMode == MTK_MODE
     @debug "Experimental: Generates and runs code using modelling toolkit"
-    simCode = generateSimulationCode(bDAE)
+    simCode = generateSimulationCode(bDAE; mode = MTK_MODE)
     return generateMTKTargetCode(simCode)
   else
     @error "No mode specificed: valid modes are:"
@@ -118,8 +118,8 @@ function lower(frontendDAE::DAE.DAE_LIST)::BDAE.BACKEND_DAE
   #= Mark state variables =#
   bDAE = Causalize.detectStates(bDAE)
   @debug(BDAEUtil.stringHeading1(bDAE, "states marked"));
+  #= We always residualize since residuals are easier to work with =#
   bDAE = Causalize.residualizeEveryEquation(bDAE)
-  #= =#
   @debug(BDAEUtil.stringHeading1(bDAE, "residuals"));
   return bDAE
 end
@@ -127,8 +127,8 @@ end
 """
   Transforms  BDAE-IR to simulation code for DAE-mode
 """
-function generateSimulationCode(bDAE::BDAE.BACKEND_DAE)::SimulationCode.SimCode
-  simCode = SimulationCode.transformToSimCode(bDAE)
+function generateSimulationCode(bDAE::BDAE.BACKEND_DAE; mode)::SimulationCode.SimCode
+  simCode = SimulationCode.transformToSimCode(bDAE; mode = mode)
   @debug BDAEUtil.stringHeading1(simCode, "SIM_CODE: transformed simcode")
   return simCode
 end

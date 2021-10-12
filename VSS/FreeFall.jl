@@ -3,9 +3,9 @@ begin
     using DiffEqBase
     using DifferentialEquations
     function FreeFallModel(tspan = (0.0, 1.0))
-        @variables t        #= C:\Users\johti17\Projects\Programming\JuliaPackages\OM.jl\OMBackend.jl\src\CodeGeneration\MTK_CodeGeneration.jl:92 =#
-        parameters = ModelingToolkit.@parameters(()) #= C:\Users\johti17\Projects\Programming\JuliaPackages\OM.jl\OMBackend.jl\src\CodeGeneration\MTK_CodeGeneration.jl:93 =#
-        vars = ModelingToolkit.@variables((x(t), y(t), vx(t), vy(t))) #= C:\Users\johti17\Projects\Programming\JuliaPackages\OM.jl\OMBackend.jl\src\CodeGeneration\MTK_CodeGeneration.jl:100 =#
+        @variables t        #= C:\Users\johti17\Projects\Programming\JuliaPackages\OM.jl\OMBackend.jl\src\CodeGeneration\MTK_CodeGeneration.jl:101 =#
+        parameters = ModelingToolkit.@parameters(()) #= C:\Users\johti17\Projects\Programming\JuliaPackages\OM.jl\OMBackend.jl\src\CodeGeneration\MTK_CodeGeneration.jl:102 =#
+        vars = ModelingToolkit.@variables((x(t), y(t), vx(t), vy(t))) #= C:\Users\johti17\Projects\Programming\JuliaPackages\OM.jl\OMBackend.jl\src\CodeGeneration\MTK_CodeGeneration.jl:109 =#
         der = Differential(t)
         eqs = [der(x) ~ vx, der(y) ~ vy, der(vx) ~ 0.0, der(vy) ~ -9.81]
         nonLinearSystem = ModelingToolkit.ODESystem(
@@ -18,7 +18,7 @@ begin
         pars = Dict()
         initialValues = [x => 0.0, y => 0.0, vx => 0.0, vy => 0.0]
         firstOrderSystem = ModelingToolkit.ode_order_lowering(nonLinearSystem)
-        reducedSystem = ModelingToolkit.dae_index_lowering(firstOrderSystem)
+        reducedSystem = firstOrderSystem
         local event_p = []
         local discreteVars = collect(values(Dict([])))
         local event_vars = vcat(

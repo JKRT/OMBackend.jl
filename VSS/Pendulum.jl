@@ -1,11 +1,11 @@
-begin
+
     using ModelingToolkit
     using DiffEqBase
     using DifferentialEquations
     function PendulumModel(tspan = (0.0, 1.0))
-        @variables t        #= C:\Users\johti17\Projects\Programming\JuliaPackages\OM.jl\OMBackend.jl\src\CodeGeneration\MTK_CodeGeneration.jl:92 =#
-        parameters = ModelingToolkit.@parameters((x0, y0, g, L, vx)) #= C:\Users\johti17\Projects\Programming\JuliaPackages\OM.jl\OMBackend.jl\src\CodeGeneration\MTK_CodeGeneration.jl:93 =#
-        vars = ModelingToolkit.@variables((x(t), y(t), phi(t), phid(t), vy(t))) #= C:\Users\johti17\Projects\Programming\JuliaPackages\OM.jl\OMBackend.jl\src\CodeGeneration\MTK_CodeGeneration.jl:100 =#
+        @variables t        #= C:\Users\johti17\Projects\Programming\JuliaPackages\OM.jl\OMBackend.jl\src\CodeGeneration\MTK_CodeGeneration.jl:101 =#
+        parameters = ModelingToolkit.@parameters((x0, y0, g, L)) #= C:\Users\johti17\Projects\Programming\JuliaPackages\OM.jl\OMBackend.jl\src\CodeGeneration\MTK_CodeGeneration.jl:102 =#
+        vars = ModelingToolkit.@variables((x(t), y(t), phi(t), phid(t), vx(t), vy(t))) #= C:\Users\johti17\Projects\Programming\JuliaPackages\OM.jl\OMBackend.jl\src\CodeGeneration\MTK_CodeGeneration.jl:109 =#
         der = Differential(t)
         eqs = [
             der(x) ~ vx,
@@ -27,31 +27,22 @@ begin
             y0 => float(10.0),
             g => float(9.81),
             L => float(sqrt(x0^2.0 + y0^2.0)),
-            vx => 0.0,
         )
-        initialValues = [
-            vy => 0.0,
-            x => exp,
-            x => pars[x0],
-            y => exp,
-            y => pars[y0],
-            phi => 0.0,
-            phid => 0.0,
-        ]
+        initialValues =
+            [vx => 0.0, vy => 0.0, x => pars[x0], y => pars[y0], phi => 1.0, phid => 0.0]
         firstOrderSystem = ModelingToolkit.ode_order_lowering(nonLinearSystem)
         reducedSystem = ModelingToolkit.dae_index_lowering(firstOrderSystem)
         local event_p = [10.0, 10.0, 9.81, 0]
-        local discreteVars = collect(values(Dict([vx => 0.0])))
+        local discreteVars = collect(values(Dict([])))
         local event_vars = vcat(
             collect(
                 values(
                     Dict([
+                        vx => 0.0,
                         vy => 0.0,
-                        x => exp,
                         x => pars[x0],
-                        y => exp,
                         y => pars[y0],
-                        phi => 0.0,
+                        phi => 1.0,
                         phid => 0.0,
                     ]),
                 ),
@@ -92,4 +83,3 @@ begin
     function PendulumSimulate(tspan = (0.0, 1.0); solver = Rodas5())
         return solve(PendulumModel_problem, tspan = tspan, solver)
     end
-end

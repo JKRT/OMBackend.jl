@@ -1,7 +1,7 @@
 #=
   Author: John Tinnerholm
 
-TODO: Remember the state derivative scheme. What the heck did I mean  with that? 
+TODO: Remember the state derivative scheme. What the heck did I mean  with that?
 TODO: Make duplicate code better...
 TODO: Make this into it's own module
 TODO: Fix the redundant string conversion scheme
@@ -22,14 +22,15 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   @debug "Runnning: generateMTKCode"
   RESET_CALLBACKS()
   local stringToSimVarHT = simCode.stringToSimVarHT
-  local equations::Array = []
+  local equations::Array = BDAE.RESIDUAL_EQUATION[]
   local exp::DAE.Exp
   local modelName::String = simCode.name
-  local parameters::Array = []
-  local stateDerivatives::Array = []
-  local stateVariables::Array = []
-  local algebraicVariables::Array = []
-  local discreteVariables::Vector = []  
+  local parameters::Vector = String[]
+  local stateDerivatives::Vector = String[]
+  local stateVariables::Vector = String[]
+  local algebraicVariables::Vector = String[]
+  local discreteVariables::Vector = String[]
+  local performIndexReduction = false
   for varName in keys(stringToSimVarHT)
     (idx, var) = stringToSimVarHT[varName]
     local varType = var.varKind
@@ -39,20 +40,28 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
       SimulationCode.STATE(__) => push!(stateVariables, varName)
       SimulationCode.PARAMETER(__) => push!(parameters, varName)
       SimulationCode.ALG_VARIABLE(__) => begin
-        #=TODO: seems to be unable to find variables in some cases... 
-        should there be an and here? Keep track of variables that are also involved in if structures=#
-        if idx in simCode.matchOrder 
+        #=TODO: Seems to be unable to find variables in some cases...
+        should there be an and here? Keep track of variables that are also involved in if/when structures
+        =#
+        if idx in simCode.matchOrder
           push!(algebraicVariables, varName)
-        else #= We have a variable that is not contained in continious system =#
+        elseif involvedInEvent(idx, simCode) #= We have a variable that is not contained in continious system =#
           #= Treat discrete variables separate =#
           push!(discreteVariables, varName)
+        elseif simCode.isSingular
+          #=
+            If the variable is not involved in an event and the index is not in match order and
+            the system is singular.
+            This means that the variable is probably algebraic however, we need to perform index reduction.
+          =#
+          push!(algebraicVariables, varName)
         end
       end
       #=TODO:johti17 Do I need to modify this?=#
       SimulationCode.STATE_DERIVATIVE(__) => push!(stateDerivatives, varName)
     end
   end
-
+  performIndexReduction = simCode.isSingular
   @info simCode.matchOrder
   @info "Our states where:" stateVariables
   @info "Our discrete variables" discreteVariables
@@ -76,24 +85,24 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
 
   RESET_CALLBACKS()
 
-  #= 
+  #=
   Formulate the problem as a DAE Problem.
-  For this variant we keep t on its own line 
+  For this variant we keep t on its own line
   https://github.com/SciML/ModelingToolkit.jl/issues/998
   =#
   #=If our model name is separated by . replace it with __ =#
-  local MODEL_NAME = replace(modelName, "." => "__") 
+  local MODEL_NAME = replace(modelName, "." => "__")
   program = quote
     using ModelingToolkit
     using DiffEqBase
     using DifferentialEquations
-    
+
     function $(Symbol(MODEL_NAME * "Model"))(tspan = (0.0, 1.0))
       @variables t
       parameters = ModelingToolkit.@parameters begin
         ($(parVariablesSym...), $(discreteVariablesSym...))
       end
-      #= 
+      #=
       Only variables that are present in the equation system later should be a part of the variables in the MTK system.
       This means that certain algebraic variables should not be listed among the variables (These are the discrete variables).
       =#
@@ -107,9 +116,9 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
       #= Initial values for the continious system. =#
       initialValues = [$(START_CONDTIONS_EQUATIONS...)]
       firstOrderSystem = ModelingToolkit.ode_order_lowering(nonLinearSystem)
-      reducedSystem = ModelingToolkit.dae_index_lowering(firstOrderSystem)
-      #= 
-      These arrays are introduced to handle the bolted on event handling using callbacks. 
+      $(MTK_indexReduction(performIndexReduction))
+      #=
+      These arrays are introduced to handle the bolted on event handling using callbacks.
       The callback handling for MTK is subject of change should hybrid system be implemented for MTK.
       =#
       local event_p = [$(PARAMETER_RAW_ARRAY...)]
@@ -129,23 +138,23 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
     end
     $(CALL_BACK_EQUATIONS)
     $(Symbol("$(MODEL_NAME)Model_problem")) = $(Symbol("$(MODEL_NAME)Model"))()
-    function $(Symbol("$(MODEL_NAME)Simulate"))(tspan)     
+    function $(Symbol("$(MODEL_NAME)Simulate"))(tspan)
       solve($(Symbol("$(MODEL_NAME)Model_problem")), tspan=tspan)
     end
     function $(Symbol("$(MODEL_NAME)Simulate"))(tspan = (0.0, 1.0); solver=Rodas5())
       solve($(Symbol("$(MODEL_NAME)Model_problem")), tspan=tspan, solver)
     end
   end
-  
+
   return (modelName, program)
-  
+
 end
 
 """
      Creates the residual equations in unsorted order
   """
 function createResidualEquationsMTK(stateVariables::Array, algebraicVariables::Array, equations::Array, simCode::SimulationCode.SIM_CODE)::Array{Expr}
-  local eqs::Array{Expr} = []
+  local eqs::Vector{Expr} = Expr[]
   local ht = simCode.stringToSimVarHT
   local lhsVariables = Set([])
   local usedEquations = []
@@ -156,12 +165,12 @@ function createResidualEquationsMTK(stateVariables::Array, algebraicVariables::A
     push!(usedEquations, equationIdx)
     push!(eqs, residualEqtoJuliaMTK(equation, simCode, equationIdx))
   end
-  #= 
+  #=
   Generate algebraic equations.
-  It might be the case that the algebraic variables are solved someplace else and not in 
+  It might be the case that the algebraic variables are solved someplace else and not in
   the main set of equations. For instance a particular algebraic variable might be solved in some when equation.
   This sitaution is assumed to have been checked statically prior to this by the frontend.
-  If there is no equation for which a algebraic variable is not solved we ignore it. 
+  If there is no equation for which a algebraic variable is not solved we ignore it.
   =#
   local totalEquations = [i for i in 1:length(equations)]
   local remainingEquations = setdiff(totalEquations, usedEquations)
@@ -174,112 +183,6 @@ function createResidualEquationsMTK(stateVariables::Array, algebraicVariables::A
     push!(eqs, eqExp)
   end
   return eqs
-end
-
-"Converts a DAE expression into a Julia expression"
-function expToJuliaExpMTK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuffix=""; varPrefix="x", derSymbol::Bool=false)::Expr
-  hashTable = simCode.stringToSimVarHT
-  local expr::Expr = begin
-    local int::Int64
-    local real::Float64
-    local bool::Bool
-    local tmpStr::String
-    local cr::DAE.ComponentRef
-    local e1::DAE.Exp
-    local e2::DAE.Exp
-    local e3::DAE.Exp
-    local expl::List{DAE.Exp}
-    local lstexpl::List{List{DAE.Exp}}
-    @match exp begin
-      DAE.BCONST(bool) => quote $bool end
-      DAE.ICONST(int) => quote $int end
-      DAE.RCONST(real) => quote $real end
-      DAE.SCONST(tmpStr) => quote $tmpStr end
-      DAE.CREF(cr, _)  => begin
-        varName = SimulationCode.string(cr)
-        builtin = if varName == "time"
-          true
-        else
-          false
-        end
-        if ! builtin
-          #= If we refeer to time, we simply return t instead of a concrete variable =#
-          indexAndVar = hashTable[varName]
-          varKind::SimulationCode.SimVarType = indexAndVar[2].varKind
-          @match varKind begin
-            SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
-            SimulationCode.STATE(__) => quote
-              $(LineNumberNode(@__LINE__, "$varName state"))
-              $(Symbol(indexAndVar[2].name))
-            end
-            SimulationCode.PARAMETER(__) => quote
-              $(LineNumberNode(@__LINE__, "$varName parameter"))
-              $(Symbol(indexAndVar[2].name))
-            end
-            SimulationCode.ALG_VARIABLE(__) => quote
-              $(LineNumberNode(@__LINE__, "$varName, algebraic"))
-              $(Symbol(indexAndVar[2].name))
-            end
-            _ => begin
-              @error "Unsupported varKind: $(varKind)"
-              throw()
-            end
-          end
-        else #= Currently only time is a builtin variable. Time is represented as t in the generated code =#
-          quote
-            t
-          end
-        end
-      end
-      DAE.UNARY(operator = op, exp = e1) => begin
-        o = DAE_OP_toJuliaOperator(op)
-        quote
-          $(o)($(expToJuliaExpMTK(e1, simCode, varPrefix=varPrefix)))
-        end
-      end
-      DAE.BINARY(exp1 = e1, operator = op, exp2 = e2) => begin
-        a = expToJuliaExpMTK(e1, simCode, varPrefix=varPrefix, derSymbol = derSymbol)
-        b = expToJuliaExpMTK(e2, simCode, varPrefix=varPrefix, derSymbol = derSymbol)
-        o = DAE_OP_toJuliaOperator(op)
-        :($o($(a), $(b)))
-      end
-      DAE.LUNARY(operator = op, exp = e1)  => begin
-        quote
-          $("(" + SimulationCode.string(op) + " " + expToJuliaExpMTK(e1, simCode, varPrefix=varPrefix, derSymbol = derSymbol) + ")")
-        end
-      end
-      DAE.LBINARY(exp1 = e1, operator = op, exp2 = e2) => begin
-        quote 
-          $(expToJuliaExpMTK(e1, simCode, varPrefix=varPrefix, derSymbol = derSymbol) + " " + SimulationCode.string(op) + " "
-            + expToJuliaExpMTK(e2, simCode, varPrefix=varPrefix, derSymbol = derSymbol))
-        end
-      end
-      DAE.RELATION(exp1 = e1, operator = op, exp2 = e2) => begin
-        quote 
-          $(expToJuliaExpMTK(e1, simCode,
-                             varPrefix=varPrefix,derSymbol = derSymbol)
-            + " "
-            + SimulationCode.string(op)
-            + " "
-            + expToJuliaExpMTK(e2, simCode,varPrefix=varPrefix, derSymbol=derSymbol))
-        end
-      end
-      DAE.IFEXP(expCond = e1, expThen = e2, expElse = e3) => begin
-        throw(ErrorException("If expressions not allowed in backend code"))
-      end
-      DAE.CALL(path = Absyn.IDENT(tmpStr), expLst = explst)  => begin
-        #Call as symbol is really ugly.. please fix me :(
-        DAECallExpressionToMTKCallExpression(tmpStr, explst, simCode, hashTable; varPrefix=varPrefix, derAsSymbol=derSymbol)
-      end
-      DAE.CAST(ty, exp)  => begin
-        quote
-          $(generateCastExpressionMTK(ty, exp, simCode, varPrefix))
-        end
-      end
-      _ =>  throw(ErrorException("$exp not yet supported"))
-    end
-  end
-  return expr
 end
 
 """
@@ -329,10 +232,6 @@ function residualEqtoJuliaMTK(eq::BDAE.Equation, simCode::SimulationCode.SIM_COD
 #      local varToSolveExpr::Symbol = Symbol(varToSolve.name)
       #= These are the variables present in this specific equation. =#
       local daeVariables = getVariablesInDAE_Exp(daeExp, simCode, Set([]))
-      @info "DBG:"
-      @info daeVariables
-      @info "Trying to solve:" varToSolveExpr
-      @info "In the following dae exp: $(string(daeExp))"
       #= Simple quation rewrite..=#
       eqRewrite = function ()
         eqExpr = quote
@@ -370,7 +269,7 @@ end
 
 """
   Generates the initial value for the equations
-  TODO: Currently unable to generate start condition in order 
+  TODO: Currently unable to generate start condition in order
 """
 function createStartConditionsEquationsMTK(states::Array,
                                         algebraics::Array,
@@ -403,14 +302,14 @@ function getStartConditionsMTK(vars::Array, simCode::SimulationCode.SimCode)::Ar
       SOME(attributes) => begin
         () = @match (attributes.start, attributes.fixed) begin
           (SOME(DAE.CREF(start)), SOME(__)) || (SOME(DAE.CREF(start)), _)  => begin
-            push!(startExprs, :($(Symbol("$varName")) => $exp))            
+#            push!(startExprs, :($(Symbol("$varName")) => $(exp))) what is this?
             #= We have a variable of sorts =#
             push!(startExprs,
                   quote
                   $(Symbol("$varName")) => pars[$(Symbol(start.ident))]
                   end)
-            ()          
-          end            
+            ()
+          end
           (SOME(start), SOME(fixed)) || (SOME(start), _)  => begin
             push!(startExprs,
                   quote
@@ -432,7 +331,7 @@ function getStartConditionsMTK(vars::Array, simCode::SimulationCode.SimCode)::Ar
 end
 
 """
-  Creates parameters on a MTK parameters compatible format.   
+  Creates parameters on a MTK parameters compatible format.
 """
 function createParameterEquationsMTK(parameters::Array, simCode::SimulationCode.SimCode)::Array{Expr}
   local parameterEquations::Array = []
@@ -473,7 +372,7 @@ function createParameterArray(parameters::Vector{T}, simCode::SIM_T) where {T, S
       _ => ErrorException("Unknown SimulationCode.SimVarType for parameter.")
     end
     #= Evaluate the parameters. If it is a variable, and can't be evaluated look it up in the parameter dictonary. =#
-    local parValue    
+    local parValue
     try
       #= The boundvalue is known =#
       val = eval(expToJuliaExpMTK(bindExp, simCode))
