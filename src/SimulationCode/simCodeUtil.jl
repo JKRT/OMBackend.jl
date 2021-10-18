@@ -8,9 +8,9 @@ function isStateOrAlgebraic(simvar::SimVar)::Bool
   return isAlgebraic(simvar) || isState(simvar)
 end
 
-"
-Returns true if simvar is  an algebraic variable
-"
+"""
+Returns true if simvar is an algebraic variable
+"""
 function isAlgebraic(simvar::SimVar)::Bool
   res = @match simvar.varKind begin
     ALG_VARIABLE(__) => true
@@ -107,7 +107,7 @@ end
 
 
 """
-author: johti17 & Andreas
+Author: johti17 & Andreas
    This functions create and assigns indices for variables
    Thus Construct the table that maps variable name to the actual variable.
 It executes the following steps:
@@ -155,6 +155,8 @@ end
 """
   Given the available residual equations and the set of backend variables 
   create a bidrection graph between these equations and the supplied variables.
+Note: If we need to do index reduction there might be empty equations here.
+
 """
 function createEquationVariableBidirectionGraph(equations::RES_T,
                                                 allBackendVars::VECTOR_VAR,
