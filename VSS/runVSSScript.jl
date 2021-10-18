@@ -35,6 +35,15 @@ function flattenPendulum()
   translateModelsMTK(tst, F)
 end
 
+function flattenNonLinearScaleable()
+  local tst = ["nonLinearScaleable"]
+  local F = "nonLinearScaleable"
+#  @info "Dumping the models"
+  dumpModelsMTK(tst, F)
+#  #=lets try to run=#
+  translateModelsMTK(tst, F)
+end
+
 function flattenFreeFall()
   local tst = ["FreeFall"]
   local F = "FreeFall"
@@ -45,6 +54,7 @@ end
 
 flattenFreeFall()
 flattenPendulum()
+flattenNonLinearScaleable()
 
 OMBackend.writeModelToFile("FreeFall", "FreeFall.jl"; keepComments = false, formatFile = true, mode = OMBackend.MTK_MODE)
 OMBackend.writeModelToFile("Pendulum", "Pendulum.jl"; keepComments = false, formatFile = true, mode = OMBackend.MTK_MODE)

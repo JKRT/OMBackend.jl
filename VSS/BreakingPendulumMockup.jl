@@ -1,6 +1,7 @@
 using Revise
+using ModelingToolkit
 include("Pendulum.jl")
-include("FreeFall.jl") 
+include("FreeFall.jl")
 
 #=
 This model contains variables but no equations of its own.
@@ -31,7 +32,7 @@ end
 
 function BreakingPendulum(tspan)
   (_, initialValues, reducedSystem, tspan, pars) = PendulumModel(tspan)
-  freeFall = FreeFallModel(tspan)
+  (freeFall,_,_,_,_) = FreeFallModel(tspan)
   (sCB, changeStructure1) = structuralCallback(freeFall)
   #= Our initial model is the pendulum model (but with a structural change specified.) =#
    breakingPendulumModel = ModelingToolkit.ODEProblem(
@@ -47,4 +48,4 @@ end
 
 (problem, structuralCallbacks) = BreakingPendulum((0.0, 7.))
 import OMBackend
-OMBackend.Runtime.solve(problem, (0.0, 7.), Rodas5(), structuralCallbacks)
+finalSolution = OMBackend.Runtime.solve(problem, (0.0, 7.), Rodas5(), structuralCallbacks)
