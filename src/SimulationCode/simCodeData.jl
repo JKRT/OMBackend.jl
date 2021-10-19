@@ -75,7 +75,7 @@ struct BRANCH{T1 <: DAE.Exp,
               T3 <: Int, #= Integer code Each branch has one target (next) The ID of one branch is target - 1=#
               T4 <: Bool,
               T5 <: Vector{Int},
-              T6 <: LightGraphs.AbstractGraph,
+              T6 <: Graphs.AbstractGraph,
               T7 <: Vector{Int},
               T8 <: AbstractDict{String, Tuple{Integer, SimVar}}} <: Construct
   
@@ -114,7 +114,7 @@ struct SIM_CODE{T0<:String,
                 T5<:Vector{IF_EQUATION},
                 T6<:Bool,
                 T7<:Vector{Int},
-                T8<:LightGraphs.AbstractGraph,
+                T8<:Graphs.AbstractGraph,
                 T9<:Vector} <: SimCode
   name::T0
   "Mapping of names to the corresponding variable"
