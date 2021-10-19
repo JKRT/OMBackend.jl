@@ -46,7 +46,6 @@ import DAE
 import Absyn
 import MetaGraphs
 #= For symbolic math operations =#
-import Reduce
 
 
 include("./CodeGenerationUtil.jl")

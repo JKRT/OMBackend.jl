@@ -9,7 +9,7 @@
 "
 module GraphAlgorithms
 
-import LightGraphs
+import Graphs
 import MetaGraphs
 import Cairo
 using GraphPlot
@@ -80,7 +80,7 @@ Author: John Tinnerholm
   representing a causalised system.
   input matchOrder, assign array(j) = i The variable j is solved in equation i
   input graph equation -> {Equation -> variables belonging to it}
-  output LightGraphs.SimpleDiGraph
+  output Graphs.SimpleDiGraph
 """
 function merge(matchOrder::Vector, graph::OrderedDict)::MetaGraphs.MetaDiGraph  "Remove function for arrays.."
   function remove!(a, item)
@@ -98,7 +98,7 @@ function merge(matchOrder::Vector, graph::OrderedDict)::MetaGraphs.MetaDiGraph  
   =#
   local nMatchOrder = length(matchOrder)
   for eq in 1:nMatchOrder
-    LightGraphs.add_vertex!(g)
+    Graphs.add_vertex!(g)
     MetaGraphs.set_prop!(g, eq, :eID, eq)
   end
   for eq in 1:nMatchOrder
@@ -114,7 +114,7 @@ function merge(matchOrder::Vector, graph::OrderedDict)::MetaGraphs.MetaDiGraph  
       for v in depVariables
         MetaGraphs.set_prop!(g, matchOrder[v], :vID, v)
         MetaGraphs.set_prop!(g, eq, :vID, varIdx[1])
-        LightGraphs.add_edge!(g, matchOrder[v], eq)
+        Graphs.add_edge!(g, matchOrder[v], eq)
       end
     else
       MetaGraphs.set_prop!(g, eq, :vID, varIdx[1])
@@ -128,7 +128,7 @@ end
   Dumps the properties of a given MetaDiGraph.
 "
 function dumpGraphProperties(g::MetaGraphs.MetaDiGraph)
-  local nVertices = LightGraphs.vertices(g).stop
+  local nVertices = Graphs.vertices(g).stop
   local str = "Meta properties of the graph:\n"
   for i in 1:nVertices
     str *= "Properties: $(MetaGraphs.props(g, i))\n"
@@ -139,19 +139,19 @@ end
 "
   Topological sort 
 "
-function topological_sort(g::LightGraphs.AbstractGraph)::Array
-  LightGraphs.topological_sort_by_dfs(g)
+function topological_sort(g::Graphs.AbstractGraph)::Array
+  Graphs.topological_sort_by_dfs(g)
 end
 
-function stronglyConnectedComponents(g::LightGraphs.AbstractGraph)::Array
-  LightGraphs.strongly_connected_components_kosaraju(g)
+function stronglyConnectedComponents(g::Graphs.AbstractGraph)::Array
+  Graphs.strongly_connected_components_kosaraju(g)
 end
 
 
 """
     Plots the given equation graph as a png
 """
-function plotEquationGraphPNG(filePath::String, g::LightGraphs.AbstractGraph, labels, dims = (64cm, 64cm)::Tuple)
+function plotEquationGraphPNG(filePath::String, g::Graphs.AbstractGraph, labels, dims = (64cm, 64cm)::Tuple)
   plot = gplot(g,
                nodelabel=labels,
                nodefillc="blue",
@@ -161,7 +161,7 @@ function plotEquationGraphPNG(filePath::String, g::LightGraphs.AbstractGraph, la
   draw(Compose.PNG(filePath, dims...), plot)
 end
 
-# function plotEquationGraph(filePath::String, g::LightGraphs.AbstractGraph, dims = (64cm, 64cm)::Tuple)
+# function plotEquationGraph(filePath::String, g::Graphs.AbstractGraph, dims = (64cm, 64cm)::Tuple)
 #   plot = gplot(g,
 #                nodefillc="blue",
 #                nodelabelc="white",
@@ -170,8 +170,8 @@ end
 #   draw(Compose.PDF(filePath, dims...), plot)
 # end
 
-function connected_components(g::LightGraphs.AbstractGraph)
-  LightGraphs.connected_components(g)
+function connected_components(g::Graphs.AbstractGraph)
+  Graphs.connected_components(g)
 end
 
 """
