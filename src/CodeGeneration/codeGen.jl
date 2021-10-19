@@ -435,7 +435,8 @@ function createSortedEquations(variables::Array, simCode::SimulationCode.SIM_COD
     local varToSolve = simCode.stringToSimVarHT[ht[variableIdx]][2]
     local varToSolveExpr::Symbol = SimulationCode.isState(varToSolve) ? Symbol("dx_$(variableIdx)") : Symbol("$(arrayName)_$(variableIdx)")
     #= Solve equation symbolically (Or numerically) =#
-    local reduceSolution::Expr = Reduce.Algebra.solve(rewrittenEquation, varToSolveExpr)[1]
+    #local reduceSolution::Expr = Reduce.Algebra.solve(rewrittenEquation, varToSolveExpr)[1]
+    throw("Old codegen to be removed in future patch!")
     local postProcessSolution::Expr = symbolicVariableToArrayRef(reduceSolution)
     push!(sortedEquations, postProcessSolution)
   end

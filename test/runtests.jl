@@ -76,10 +76,11 @@ function testBackend(TEST_CASES::Array; mode)
           @testset "Simulate" begin
             @info "Simulating: $MODEL_NAME"
             try
-              simulationResult = getSimulationResult(OMBackend.simulateModel(MODEL_NAME; tspan=(0.0, 1.0)))
+              simulationResult = getSimulationResult(OMBackend.simulateModel(MODEL_NAME; MODE = mode, tspan=(0.0, 1.0)))
               @test simulationResult == :Success
             catch e
               @info "Simulation failure: see $(testCase)_result.csv"
+              @info "Simulatio result was:"
               @test false
             end
           end
@@ -111,8 +112,8 @@ function runTests()
   TEST_CASES_HYBRID = ["bouncingBallReals"]
   @testset "Backend test" begin
     @testset "DifferentialEquations.jl Backend tests" begin
-      testBackend(TEST_CASES_BASIC; mode= OMBackend.DAE_MODE)
-      testBackend(TEST_CASES_ADVANCED; mode= OMBackend.DAE_MODE)
+#      testBackend(TEST_CASES_BASIC; mode= OMBackend.DAE_MODE)
+#      testBackend(TEST_CASES_ADVANCED; mode= OMBackend.DAE_MODE)
       #= Currently failing due to  https://github.com/SciML/Sundials.jl/issues/292 and https://github.com/SciML/Sundials.jl/issues/290=#
       #testBackend(TEST_CASES_HYBRID; mode = OMBackend.DAE_MODE)
     end
