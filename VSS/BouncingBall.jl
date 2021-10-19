@@ -35,7 +35,7 @@ begin
             pars,
             callback = BouncingBallCallbackSet(aux),
         )
-        return (problem, initialValues, reducedSystem, tspan, pars)
+        return (problem, initialValues, reducedSystem, tspan, pars, vars)
     end
     begin
         saved_values_BouncingBall = SavedValues(Float64, Tuple{Float64,Array})
@@ -63,7 +63,7 @@ begin
             return CallbackSet(cb1, cb2)
         end
     end
-    (BouncingBallModel_problem, _, _, _, _) = BouncingBallModel()
+    (BouncingBallModel_problem, _, _, _, _, _) = BouncingBallModel()
     function BouncingBallSimulate(tspan)
         return solve(BouncingBallModel_problem, tspan = tspan)
     end

@@ -134,10 +134,10 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
                                            tspan,
                                            pars,
                                            callback=$(Symbol("$(MODEL_NAME)CallbackSet"))(aux))
-      return (problem, initialValues, reducedSystem, tspan, pars)
+      return (problem, initialValues, reducedSystem, tspan, pars, vars)
     end
     $(CALL_BACK_EQUATIONS)
-    ($(Symbol("$(MODEL_NAME)Model_problem")), _, _, _, _) = $(Symbol("$(MODEL_NAME)Model"))()
+    ($(Symbol("$(MODEL_NAME)Model_problem")), _, _, _, _,_) = $(Symbol("$(MODEL_NAME)Model"))()
     function $(Symbol("$(MODEL_NAME)Simulate"))(tspan)
       solve($(Symbol("$(MODEL_NAME)Model_problem")), tspan=tspan)
     end

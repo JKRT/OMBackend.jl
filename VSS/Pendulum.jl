@@ -59,7 +59,7 @@ begin
             pars,
             callback = PendulumCallbackSet(aux),
         )
-        return (problem, initialValues, reducedSystem, tspan, pars)
+        return (problem, initialValues, reducedSystem, tspan, pars, vars)
     end
     begin
         saved_values_Pendulum = SavedValues(Float64, Tuple{Float64,Array})
@@ -76,7 +76,7 @@ begin
             return CallbackSet(cb1)
         end
     end
-    (PendulumModel_problem, _, _, _, _) = PendulumModel()
+    (PendulumModel_problem, _, _, _, _, _) = PendulumModel()
     function PendulumSimulate(tspan)
         return solve(PendulumModel_problem, tspan = tspan)
     end

@@ -35,7 +35,7 @@ begin
             pars,
             callback = FreeFallCallbackSet(aux),
         )
-        return (problem, initialValues, reducedSystem, tspan, pars)
+        return (problem, initialValues, reducedSystem, tspan, pars, vars)
     end
     begin
         saved_values_FreeFall = SavedValues(Float64, Tuple{Float64,Array})
@@ -52,7 +52,7 @@ begin
             return CallbackSet(cb1)
         end
     end
-    (FreeFallModel_problem, _, _, _, _) = FreeFallModel()
+    (FreeFallModel_problem, _, _, _, _, _) = FreeFallModel()
     function FreeFallSimulate(tspan)
         return solve(FreeFallModel_problem, tspan = tspan)
     end
