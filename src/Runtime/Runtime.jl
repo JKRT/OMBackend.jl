@@ -38,24 +38,20 @@ We should also statically detect if VSS simulation is needed since it is more re
 =#
 
 """
-  Custom solver function to monitor the solving process
+  Custom solver function for Modelica code with structuralCallbacks to monitor the solving process
   (Using the integrator interface) from DifferentialEquations.jl
 """
-
-function solve(problem, tspan, alg, structuralCallbacks, commonVariableDict; kwargs...)
-  @info "Calling solve!"
+function solve(problem, tspan, alg, structuralCallbacks, commonVariableSet; kwargs...)
+  local symsOfInitialMode = getSyms(problem)
+  local indicesOfCommonVariablesForStartingMode = getIndicesOfCommonVariables(symsOfInitialMode, commonVariableSet)
   #= Create integrator =#
-  integrator = init(problem, alg, dtmax = 0.1, kwargs...)
+  integrator = init(problem, alg, kwargs...)
   add_tstop!(integrator, tspan[2])
   oldSols = []
   #= Run the integrator=#
   @label START_OF_INTEGRATION
-  println(integrator.t)
-  @show integrator
   for i in integrator
     #= Check structural callbacks in order =#
-    println("Stepping:")
-#    println("Status of i: $(i)")
     retCode = check_error(integrator)
     for cb in structuralCallbacks
       if cb.structureChanged
@@ -65,13 +61,12 @@ function solve(problem, tspan, alg, structuralCallbacks, commonVariableDict; kwa
         indicesOfCommonVariables = getIndicesOfCommonVariables(getSyms(problem), getSyms(cb.system))
         newU0 = Float64[i.u[idx] for idx in indicesOfCommonVariables]
         #= Now we have the start values for the next part of the system=#
-        push!(oldSols, integrator.sol)
+        push!(oldSols, (integrator.sol, getSyms(cb.system)))
         integrator = init(cb.system,
                           alg;
                           t0 = i.t,
                           u0 = newU0,
                           tstop = tspan[2],
-                          dtmax = 0.1,
                           kwargs...)
         #= Reset with the new values of u0 =#
         reinit!(integrator, newU0; t0 = i.t, reset_dt = true)
@@ -84,29 +79,30 @@ function solve(problem, tspan, alg, structuralCallbacks, commonVariableDict; kwa
   end
   #= The solution of the integration procedure =#
   local solution = integrator.sol
+  @info "Solution:" solution
+  
   #= The final solution =#
   #= in oldSols we have the old solution. =#
-  local newTimePoints = vcat(first(oldSols).t, solution.t) #TODO should be a loop here.
-
+  local startingSol = first(first(oldSols))
+  @info "Starting solution" startingSol
+  local newTimePoints = vcat(startingSol.t, solution.t) #TODO should be a loop here.
   #=TODO: We have a set of common variables. Find the indices for this set. =#
   #= We are creating a new Vector{Vector{Float64}}: =#
   #= Each solution in oldSol is solution to some subsolution of the VSS, before structural change =#
   #= If the dimensions between the solutions are not equivivalent we should only keep the columns we need =#
 #  indicesOfCommonVariables = getIndicesOfCommonVariables(getSyms(problem), getSyms(cb.system))
-  local startingSol = first(oldSols)
-  local newUs = [startingSol[i,:]  for i in [1,2,5,6]] #TODO be clever here. 
-  #= Now we need to merge these with the new solution =#
-  @info "New US before vcat:" newUs[1]
-  a = vcat(newUs[1], solution[1,:])
-  b = vcat(newUs[2], solution[2,:])
-  c = vcat(newUs[3], solution[3,:])
-  d = vcat(newUs[4], solution[4,:])
 
+  #= The starting point is the initial variables of our starting mode =#
+  local newUs = [startingSol[i,:]  for i in indicesOfCommonVariablesForStartingMode]
+  #= Now we need to merge these with the latest solution =#
+  local tmp = getIndicesOfCommonVariables(commonVariableSet, getSymsFromSolution(solution))
+  for i in 1:length(commonVariableSet)
+    newUs[i] = vcat(newUs[i], solution[tmp[i],:])
+  end
   #=Convert into a matrix and then into a vector of vector again to get the right dimensions. =#
-  newUs = transpose(hcat([a,b,c,d]...))
+  newUs = transpose(hcat(newUs...))
   newUs = [newUs[:,i] for i in 1:size(newUs,2)]
-  #= For anyone reading this.. this could have been done better! =#
-  
+  #= For anyone reading this.. this the transformations above could have been done better! =#
   #= Should be the common varibles =#  
   local sol = SciMLBase.build_solution(solution.prob, solution.alg, newTimePoints, newUs)
   #= Return the final solution =#
@@ -117,7 +113,6 @@ end
   Solving procedure without structural callbacks.
 """
 function solve(problem, tspan, alg; kwargs...)
-  @info "Calling solve!"
   #= Create integrator =#
   integrator = init(problem, alg, stop_at_next_tstop = true, kwargs...)
   add_tstop!(integrator, tspan[2])
@@ -134,11 +129,18 @@ function getSyms(problem)
   return problem.f.syms
 end
 
+"""
+  Fetches  the symbolic variables from a solution
+"""
+function getSymsFromSolution(sol)
+  return sol.prob.f.syms
+end
+
 
 """
-  Get the indices of the variables common between syms1 and syms2
+  Get a vector of indices of the variables common between syms1 and syms2
 """
-function getIndicesOfCommonVariables(syms1, syms2)
+function getIndicesOfCommonVariables(syms1::Vector, syms2::Vector)
   local indicesOfCommonVariables = Int[]
   local idxDict1 = DataStructures.OrderedDict()
   local idxDict2 = DataStructures.OrderedDict()
@@ -158,10 +160,6 @@ function getIndicesOfCommonVariables(syms1, syms2)
   else
     keys(idxDict2), idxDict1
   end
-  # @info "idxDict1" idxDict1
-  # @info "idxDict2" idxDict2
-  # @info commonVariables
-  # @info smallestKeyset
   for key in smallestKeyset
     if haskey(dict, key)
       push!(indicesOfCommonVariables, dict[key])
