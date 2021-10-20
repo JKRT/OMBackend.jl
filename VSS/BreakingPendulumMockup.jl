@@ -1,5 +1,6 @@
 using Revise
 using ModelingToolkit
+import OMBackend
 include("Pendulum.jl")
 include("FreeFall.jl")
 
@@ -24,7 +25,7 @@ function structuralCallback(f)
   end
   function condition(u, t, integrator)
     return t - 5
-    end    
+    end
   cb = ContinuousCallback(condition, affect!)
   return (cb, structuralChange)
 end
@@ -41,11 +42,10 @@ function BreakingPendulum(tspan)
     tspan,
     pars,
     callback = CallbackSet(sCB),
-  )
-  return (breakingPendulumModel, [changeStructure1])
+   )
+  local commonVariableSet = [Symbol("x(t)"), Symbol("y(t)"), Symbol("vx(t)"), Symbol("vy(t)")]
+  return (breakingPendulumModel, [changeStructure1], commonVariableSet)
 end
 
-
 (problem, structuralCallbacks) = BreakingPendulum((0.0, 7.))
-import OMBackend
-finalSolution = OMBackend.Runtime.solve(problem, (0.0, 7.), Rodas5(), structuralCallbacks)
+finalSolution = OMBackend.Runtime.solve(problem, (0.0, 7.), Rodas5(), structuralCallbacks, commonVariableSet)
