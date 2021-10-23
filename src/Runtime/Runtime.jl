@@ -45,7 +45,7 @@ function solve(problem, tspan, alg, structuralCallbacks, commonVariableSet; kwar
   local symsOfInitialMode = getSyms(problem)
   local indicesOfCommonVariablesForStartingMode = getIndicesOfCommonVariables(symsOfInitialMode, commonVariableSet)
   #= Create integrator =#
-  integrator = init(problem, alg, kwargs...)
+  integrator = init(problem, alg, dtmax=0.01, kwargs...)
   add_tstop!(integrator, tspan[2])
   oldSols = []
   #= Run the integrator=#
@@ -67,6 +67,7 @@ function solve(problem, tspan, alg, structuralCallbacks, commonVariableSet; kwar
                           t0 = i.t,
                           u0 = newU0,
                           tstop = tspan[2],
+                          dtmax=0.01,
                           kwargs...)
         #= Reset with the new values of u0 =#
         reinit!(integrator, newU0; t0 = i.t, reset_dt = true)

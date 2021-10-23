@@ -210,7 +210,7 @@ function matchAndCheckStronglyConnectedComponents(equations, eqVariableMapping, 
 
   if isSingular && mode == DAE_MODE
     throw("TODO: index reduction not implemented for DAE-mode")
-    #= Do index reduction here. =#
+    #= TODO do index reduction here. =#
   end
   #= We will not get here... For now:) =#
   return matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT)
