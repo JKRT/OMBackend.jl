@@ -20,6 +20,7 @@ import JuliaFormatter
 import Plots
 import REPL
 import OMBackend
+import OMFrontend
 
 const latexSymbols = REPL.REPLCompletions.latex_symbols
 #= Settings =#
@@ -46,25 +47,21 @@ function plotGraph(shouldPlot::Bool)
   global PLOT_EQUATION_GRAPH = shouldPlot
 end
 
-
-"""
-Contains expressions of models currently in memory.
-Do NOT mutate in other modules!
-//John
-"""
-const COMPILED_MODELS = Dict()
-
 """ 
   MTK models
 """
 const COMPILED_MODELS_MTK = Dict()
 
-function translate(frontendDAE::DAE.DAE_LIST; BackendMode = DAE_MODE)::Tuple{String, Expr}
+function translate(frontendDAE::DAE.DAE_LIST; BackendMode = MTK_MODE)::Tuple{String, Expr}
   local bDAE = lower(frontendDAE)
   local simCode
   if BackendMode == DAE_MODE
+<<<<<<< HEAD
     simCode = generateSimulationCode(bDAE; mode = DAE_MODE)
     return generateTargetCode(simCode)
+=======
+    throw("DAE mode is removed.")
+>>>>>>> Major changes. Remove DAE-mode. Now only supports MTK mode
   elseif BackendMode == MTK_MODE
     @debug "Experimental: Generates and runs code using modelling toolkit"
     simCode = generateSimulationCode(bDAE; mode = MTK_MODE)
@@ -124,6 +121,17 @@ function lower(frontendDAE::DAE.DAE_LIST)::BDAE.BACKEND_DAE
   return bDAE
 end
 
+
+"""
+     Transforms given FlatModelica to backend DAE-IR (BDAE-IR).
+  """
+function lower(frontendDAE::OMFrontend.Main.FlatModel)
+  local bDAE::BDAE.BACKEND_DAE
+  local simCode::SIM_CODE
+  @debug "Length of frontend DAE:" length(frontendDAE.elementLst)
+  bDAE = BDAECreate.lower(frontendDAE)
+end
+
 """
   Transforms  BDAE-IR to simulation code for DAE-mode
 """
@@ -133,16 +141,6 @@ function generateSimulationCode(bDAE::BDAE.BACKEND_DAE; mode)::SimulationCode.Si
   return simCode
 end
 
-"""
-  Transforms BDAE-IR to simulation code for DAE-mode
-"""
-function generateExplicitSimulationCode(bDAE::BDAE.BACKEND_DAE)
-  simCode = SimulationCode.transformToExplicitSimCode(bDAE)
-  @error "Code generation for ODE-mode not yet supported! Exiting.."
-  throw("ODE Mode is not supported")
-#  @debug BDAE.stringHeading1(simCode, "SIM_CODE: transformed simcode")
-#  return simCode
-end
 
 """
   Generates code interfacing DifferentialEquations.jl
@@ -179,14 +177,8 @@ end
 """
   Writes a model to file by default the file is formatted and comments are kept.
 """
-function writeModelToFile(modelName::String, filePath::String; keepComments = true, formatFile = true, mode = DAE_MODE)
-  if mode === DAE_MODE
-    model = COMPILED_MODELS[modelName]
-  elseif mode === MTK_MODE
-    model = COMPILED_MODELS_MTK[modelName]
-  else
-    throw("Unsupported mode in writeModelToFile. Mode was: $mode")
-  end
+function writeModelToFile(modelName::String, filePath::String; keepComments = true, formatFile = true, mode = MTK_MODE)
+  model = COMPILED_MODELS_MTK[modelName]
   fileName = "$modelName.jl"
   try
     if keepComments == false
@@ -212,32 +204,28 @@ end
   Prints a model. 
   If the specified model exists. Print it to stdout.
 """
-function printModel(modelName::String; MTK = false, keepComments = true, keepBeginBlocks = true)
+function printModel(modelName::String; MTK = true, keepComments = true, keepBeginBlocks = true)
   try
     local model::Expr
-    model =  if !MTK
-      COMPILED_MODELS[modelName]
-    else
-      COMPILED_MODELS_MTK[modelName]
+    model = COMPILED_MODELS_MTK[modelName]
+    strippedModel = "$model"
+    #= Remove all the redudant blocks from the model =#
+    if keepComments == false
+      strippedModel = CodeGeneration.stripComments(model)
     end
-      strippedModel = "$model"
-      #= Remove all the redudant blocks from the model =#
-      if keepComments == false
-        strippedModel = CodeGeneration.stripComments(model)
-      end
-      if keepBeginBlocks == false
-        strippedModel = CodeGeneration.stripBeginBlocks(model)
-      end
-      
-      local modelStr::String = "$strippedModel"
-      formattedResults = JuliaFormatter.format_text(modelStr;
-                                                    remove_extra_newlines = true,
-                                                    always_use_return = false)
-      println(formattedResults)
-    catch e 
-      @error "Model: $(modelName) is not compiled. Available models are: $(availableModels())"
-      throw("Error printing model")
+    if keepBeginBlocks == false
+      strippedModel = CodeGeneration.stripBeginBlocks(model)
     end
+    
+    local modelStr::String = "$strippedModel"
+    formattedResults = JuliaFormatter.format_text(modelStr;
+                                                  remove_extra_newlines = true,
+                                                  always_use_return = false)
+    println(formattedResults)
+  catch e 
+    @error "Model: $(modelName) is not compiled. Available models are: $(availableModels())"
+    throw("Error printing model")
+  end
 end
 
 """
@@ -261,26 +249,11 @@ end
 `simulateModel(modelName::String; MODE = DAE_MODE ,tspan=(0.0, 1.0))`
   Simulates model interactivly.
 """
-function simulateModel(modelName::String; MODE = DAE_MODE ,tspan=(0.0, 1.0))
+function simulateModel(modelName::String; MODE = MTK_MODE ,tspan=(0.0, 1.0))
   #= Strings containing . need to be in a format suitable for Julia =#
   modelName = replace(modelName, "." => "__")
-  local modelCode::Expr
-  if MODE === DAE_MODE
-    modelCode = COMPILED_MODELS[modelName]
-    try
-      @eval $(:(import OMBackend))
-      @eval $modelCode
-      local modelRunnable = Meta.parse("OMBackend.$(modelName)Simulate($(tspan))")
-      #= Run the model with the supplied tspan. =#
-      @eval Main $modelRunnable
-    catch err
-      @info "Interactive evaluation failed: $err"
-      println(modelCodeStr)
-      @info "Dump of model-code"
-      #    Base.dump(parsedModel) TODO
-      throw(err)
-    end
-  elseif MODE == MTK_MODE
+  local modelCode::Expr  
+  if MODE == MTK_MODE
     #= This does a redudant string conversion for now due to modeling toolkit being as is...=#
       modelCode = COMPILED_MODELS_MTK[modelName]
       local modelCodeStr = ""

@@ -219,31 +219,26 @@ end
 end
 
 #= Component Reference Index =#
-@Uniontype CrefIndex begin
-  @Record CREFINDEX begin
-    cref::DAE.ComponentRef
-    index::Integer
-  end
+struct CREFINDEX
+  cref::DAE.ComponentRef
+  index::Integer
 end
 
-
-#= variables =#
-@Uniontype Var begin
-  @Record VAR begin
-    varName #= variable name =#::DAE.ComponentRef
-    varKind #= kind of variable =#::VarKind
-    varDirection #= input, output or bidirectional =#::DAE.VarDirection
-    varType #= built-in type or enumeration =#::DAE.Type
-    bindExp #= Binding expression e.g. for parameters =#::Option{DAE.Exp}
-    arryDim #= array dimensions of non-expanded var =#::List
-    source #= origin of variable =#::DAE.ElementSource
-    values #= values on built-in attributes =#::Option{DAE.VariableAttributes}
-    tearingSelectOption #= value for TearingSelect =#::Option{TearingSelect}
-#    hideResult #= expression from the hideResult annotation =#::DAE.Exp
-    connectorType #= flow, stream, unspecified or not connector. =#::DAE.ConnectorType
-    unreplaceable #= indicates if it is allowed to replace this variable =#::Bool
-  end
+struct VAR
+  varName #= variable name =#
+  varKind #= kind of variable =#::VarKind
+  varDirection #= input, output or bidirectional =#
+  varType #= built-in type or enumeration =#
+  bindExp #= Binding expression e.g. for parameters =#
+  arryDim #= array dimensions of non-expanded var =#::List
+  source #= origin of variable =#
+  values #= values on built-in attributes =#
+  tearingSelectOption #= value for TearingSelect =#
+  #    hideResult #= expression from the hideResult annotation =#::DAE.Exp
+  connectorType #= flow, stream, unspecified or not connector. =##::DAE.ConnectorType
+  unreplaceable #= indicates if it is allowed to replace this variable =#::Bool
 end
+
 
 #=Simplify construction of var=#
 VAR(varName,varKind,varType) =
@@ -424,8 +419,8 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
 
 @Uniontype Equation begin
   @Record EQUATION begin
-    lhs::DAE.Exp
-    rhs::DAE.Exp
+    lhs
+    rhs
     source #= origin of equation =#::DAE.ElementSource
     attr::EquationAttributes
   end
@@ -447,9 +442,9 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
   end
 
   @Record RESIDUAL_EQUATION begin
-    exp #= not present from FrontEnd =#::DAE.Exp
-    source #= origin of equation =#::DAE.ElementSource
-    attr::EquationAttributes
+    exp #= not present from FrontEnd =#
+    source #= origin of equation =#
+    attr
   end
 
   @Record ALGORITHM begin
