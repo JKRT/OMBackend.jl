@@ -52,7 +52,7 @@ end
 """
 const COMPILED_MODELS_MTK = Dict()
 
-function translate(frontendDAE::DAE.DAE_LIST; BackendMode = MTK_MODE)::Tuple{String, Expr}
+function translate(frontendDAE::Union{DAE.DAE_LIST, OMFrontend.Main.FlatModel}; BackendMode = MTK_MODE)::Tuple{String, Expr}
   local bDAE = lower(frontendDAE)
   local simCode
   if BackendMode == DAE_MODE

@@ -123,8 +123,8 @@ const Constraints = List
 
 #= An independent system of equations (and their corresponding variables) =#
 struct EQSYSTEM
-  orderedVars #= ordered Variables, only states and alg. vars =#::Variables
-  orderedEqs #= ordered Equations =#::Array
+  orderedVars #= ordered Variables, only states and alg. vars =#::Vector
+  orderedEqs #= ordered Equations =#::Vector
   m::Option{Array}
   mT::Option{Array}
   mapping #= current type of adjacency matrix, boolean is true if scalar =#::Option{Tuple}
@@ -141,7 +141,7 @@ The equations are also split into two lists, one with simple equations, a=b, a-b
 are removed from  the set of equations to speed up calculations. =#
 struct BACKEND_DAE
   name::String
-  eqs::Array{EQSYSTEM}
+  eqs::Vector
   shared::Shared
 end
 
@@ -208,13 +208,6 @@ end
     datareconinputs::Variables
     #=  ... maybe more DATA for the code generation
     =#
-  end
-end
-
-@Uniontype Variables begin
-  @Record VARIABLES begin
-    varArr #= Array of variables =#::Array{Var} #=Note not the original type=#
-    #=Some auxiliary data structure as well?=#
   end
 end
 

@@ -42,6 +42,7 @@ import DAE
 import ..BDAE
 import ..BDAEUtil
 import ..Causalize
+import OMFrontend
 
 """
   This function translates a DAE, which is the result from instantiating a
@@ -53,13 +54,13 @@ import ..Causalize
   outputs: BDAE.BACKEND_DAE"""
 function lower(lst::DAE.DAE_LIST)::BDAE.BACKEND_DAE
   local outBDAE::BDAE.BACKEND_DAE
-  local eqSystems::Array{BDAE.EQSYSTEM}
-  local varArray::Array{BDAE.Var}
-  local eqArray::Array{BDAE.Equation}
+  local eqSystems::Vector{BDAE.EQSYSTEM}
+  local varArray::Vector{BDAE.VAR}
+  local eqArray::Vector{BDAE.Equation}
   local name = listHead(lst.elementLst).ident
   (varArray, eqArray, initialEquations) = begin
     local elementLst::List{DAE.Element}
-    local variableLst::List{BDAE.Var}
+    local variableLst::List{BDAE.VAR}
     local equationLst::List{BDAE.Equation}
     @match lst begin
       DAE.DAE_LIST(elementLst) => begin
@@ -80,7 +81,7 @@ end
   Lowers a single flat model of the NF into BDAE.
 """
 function lower(frontendDAE::OMFrontend.Main.FlatModel)
-  local equations = [convertIntoBDAEResidual(e) for e in frontendDAE.equations]
+  local equations = [convertFrontendEquationIntoBDAE_equation(e) for e in frontendDAE.equations]
   local variables = [convertIntoBDAEVariable(v) for v in frontendDAE.variables]
   local algorithms = [alg for alg in frontendDAE.algorithms]
   local iAlgorithms = [iAlg for iAlg in frontendDAE.initialAlgorithms]
@@ -89,8 +90,8 @@ function lower(frontendDAE::OMFrontend.Main.FlatModel)
   eqSystems = [BDAEUtil.createEqSystem(variables, equations)]
 end
 
-function convertFrontendEquationIntoBDAEResidual(eq::OMFrontend.Main.Equation)
-  deq = OMFrontend.Main.convertEquation(deq)
+function convertFrontendEquationIntoBDAE_equation(eq::OMFrontend.Main.Equation)
+  deq = OMFrontend.Main.convertEquation(eq, list())
   #= We cheat a bit here for now. Convert the equation into a DAE equation and then to the operation below. =#
   BDAE.EQUATION(deq.lhs,
                 deq.rhs,
@@ -123,7 +124,7 @@ end
   TODO: Optimize by using List instead of array.
 """
 function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple{List, List, List}
-  local variableLst::List{BDAE.Var} = nil
+  local variableLst::List{BDAE.VAR} = nil
   local equationLst::List{BDAE.Equation} = nil
   local initialEquationLst::List{BDAE.Equation} = nil
   for elem in elementLst

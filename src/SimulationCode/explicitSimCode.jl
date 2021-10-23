@@ -23,8 +23,6 @@ function transformToExplicitSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCod
   (isSingular::Bool, matchOrder::Array) = GraphAlgorithms.matching(eqVariableMapping, length(eqVariableMapping.keys))
   digraph = GraphAlgorithms.merge(matchOrder, eqVariableMapping)
   #  if OMBackend.PLOT_EQUATION_GRAPH
-
-#  @info "Hello"
     local labels = makeLabels(digraph, matchOrder, stringToSimVarHT)
     GraphAlgorithms.plotEquationGraph("./digraphOutput$(backendDAE.name).pdf", digraph, labels)
 #  end
@@ -66,18 +64,6 @@ function createEquationIndicies(resEqs)
   end
   return ht
 end
-
-#TODO Code for detecting algebraic loops to be removed.
-  # #= Check algebraic loops =#
-  # loopsExist = false
-  # for i in reverseTopologicalSort
-  #   if length(i) > 1
-  #     loopsExist = true
-  #     break
-  #   end
-  # end
-
-
 
 function dumpInfoOfSort(matchOrder, reverseTopologicalSort, stringToSimVarHT)
   #= Tearing could be added here =#

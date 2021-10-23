@@ -45,14 +45,12 @@ import DAE
 """
 This function converts an array of variables to the BDAE variable structure
 """
-function convertVarArrayToBDAE_Variables(vars::Array{BDAE.Var})::BDAE.Variables
-  local variables::BDAE.Variables = begin
-    BDAE.VARIABLES([i for i in vars])
-  end
+function convertVarArrayToBDAE_Variables(vars::Vector{BDAE.VAR})::Vector
+  local variables = [i for i in vars]
   return variables
 end
 
-function createEqSystem(vars::BDAE.Variables, eqs::Array)::BDAE.EQSYSTEM
+function createEqSystem(vars::Vector, eqs::Vector)::BDAE.EQSYSTEM
   (BDAE.EQSYSTEM(vars,
                  eqs,
                  NONE(),
@@ -93,10 +91,10 @@ function mapEqSystems(dae::BDAE.BACKEND_DAE, traversalOperation::Function)
           eqs[i] = traversalOperation(eqs[i])
         end
         @assign dae.eqs = eqs
-        (dae)
+        dae
       end
       _ => begin
-        (dae)
+        dae
       end
     end
   end
@@ -318,7 +316,8 @@ end
   input: All existing variables
   output All variable in that specific equation
 """
-function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Vector{BDAE.Var})::Vector{DAE.ComponentRef}
+
+function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Vector{BDAE.VAR})::Vector{DAE.ComponentRef}
   local componentReferences::List = Util.getAllCrefs(eq.exp)
   local stateCrefs = Dict{DAE.ComponentRef, Bool}()
   (_, stateElements)  = traverseEquationExpressions(eq, detectStateExpression, stateCrefs)
