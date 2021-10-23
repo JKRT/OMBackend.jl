@@ -123,13 +123,27 @@ end
 
 
 """
-     Transforms given FlatModelica to backend DAE-IR (BDAE-IR).
-  """
+  Transforms given FlatModelica to backend DAE-IR (BDAE-IR).
+"""
 function lower(frontendDAE::OMFrontend.Main.FlatModel)
-  local bDAE::BDAE.BACKEND_DAE
-  local simCode::SIM_CODE
-  @debug "Length of frontend DAE:" length(frontendDAE.elementLst)
-  bDAE = BDAECreate.lower(frontendDAE)
+  local bDAE = BDAECreate.lower(frontendDAE)
+  @debug(BDAEUtil.stringHeading1(bDAE, "translated"));
+  #= Expand arrays =#
+  (bDAE, expandedVars) = Causalize.expandArrayVariables(bDAE)
+  @debug(BDAEUtil.stringHeading1(bDAE, "Array variables expanded"));
+  #= Expand Array variables in equation system=#
+  bDAE = Causalize.detectAndReplaceArrayVariables(bDAE, expandedVars)
+  @debug(BDAEUtil.stringHeading1(bDAE, "Equation system variables expanded"));
+  #= Transform if expressions to if equations =#
+  @debug(BDAEUtil.stringHeading1(bDAE, "if equations transformed"));
+  bDAE = Causalize.detectIfExpressions(bDAE)
+  #= Mark state variables =#
+  bDAE = Causalize.detectStates(bDAE)
+  @debug(BDAEUtil.stringHeading1(bDAE, "states marked"));
+  bDAE = Causalize.residualizeEveryEquation(bDAE)
+  #= =#
+  @debug(BDAEUtil.stringHeading1(bDAE, "residuals"));
+  return bDAE
 end
 
 """

@@ -81,27 +81,18 @@ end
   Lowers a single flat model of the NF into BDAE.
 """
 function lower(frontendDAE::OMFrontend.Main.FlatModel)
-  local equations = [convertFrontendEquationIntoBDAE_equation(e) for e in frontendDAE.equations]
-  local variables = [convertIntoBDAEVariable(v) for v in frontendDAE.variables]
+  local equations = [equationToBackendEquation(eq) for eq in  OMFrontend.Main.convertEquations(frontendDAE.equations)]
+  local variables = [variableToBackendVariable(var) for var in  OMFrontend.Main.convertVariables(frontendDAE.variables, list())] 
   local algorithms = [alg for alg in frontendDAE.algorithms]
   local iAlgorithms = [iAlg for iAlg in frontendDAE.initialAlgorithms]
   local initialEquations = [ie for ie in frontendDAE.initialEquations]
   #= We ignore the comment=#
   eqSystems = [BDAEUtil.createEqSystem(variables, equations)]
+  outBDAE = BDAE.BACKEND_DAE(frontendDAE.name, eqSystems, BDAE.SHARED_DUMMY())
 end
 
-function convertFrontendEquationIntoBDAE_equation(eq::OMFrontend.Main.Equation)
-  deq = OMFrontend.Main.convertEquation(eq, list())
-  #= We cheat a bit here for now. Convert the equation into a DAE equation and then to the operation below. =#
-  BDAE.EQUATION(deq.lhs,
-                deq.rhs,
-                elem.source,
-                #=TODO: Below might need to be changed =#
-                BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
-end
-
-function convertFrontendVariableIntoBDAEVariable(var::OMFrontend.Main.Variable)
-  elem = OMFrontend.Main.convertVariable(var)
+function convertVariableIntoBDAEVariable(var::OMFrontend.Main.Variable)
+  elem = OMFrontend.Main.convertVariable(var, OMFrontend.Main.VARIABLE_CONVERSION_SETTINGS(true, false, true))
   BDAE.VAR(elem.componentRef,
            BDAEUtil.DAE_VarKind_to_BDAE_VarKind(elem.kind),
            elem.direction,
@@ -134,23 +125,23 @@ function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple{List, List,
       @match elem begin
         DAE.VAR(__) => begin
           variableLst = BDAE.VAR(elem.componentRef,
-                                       BDAEUtil.DAE_VarKind_to_BDAE_VarKind(elem.kind),
-                                       elem.direction,
-                                       elem.ty,
-                                       elem.binding,
-                                       elem.dims,
-                                       elem.source,
-                                       elem.variableAttributesOption,
-                                       NONE(), #=Tearing=#
-                                       elem.connectorType,
-                                       false #=We do not know if we can replace or not yet=#
-                                       ) <| variableLst
+          BDAEUtil.DAE_VarKind_to_BDAE_VarKind(elem.kind),
+          elem.direction,
+          elem.ty,
+          elem.binding,
+          elem.dims,
+          elem.source,
+          elem.variableAttributesOption,
+          NONE(), #=Tearing=#
+          elem.connectorType,
+          false #=We do not know if we can replace or not yet=#
+          ) <| variableLst
         end
         DAE.EQUATION(__) => begin
           equationLst = BDAE.EQUATION(elem.exp,
                                             elem.scalar,
                                             elem.source,
-                                            #=TODO: Below might need to be changed =#
+          #=TODO: Below might need to be changed =#
                                             BDAE.EQ_ATTR_DEFAULT_UNKNOWN) <| equationLst
         end
         DAE.WHEN_EQUATION(__) => begin
@@ -159,15 +150,15 @@ function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple{List, List,
         DAE.IF_EQUATION(__) => begin
           equationLst = lowerIfEquation(elem) <| equationLst
         end
-        DAE.COMP(__) => begin
-          variableLst,equationLst,initialEquationLst = splitEquationsAndVars(elem.dAElist)
-        end
         DAE.INITIALEQUATION(__) => begin
           initialEquationLst = BDAE.EQUATION(elem.exp1,
-                                             elem.exp2,
-                                             elem.source,
-                                             #=TODO: Below might need to be changed =#
-                                             BDAE.EQ_ATTR_DEFAULT_UNKNOWN) <| initialEquationLst
+          elem.exp2,
+          elem.source,
+          #=TODO: Below might need to be changed =#
+          BDAE.EQ_ATTR_DEFAULT_UNKNOWN) <| initialEquationLst
+        end
+        DAE.COMP(__) => begin
+          variableLst,equationLst,initialEquationLst = splitEquationsAndVars(elem.dAElist)
         end
         _ => begin
           @error "Skipped:" elem
@@ -178,6 +169,57 @@ function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple{List, List,
   end
   return (variableLst, equationLst, initialEquationLst)
 end
+
+function equationToBackendEquation(elem::DAE.Element)
+  @match elem begin
+    DAE.EQUATION(__) => begin
+      equationLst = BDAE.EQUATION(elem.exp,
+                                  elem.scalar,
+                                  elem.source,
+                                  #=TODO: Below might need to be changed =#
+                                  BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
+    end
+    DAE.WHEN_EQUATION(__) => begin
+      equationLst = lowerWhenEquation(elem)
+    end
+    DAE.IF_EQUATION(__) => begin
+      equationLst = lowerIfEquation(elem)
+    end
+    DAE.INITIALEQUATION(__) => begin
+      initialEquationLst = BDAE.EQUATION(elem.exp1,
+                                         elem.exp2,
+                                         elem.source,
+                                         #=TODO: Below might need to be changed =#
+                                         BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
+    end
+    DAE.COMP(__) => begin
+      variableLst,equationLst,initialEquationLst = splitEquationsAndVars(elem.dAElist)
+    end
+    _ => begin
+      @error "Skipped:" elem
+      throw("Unsupported equation: $elem")
+    end
+  end
+end
+
+function variableToBackendVariable(elem::DAE.Element)
+  @match elem begin
+    DAE.VAR(__) => begin
+      variableLst = BDAE.VAR(elem.componentRef,
+      BDAEUtil.DAE_VarKind_to_BDAE_VarKind(elem.kind),
+      elem.direction,
+      elem.ty,
+      elem.binding,
+      elem.dims,
+      elem.source,
+      elem.variableAttributesOption,
+      NONE(), #=Tearing=#
+      elem.connectorType,
+      false #=We do not know if we can replace or not yet=#)
+    end
+  end
+end
+
 
 function lowerWhenEquation(eq::DAE.Element)::BDAE.WHEN_EQUATION
   local whenOperatorLst::List{BDAE.WhenOperator} = nil
