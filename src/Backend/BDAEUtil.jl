@@ -133,7 +133,7 @@ function mapEqSystemVariablesNoUpdate(syst::BDAE.EQSYSTEM, traversalOperation::F
   extArg = begin
     local varArr::Array{BDAE.Var,1}
     @match syst begin
-      BDAE.EQSYSTEM(orderedVars = BDAE.VARIABLES(varArr = varArr)) => begin
+      BDAE.EQSYSTEM(orderedVars =  varArr) => begin
         for i in 1:arrayLength(varArr)
           extArg = traversalOperation(varArr[i], extArg)
         end

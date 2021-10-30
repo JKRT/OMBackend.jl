@@ -246,16 +246,10 @@ end
     Prints available compiled models to stdout
 """
 function availableModels()::String
-  str = "Compiled models (DAE-MODE):\n"
-    for m in keys(COMPILED_MODELS)
-      str *= "  $m\n"
-    end
-
   str = "Compiled models (MTK-MODE):\n"
     for m in keys(COMPILED_MODELS_MTK)
       str *= "  $m\n"
-    end
-  
+    end  
   return str
 end
 
