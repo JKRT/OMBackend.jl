@@ -163,7 +163,7 @@ end
 #= Data shared for all equation-systems =#
 @Uniontype Shared begin
   @Record SHARED begin
-    initialEqs #= Initial equations =#::Array
+    initialEqs #= Initial equations =#::Vector
   end
 
   @Record SHARED_DUMMY begin

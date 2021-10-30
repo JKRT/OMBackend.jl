@@ -85,7 +85,7 @@ function lower(frontendDAE::OMFrontend.Main.FlatModel)
   local variables = [variableToBackendVariable(var) for var in  OMFrontend.Main.convertVariables(frontendDAE.variables, list())] 
   local algorithms = [alg for alg in frontendDAE.algorithms]
   local iAlgorithms = [iAlg for iAlg in frontendDAE.initialAlgorithms]
-  local initialEquations = [ie for ie in frontendDAE.initialEquations]
+#  local initialEquations = [equationToBackendEquation(ieq) for ieq in frontendDAE.initialEquations]
   #= We ignore the comment=#
   eqSystems = [BDAEUtil.createEqSystem(variables, equations)]
   outBDAE = BDAE.BACKEND_DAE(frontendDAE.name, eqSystems, BDAE.SHARED_DUMMY())
