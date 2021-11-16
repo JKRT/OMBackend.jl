@@ -5,6 +5,7 @@ TODO: Remember the state derivative scheme. What the heck did I mean  with that?
 TODO: Make duplicate code better...
 TODO: Make this into it's own module
 TODO: Fix the redundant string conversion scheme
+TODO: Investigate broken if equations
 =#
 using ModelingToolkit
 import OMBackend
@@ -62,10 +63,6 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
     end
   end
   performIndexReduction = simCode.isSingular
-  @info simCode.matchOrder
-  @info "Our states where:" stateVariables
-  @info "Our discrete variables" discreteVariables
-  @info "Our algebraic variables:" algebraicVariables
   #= Create equations for variables not in a loop + parameters and stuff=#
   local equations = createResidualEquationsMTK(stateVariables,
                                                algebraicVariables,
@@ -154,6 +151,9 @@ end
      Creates the residual equations in unsorted order
   """
 function createResidualEquationsMTK(stateVariables::Array, algebraicVariables::Array, equations::Array, simCode::SimulationCode.SIM_CODE)::Array{Expr}
+  if isempty(equations)
+    return Expr[]
+  end
   local eqs::Vector{Expr} = Expr[]
   local ht = simCode.stringToSimVarHT
   local lhsVariables = Set([])
@@ -255,7 +255,6 @@ function residualEqtoJuliaMTK(eq::BDAE.Equation, simCode::SimulationCode.SIM_COD
           $(Symbol(varToSolve.name)) ~ $(evEqExpr[1])
         end
       end
-      @info "Resulting equation:" sol
       #= Return sol. Assign to results =#
       sol
     end

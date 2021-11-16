@@ -27,11 +27,15 @@ equation
   der(vy) = -9.81;
 end FreeFall;
 
+model AreWeInSpace
+
+end
+
 model Pendulum
   parameter Real x0 = 10;
   parameter Real y0 = 10;
   parameter Real g = 9.81;
-  parameter Real L = sqrt(x0^2 + y0^2);
+  parameter Real length = sqrt(x0^2 + y0^2);
   /* Common variables */
   Real x(start = x0);
   Real y(start = y0);
@@ -44,27 +48,10 @@ equation
   der(phi) = phid;
   der(x) = vx;
   der(y) = vy;
-  x = L * sin(phi);
-  y = -L * cos(phi);
-  der(phid) =  -g / L * sin(phi);
+  x = length * sin(phi);
+  y = -length * cos(phi);
+  der(phid) =  -g / length * sin(phi);
 end Pendulum;
-
-model BouncingBall
-  parameter Real e=0.7;
-  parameter Real g=9.81;
-  Real x;   
-  Real y(start = 1.0);
-  Real vx;
-  Real vy;
-equation
-  der(x) = vx;
-  der(y) = vy;
-  der(vy) = -g;
-  der(vx) = 0.0;  
-  when y <= 0 then
-    reinit(vy, -e*pre(vy));
-  end when;
-end BouncingBall
 
 model BreakingPendulum
 /* Common variables */
@@ -80,13 +67,12 @@ This means that the variables present in the breaking pendulum
 need also to be present in the different modes the system can be in.
 */
 structural FreeFall freeFall;
-structural BouncingBall bouncingBall;
 structural Pendulum pendulum;
 
 equation
 /* New Modelica construct the switch equation */
-   switch-when t == 5
+   switch-when t - 5 == 0
      case Pendulum then FreeFall;
-     case _  FreeFall; //Or bouncing ball.
+     case _  FreeFall;
    end switch-when;
 end BreakingPendulum;

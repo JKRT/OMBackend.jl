@@ -320,10 +320,8 @@ end
 """
 function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Vector{BDAE.Var})::Vector{DAE.ComponentRef}
   local componentReferences::List = Util.getAllCrefs(eq.exp)
-  @info "Component references: $(string(componentReferences))" 
   local stateCrefs = Dict{DAE.ComponentRef, Bool}()
   (_, stateElements)  = traverseEquationExpressions(eq, detectStateExpression, stateCrefs)
-  @info stateElements
   local stateElementArray = collect(keys(stateElements))
   local componentReferencesNotStates = [componentReferences...]
   local componentReferencesArr = [componentReferences..., stateElementArray...]
@@ -337,7 +335,7 @@ function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Vector{BDAE.Var})::Ve
     else
     end
   end
-  @info "Variables in eq: $(string(variablesInEq)) for eq: $(string(eq))"
+#  @info "Variables in eq: $(string(variablesInEq)) for eq: $(string(eq))"
   return variablesInEq
 end
 

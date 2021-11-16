@@ -80,12 +80,12 @@ function solve(problem, tspan, alg, structuralCallbacks, commonVariableSet; kwar
   end
   #= The solution of the integration procedure =#
   local solution = integrator.sol
-  @info "Solution:" solution
+#  @info "Solution:" solution
   
   #= The final solution =#
   #= in oldSols we have the old solution. =#
   local startingSol = first(first(oldSols))
-  @info "Starting solution" startingSol
+#  @info "Starting solution" startingSol
   local newTimePoints = vcat(startingSol.t, solution.t) #TODO should be a loop here.
   #=TODO: We have a set of common variables. Find the indices for this set. =#
   #= We are creating a new Vector{Vector{Float64}}: =#

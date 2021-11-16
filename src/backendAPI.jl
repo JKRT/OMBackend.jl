@@ -138,7 +138,8 @@ end
 """
 function generateExplicitSimulationCode(bDAE::BDAE.BACKEND_DAE)
   simCode = SimulationCode.transformToExplicitSimCode(bDAE)
-  @info "Code generation for ODE-mode not yet supported! Exiting.."
+  @error "Code generation for ODE-mode not yet supported! Exiting.."
+  throw("ODE Mode is not supported")
 #  @debug BDAE.stringHeading1(simCode, "SIM_CODE: transformed simcode")
 #  return simCode
 end

@@ -88,7 +88,7 @@ function transformToSimCode(backendDAE::BDAE.BACKEND_DAE; mode)::SimulationCode.
   SimulationCode.SIM_CODE(backendDAE.name,
                           stringToSimVarHT,
                           resEqs,
-                          #=TODO fix initial equations here =#
+                          #= TODO: fix initial equations here =#
                           BDAE.RESIDUAL_EQUATION[],
                           whenEqs,
                           simCodeIfEquations,
