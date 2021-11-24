@@ -1,4 +1,4 @@
-[![Github Action CI](https://github.com/JKRT/OMBackend.jl/workflows/CI/badge.svg)](https://github.com/JKRT/OMBackend.jl/actions)
+[![Github Action CI](https://github.com/JKRT/OMBackend.jl/workflows/CI/badge.svg)](https://github.com/JKRT/OMBackend.jl/actions) [![License: OSMC-PL](https://img.shields.io/badge/license-OSMC--PL-lightgrey.svg)](OSMC-License.txt)
 # About OMBackend.jl
 OMBackend.jl is one component of the new OpenModelica Compiler infrastructure for Julia.
 It is able to transform a given Hybrid DAE and simulate it using DifferentialEquations.jl.
