@@ -166,10 +166,9 @@ function ODE_MODE_MTK_LOOP(simCode::SimulationCode.SIM_CODE)
   local stateDerivativesLoop::Array = []
   local stateVariablesLoop::Array = []
   local algebraicVariablesLoop::Array = []
-  local discreteVariablesLoop::Vector = []
-  
+  local discreteVariablesLoop::Vector = []  
   #= 
-  We have a cycle! 
+    We have a cycle! 
   =#
   loop = getCycleInSCCs(simCode.stronglyConnectedComponents)
   
