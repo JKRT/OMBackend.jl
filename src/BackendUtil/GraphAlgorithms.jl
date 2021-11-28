@@ -23,8 +23,10 @@ using DataStructures
         dict, adjacency list representation of the equation-variable graph
         n, the number of unknown and equations.
   output:
-         assign::Array. assign(j) = i, where j is a variable and i the equation in which it is assigned.
-         isSingular::Boolean,          Boolean indicating if the system is singular or not.
+         assign::Array. assign[j] = i,
+         where j is a variable and i the equation in which it is assigned.
+         isSingular::Boolean,
+         Boolean indicating if the system is singular or not.
 """
 function matching(dict::DataStructures.OrderedDict, n::Int)
   #= Global arrays for bookkeeping =#
@@ -85,7 +87,7 @@ Author: John Tinnerholm
 function merge(matchOrder::Vector, graph::OrderedDict)::MetaGraphs.MetaDiGraph  "Remove function for arrays.."
   function remove!(a, item)
     deleteat!(a, findall(x->x==item, a))
-  end 
+  end
   #= 
     Convert the given map into an array representation.
     Similar format to the assign matrix but represent the dependencies 
@@ -124,9 +126,9 @@ function merge(matchOrder::Vector, graph::OrderedDict)::MetaGraphs.MetaDiGraph  
   return g
 end
 
-"
+"""
   Dumps the properties of a given MetaDiGraph.
-"
+"""
 function dumpGraphProperties(g::MetaGraphs.MetaDiGraph)
   local nVertices = Graphs.vertices(g).stop
   local str = "Meta properties of the graph:\n"
@@ -136,9 +138,9 @@ function dumpGraphProperties(g::MetaGraphs.MetaDiGraph)
   return str
 end
 
-"
+"""
   Topological sort 
-"
+"""
 function topological_sort(g::Graphs.AbstractGraph)::Array
   Graphs.topological_sort_by_dfs(g)
 end
@@ -160,15 +162,6 @@ function plotEquationGraphPNG(filePath::String, g::Graphs.AbstractGraph, labels,
                layout=spring_layout)
   draw(Compose.PNG(filePath, dims...), plot)
 end
-
-# function plotEquationGraph(filePath::String, g::Graphs.AbstractGraph, dims = (64cm, 64cm)::Tuple)
-#   plot = gplot(g,
-#                nodefillc="blue",
-#                nodelabelc="white",
-#                edgestrokec="black",
-#                layout=spring_layout)
-#   draw(Compose.PDF(filePath, dims...), plot)
-# end
 
 function connected_components(g::Graphs.AbstractGraph)
   Graphs.connected_components(g)

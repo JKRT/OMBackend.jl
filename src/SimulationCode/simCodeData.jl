@@ -76,7 +76,7 @@ struct BRANCH{T1 <: DAE.Exp,
               T4 <: Bool,
               T5 <: Vector{Int},
               T6 <: Graphs.AbstractGraph,
-              T7 <: Vector{Int},
+              T7 <: Vector{Vector{Int}},
               T8 <: AbstractDict{String, Tuple{Integer, SimVar}}} <: Construct
   
   condition::T1
@@ -140,8 +140,7 @@ struct SIM_CODE{T0<:String,
     If the system is singular tearing is needed.
    "
   equationGraph::T8
-  "
-    The reverse topological sort of the equation-graph
+  " The reverse topological sort of the equation-graph
   "
   stronglyConnectedComponents::T9
 end

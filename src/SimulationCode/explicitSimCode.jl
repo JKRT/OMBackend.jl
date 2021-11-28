@@ -24,7 +24,7 @@ function transformToExplicitSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCod
   digraph = GraphAlgorithms.merge(matchOrder, eqVariableMapping)
   #  if OMBackend.PLOT_EQUATION_GRAPH
 
-  @info "Hello"
+#  @info "Hello"
     local labels = makeLabels(digraph, matchOrder, stringToSimVarHT)
     GraphAlgorithms.plotEquationGraph("./digraphOutput$(backendDAE.name).pdf", digraph, labels)
 #  end
@@ -38,7 +38,7 @@ function transformToExplicitSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCod
       push!(reOrderedResiduals, resEqs[i[1]])
     end
   else
-    @info "Loop encountered exiting..."
+#    @info "Loop encountered exiting..."
     @error "Unresolved algebraic loop"
     throw()
   end
@@ -81,8 +81,8 @@ end
 
 function dumpInfoOfSort(matchOrder, reverseTopologicalSort, stringToSimVarHT)
   #= Tearing could be added here =#
-  @info "Strongly connected components!" reverseTopologicalSort
-  @info "Equation solving order:"
+#  @info "Strongly connected components!" reverseTopologicalSort
+#  @info "Equation solving order:"
   ht = makeIndexVarNameDict(matchOrder, stringToSimVarHT)
   #= Print predefined variables=#
   for i in 1:length(matchOrder)

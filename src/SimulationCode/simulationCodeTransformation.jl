@@ -1,7 +1,7 @@
 #= /*
 * This file is part of OpenModelica.
 *
-* Copyright (c) 1998-2020, Open Source Modelica Consortium (OSMC),
+* Copyright (c) 1998-CurrentYear, Open Source Modelica Consortium (OSMC),
 * c/o Linköpings universitet, Department of Computer and Information Science,
 * SE-58183 Linköping, Sweden.
 *
@@ -54,9 +54,10 @@ end
 
 """
   Transform BDAE-Structure to SimulationCode.SIM_CODE
-  We only handle one equation system for now
+  We only handle one equation system for now.
+  mode specifies what mode we should use for code generation.
 """
-function transformToSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.SIM_CODE
+function transformToSimCode(backendDAE::BDAE.BACKEND_DAE; mode)::SimulationCode.SIM_CODE
   #= Fetch the different components of the model.=#
   local equationSystems::Array = backendDAE.eqs
   local allOrderedVars::Array{BDAE.Var} = [v for es in equationSystems for v in es.orderedVars.varArr]
@@ -73,7 +74,7 @@ function transformToSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.SIM_CO
   local eqVariableMapping = createEquationVariableBidirectionGraph(resEqs, allBackendVars, stringToSimVarHT)
   local numberOfVariablesInMapping = length(eqVariableMapping.keys)
   (isSingular, matchOrder, digraph, stronglyConnectedComponents) =
-    matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT)
+    matchAndCheckStronglyConnectedComponents(equations, eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT; mode = mode)
   #= 
     The set of if equations needs to be handled in a separate way. 
     Each branch might contain a separate section of variables etc that needs to be sorted and processed. 
@@ -87,7 +88,7 @@ function transformToSimCode(backendDAE::BDAE.BACKEND_DAE)::SimulationCode.SIM_CO
   SimulationCode.SIM_CODE(backendDAE.name,
                           stringToSimVarHT,
                           resEqs,
-                          #=TODO fix initial equations here =#
+                          #= TODO: fix initial equations here =#
                           BDAE.RESIDUAL_EQUATION[],
                           whenEqs,
                           simCodeIfEquations,
@@ -186,10 +187,47 @@ function constructSimCodeIFEquations(BDAE_ifEquations::Vector{BDAE.IF_EQUATION},
 end
 
 """
-  This function does matching, it also checks for strongly connected components
+Author:johti17
+  This function does matching, it also checks for strongly connected components.
+If the system is singular we try index reduction before proceeding.
+""" 
+function matchAndCheckStronglyConnectedComponents(equations, eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT; mode)::Tuple
+  (isSingular::Bool, matchOrder::Vector) = GraphAlgorithms.matching(eqVariableMapping, numberOfVariablesInMapping)
+  local digraph::MetaGraphs.MetaDiGraph
+
+  #=
+    If the equation is singular this means our system is singular.
+    Index reduction might resolve the issues with this system.
+  =#
+  if isSingular && mode == OMBackend.MTK_MODE
+    # @error "The system of equations is Singular"
+    # throw("Error: Singular system")
+    #= TODO: Try index reduction =#
+    digraph = GraphAlgorithms.merge(matchOrder, eqVariableMapping)
+    stronglyConnectedComponents::Array = GraphAlgorithms.stronglyConnectedComponents(digraph)
+    return (isSingular, matchOrder, digraph, stronglyConnectedComponents)
+  end
+
+  if isSingular && mode == DAE_MODE
+    throw("TODO: index reduction not implemented for DAE-mode")
+    #= TODO do index reduction here. =#
+  end
+  #= We will not get here... For now:) =#
+  return matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT)
+end
+
+
+"""
+  This function conducts matching and checks for strongly connected components.
+  If the system is singular after matching it throws an error.
 """
 function matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT)::Tuple
-  (isSingular::Bool, matchOrder::Array) = GraphAlgorithms.matching(eqVariableMapping, numberOfVariablesInMapping)
+  (isSingular::Bool, matchOrder::Vector) = GraphAlgorithms.matching(eqVariableMapping, numberOfVariablesInMapping)
+  if isSingular
+    @error "The system of equations is Singular"
+    throw("Error: Singular system")
+  end
+  #= The merge algortihm takes a matching and produces a resulting digraph =#
   local digraph::MetaGraphs.MetaDiGraph = GraphAlgorithms.merge(matchOrder, eqVariableMapping)
   if OMBackend.PLOT_EQUATION_GRAPH
     @info "Dumping the equation graph"
@@ -201,7 +239,7 @@ function matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVar
 end
 
 """
-  John:
+  Author: johti17:
   Splits a given set of equations into different types
 """
 function allocateAndCollectSimulationEquations(equations::T)::Tuple where {T}
