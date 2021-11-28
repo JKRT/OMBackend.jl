@@ -56,12 +56,7 @@ function translate(frontendDAE::Union{DAE.DAE_LIST, OMFrontend.Main.FlatModel}; 
   local bDAE = lower(frontendDAE)
   local simCode
   if BackendMode == DAE_MODE
-<<<<<<< HEAD
-    simCode = generateSimulationCode(bDAE; mode = DAE_MODE)
-    return generateTargetCode(simCode)
-=======
     throw("DAE mode is removed.")
->>>>>>> Major changes. Remove DAE-mode. Now only supports MTK mode
   elseif BackendMode == MTK_MODE
     @debug "Experimental: Generates and runs code using modelling toolkit"
     simCode = generateSimulationCode(bDAE; mode = MTK_MODE)

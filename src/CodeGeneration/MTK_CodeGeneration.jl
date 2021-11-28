@@ -79,7 +79,7 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   local stateVariablesSym = [:($(Symbol(v))(t)) for v in stateVariables]
   local algebraicVariablesSym = [:($(Symbol(v))(t)) for v in algebraicVariables]
   local discreteVariablesSym = [:($(Symbol(v))) for v in discreteVariables]
-
+  #= Reset the callback counter=#
   RESET_CALLBACKS()
 
   #=
@@ -142,6 +142,9 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
       solve($(Symbol("$(MODEL_NAME)Model_problem")), tspan=tspan, solver)
     end
   end
+  #= MODEL_NAME is preprocessed with . replaced with _=#
+  return MODEL_NAME, program
+end
 
 """
  This generates code targetting modeling toolkit (but separates algebraic loops from the rest of the system).
@@ -513,115 +516,6 @@ function createParameterArray(parameters::Vector{T}, simCode::SIM_T) where {T, S
     push!(paramArray, parValue)
   end
   return paramArray
-end
-
-
-"""
-  Converts a DAE expression into a Julia expression
-"""
-function expToJuliaExpMTK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuffix=""; varPrefix="x", derSymbol::Bool=false)::Expr
-  hashTable = simCode.stringToSimVarHT
-  local expr::Expr = begin
-    local int::Int64
-    local real::Float64
-    local bool::Bool
-    local tmpStr::String
-    local cr::DAE.ComponentRef
-    local e1::DAE.Exp
-    local e2::DAE.Exp
-    local e3::DAE.Exp
-    local expl::List{DAE.Exp}
-    local lstexpl::List{List{DAE.Exp}}
-    @match exp begin
-      DAE.BCONST(bool) => quote $bool end
-      DAE.ICONST(int) => quote $int end
-      DAE.RCONST(real) => quote $real end
-      DAE.SCONST(tmpStr) => quote $tmpStr end
-      DAE.CREF(cr, _)  => begin
-        varName = SimulationCode.string(cr)
-        builtin = if varName == "time"
-          true
-        else
-          false
-        end
-        if ! builtin
-          #= If we refeer to time, we simply return t instead of a concrete variable =#
-          indexAndVar = hashTable[varName]
-          varKind::SimulationCode.SimVarType = indexAndVar[2].varKind
-          @match varKind begin
-            SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
-            SimulationCode.STATE(__) => quote
-              $(LineNumberNode(@__LINE__, "$varName state"))
-              $(Symbol(indexAndVar[2].name))
-            end
-            SimulationCode.PARAMETER(__) => quote
-              $(LineNumberNode(@__LINE__, "$varName parameter"))
-              $(Symbol(indexAndVar[2].name))
-            end
-            SimulationCode.ALG_VARIABLE(__) => quote
-              $(LineNumberNode(@__LINE__, "$varName, algebraic"))
-              $(Symbol(indexAndVar[2].name))
-            end
-            _ => begin
-              @error "Unsupported varKind: $(varKind)"
-              throw()
-            end
-          end
-        else #= Currently only time is a builtin variable. Time is represented as t in the generated code =#
-          quote
-            t
-          end
-        end
-      end
-      DAE.UNARY(operator = op, exp = e1) => begin
-        o = DAE_OP_toJuliaOperator(op)
-        quote
-          $(o)($(expToJuliaExpMTK(e1, simCode, varPrefix=varPrefix)))
-        end
-      end
-      DAE.BINARY(exp1 = e1, operator = op, exp2 = e2) => begin
-        a = expToJuliaExpMTK(e1, simCode, varPrefix=varPrefix, derSymbol = derSymbol)
-        b = expToJuliaExpMTK(e2, simCode, varPrefix=varPrefix, derSymbol = derSymbol)
-        o = DAE_OP_toJuliaOperator(op)
-        :($o($(a), $(b)))
-      end
-      DAE.LUNARY(operator = op, exp = e1)  => begin
-        quote
-          $("(" + SimulationCode.string(op) + " " + expToJuliaExpMTK(e1, simCode, varPrefix=varPrefix, derSymbol = derSymbol) + ")")
-        end
-      end
-      DAE.LBINARY(exp1 = e1, operator = op, exp2 = e2) => begin
-        quote 
-          $(expToJuliaExpMTK(e1, simCode, varPrefix=varPrefix, derSymbol = derSymbol) + " " + SimulationCode.string(op) + " "
-            + expToJuliaExpMTK(e2, simCode, varPrefix=varPrefix, derSymbol = derSymbol))
-        end
-      end
-      DAE.RELATION(exp1 = e1, operator = op, exp2 = e2) => begin
-        quote 
-          $(expToJuliaExpMTK(e1, simCode,
-                             varPrefix=varPrefix,derSymbol = derSymbol)
-            + " "
-            + SimulationCode.string(op)
-            + " "
-            + expToJuliaExpMTK(e2, simCode,varPrefix=varPrefix, derSymbol=derSymbol))
-        end
-      end
-      DAE.IFEXP(expCond = e1, expThen = e2, expElse = e3) => begin
-        throw(ErrorException("If expressions not allowed in backend code"))
-      end
-      DAE.CALL(path = Absyn.IDENT(tmpStr), expLst = explst)  => begin
-        #Call as symbol is really ugly.. please fix me :(
-        DAECallExpressionToMTKCallExpression(tmpStr, explst, simCode, hashTable; varPrefix=varPrefix, derAsSymbol=derSymbol)
-      end
-      DAE.CAST(ty, exp)  => begin
-        quote
-          $(generateCastExpressionMTK(ty, exp, simCode, varPrefix))
-        end
-      end
-      _ =>  throw(ErrorException("$exp not yet supported"))
-    end
-  end
-  return expr
 end
 
 """
