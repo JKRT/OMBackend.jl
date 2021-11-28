@@ -125,27 +125,25 @@ const Constraints = List
 struct EQSYSTEM
   orderedVars #= ordered Variables, only states and alg. vars =#::Vector
   orderedEqs #= ordered Equations =#::Vector
-  m::Option{Array}
-  mT::Option{Array}
-  mapping #= current type of adjacency matrix, boolean is true if scalar =#::Option{Tuple}
-  stateSets #= the state sets of the system =#::StateSets
-  partitionKind::BaseClockPartitionKind
-  removedEqs #= these are equations that cannot solve for a variable.
-  e.g. assertions, external function calls, algorithm sections without effect =#::Array
+  simpleEquations::Vector #= List of simple equations=#
+end
+
+struct SHARED
+  globalKnownVars::Vector
+  localKnownVars::Vector
+  initialEqs::Vector
 end
 
 #= THE LOWERED DAE consist of variables and equations. The variables are split into
 two lists, one for unknown variables states and algebraic and one for known variables
 constants and parameters.
 The equations are also split into two lists, one with simple equations, a=b, a-b=0, etc., that
-are removed from  the set of equations to speed up calculations. =#
+are removed from the set of euations to speed up calculations. =#
 struct BACKEND_DAE
   name::String
-  eqs::Vector
-  shared::Shared
+  eqs::Vector{EQSYSTEM}
+  shared::SHARED
 end
-
-
 
 #=Clock removed for now=#
 @Uniontype SubClock begin
@@ -158,17 +156,6 @@ const DEFAULT_SUBCLOCK = "TODO. NOT SUPPORTED"
 @Uniontype BaseClockPartitionKind begin
   @Record UNKNOWN_PARTITION begin
   end
-end
-
-#= Data shared for all equation-systems =#
-@Uniontype Shared begin
-  @Record SHARED begin
-    initialEqs #= Initial equations =#::Vector
-  end
-
-  @Record SHARED_DUMMY begin
-  end
-
 end
 
 @Uniontype BasePartition begin
@@ -396,7 +383,6 @@ const defaultEvalStages = EVALUATION_STAGES(false, false, false, false)::Evaluat
 
 @Uniontype EquationAttributes begin
   @Record EQUATION_ATTRIBUTES begin
-
     differentiated #= true if the equation was differentiated, and should not be differentiated again to avoid equal equations =#::Bool
     kind::EquationKind
     evalStages::EvaluationStages
@@ -414,8 +400,8 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
   @Record EQUATION begin
     lhs
     rhs
-    source #= origin of equation =#::DAE.ElementSource
-    attr::EquationAttributes
+    source
+    attributes
   end
 
   @Record ARRAY_EQUATION begin

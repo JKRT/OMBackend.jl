@@ -253,7 +253,7 @@ end
 Returns the shared global and local variable for the shared data in
 an equation system. If no such data is present. Return two empty arrays
 """
-function getSharedVariablesLocalsAndGlobals(shared::BDAE.Shared)
+function getSharedVariablesLocalsAndGlobals(shared::BDAE.SHARED)
   @match shared begin
     BDAE.SHARED(__) => vcat(shared.globalKnownVars, shared.localKnownVars)
     _ => []

@@ -51,14 +51,8 @@ function convertVarArrayToBDAE_Variables(vars::Vector{BDAE.VAR})::Vector
 end
 
 function createEqSystem(vars::Vector, eqs::Vector)::BDAE.EQSYSTEM
-  (BDAE.EQSYSTEM(vars,
-                 eqs,
-                 NONE(),
-                 NONE(),
-                 NONE(),
-                 nil,
-                 BDAE.UNKNOWN_PARTITION(),
-                 BackendEquation.emptyEqns()))
+  #= TODO Extract the simple equations =#
+  BDAE.EQSYSTEM(vars, eqs, [])
 end
 
 """

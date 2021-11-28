@@ -74,21 +74,26 @@ function lower(lst::DAE.DAE_LIST)::BDAE.BACKEND_DAE
   @debug "eqLst:" length(equationLst)
   #= We start with an array of one system =#
   eqSystems = [BDAEUtil.createEqSystem(variables, eqArray)]
-  outBDAE = BDAE.BACKEND_DAE(name, eqSystems, BDAE.SHARED_DUMMY())
+  outBDAE = BDAE.BACKEND_DAE(name, eqSystems, BDAE.SHARED([], [], listArray(initialEquations)))
 end
 
 """
-  Lowers a single flat model of the NF into BDAE.
+  Lowers a FlatModelica defined in the new frontend into BDAE.
+  1. We translate all different components of the flat model into the DAE representation.
+  2. We convert this representation into the BackendDAE representation.
+  3. We return backend DAE to be used in the remainder of the compilation before code generation.
 """
 function lower(frontendDAE::OMFrontend.Main.FlatModel)
-  local equations = [equationToBackendEquation(eq) for eq in  OMFrontend.Main.convertEquations(frontendDAE.equations)]
-  local variables = [variableToBackendVariable(var) for var in  OMFrontend.Main.convertVariables(frontendDAE.variables, list())] 
+  local equations = [equationToBackendEquation(eq) for eq in OMFrontend.Main.convertEquations(frontendDAE.equations)]
+  local variables = [variableToBackendVariable(var) for var in OMFrontend.Main.convertVariables(frontendDAE.variables, list())] 
   local algorithms = [alg for alg in frontendDAE.algorithms]
   local iAlgorithms = [iAlg for iAlg in frontendDAE.initialAlgorithms]
-#  local initialEquations = [equationToBackendEquation(ieq) for ieq in frontendDAE.initialEquations]
-  #= We ignore the comment=#
+  local initialEquations = [equationToBackendEquation(ieq) for ieq in OMFrontend.Main.convertEquations(frontendDAE.initialEquations)]  
   eqSystems = [BDAEUtil.createEqSystem(variables, equations)]
-  outBDAE = BDAE.BACKEND_DAE(frontendDAE.name, eqSystems, BDAE.SHARED_DUMMY())
+  #= 
+  The resulting backend DAE.   
+  =#
+  outBDAE = BDAE.BACKEND_DAE(frontendDAE.name, eqSystems, BDAE.SHARED([], [], initialEquations))
 end
 
 function convertVariableIntoBDAEVariable(var::OMFrontend.Main.Variable)
@@ -139,10 +144,10 @@ function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple{List, List,
         end
         DAE.EQUATION(__) => begin
           equationLst = BDAE.EQUATION(elem.exp,
-                                            elem.scalar,
-                                            elem.source,
-          #=TODO: Below might need to be changed =#
-                                            BDAE.EQ_ATTR_DEFAULT_UNKNOWN) <| equationLst
+                                      elem.scalar,
+                                      elem.source,
+                                      #=TODO: Below might need to be changed =#
+                                      BDAE.EQ_ATTR_DEFAULT_UNKNOWN) <| equationLst
         end
         DAE.WHEN_EQUATION(__) => begin
           equationLst = lowerWhenEquation(elem) <| equationLst
