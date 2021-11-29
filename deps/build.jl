@@ -27,6 +27,7 @@ function buildDeps()
   Pkg.add("Absyn")
   Pkg.add("SCode")
   Pkg.add("DoubleEnded")
+  Pkg.add("OpenModelicaParser") #= Add if we do not have it =#
   Pkg.add("OMFrontend")
   Pkg.add("DAE")
   @info("All dependencies succesfull")
