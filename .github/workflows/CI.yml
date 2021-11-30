@@ -38,5 +38,5 @@ jobs:
       - uses: julia-actions/julia-runtest@v1
         with:
           file: lcov.info
-      - name: Debugging with tmate
-      uses: mxschmitt/action-tmate@v3.7
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v3
