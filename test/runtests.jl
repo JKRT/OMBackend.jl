@@ -37,7 +37,7 @@ import Tables
 
 # Load module for test DAEs
 
-include("debugUtil.jl")
+#include("debugUtil.jl")
 #= Uncomment to turn on logging =#
 #ENV["JULIA_DEBUG"] = "OMBackend"
 
