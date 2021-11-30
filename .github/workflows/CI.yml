@@ -40,10 +40,5 @@ jobs:
           file: lcov.info
 
 
-on:
-  workflow_dispatch:
-    inputs:
-      debug_enabled:
-        description: 'Run the build with tmate debugging enabled (https://github.com/marketplace/actions/debugging-with-tmate)'     
-        required: false
-        default: false
+    - name: Debugging with tmate
+    uses: mxschmitt/action-tmate@v3.7
