@@ -29,7 +29,7 @@
 *
 =#
 
-function bDAEVarKindToSimCodeVarKind(backendVar::BDAE.Var)::SimulationCode.SimVarType
+function bDAEVarKindToSimCodeVarKind(backendVar::BDAE.VAR)::SimulationCode.SimVarType
   varKind = @match backendVar.varKind begin
     BDAE.STATE(__) => SimulationCode.STATE()
     BDAE.PARAM(__) || BDAE.CONST(__) => SimulationCode.PARAMETER(backendVar.bindExp)
@@ -39,11 +39,11 @@ function bDAEVarKindToSimCodeVarKind(backendVar::BDAE.Var)::SimulationCode.SimVa
 end
 
 """
-`BDAE_identifierToVarString(backendVar::BDAE.Var)`
-Converts a `BDAE.Var` to a simcode string, for use in variable names. 
+`BDAE_identifierToVarString(backendVar::BDAE.VAR)`
+Converts a `BDAE.VAR` to a simcode string, for use in variable names. 
 The . separator is replaced with 3 `_`
 """
-function BDAE_identifierToVarString(backendVar::BDAE.Var)
+function BDAE_identifierToVarString(backendVar::BDAE.VAR)
   local varName::DAE.ComponentRef = backendVar.varName
   @match varName begin
     DAE.CREF_IDENT(__) => string(varName)
@@ -59,11 +59,11 @@ end
 """
 function transformToSimCode(backendDAE::BDAE.BACKEND_DAE; mode)::SimulationCode.SIM_CODE
   #= Fetch the different components of the model.=#
-  local equationSystems::Array = backendDAE.eqs
-  local allOrderedVars::Array{BDAE.Var} = [v for es in equationSystems for v in es.orderedVars.varArr]
-  local allSharedVars::Array{BDAE.Var} = getSharedVariablesLocalsAndGlobals(backendDAE.shared)
+  local equationSystems::Vector = backendDAE.eqs
+  local allOrderedVars::Vector{BDAE.VAR} = [v for es in equationSystems for v in es.orderedVars]
+  local allSharedVars::Vector{BDAE.VAR} = getSharedVariablesLocalsAndGlobals(backendDAE.shared)
   local allBackendVars = vcat(allOrderedVars, allSharedVars)
-  local simVars::Array{SimulationCode.SIMVAR} = allocateAndCollectSimulationVariables(allBackendVars)
+  local simVars::Vector{SimulationCode.SIMVAR} = allocateAndCollectSimulationVariables(allBackendVars)
   # Assign indices and put all variable into an hash table
   local stringToSimVarHT = createIndices(simVars)
   local equations = [eq for es in equationSystems for eq in es.orderedEqs]
@@ -234,7 +234,7 @@ function matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVar
     local labels = makeLabels(digraph, matchOrder, stringToSimVarHT)
     GraphAlgorithms.plotEquationGraphPNG("./digraphOutput.png", digraph, labels)
   end
-  stronglyConnectedComponents::Array = GraphAlgorithms.stronglyConnectedComponents(digraph)
+  stronglyConnectedComponents::Vector = GraphAlgorithms.stronglyConnectedComponents(digraph)
   return (isSingular, matchOrder, digraph, stronglyConnectedComponents)
 end
 
@@ -253,14 +253,14 @@ end
 Returns the shared global and local variable for the shared data in
 an equation system. If no such data is present. Return two empty arrays
 """
-function getSharedVariablesLocalsAndGlobals(shared::BDAE.Shared)
+function getSharedVariablesLocalsAndGlobals(shared::BDAE.SHARED)
   @match shared begin
     BDAE.SHARED(__) => vcat(shared.globalKnownVars, shared.localKnownVars)
     _ => []
   end
 end
 
-function allocateAndCollectSimulationVariables(bDAEVariables::Array{BDAE.Var})
+function allocateAndCollectSimulationVariables(bDAEVariables::Vector{BDAE.VAR})
   collectVariables(bDAEVariables)
 end
 
@@ -271,7 +271,7 @@ end
   Save the name and it's kind of each variable.
   Index will be set to NONE.
 """
-function collectVariables(allBackendVars::Array{BDAE.Var})
+function collectVariables(allBackendVars::Vector{BDAE.VAR})
   local numberOfVars::Integer = length(allBackendVars)
   local simVars::Array = Array{SimulationCode.SimVar}(undef, numberOfVars)
   for (i, backendVar) in enumerate(allBackendVars)

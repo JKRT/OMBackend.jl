@@ -123,29 +123,27 @@ const Constraints = List
 
 #= An independent system of equations (and their corresponding variables) =#
 struct EQSYSTEM
-  orderedVars #= ordered Variables, only states and alg. vars =#::Variables
-  orderedEqs #= ordered Equations =#::Array
-  m::Option{Array}
-  mT::Option{Array}
-  mapping #= current type of adjacency matrix, boolean is true if scalar =#::Option{Tuple}
-  stateSets #= the state sets of the system =#::StateSets
-  partitionKind::BaseClockPartitionKind
-  removedEqs #= these are equations that cannot solve for a variable.
-  e.g. assertions, external function calls, algorithm sections without effect =#::Array
+  orderedVars #= ordered Variables, only states and alg. vars =#::Vector
+  orderedEqs #= ordered Equations =#::Vector
+  simpleEquations::Vector #= List of simple equations=#
+end
+
+struct SHARED
+  globalKnownVars::Vector
+  localKnownVars::Vector
+  initialEqs::Vector
 end
 
 #= THE LOWERED DAE consist of variables and equations. The variables are split into
 two lists, one for unknown variables states and algebraic and one for known variables
 constants and parameters.
 The equations are also split into two lists, one with simple equations, a=b, a-b=0, etc., that
-are removed from  the set of equations to speed up calculations. =#
+are removed from the set of euations to speed up calculations. =#
 struct BACKEND_DAE
   name::String
-  eqs::Array{EQSYSTEM}
-  shared::Shared
+  eqs::Vector{EQSYSTEM}
+  shared::SHARED
 end
-
-
 
 #=Clock removed for now=#
 @Uniontype SubClock begin
@@ -158,17 +156,6 @@ const DEFAULT_SUBCLOCK = "TODO. NOT SUPPORTED"
 @Uniontype BaseClockPartitionKind begin
   @Record UNKNOWN_PARTITION begin
   end
-end
-
-#= Data shared for all equation-systems =#
-@Uniontype Shared begin
-  @Record SHARED begin
-    initialEqs #= Initial equations =#::Array
-  end
-
-  @Record SHARED_DUMMY begin
-  end
-
 end
 
 @Uniontype BasePartition begin
@@ -211,39 +198,27 @@ end
   end
 end
 
-@Uniontype Variables begin
-  @Record VARIABLES begin
-    varArr #= Array of variables =#::Array{Var} #=Note not the original type=#
-    #=Some auxiliary data structure as well?=#
-  end
-end
-
 #= Component Reference Index =#
-@Uniontype CrefIndex begin
-  @Record CREFINDEX begin
-    cref::DAE.ComponentRef
-    index::Integer
-  end
+struct CREFINDEX
+  cref::DAE.ComponentRef
+  index::Integer
 end
 
-
-#= variables =#
-@Uniontype Var begin
-  @Record VAR begin
-    varName #= variable name =#::DAE.ComponentRef
-    varKind #= kind of variable =#::VarKind
-    varDirection #= input, output or bidirectional =#::DAE.VarDirection
-    varType #= built-in type or enumeration =#::DAE.Type
-    bindExp #= Binding expression e.g. for parameters =#::Option{DAE.Exp}
-    arryDim #= array dimensions of non-expanded var =#::List
-    source #= origin of variable =#::DAE.ElementSource
-    values #= values on built-in attributes =#::Option{DAE.VariableAttributes}
-    tearingSelectOption #= value for TearingSelect =#::Option{TearingSelect}
-#    hideResult #= expression from the hideResult annotation =#::DAE.Exp
-    connectorType #= flow, stream, unspecified or not connector. =#::DAE.ConnectorType
-    unreplaceable #= indicates if it is allowed to replace this variable =#::Bool
-  end
+struct VAR
+  varName #= variable name =#
+  varKind #= kind of variable =#::VarKind
+  varDirection #= input, output or bidirectional =#
+  varType #= built-in type or enumeration =#
+  bindExp #= Binding expression e.g. for parameters =#
+  arryDim #= array dimensions of non-expanded var =#::List
+  source #= origin of variable =#
+  values #= values on built-in attributes =#
+  tearingSelectOption #= value for TearingSelect =#
+  #    hideResult #= expression from the hideResult annotation =#::DAE.Exp
+  connectorType #= flow, stream, unspecified or not connector. =##::DAE.ConnectorType
+  unreplaceable #= indicates if it is allowed to replace this variable =#::Bool
 end
+
 
 #=Simplify construction of var=#
 VAR(varName,varKind,varType) =
@@ -408,7 +383,6 @@ const defaultEvalStages = EVALUATION_STAGES(false, false, false, false)::Evaluat
 
 @Uniontype EquationAttributes begin
   @Record EQUATION_ATTRIBUTES begin
-
     differentiated #= true if the equation was differentiated, and should not be differentiated again to avoid equal equations =#::Bool
     kind::EquationKind
     evalStages::EvaluationStages
@@ -424,10 +398,10 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
 
 @Uniontype Equation begin
   @Record EQUATION begin
-    lhs::DAE.Exp
-    rhs::DAE.Exp
-    source #= origin of equation =#::DAE.ElementSource
-    attr::EquationAttributes
+    lhs
+    rhs
+    source
+    attributes
   end
 
   @Record ARRAY_EQUATION begin
@@ -447,9 +421,9 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
   end
 
   @Record RESIDUAL_EQUATION begin
-    exp #= not present from FrontEnd =#::DAE.Exp
-    source #= origin of equation =#::DAE.ElementSource
-    attr::EquationAttributes
+    exp #= not present from FrontEnd =#
+    source #= origin of equation =#
+    attr
   end
 
   @Record ALGORITHM begin

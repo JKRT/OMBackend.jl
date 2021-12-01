@@ -83,7 +83,7 @@ function detectStatesEqSystem(syst::BDAE.EQSYSTEM)::BDAE.EQSYSTEM
           (_, stateCrefs) = BDAEUtil.traverseEquationExpressions(eq, detectStateExpression, stateCrefs)
         end
         #= Do replacements for stateCrefs =#
-        @set syst.orderedVars = updateStates(vars, stateCrefs)
+        @assign syst.orderedVars = updateStates(vars, stateCrefs)
         syst
       end
     end
@@ -145,7 +145,7 @@ function detectIfEquationsEqSystem(syst::BDAE.EQSYSTEM)::BDAE.EQSYSTEM
         local newVariables = collect(keys(tmpVarToElement))
         local newEquations = collect(values(tmpVarToElement))
         @assign syst.orderedEqs = vcat(syst.orderedEqs, newEquations)
-        @assign syst.orderedVars.varArr = vcat(syst.orderedVars.varArr, newVariables)
+        @assign syst.orderedVars = vcat(syst.orderedVars, newVariables)
         syst
       end
     end
@@ -340,35 +340,29 @@ function detectArrayExpression(exp::DAE.Exp, arrayCrefs::Dict{String, Bool})
 end
 
 """
-    kabdelhak:
+  kabdelhak:
     Traverses all variables and uses a hashmap to determine if a variable needs
     to be updated to be a BDAE.STATE()
 """
-function updateStates(vars::BDAE.Variables, stateCrefs::Dict{DAE.ComponentRef, Bool})
-  vars = begin
-    local varArr::Array{BDAE.Var, 1}
-    @match vars begin
-      BDAE.VARIABLES(varArr = varArr) => begin
-        for i in 1:arrayLength(varArr)
-          varArr[i] = begin
-            local cref::DAE.ComponentRef
-            local var::BDAE.Var
-            @match varArr[i] begin
-              var && BDAE.VAR(varName = cref) where (haskey(stateCrefs, cref)) => begin
-                @assign var.varKind = BDAE.STATE(0, NONE(), true)
-                var
-              end
-              _ => begin
-                varArr[i]
-              end
-            end
-          end
+function updateStates(vars::Vector, stateCrefs::Dict{DAE.ComponentRef, Bool})
+  local varArr::Vector{BDAE.VAR} = vars
+  for i in 1:arrayLength(varArr)
+    varArr[i] = begin
+      local cref::DAE.ComponentRef
+      local var::BDAE.Var
+      @match varArr[i] begin
+        var && BDAE.VAR(varName = cref) where (haskey(stateCrefs, cref)) => begin
+          @assign var.varKind = BDAE.STATE(0, NONE(), true)
+          var
         end
-        @assign vars.varArr = varArr
-        (vars)
+        _ => begin
+          varArr[i]
+        end
       end
-    end
+    end      
+    vars = varArr
   end
+  return vars
 end
 
 """
@@ -432,7 +426,7 @@ function expandArrayVariables(bDAE::BDAE.BACKEND_DAE)::Tuple{BDAE.BACKEND_DAE, A
   for system in systems
     local orderedVars = system.orderedVars
     local indexOfExpandedVariables = []
-    for v in orderedVars.varArr
+    for v in orderedVars
       if typeof(v.varType) == DAE.T_ARRAY
         local dims = v.varType.dims
         local dimIndices = BDAEUtil.getSubscriptAsIntArray(dims)
@@ -469,11 +463,12 @@ function expandArrayVariables(bDAE::BDAE.BACKEND_DAE)::Tuple{BDAE.BACKEND_DAE, A
       end      
     end
   end
-  #= Expanded variables TODO consider if there are more than one system =#
+  #= Expanded variables =#
+  #= TODO: Consider if there are more than one system =#
   @debug "Expanded variables" string(expandedVars)
-  newOrderedVars = setdiff(bDAE.eqs[1].orderedVars.varArr, expandedVars)
+  newOrderedVars = setdiff(bDAE.eqs[1].orderedVars, expandedVars)
   newOrderedVars = vcat(newOrderedVars, newVars)
-  @assign bDAE.eqs[1].orderedVars.varArr = newOrderedVars
+  @assign bDAE.eqs[1].orderedVars = newOrderedVars
   return (bDAE, expandedVars)
 end
 

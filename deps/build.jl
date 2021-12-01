@@ -26,9 +26,13 @@ function buildDeps()
   Pkg.add("MetaModelica")
   Pkg.add("Absyn")
   Pkg.add("SCode")
-  Pkg.add("DoubleEnded")
   Pkg.add("DAE")
-  @info("Build all dependencies succesfull")
+  Pkg.add("DoubleEnded")
+  Pkg.add("OpenModelicaParser") #= Add if we do not have it =#
+  Pkg.add("OMFrontend")
+  @info("All dependencies succesfull")
+  Pkg.build("OMFrontend") #= This will call build on the parser implicitly. =#
+  @info("OMFrontend built successfully")
 end
 
 buildDeps()

@@ -79,7 +79,7 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   local stateVariablesSym = [:($(Symbol(v))(t)) for v in stateVariables]
   local algebraicVariablesSym = [:($(Symbol(v))(t)) for v in algebraicVariables]
   local discreteVariablesSym = [:($(Symbol(v))) for v in discreteVariables]
-
+  #= Reset the callback counter=#
   RESET_CALLBACKS()
 
   #=
@@ -142,7 +142,167 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
       solve($(Symbol("$(MODEL_NAME)Model_problem")), tspan=tspan, solver)
     end
   end
+  #= MODEL_NAME is preprocessed with . replaced with _=#
+  return MODEL_NAME, program
+end
 
+"""
+ This generates code targetting modeling toolkit (but separates algebraic loops from the rest of the system).
+ Discrete variables are treated as parameters 
+"""
+function ODE_MODE_MTK_LOOP(simCode::SimulationCode.SIM_CODE)
+  @debug "Runnning: generateMTKCode"
+  RESET_CALLBACKS()
+  local stringToSimVarHT = simCode.stringToSimVarHT
+  local equations::Array = []
+  local exp::DAE.Exp
+  local modelName::String = simCode.name
+  local parameters::Array = []
+  local stateDerivatives::Array = []
+  local stateVariables::Array = []
+  local algebraicVariables::Array = []
+  local discreteVariables::Vector = []
+  #= Loop arrays=#
+  local stateDerivativesLoop::Array = []
+  local stateVariablesLoop::Array = []
+  local algebraicVariablesLoop::Array = []
+  local discreteVariablesLoop::Vector = []  
+  #= 
+    We have a cycle! 
+  =#
+  loop = getCycleInSCCs(simCode.stronglyConnectedComponents)
+  
+  for varName in keys(stringToSimVarHT)
+    (idx, var) = stringToSimVarHT[varName]
+    if simCode.matchOrder[idx] in loop
+      local varType = var.varKind
+      @match varType  begin
+        SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
+        SimulationCode.STATE(__) => push!(stateVariablesLoop, varName)
+        SimulationCode.PARAMETER(__) => push!(parameters, varName)
+        SimulationCode.ALG_VARIABLE(__) => begin
+          if idx in simCode.matchOrder
+            push!(algebraicVariablesLoop, varName)
+          else #= We have a variable that is not contained in continious system =#
+            #= Treat discrete variables separate =#
+            push!(discreteVariablesLoop, varName)
+          end
+        end
+        #=TODO: Do I need to modify this?=#
+        SimulationCode.STATE_DERIVATIVE(__) => push!(stateDerivativesLoop, varName)
+      end
+    else #= Someplace else=#
+      local varType = var.varKind
+      @match varType  begin
+        SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
+        SimulationCode.STATE(__) => push!(stateVariables, varName)
+        SimulationCode.PARAMETER(__) => push!(parameters, varName)
+        SimulationCode.ALG_VARIABLE(__) => begin
+          if idx in simCode.matchOrder
+            push!(algebraicVariables, varName)
+          else #= We have a variable that is not contained in continious system =#
+            #= Treat discrete variables separate =#
+            push!(discreteVariables, varName)
+          end
+        end
+        #=TODO: Do I need to modify this?=#
+        SimulationCode.STATE_DERIVATIVE(__) => push!(stateDerivatives, varName)
+      end
+    end
+  end
+  local allVariables = vcat(stateVariables, algebraicVariables, stateVariablesLoop, algebraicVariablesLoop)
+  #= Create equations for variables not in a loop + parameters and stuff=#
+  local equations = createSortedEquations(stateVariables,
+                                          simCode; arrayName = "u")
+  local parVariablesSym = [Symbol(p) for p in parameters]  
+  local START_CONDTIONS_EQUATIONS = getStartConditions(allVariables, "reals", simCode)
+  
+  local DISCRETE_START_VALUES = getStartConditionsMTK(discreteVariables, simCode)
+  local PARAMETER_EQUATIONS = createParameterEquationsMTK(parameters, simCode)
+  local PARAMETER_RAW_ARRAY = createParameterArray(parameters, simCode)
+  #= Create callback equations. For MTK we disable the saving function for now. =#
+  local CALL_BACK_EQUATIONS = createCallbackCode(modelName, simCode; generateSaveFunction = true)
+  #= Symbolic names =#
+  
+  local stateVariablesSym = [:($(Symbol(v))(t)) for v in stateVariables]
+  local algebraicVariablesSym = [:($(Symbol(v))(t)) for v in algebraicVariables]
+
+  local stateVariablesSymNoT = [:($(Symbol(v))) for v in stateVariables]
+  local algebraicVariablesSymNoT = [:($(Symbol(v))) for v in algebraicVariables]
+
+  DUMMY_EQUATION_OUTSIDE_LOOP = Expr[]
+  for v in vcat(stateVariablesSymNoT, algebraicVariablesSymNoT)
+    push!(DUMMY_EQUATION_OUTSIDE_LOOP, :($v ~ $v))
+  end
+  
+  local discreteVariablesSym = [:($(Symbol(v))) for v in discreteVariables]
+  RESET_CALLBACKS()
+  #= Create loop variables and the loop itself=#
+  local equations_loop = createResidualEquationsMTK(stateVariablesLoop,
+                                                    algebraicVariablesLoop,
+                                                    simCode.residualEquations,
+                                                    simCode::SimulationCode.SIM_CODE)
+  local algebraicVariablesSymLoop = [:($(Symbol(v))) for v in algebraicVariablesLoop]
+  local stateVariablesSymLoop = [:($(Symbol(v))) for v in stateVariablesLoop]
+  local START_CONDTIONS_EQUATIONS_LOOP = createStartConditionsEquationsMTK(stateVariablesLoop, algebraicVariablesLoop, simCode)
+  #= 
+  Formulate the problem as a DAE Problem.ac
+  For this variant we keep t on its own line 
+  https://github.com/SciML/ModelingToolkit.jl/issues/998
+  =#
+  program = quote
+    using ModelingToolkit
+    using DiffEqBase
+    using DifferentialEquations
+    using NLsolve
+    #= t for time=#
+    function $(Symbol(modelName, "AlgebraicLoop"))()
+      parameters = ModelingToolkit.@parameters begin
+        ($(parVariablesSym...), $(discreteVariablesSym...), t)
+      end
+      vars = ModelingToolkit.@variables begin
+        ($(stateVariablesSym...), $(stateVariablesSymLoop...), $(algebraicVariablesSymLoop...))
+      end
+      eqs = [$(equations_loop...), $(DUMMY_EQUATION_OUTSIDE_LOOP...)]
+      nonLinearSystem = ModelingToolkit.NonlinearSystem(eqs, vars, parameters, name=:($(Symbol($modelName))))
+      return nonLinearSystem
+    end
+
+    function makeNLProblem()
+      loop = $(Symbol(modelName, "AlgebraicLoop"))()
+      nlsys_function = generate_function(loop, expression=Val{false})[2]
+    end
+    $(Symbol(modelName, "NonLinearFunction")) = makeNLProblem()
+    function $(Symbol("$(modelName)Model_ODE"))(dx, x, aux, t)
+      p = aux[1]
+      u = aux[2]
+      func!(res, u) = $(Symbol(modelName, "NonLinearFunction"))(res, u, vcat(p,[t]))
+      sol = nlsolve(func!, u, ftol=1e-8; method = :newton)
+      aux[2] = sol.zero
+      #= Equations goes here =#
+      $(equations...)
+    end
+    function $(Symbol("$(modelName)Model_problem"))(tspan)
+      aux = [[$(PARAMETER_RAW_ARRAY...)], fill(0.0, $(length(allVariables)))]
+      pars = aux[1]
+      reals = aux[2]
+      $(START_CONDTIONS_EQUATIONS)
+      x = fill(0.0, $(length(stateVariables)))
+      dx = fill(0.0, $(length(stateVariables)))
+      odeF = $(Symbol("$(modelName)Model_ODE"))
+      ODEProblem(odeF, x, tspan, aux)
+    end
+    
+    $(CALL_BACK_EQUATIONS)
+    $(Symbol("$(modelName)Model_problemInstance")) = $(Symbol("$(modelName)Model_problem"))((0.0,1.))
+    function $(Symbol("$(modelName)Simulate"))(tspan)     
+      solve($(Symbol("$(modelName)Model_problemInstance")), tspan=tspan)
+    end
+    function $(Symbol("$(modelName)Simulate"))(tspan = (0.0, 1.0); solver=Tsit5())
+      solve($(Symbol("$(modelName)Model_problemInstance")), tspan=tspan, solver)
+    end
+  end
+  
   return (modelName, program)
 
 end
@@ -184,33 +344,6 @@ function createResidualEquationsMTK(stateVariables::Array, algebraicVariables::A
   end
   return eqs
 end
-
-"""
-  Generates code for DAE cast expressions for MTK code.
-"""
-function generateCastExpressionMTK(ty, exp, simCode, varPrefix)
-  return @match ty, exp begin
-    (DAE.T_REAL(__), DAE.ICONST(__)) => begin
-      quote
-        float($(expToJuliaExpMTK(exp, simCode, varPrefix=varPrefix)))
-      end
-    end
-    (DAE.T_REAL(__), DAE.CREF(cref)) where typeof(cref.identType) === DAE.T_INTEGER => begin
-      quote
-        float($(expToJuliaExpMTK(exp, simCode, varPrefix=varPrefix)))
-      end
-    end
-    #= Conversion to a float other alternatives, =#
-    (DAE.T_REAL(__), _) => begin
-      quote
-        float($(expToJuliaExpMTK(exp, simCode, varPrefix=varPrefix)))
-      end
-    end
-    _ => throw("Cast $ty: for exp: $exp not yet supported in codegen!")
-  end
-end
-
-
 
 """
   Transforms a given equation into MTK Julia code.
@@ -382,4 +515,29 @@ function createParameterArray(parameters::Vector{T}, simCode::SIM_T) where {T, S
     push!(paramArray, parValue)
   end
   return paramArray
+end
+
+"""
+  Generates code for DAE cast expressions for MTK code.
+"""
+function generateCastExpressionMTK(ty, exp, simCode, varPrefix)
+  return @match ty, exp begin
+    (DAE.T_REAL(__), DAE.ICONST(__)) => begin
+      quote
+        float($(expToJuliaExpMTK(exp, simCode, varPrefix=varPrefix)))
+      end
+    end
+    (DAE.T_REAL(__), DAE.CREF(cref)) where typeof(cref.identType) === DAE.T_INTEGER => begin
+      quote
+        float($(expToJuliaExpMTK(exp, simCode, varPrefix=varPrefix)))
+      end
+    end
+    #= Conversion to a float other alternatives, =#
+    (DAE.T_REAL(__), _) => begin
+      quote
+        float($(expToJuliaExpMTK(exp, simCode, varPrefix=varPrefix)))
+      end
+    end
+    _ => throw("Cast $ty: for exp: $exp not yet supported in codegen!")
+  end
 end
