@@ -17,7 +17,7 @@ jobs:
         os:
           - ubuntu-latest
         arch:
-          - x64
+          - x64	  
     steps:
       - uses: actions/checkout@v2
       - uses: julia-actions/setup-julia@v1
@@ -28,5 +28,3 @@ jobs:
       - uses: julia-actions/julia-runtest@v1
         with:
           file: lcov.info
-      - name: Setup tmate session
-        uses: mxschmitt/action-tmate@v3
