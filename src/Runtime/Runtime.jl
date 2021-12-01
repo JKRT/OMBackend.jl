@@ -37,6 +37,7 @@ Saving our current time step and reinitialize our new changed system.
 We should also statically detect if VSS simulation is needed since it is more resource heavy than regular simulation
 =#
 
+
 """
   Custom solver function for Modelica code with structuralCallbacks to monitor the solving process
   (Using the integrator interface) from DifferentialEquations.jl
@@ -46,7 +47,6 @@ function solve(problem, tspan, alg, structuralCallbacks, commonVariableSet; kwar
   local indicesOfCommonVariablesForStartingMode = getIndicesOfCommonVariables(symsOfInitialMode, commonVariableSet)
   #= Create integrator =#
   integrator = init(problem, alg, dtmax=0.01, kwargs...)
-  add_tstop!(integrator, tspan[2])
   oldSols = []
   #= Run the integrator=#
   @label START_OF_INTEGRATION
@@ -55,10 +55,9 @@ function solve(problem, tspan, alg, structuralCallbacks, commonVariableSet; kwar
     retCode = check_error(integrator)
     for cb in structuralCallbacks
       if cb.structureChanged
-        println("STRUCTURE CHANGED!")
-        println("Status of i: $(i)")
+#        println("Status of i: $(i)")
         #= Find the correct variables and map them between the two models  =#
-        indicesOfCommonVariables = getIndicesOfCommonVariables(getSyms(problem), getSyms(cb.system))
+        indicesOfCommonVariables = getIndicesOfCommonVariables(getSyms(problem), getSyms(cb.system)) #=TODO: Trigger recompilation =#
         newU0 = Float64[i.u[idx] for idx in indicesOfCommonVariables]
         #= Now we have the start values for the next part of the system=#
         push!(oldSols, (integrator.sol, getSyms(cb.system)))
@@ -72,7 +71,7 @@ function solve(problem, tspan, alg, structuralCallbacks, commonVariableSet; kwar
         #= Reset with the new values of u0 =#
         reinit!(integrator, newU0; t0 = i.t, reset_dt = true)
         cb.structureChanged = false
-        println("!!DONE CHANGING THE STRUCTURE!! Restarting")
+#        println("!!DONE CHANGING THE STRUCTURE!! Restarting")
         #= goto to save preformance =#
         @goto START_OF_INTEGRATION
       end
@@ -80,8 +79,7 @@ function solve(problem, tspan, alg, structuralCallbacks, commonVariableSet; kwar
   end
   #= The solution of the integration procedure =#
   local solution = integrator.sol
-#  @info "Solution:" solution
-  
+#  @info "Solution:" solution  
   #= The final solution =#
   #= in oldSols we have the old solution. =#
   local startingSol = first(first(oldSols))
@@ -131,7 +129,7 @@ function getSyms(problem)
 end
 
 """
-  Fetches  the symbolic variables from a solution
+  Fetches the symbolic variables from a solution
 """
 function getSymsFromSolution(sol)
   return sol.prob.f.syms

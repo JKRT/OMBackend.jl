@@ -31,7 +31,6 @@ function structuralCallback(f)
   return (cb, structuralChange)
 end
 
-
 function BreakingPendulum(tspan)
   (pendulum, initialValues, reducedSystem, tspan, pars, vars1) = PendulumModel(tspan)
   (bouncingBall, _ ,_ ,_ ,_, vars2) = BouncingBallModel(tspan)
@@ -46,7 +45,6 @@ function BreakingPendulum(tspan)
 
   #=Some inline testing=#
   indices = OMBackend.Runtime.getIndicesOfCommonVariables(OMBackend.Runtime.getSyms(bouncingBall), OMBackend.Runtime.getSyms(pendulum))
-  @info "Indices values:" indices
   #= To keep track of common variables. We will know the common variables a priori =#
   local commonVariableSet = [Symbol("x(t)"), Symbol("y(t)"), Symbol("vx(t)"), Symbol("vy(t)")]
   return (breakingPendulumModel, [changeStructure1], commonVariableSet)
@@ -54,5 +52,4 @@ end
 
 
 (problem, structuralCallbacks, commonVariableSet) = BreakingPendulum((0.0, 7.))
-import OMBackend
 finalSolution = OMBackend.Runtime.solve(problem, (0.0, 7.), Rodas5(), structuralCallbacks, commonVariableSet)

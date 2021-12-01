@@ -3,9 +3,9 @@ begin
     using DiffEqBase
     using DifferentialEquations
     function BouncingBallModel(tspan = (0.0, 1.0))
-        @variables t        #= C:\Users\John\Projects\Programming\JuliaPackages\OM.jl\OMBackend.jl\src\CodeGeneration\MTK_CodeGeneration.jl:101 =#
-        parameters = ModelingToolkit.@parameters((e, g)) #= C:\Users\John\Projects\Programming\JuliaPackages\OM.jl\OMBackend.jl\src\CodeGeneration\MTK_CodeGeneration.jl:102 =#
-        vars = ModelingToolkit.@variables((x(t), y(t), vx(t), vy(t))) #= C:\Users\John\Projects\Programming\JuliaPackages\OM.jl\OMBackend.jl\src\CodeGeneration\MTK_CodeGeneration.jl:109 =#
+        @variables t        #= C:\Users\johti17\Projects\Programming\JuliaPackages\OM.jl\OMBackend.jl\src\CodeGeneration\MTK_CodeGeneration.jl:98 =#
+        parameters = ModelingToolkit.@parameters((e, g)) #= C:\Users\johti17\Projects\Programming\JuliaPackages\OM.jl\OMBackend.jl\src\CodeGeneration\MTK_CodeGeneration.jl:99 =#
+        vars = ModelingToolkit.@variables((x(t), y(t), vx(t), vy(t))) #= C:\Users\johti17\Projects\Programming\JuliaPackages\OM.jl\OMBackend.jl\src\CodeGeneration\MTK_CodeGeneration.jl:106 =#
         der = Differential(t)
         eqs = [der(x) ~ vx, der(y) ~ vy, der(vx) ~ 0.0, der(vy) ~ -g]
         nonLinearSystem = ModelingToolkit.ODESystem(

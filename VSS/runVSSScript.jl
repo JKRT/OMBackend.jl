@@ -25,12 +25,11 @@ function dumpModelsMTK(models, file)
   end
 end
 
-
 function flattenPendulum()
   local tst = ["Pendulum"]
   local F = "Pendulum"
 #  @info "Dumping the models"
-  dumpModelsMTK(tst, F)
+#  dumpModelsMTK(tst, F)
 #  #=lets try to run=#
   translateModelsMTK(tst, F)
 end
@@ -38,7 +37,7 @@ end
 function flattenFreeFall()
   local tst = ["FreeFall"]
   local F = "FreeFall"
-  dumpModelsMTK(tst, F)
+#  dumpModelsMTK(tst, F)
 #  #=lets try to run=#
   translateModelsMTK(tst, F)
 end
@@ -46,7 +45,7 @@ end
 function flattenBouncingBall()
   local tst = ["BouncingBall"]
   local F = "BouncingBall"
-  dumpModelsMTK(tst, F)
+#  dumpModelsMTK(tst, F)
 #  #=lets try to run=#
   translateModelsMTK(tst, F)
 end
@@ -58,3 +57,17 @@ flattenBouncingBall()
 OMBackend.writeModelToFile("FreeFall", "FreeFall.jl"; keepComments = false, formatFile = true, mode = OMBackend.MTK_MODE)
 OMBackend.writeModelToFile("Pendulum", "Pendulum.jl"; keepComments = false, formatFile = true, mode = OMBackend.MTK_MODE)
 OMBackend.writeModelToFile("BouncingBall", "BouncingBall.jl"; keepComments = false, formatFile = true, mode = OMBackend.MTK_MODE)
+
+
+@info "Including compiled files"
+@time include("BreakingPendulumBouncingballMockup.jl") #= This include is slow =#
+@info "Done compiling"
+
+#= Create the breaking pendulum model =#
+(problem, structuralCallbacks) = BreakingPendulum((0.0, 7.))
+#= Note we fixed =#
+@info "Model compiled. Simulate VSS script"
+@time finalSolution = OMBackend.Runtime.solve(problem, (0.0, 7.), Rodas5(), structuralCallbacks, commonVariableSet)
+@info "Solution obtained. Plotting solution"
+using Plots
+plot(finalSolution)

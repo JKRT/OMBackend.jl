@@ -1,6 +1,3 @@
-using Revise
-using ModelingToolkit
-import OMBackend
 include("Pendulum.jl")
 include("FreeFall.jl")
 
@@ -20,7 +17,6 @@ end
 function structuralCallback(f)
   structuralChange = StructuralChange(false, f)
   function affect!(integrator)
-    println("Detecting structure change!")
     structuralChange.structureChanged = true
   end
   function condition(u, t, integrator)
@@ -46,6 +42,3 @@ function BreakingPendulum(tspan)
   local commonVariableSet = [Symbol("x(t)"), Symbol("y(t)"), Symbol("vx(t)"), Symbol("vy(t)")]
   return (breakingPendulumModel, [changeStructure1], commonVariableSet)
 end
-
-(problem, structuralCallbacks) = BreakingPendulum((0.0, 7.))
-finalSolution = OMBackend.Runtime.solve(problem, (0.0, 7.), Rodas5(), structuralCallbacks, commonVariableSet)
