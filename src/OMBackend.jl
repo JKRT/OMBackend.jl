@@ -43,5 +43,4 @@ include("$CURRENT_DIRECTORY/CodeGeneration/CodeGeneration.jl")
 include("$CURRENT_DIRECTORY/../test/ExampleDAE/ExampleDAEs.jl")
 #= Finnaly add the API=#
 include("backendAPI.jl")
-include("ifElse.jl")
 end #=OMBackend=#
