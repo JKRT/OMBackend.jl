@@ -38,7 +38,6 @@ Tables = "bd369af6-aec1-5ad0-b16a-f7cc5008161c"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
-OpenModelicaParser = "3cc3926e-259e-5855-988e-4819684349c8"
 
 [targets]
 test = ["Test", "OpenModelicaParser"]
