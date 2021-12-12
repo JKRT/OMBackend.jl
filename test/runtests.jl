@@ -41,7 +41,6 @@ import Tables
 #= Uncomment to turn on logging =#
 #ENV["JULIA_DEBUG"] = "OMBackend"
 
-using OpenModelicaParser
 using OMFrontend
 using OMBackend
 using OMBackend.ExampleDAEs
