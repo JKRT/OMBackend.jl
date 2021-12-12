@@ -25,7 +25,7 @@ julia> include("deps/build.jl")
 ```
 Then precompile with:
 ```julia
-(v1.6) pkg> activate .
+(v1.7) pkg> activate .
 julia> using OMBackend
 ```
 
