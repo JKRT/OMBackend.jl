@@ -1,4 +1,3 @@
-
 #=
 * This file is part of OpenModelica.
 *
@@ -35,13 +34,6 @@
 import CSV
 import Tables
 
-# Load module for test DAEs
-
-#include("debugUtil.jl")
-#= Uncomment to turn on logging =#
-#ENV["JULIA_DEBUG"] = "OMBackend"
-
-using OMFrontend
 using OMBackend
 using OMBackend.ExampleDAEs
 using Test
