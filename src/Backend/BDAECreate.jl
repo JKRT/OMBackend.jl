@@ -41,7 +41,6 @@ using ExportAll
 import DAE
 import ..BDAE
 import ..BDAEUtil
-import ..Causalize
 import OMFrontend
 
 """

@@ -34,8 +34,15 @@
 import CSV
 import Tables
 
+#=
+Danger: Do not remove this using line it is needed to init the parser.
+=#
+using OMParser
+#= **** =#
+
 using OMBackend
-using OMBackend.ExampleDAEs
+include("./ExampleDAE/ExampleDAEs.jl")
+import ..ExampleDAEs
 using Test
 
 import OMBackend.Runtime.OMSolution

@@ -42,7 +42,6 @@ import .Backend.BDAECreate
 import .Backend.BDAEUtil
 import .Backend.Causalize
 import ..CodeGeneration
-import OMBackend.ExampleDAEs
 import .SimulationCode
 import ..Runtime
 import Base.Meta
@@ -50,7 +49,6 @@ import SCode
 import JuliaFormatter
 import Plots
 import REPL
-import OMBackend
 import OMFrontend
 
 const latexSymbols = REPL.REPLCompletions.latex_symbols
