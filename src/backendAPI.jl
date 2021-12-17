@@ -323,7 +323,6 @@ function plot(sol::Runtime.OMSolution)
   Plots.plot(t, rescols; labels=labels)
 end
 
-
 "
 `function plot(sol)`
   An alternative plot function in OMBackend.
@@ -332,7 +331,6 @@ end
 function plot(sol)
   Plots.plot(sol)
 end
-
 
 """
 `turnOnLogging(mod = "OMBackend"::String)`\n
