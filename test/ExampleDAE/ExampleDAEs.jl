@@ -5,9 +5,9 @@ using MetaModelica
 using ImmutableList
 import SCode
 
-using ..FrontendUtil
+using ..OMBackend.FrontendUtil
 
-import ..Prefix
+import ..OMBackend.Prefix
 import DAE
 import DAE.ClassInf
 #import .ClassInf

@@ -1,7 +1,7 @@
 #= /*
 * This file is part of OpenModelica.
 *
-* Copyright (c) 1998-2020, Open Source Modelica Consortium (OSMC),
+* Copyright (c) 1998-CurrentYear, Open Source Modelica Consortium (OSMC),
 * c/o Linköpings universitet, Department of Computer and Information Science,
 * SE-58183 Linköping, Sweden.
 *
@@ -33,7 +33,6 @@
   File: simCodeDump.jl
   Dumping functions for simulation code structures.
 """
-
 function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String)
   print(BDAE.DOUBLE_LINE + "\n")
   print("SIM_CODE: " + heading + "\n")
@@ -69,9 +68,6 @@ function string(backendVar::BDAE.Var)
   BDAE.string(varName; separator = "___")
 end
 
-function Base.string(cr::DAE.ComponentRef)
-  BDAE.string(cr; separator = "_")
-end
 
 """
   This function just forwards the call to BDAE

@@ -28,11 +28,13 @@ function buildDeps()
   Pkg.add("SCode")
   Pkg.add("DAE")
   Pkg.add("DoubleEnded")
-  Pkg.add("OpenModelicaParser") #= Add if we do not have it =#
+  #= Add if we do not have it =#
+  Pkg.add(url="https://github.com/OpenModelica/OMParser.jl.git")
   Pkg.add("OMFrontend")
   @info("All dependencies succesfull")
-  Pkg.build("OMFrontend") #= This will call build on the parser implicitly. =#
-  @info("OMFrontend built successfully")
+  Pkg.build("OMParser") #= Build the parser =#
+  Pkg.build("OMFrontend")
+  @info("OMFrontend + OMParser built successfully")
 end
 
 buildDeps()

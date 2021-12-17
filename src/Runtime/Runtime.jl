@@ -4,8 +4,6 @@
 module Runtime
 
 using DataStructures
-using DiffEqBase
-using DifferentialEquations
 using ModelingToolkit
 
 abstract type AbstractOMSolution end

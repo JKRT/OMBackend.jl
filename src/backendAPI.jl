@@ -42,7 +42,6 @@ import .Backend.BDAECreate
 import .Backend.BDAEUtil
 import .Backend.Causalize
 import ..CodeGeneration
-import OMBackend.ExampleDAEs
 import .SimulationCode
 import ..Runtime
 import Base.Meta
@@ -50,7 +49,6 @@ import SCode
 import JuliaFormatter
 import Plots
 import REPL
-import OMBackend
 import OMFrontend
 
 const latexSymbols = REPL.REPLCompletions.latex_symbols
@@ -325,7 +323,6 @@ function plot(sol::Runtime.OMSolution)
   Plots.plot(t, rescols; labels=labels)
 end
 
-
 "
 `function plot(sol)`
   An alternative plot function in OMBackend.
@@ -334,7 +331,6 @@ end
 function plot(sol)
   Plots.plot(sol)
 end
-
 
 """
 `turnOnLogging(mod = "OMBackend"::String)`\n

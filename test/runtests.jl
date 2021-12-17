@@ -1,4 +1,3 @@
-
 #=
 * This file is part of OpenModelica.
 *
@@ -35,16 +34,15 @@
 import CSV
 import Tables
 
-# Load module for test DAEs
+#=
+Danger: Do not remove this using line it is needed to init the parser.
+=#
+using OMParser
+#= **** =#
 
-#include("debugUtil.jl")
-#= Uncomment to turn on logging =#
-#ENV["JULIA_DEBUG"] = "OMBackend"
-
-using OpenModelicaParser
-using OMFrontend
 using OMBackend
-using OMBackend.ExampleDAEs
+include("./ExampleDAE/ExampleDAEs.jl")
+import ..ExampleDAEs
 using Test
 
 import OMBackend.Runtime.OMSolution

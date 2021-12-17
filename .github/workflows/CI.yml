@@ -13,18 +13,39 @@ jobs:
       fail-fast: false
       matrix:
         version:
-          - '1.6'
+          - '1.7'
         os:
           - ubuntu-latest
         arch:
           - x64	  
     steps:
       - uses: actions/checkout@v2
+        
       - uses: julia-actions/setup-julia@v1
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
-      - run: julia --compiled-modules=no --color=yes --project -e 'import Pkg; Pkg.Registry.add("General"); Pkg.Registry.add(Pkg.RegistrySpec(url="https://github.com/JKRT/OpenModelicaRegistry.git")); Pkg.build(;verbose = true);'
-      - uses: julia-actions/julia-runtest@v1
+          
+      - uses: actions/cache@v1
+        env:
+          cache-name: cache-artifacts
+        with:
+          path: ~/.julia/artifacts
+          key: ${{ runner.os }}-test-${{ env.cache-name }}-${{ hashFiles('**/Project.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-test-${{ env.cache-name }}-
+            ${{ runner.os }}-test-
+            ${{ runner.os }}-
+      - name: Build    
+        run: julia --compiled-modules=no --color=yes --project -e 'import Pkg; Pkg.Registry.add("General"); Pkg.Registry.add(Pkg.RegistrySpec(url="https://github.com/JKRT/OpenModelicaRegistry.git")); Pkg.build(;verbose = true);'
+
+      - name: Test
+        uses: julia-actions/julia-runtest@v1
+
+      - name: Calculate process coverage
+        uses: julia-actions/julia-processcoverage@v1
+
+      - name: Coverage report
+        uses: codecov/codecov-action@v1
         with:
           file: lcov.info
