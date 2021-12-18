@@ -1,11 +1,10 @@
 #=
   Author: John Tinnerholm
 
-TODO: Remember the state derivative scheme. What the heck did I mean  with that?
-TODO: Make duplicate code better...
-TODO: Make this into it's own module
-TODO: Fix the redundant string conversion scheme
-TODO: Investigate broken if equations
+  TODO: Remember the state derivative scheme. What the heck did I mean  with that?
+  TODO: Make duplicate code better...
+  TODO: Fix the redundant string conversion scheme
+  TODO: Investigate the once again broken if equations
 =#
 using ModelingToolkit
 import OMBackend
@@ -362,11 +361,10 @@ function residualEqtoJuliaMTK(eq::BDAE.Equation, simCode::SimulationCode.SIM_COD
       #= If we solve for state we solve for der_<var-name>=#
       #= Why did I do this. Ask Lennart! =#
       local varToSolveExpr::Symbol =  solveForState ? Symbol(derSymbolString) : Symbol(varToSolve.name)
-#      local varToSolveExpr::Symbol = Symbol(varToSolve.name)
       #= These are the variables present in this specific equation. =#
       local daeVariables = getVariablesInDAE_Exp(daeExp, simCode, Set([]))
       #= Simple quation rewrite..=#
-      eqRewrite = function ()
+      function eqRewrite()
         eqExpr = quote
           ModelingToolkit.@variables begin
             $(daeVariables...)
@@ -375,17 +373,29 @@ function residualEqtoJuliaMTK(eq::BDAE.Equation, simCode::SimulationCode.SIM_COD
           leq = 0 ~ $(stripBeginBlocks(expToJuliaExpMTK(daeExp, simCode ;derSymbol=true)))
           Symbolics.solve_for([leq], [$varToSolveExpr]; check = false #= Does not check for linearity!.. =#)
         end
-        local res = @eval $eqExpr
+        res = eval(eqExpr)
         return res
       end
       local evEqExpr = eqRewrite()
+      #=
+        The value return here will be of a Symbolics type.
+        We need to convert it into a regular symbol to proceed
+      =#
+      #=
+      Dangerous conversion hack.
+      We convert the SymbolicUtils exp to a string and then back to an exp again.
+      This is currently done to avoid errors in module paths.
+      =#
+      evEqExprStr = string(evEqExpr[1])
+      #= We convert from a string back to an expr =#
+      evEqExprExpr = Meta.parse(evEqExprStr)
       if solveForState
-        local sol = quote
-          der($(Symbol(varToSolve.name))) ~ $(evEqExpr[1])
+        sol = quote
+          der($(Symbol(varToSolve.name))) ~ $(evEqExprExpr)
         end
-      else
-        local sol = quote
-          $(Symbol(varToSolve.name)) ~ $(evEqExpr[1])
+      else #= For non state variables =#
+        sol = quote
+          $(Symbol(varToSolve.name)) ~ $(evEqExprExpr)
         end
       end
       #= Return sol. Assign to results =#

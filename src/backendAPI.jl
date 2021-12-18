@@ -287,17 +287,31 @@ function simulateModel(modelName::String; MODE = MTK_MODE ,tspan=(0.0, 1.0))
   local modelCode::Expr  
   if MODE == MTK_MODE
     #= This does a redudant string conversion for now due to modeling toolkit being as is...=#
+    try
       modelCode = COMPILED_MODELS_MTK[modelName]
-      local modelCodeStr = ""
+    catch err
+      println("Failed to simulate model.")
+      println("Available models are:")
+      availableModels()
+    end
+    #= Check if a compiled instance of the model already exists in the backend =#
+    try
+      local modelRunnable = Meta.parse("OMBackend.$(modelName)Simulate($(tspan))")
+      res = @eval $modelRunnable
+      return res
+    catch #= The model is not compiled yet. Proceeding.. =#
+    end    
     try
       @eval $(:(import OMBackend))
       strippedModel = CodeGeneration.stripBeginBlocks(modelCode)
-      modelCodeStr::String = "$strippedModel"
-      local parsedModel = Meta.parse(modelCodeStr)
-      @eval $parsedModel
+      @eval $strippedModel
       local modelRunnable = Meta.parse("OMBackend.$(modelName)Simulate($(tspan))")
       #= Run the model with the supplied tspan. =#
       @eval Main $modelRunnable
+      #=
+      The model is now compiled and a part of the OMBackend module.
+      In the following path OMBackend.<modelName>Simulate
+      =#
     catch err
       @info "Interactive evaluation failed: $err with mode: $(MODE)"
       @info err
