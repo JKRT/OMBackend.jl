@@ -315,8 +315,7 @@ function simulateModel(modelName::String; MODE = MTK_MODE ,tspan=(0.0, 1.0))
     catch err
       @info "Interactive evaluation failed: $err with mode: $(MODE)"
       @info err
-      println(modelCodeStr)
-      @info modelCodeStr
+      println(modelCode)
       throw(err)
     end
   else
