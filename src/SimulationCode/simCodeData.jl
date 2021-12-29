@@ -58,7 +58,6 @@ end
 """ Abstract type for different variants of simulation code """
 abstract type SimCode end
 
-
 """
   Abstract type for control flow constructs for simulation code
 """
@@ -106,16 +105,20 @@ end
 struct SIM_CODE{T0<:String,
                 T1<:AbstractDict{String, Tuple{Integer, SimVar}},
                 T2<:Vector{BDAE.RESIDUAL_EQUATION},
-                #= When equations are discret events (In the sense they occur once, the condition is continusly checked. ) =#
+                #= When equations are discret events (In the sense they occur once, the condition is checked per time step. ) =#
                 T4<:Vector{BDAE.WHEN_EQUATION},
                 #=
                   If equations are represented via a vector of possible branches in which the code can operate. 
-                  Similar to basic blocks =#
+                Similar to basic blocks
+                =#
                 T5<:Vector{IF_EQUATION},
                 T6<:Bool,
                 T7<:Vector{Int},
                 T8<:Graphs.AbstractGraph,
-                T9<:Vector} <: SimCode
+                T9<:Vector,
+                T10 <: Vector{BDAE.STRUCTURAL_TRANSISTION},
+                T11 <: Vector,
+                T12 <: String} <: SimCode
   name::T0
   "Mapping of names to the corresponding variable"
   stringToSimVarHT::T1
@@ -140,18 +143,12 @@ struct SIM_CODE{T0<:String,
     If the system is singular tearing is needed.
    "
   equationGraph::T8
-  " The reverse topological sort of the equation-graph
-  "
+  " The reverse topological sort of the equation-graph "
   stronglyConnectedComponents::T9
-end
-
-
-struct UNSORTED_SIM_CODE <: SimCode
-  name::String
-  "Mapping of names to the corresponding variable"
-  stringToSimVarHT::Dict{String, Tuple{Integer, SimVar}}
-  "Different equations stored within simulation code"
-  residualEquations::Array{BDAE.RESIDUAL_EQUATION}
-  whenEquations::Array{BDAE.WHEN_EQUATION}
-  ifEquations::Array{BDAE.IF_EQUATION}
+  "Contains all structural transistions"
+  structuralTransistions::T10  
+  "Structural submodels"
+  subModels::T11
+  "Initial model"
+  activeModel::T12
 end

@@ -18,6 +18,14 @@ struct OMSolution{T1, T2} <: AbstractOMSolution
   idxToName::T2
 end
 
+"""
+  Wrapper callback for structural change
+"""
+mutable struct StructuralChange{SYS}
+  structureChanged::Bool
+  system::SYS
+end
+
 #=
 The current scheme for structural change.
 Callbacks are created in the model that encompasses the two submodels.
