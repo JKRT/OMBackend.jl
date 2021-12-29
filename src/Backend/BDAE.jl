@@ -121,24 +121,29 @@ const LinearIntegerJacobian = Tuple
 const InnerEquations = List
 const Constraints = List
 
-#= An independent system of equations (and their corresponding variables) =#
+"""
+An independent system of equations (and their corresponding variables)
+Structural submodels gets converted into these.
+"""
 struct EQSYSTEM
+  name::String
   orderedVars #= ordered Variables, only states and alg. vars =#::Vector
   orderedEqs #= ordered Equations =#::Vector
   simpleEquations::Vector #= List of simple equations=#
-end
-
-struct SHARED
-  globalKnownVars::Vector
-  localKnownVars::Vector
   initialEqs::Vector
 end
 
-#= THE LOWERED DAE consist of variables and equations. The variables are split into
+""" Data that is shared between equation systems """
+struct SHARED
+  globalKnownVars::Vector
+  localKnownVars::Vector
+end
+
+""" THE LOWERED DAE consist of variables and equations. The variables are split into
 two lists, one for unknown variables states and algebraic and one for known variables
 constants and parameters.
 The equations are also split into two lists, one with simple equations, a=b, a-b=0, etc., that
-are removed from the set of euations to speed up calculations. =#
+are removed from the set of equations to speed up calculations. """
 struct BACKEND_DAE
   name::String
   eqs::Vector{EQSYSTEM}
@@ -467,6 +472,19 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
   end
 
   @Record DUMMY_EQUATION begin
+  end
+
+  @Record INITIAL_STRUCTURAL_STATE begin
+    initialState::String
+  end
+  #=
+  Structural transistion has three parts
+  From the condition a structural callback is generated
+  =#
+  @Record STRUCTURAL_TRANSISTION begin
+    fromState::String
+    toState::String
+    transistionCondition::DAE.Exp
   end
 end
 
@@ -828,8 +846,7 @@ end
 #= types to count operations for the components =#
 @Uniontype CompInfo begin
   @Record COUNTER begin
-    #=  single equation
-    =#
+    #=  single equation =#
     comp::StrongComponent
     numAdds::Integer
     numMul::Integer
@@ -837,11 +854,9 @@ end
     numTrig::Integer
     numRelations::Integer
     numLog::Integer
-    #=  logical operations
-    =#
+    #=  logical operations =#
     numOth::Integer
-    #=  pow,...
-    =#
+    #=  pow,... =#
     funcCalls::Integer
   end
 

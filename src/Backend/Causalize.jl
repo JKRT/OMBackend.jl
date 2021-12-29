@@ -78,7 +78,7 @@ function detectStatesEqSystem(syst::BDAE.EQSYSTEM)::BDAE.EQSYSTEM
     local eqs::Array
     local stateCrefs = Dict{DAE.ComponentRef, Bool}()
     @match syst begin
-      BDAE.EQSYSTEM(vars, eqs) => begin
+      BDAE.EQSYSTEM(name, vars, eqs, simpleEqs, initialEqs) => begin
         for eq in eqs
           (_, stateCrefs) = BDAEUtil.traverseEquationExpressions(eq, detectStateExpression, stateCrefs)
         end
@@ -101,7 +101,7 @@ function replaceArrayVariables(syst::BDAE.EQSYSTEM, expandedVariables::Array)
     local eqs::Array
     local arrayCrefs = Dict{String, Bool}([(i.varName.ident, false) for i in expandedVariables])
     @match syst begin
-      BDAE.EQSYSTEM(vars, eqs) => begin
+      BDAE.EQSYSTEM(name, vars, eqs, simpleEqs, initialEqs) => begin
         for i in 1:length(eqs)
           local eq = eqs[i]
           (eq2, arrayCrefs) = BDAEUtil.traverseEquationExpressions(eq, detectArrayExpression, arrayCrefs)
@@ -110,7 +110,7 @@ function replaceArrayVariables(syst::BDAE.EQSYSTEM, expandedVariables::Array)
           end
           @debug "arrayCrefs:" arrayCrefs
         end
-        #= Append the new variables to the list of variables =#
+        #= Append the new variables to the list of variables. Why is this commented out?=#
 #        local newVariables = collect(keys(arrayCrefs))
 #        local newEquations = collect(values(arrayCrefs))
 #        @assign syst.orderedEqs = vcat(syst.orderedEqs, newEquations)

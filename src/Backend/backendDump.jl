@@ -34,9 +34,9 @@
 
 using MetaModelica
 
-const HEAD_LINE = "############################################"::String
-const DOUBLE_LINE = "============================================"::String
-const LINE = "---------------------------------------------"::String
+const HEAD_LINE = "############################################"
+const DOUBLE_LINE = "============================================"
+const LINE = "---------------------------------------------"
 
 function stringHeading1(i::Any, heading::String)::String
   str = heading1(heading) + "\n" + string(i)
