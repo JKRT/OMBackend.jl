@@ -18,6 +18,34 @@ function isAlgebraic(simvar::SimVar)::Bool
   end
 end
 
+"""
+  Fetches the last identifier of a variable.
+That is:
+getLastIdentOfVar(Foo.Bar.x) => x
+"""
+function getLastIdentOfVar(var)::String
+  getIdentOfComponentReference(var.varName)
+end
+
+"""
+  Fetches the last ident of a component reference 
+"""
+function getIdentOfComponentReference(cr)::String
+  return begin
+    @match cr begin
+      DAE.CREF_QUAL(ident = ident, componentRef = componentRef) => begin
+        getIdentOfComponentReference(componentRef)
+      end
+      DAE.CREF_IDENT(ident) => begin
+        ident
+      end
+      DAE.CREF_ITER(ident = ident) => begin
+        throw("Case not handled")
+      end
+    end
+  end
+end
+
 "
 Returns true if simvar is  an algebraic variable
 "

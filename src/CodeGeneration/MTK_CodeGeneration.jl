@@ -62,12 +62,15 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   #= Handle structural submodels =#  
   #= TODO: Extract the active model =#
   local activeModelSimCode = getActiveModel(simCode)
+  local activeModelName = simCode.activeModel
   local structuralModes = Expr[]
   for mode in simCode.subModels
-    push!(structuralModes, ODE_MODE_MTK_MODEL_GENERATION(activeModelSimCode, simCode.activeModel))
+    push!(structuralModes, ODE_MODE_MTK_MODEL_GENERATION(mode, mode.name))
   end  
   local structuralCallbacks = createStructuralCallbacks(simCode, simCode.structuralTransistions)
   local structuralAssignments = createStructuralAssignments(simCode, simCode.structuralTransistions)
+  #= Initialize array where the common variables are stored. That is variables all modes have =#
+  local commonVariables = createCommonVariables(simCode.sharedVariables)
   #= END =#
   code = quote
     import OMBackend
@@ -75,11 +78,10 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
     $(structuralCallbacks...)
     function $(Symbol(MODEL_NAME * "Model"))(tspan = (0.0, 1.0))
       #=  Assign the initial model  =#
-      (subModel, initialValues, reducedSystem, tspan, pars, vars1) = $(Symbol(simCode.activeModel  * "Model"))(tspan)
+      (subModel, initialValues, reducedSystem, _, pars, vars1) = $(Symbol(simCode.activeModel  * "Model"))(tspan)
       #= Assign the structural callbacks =#
-      #(sCB, changeStructure1) = structuralCallback(bouncingBall)
-      $(structuralAssignments...)
-      structuralCallbacks = []      
+      $(structuralAssignments)
+      $(commonVariables)
       #= END =#
       #= Create the composite model =#
       compositeProblem = ModelingToolkit.ODEProblem(
@@ -87,17 +89,20 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
         initialValues,
         tspan,
         pars,
-        #= TODO: Does this make sense or should these callback be kept separate? =#
-        callback = CallbackSet(),
+        callback = $(if isempty(structuralCallbacks)
+                       :(CallbackSet())
+                     else
+                       quote
+                         CallbackSet(Tuple(callbackSet), ())
+                       end
+                     end),
       )
-      return (compositeProblem, structuralCallbacks #= The structural callbacks as an array =#)
-    end
-    ($(Symbol("$(MODEL_NAME)Model_problem")), structuralCallbacks) = $(Symbol("$(MODEL_NAME)Model"))()
-    function $(Symbol("$(MODEL_NAME)Simulate"))(tspan)
-      solve($(Symbol("$(MODEL_NAME)Model_problem")), tspan=tspan)
+      result = OMBackend.Runtime.OM_ProblemStructural($(activeModelName), compositeProblem, structuralCallbacks, commonVariables)
+      return result
     end
     function $(Symbol("$(MODEL_NAME)Simulate"))(tspan = (0.0, 1.0); solver=Rodas5())
-      solve($(Symbol("$(MODEL_NAME)Model_problem")), tspan=tspan, solver)
+      $(Symbol("$(MODEL_NAME)Model_problem")) = $(Symbol("$(MODEL_NAME)Model"))(tspan)
+      OMBackend.Runtime.solve($(Symbol("$(MODEL_NAME)Model_problem")), tspan, solver)
     end
   end
   @info "Codegen done?"
@@ -493,7 +498,7 @@ function getStartConditionsMTK(vars::Array, simCode::SimulationCode.SimCode)::Ar
             #= We have a variable of sorts =#
             push!(startExprs,
                   quote
-                  $(Symbol("$varName")) => pars[$(Symbol(start.ident))]
+                  $(Symbol("$varName")) => pars[$(Symbol(string(start)))]
                   end)
             ()
           end

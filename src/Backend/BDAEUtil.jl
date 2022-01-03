@@ -262,6 +262,11 @@ function DAE_VarKind_to_BDAE_VarKind(kind::DAE.VarKind)::BDAE.VarKind
   end
 end
 
+function isStateOrVariable(var::BDAE.VAR)
+  local kind = var.varKind
+  return isStateOrVariable(kind)
+end
+
 function isStateOrVariable(kind::BDAE.VarKind)
   res = @match kind begin
     BDAE.VARIABLE(__) => true

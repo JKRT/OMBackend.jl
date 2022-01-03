@@ -118,7 +118,8 @@ struct SIM_CODE{T0<:String,
                 T9<:Vector,
                 T10 <: Vector{BDAE.STRUCTURAL_TRANSISTION},
                 T11 <: Vector,
-                T12 <: String} <: SimCode
+                T12 <: Vector{String},
+                T13 <: String} <: SimCode
   name::T0
   "Mapping of names to the corresponding variable"
   stringToSimVarHT::T1
@@ -149,6 +150,8 @@ struct SIM_CODE{T0<:String,
   structuralTransistions::T10  
   "Structural submodels"
   subModels::T11
+  " Variables that different submodels have in common"
+  sharedVariables::T12
   "Initial model"
-  activeModel::T12
+  activeModel::T13
 end

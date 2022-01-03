@@ -275,7 +275,7 @@ end
 """ 
   `Base.string(cr::DAE.ComponentRef; seprator=".")` 
    Converts a `DAE.ComponentRef` to a Julia string.
-TODO: Discuss separators. A different one should maybe be used..
+   TODO: Discuss separators. A different one should maybe be used..
 """
 function Base.string(cr::DAE.ComponentRef; separator="_")
   str = begin

@@ -5,6 +5,8 @@ module Runtime
 
 using DataStructures
 using ModelingToolkit
+using DifferentialEquations
+using MetaModelica
 
 abstract type AbstractOMSolution end
 
@@ -19,11 +21,42 @@ struct OMSolution{T1, T2} <: AbstractOMSolution
 end
 
 """
-  Wrapper callback for structural change
+  Wrapper callback for a static structural change.
+  That is the model
+  we are simulating changes during the simulation but the future model can be predicted statically
 """
 mutable struct StructuralChange{SYS}
+  "The name of the next mode"
+  name::String
+  "Indicates if the structure has changed"
   structureChanged::Bool
+  " The system we are switching to.  "
   system::SYS
+end
+
+"""
+  Wrapper callback for structural change that triggers a recompilation
+"""
+mutable struct StructuralChangeRecompilation{SYS}
+  "The name of the next mode"
+  name::String
+  "Indicates if the structure has changed"
+  structureChanged::Bool
+end
+
+mutable struct OM_ProblemStructural{T0 <: String, T1, T2, T3}
+  "The name of the active mode"
+  activeModeName::T0
+  "The problem we are currently solving"
+  problem::T1
+  "The set of structural callbacks"
+  structuralCallbacks::T2
+  """ Variables that all modes have in common """
+  commonVariables::T3
+end
+
+mutable struct OM_Problem{T0, T1}
+  problem::T0
 end
 
 #=
@@ -47,38 +80,58 @@ We should also statically detect if VSS simulation is needed since it is more re
   Custom solver function for Modelica code with structuralCallbacks to monitor the solving process
   (Using the integrator interface) from DifferentialEquations.jl
 """
-function solve(problem, tspan, alg, structuralCallbacks, commonVariableSet; kwargs...)
+function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
+  local problem = omProblem.problem
+  local structuralCallbacks = omProblem.structuralCallbacks
+  local commonVariableSet = omProblem.commonVariables
   local symsOfInitialMode = getSyms(problem)
-  local indicesOfCommonVariablesForStartingMode = getIndicesOfCommonVariables(symsOfInitialMode, commonVariableSet)
+  local activeModeName = omProblem.activeModeName
+  #= The issue here is that the symbols might differ due to a change in the cref scheme =#
+  local indicesOfCommonVariablesForStartingMode = getIndicesOfCommonVariables(symsOfInitialMode, commonVariableSet; destinationPrefix = activeModeName)
   #= Create integrator =#
-  integrator = init(problem, alg, dtmax=0.01, kwargs...)
+  integrator = init(problem, alg, dtmax = 0.01, kwargs...)
+  @info "Value of tspan[2]" tspan[2]
   add_tstop!(integrator, tspan[2])
-  oldSols = []
+  local oldSols = Tuple[]
   #= Run the integrator=#
   @label START_OF_INTEGRATION
+  @info "START OF INTEGRATION"
   for i in integrator
     #= Check structural callbacks in order =#
     retCode = check_error(integrator)
+    @info "Value of retCide" retCode
+    @info "SOLVER STEP:"
     for cb in structuralCallbacks
       if cb.structureChanged
         println("STRUCTURE CHANGED!")
         println("Status of i: $(i)")
         #= Find the correct variables and map them between the two models  =#
-        indicesOfCommonVariables = getIndicesOfCommonVariables(getSyms(problem), getSyms(cb.system))
+        local newSystem = cb.system
+        indicesOfCommonVariables = getIndicesOfCommonVariables(getSyms(newSystem),
+                                                               commonVariableSet;
+                                                               destinationPrefix = cb.name)
+        @info "DONE COMPUTING INDICES"
         newU0 = Float64[i.u[idx] for idx in indicesOfCommonVariables]
+        #= Save the old solution together with the name and the mode that was active =#
+        push!(oldSols, (integrator.sol, getSyms(problem), activeModeName))
         #= Now we have the start values for the next part of the system=#
-        push!(oldSols, (integrator.sol, getSyms(cb.system)))
         integrator = init(cb.system,
                           alg;
                           t0 = i.t,
                           u0 = newU0,
+                          dt = 0.01,
+                          dtmax = 0.01,
+                          tstart = tspan[1],
                           tstop = tspan[2],
-                          dtmax=0.01,
                           kwargs...)
-        #= Reset with the new values of u0 =#
+        #=
+        Reset with the new values of u0
+        and set the active moed to the mode we are currently using.
+        =#
+        activeModeName = cb.name
         reinit!(integrator, newU0; t0 = i.t, reset_dt = true)
         cb.structureChanged = false
-        println("!!DONE CHANGING THE STRUCTURE!! Restarting")
+        @info "!!DONE CHANGING THE STRUCTURE!! Restarting"
         #= goto to save preformance =#
         @goto START_OF_INTEGRATION
       end
@@ -86,23 +139,28 @@ function solve(problem, tspan, alg, structuralCallbacks, commonVariableSet; kwar
   end
   #= The solution of the integration procedure =#
   local solution = integrator.sol
-#  @info "Solution:" solution
-  
+  @info "Solution:" solution  
   #= The final solution =#
   #= in oldSols we have the old solution. =#
-  local startingSol = first(first(oldSols))
+  local startingSol = if ! isempty(oldSols)
+    first(first(oldSols))
+  else #= If we have no old solution we are done =#
+    return solution
+  end
 #  @info "Starting solution" startingSol
   local newTimePoints = vcat(startingSol.t, solution.t) #TODO should be a loop here.
-  #=TODO: We have a set of common variables. Find the indices for this set. =#
   #= We are creating a new Vector{Vector{Float64}}: =#
   #= Each solution in oldSol is solution to some subsolution of the VSS, before structural change =#
   #= If the dimensions between the solutions are not equivivalent we should only keep the columns we need =#
 #  indicesOfCommonVariables = getIndicesOfCommonVariables(getSyms(problem), getSyms(cb.system))
-
   #= The starting point is the initial variables of our starting mode =#
   local newUs = [startingSol[i,:]  for i in indicesOfCommonVariablesForStartingMode]
   #= Now we need to merge these with the latest solution =#
-  local tmp = getIndicesOfCommonVariables(commonVariableSet, getSymsFromSolution(solution))
+  @info "Common variable set:" commonVariableSet
+  @info "DestinationPrefix:" activeModeName
+  @info "Syms from the solution:" getSymsFromSolution(solution)
+  local tmp = getIndicesOfCommonVariables(getSymsFromSolution(solution), commonVariableSet; destinationPrefix = activeModeName)
+  @info "Value of tmp:" tmp
   for i in 1:length(commonVariableSet)
     newUs[i] = vcat(newUs[i], solution[tmp[i],:])
   end
@@ -116,10 +174,121 @@ function solve(problem, tspan, alg, structuralCallbacks, commonVariableSet; kwar
   return sol
 end
 
+
+"""
+  Custom solver function for Modelica code with structuralCallbacks to monitor the solving process
+  (Using the integrator interface) from DifferentialEquations.jl
+"""
+function solve(omProblem::StructuralChangeRecompilation, tspan, alg; kwargs...)
+  local problem = omProblem.problem
+  local structuralCallbacks = omProblem.structuralCallbacks
+  local commonVariableSet = omProblem.commonVariables
+  local symsOfInitialMode = getSyms(problem)
+  local activeModeName = omProblem.activeModeName
+  #= The issue here is that the symbols might differ due to a change in the cref scheme =#
+  local indicesOfCommonVariablesForStartingMode = getIndicesOfCommonVariables(symsOfInitialMode, commonVariableSet; destinationPrefix = activeModeName)
+  #= Create integrator =#
+  @assign problem.tspan = tspan
+  integrator = init(problem, alg, dtmax = 0.01, kwargs...)
+  @info "Value of tspan[2]" tspan[2]
+  local oldSols = Tuple[]
+  #= Run the integrator=#
+  @label START_OF_INTEGRATION
+  @info "START OF INTEGRATION"
+  for i in integrator
+    #= Check structural callbacks in order =#
+    retCode = check_error(integrator)
+    @info "Value of retCide" retCode
+    @info "SOLVER STEP:"
+    for cb in structuralCallbacks
+      if cb.structureChanged
+        println("STRUCTURE CHANGED!")
+        println("Status of i: $(i)")
+        #=  Recompilation =#
+        #= Have the Absyn =#
+        #=
+        - 1) Fetch the parameter from the structural callback 
+        - 2) Change the parameters in the SCode via API (Absyn is stored somewhere...)
+        - 3) Call the frontend + the backend.
+        - 4) Assign this system to newSystem.
+        =#
+        local newSystem = cb.system
+        #= End recompilation =#
+        @info "We try to switch"
+        indicesOfCommonVariables = getIndicesOfCommonVariables(getSyms(newSystem),
+                                                               commonVariableSet;
+                                                               destinationPrefix = cb.name)
+        @info "DONE COMPUTING INDICES"
+        newU0 = Float64[i.u[idx] for idx in indicesOfCommonVariables]
+        #= Save the old solution together with the name and the mode that was active =#
+        push!(oldSols, (integrator.sol, getSyms(problem), activeModeName))
+        #= Now we have the start values for the next part of the system=#
+        integrator = init(cb.system,
+                          alg;
+                          t0 = i.t,
+                          u0 = newU0,
+                          tstop = tspan[2],
+                          dt = 0.01,
+                          dtmax = 0.01,
+                          kwargs...)
+        #=
+        Reset with the new values of u0
+        and set the active moed to the mode we are currently using.
+  =#
+        add_tstop!(integrator, tspan[2])
+        activeModeName = cb.name
+        reinit!(integrator, newU0; t0 = i.t, reset_dt = true)
+        cb.structureChanged = false
+        @info "!!DONE CHANGING THE STRUCTURE!! Restarting"
+        #= goto to save preformance =#
+        @goto START_OF_INTEGRATION
+      end
+    end
+  end
+  #= The solution of the integration procedure =#
+  local solution = integrator.sol
+  @info "Solution:" solution  
+  #= The final solution =#
+  #= in oldSols we have the old solution. =#
+  local startingSol = if ! isempty(oldSols)
+    first(first(oldSols))
+  else #= If we have no old solution we are done =#
+    return solution
+  end
+#  @info "Starting solution" startingSol
+  local newTimePoints = vcat(startingSol.t, solution.t) #TODO should be a loop here.
+  #= We are creating a new Vector{Vector{Float64}}: =#
+  #= Each solution in oldSol is solution to some subsolution of the VSS, before structural change =#
+  #= If the dimensions between the solutions are not equivivalent we should only keep the columns we need =#
+#  indicesOfCommonVariables = getIndicesOfCommonVariables(getSyms(problem), getSyms(cb.system))
+  #= The starting point is the initial variables of our starting mode =#
+  local newUs = [startingSol[i,:]  for i in indicesOfCommonVariablesForStartingMode]
+  #= Now we need to merge these with the latest solution =#
+  @info "Common variable set:" commonVariableSet
+  @info "DestinationPrefix:" activeModeName
+  @info "Syms from the solution:" getSymsFromSolution(solution)
+  local tmp = getIndicesOfCommonVariables(getSymsFromSolution(solution), commonVariableSet; destinationPrefix = activeModeName)
+  @info "Value of tmp:" tmp
+  for i in 1:length(commonVariableSet)
+    newUs[i] = vcat(newUs[i], solution[tmp[i],:])
+  end
+  #=Convert into a matrix and then into a vector of vector again to get the right dimensions. =#
+  newUs = transpose(hcat(newUs...))
+  newUs = [newUs[:,i] for i in 1:size(newUs,2)]
+  #= For anyone reading this.. this the transformations above could have been done better! =#
+  #= Should be the common varibles =#  
+  local sol = SciMLBase.build_solution(solution.prob, solution.alg, newTimePoints, newUs)
+  #= Return the final solution =#
+  return sol
+end
+
+
+
 """
   Solving procedure without structural callbacks.
 """
-function solve(problem, tspan, alg; kwargs...)
+function solve(omProblem::OM_Problem, tspan, alg; kwargs...)
+  local problem = omProblem.problem
   #= Create integrator =#
   integrator = init(problem, alg, stop_at_next_tstop = true, kwargs...)
   add_tstop!(integrator, tspan[2])
@@ -132,7 +301,7 @@ end
 """
   Fetches the symbolic variables from a problem.
 """
-function getSyms(problem)
+function getSyms(problem::ODEProblem)
   return problem.f.syms
 end
 
@@ -145,9 +314,14 @@ end
 
 
 """
-  Get a vector of indices of the variables common between syms1 and syms2
+  Get a vector of indices of the variables between syms1 and syms2.
+  The destination mode might have a prefix for it's symbols.
+  The prefix string is used to give the common variables the correct prefix
+  between transistions.
 """
-function getIndicesOfCommonVariables(syms1::Vector, syms2::Vector)
+function getIndicesOfCommonVariables(syms1::Vector{Symbol}, names::Vector{String}; destinationPrefix::String = "")
+  #= The common variables have the name without the prefix of the destination system =#
+  local syms2 = [Symbol(destinationPrefix * "_" * name * "(t)") for name in names]
   local indicesOfCommonVariables = Int[]
   local idxDict1 = DataStructures.OrderedDict()
   local idxDict2 = DataStructures.OrderedDict()

@@ -92,6 +92,7 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
   local structuralSubModels = []
   local initialState = initialModeInference(equationSystem)
   #= Use recursion to generate submodels =#
+  local sharedVariables = computeSharedVariables(auxEquationSystems)
   for auxSys in auxEquationSystems
     push!(structuralSubModels, transformToSimCode([auxSys], shared; mode = mode))
   end
@@ -109,7 +110,30 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
                           stronglyConnectedComponents,
                           structuralTransistions,
                           structuralSubModels,
+                          sharedVariables,
                           initialState)
+end
+
+"""
+ Compute the state and algebraic variables that exists between one system and possible subsystems.
+ We do so by looking at the final identifier for the given auxEquationSystems.
+ Foo.x in one system is equal to bar.x in the other system.
+"""
+function computeSharedVariables(auxEquationSystems)
+  local setOfVariables = []
+  local result = String[]
+  for auxSystem in auxEquationSystems
+    namesAsIdentifiers = map(getLastIdentOfVar,
+                             filter(BDAEUtil.isStateOrVariable, auxSystem.orderedVars))
+    push!(setOfVariables, namesAsIdentifiers)
+  end
+  result = if !isempty(setOfVariables)
+    intersect(setOfVariables...)
+  else
+    String[]
+  end
+  #= Returns the set of common variables =#
+  return result
 end
 
 """

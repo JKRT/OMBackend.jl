@@ -50,7 +50,7 @@ function createStructuralCallback(simCode, structuralTransistion::ST) where {ST}
   quote
     function $(Symbol(callbackName))(destinationSystem)
       #= Represent structural change. =#
-      local structuralChange = OMBackend.StructuralChange(false, destinationSystem)
+      local structuralChange = OMBackend.Runtime.StructuralChange($(structuralTransistion.toState), false, destinationSystem)
       #= The affect simply activates the structural callback informing us to generate code for a new system =#
       function affect!(integrator)
         structuralChange.structureChanged = true
@@ -69,7 +69,12 @@ function createStructuralAssignments(simCode, structuralTransistions::Vector{ST}
     for structuralTransisiton in structuralTransistions
       push!(structuralAssignments, createStructuralAssignment(simCode, structuralTransisiton))
     end
-  return structuralAssignments
+  result = quote
+    structuralCallbacks = OMBackend.Runtime.StructuralChange[]
+    callbackSet = []
+    $(structuralAssignments...)
+  end
+  return result
 end
 
 """
@@ -79,12 +84,36 @@ end
 function createStructuralAssignment(simCode, structuralTransistion::ST) where {ST}
   local callbackName = createCallbackName(structuralTransistion)
   local toState = structuralTransistion.toState
-  local integratorCallbackName = "sCB"
+  local toStateProblem = Symbol(toState * "Problem")
+  local toStateModel = Symbol(toState * "Model")
+  local integratorCallbackName = structuralTransistion.fromState * structuralTransistion.toState * "_CALLBACK"
+  local structuralChangeStructure = structuralTransistion.fromState * structuralTransistion.toState * "_STRUCTURAL_CHANGE"
   quote
-    (integratorCallbackName, changeStructure1) = $(Symbol(callbackName))($(Symbol(toState)))
+    ($(toStateProblem), _, _, _, _, _) = ($(toStateModel))(tspan)
+    ($(Symbol(integratorCallbackName)), $(Symbol(structuralChangeStructure))) = $(Symbol(callbackName))($(toStateProblem))
+    push!(structuralCallbacks, $(Symbol(structuralChangeStructure)))
+    push!(callbackSet, ($(Symbol(integratorCallbackName))))
   end
 end
 
 function createCallbackName(structuralTransisiton::ST) where {ST}
   return "structuralCallback" * structuralTransisiton.fromState * structuralTransisiton.toState
 end                                                             
+
+
+"""
+  Creates the variables that are shared between the structural modes of a model.
+"""
+function createCommonVariables(commonVariables)
+  commonVariablesExpr = Expr[]
+  for variable in commonVariables
+    res = :(
+      push!(commonVariables, $variable)
+    )
+    push!(commonVariablesExpr, res)
+  end
+  return quote
+    commonVariables = String[]
+    $(commonVariablesExpr...)
+  end
+end

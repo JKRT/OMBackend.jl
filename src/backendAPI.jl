@@ -208,15 +208,32 @@ function generateMTKTargetCode(simCode::SimulationCode.SIM_CODE)
   @debug "Functions:" modelCode
   @debug "Model:" modelName
   modelName = replace(modelName, "." => "__")
-  COMPILED_MODELS_MTK[modelName] = modelCode
+  if haskey(COMPILED_MODELS_MTK, modelName)
+    #= Check if the newly generated model is different from the previous model =#
+    local changeDetected = COMPILED_MODELS_MTK[modelName] == modelCode
+    COMPILED_MODELS_MTK[modelName] = (modelCode, changeDetected)
+  else
+    COMPILED_MODELS_MTK[modelName] = (modelCode, false)
+  end
   return (modelName, modelCode)
+end
+
+function getCompiledModel(modelName)
+  return first(COMPILED_MODELS_MTK[modelName])
+end
+
+"""
+  Returns true if the model was compiled again
+"""
+function modelWasCompiledAgain(modelName)
+  return last(COMPILED_MODELS_MTK[modelName])
 end
 
 """
   Writes a model to file by default the file is formatted and comments are kept.
 """
 function writeModelToFile(modelName::String, filePath::String; keepComments = true, formatFile = true, mode = MTK_MODE)
-  model = COMPILED_MODELS_MTK[modelName]
+  model = getCompiledModel(modelName)
   fileName = "$modelName.jl"
   try
     if keepComments == false
@@ -245,7 +262,7 @@ end
 function printModel(modelName::String; MTK = true, keepComments = true, keepBeginBlocks = true)
   try
     local model::Expr
-    model = COMPILED_MODELS_MTK[modelName]
+    model = getCompiledModel(modelName)
     strippedModel = "$model"
     #= Remove all the redudant blocks from the model =#
     if keepComments == false
@@ -253,8 +270,7 @@ function printModel(modelName::String; MTK = true, keepComments = true, keepBegi
     end
     if keepBeginBlocks == false
       strippedModel = CodeGeneration.stripBeginBlocks(model)
-    end
-    
+    end    
     local modelStr::String = "$strippedModel"
     formattedResults = JuliaFormatter.format_text(modelStr;
                                                   remove_extra_newlines = true,
@@ -288,19 +304,12 @@ function simulateModel(modelName::String; MODE = MTK_MODE ,tspan=(0.0, 1.0))
   if MODE == MTK_MODE
     #= This does a redudant string conversion for now due to modeling toolkit being as is...=#
     try
-      modelCode = COMPILED_MODELS_MTK[modelName]
+      modelCode = getCompiledModel(modelName)
     catch err
       println("Failed to simulate model.")
       println("Available models are:")
       availableModels()
     end
-    #= Check if a compiled instance of the model already exists in the backend =#
-    try
-      local modelRunnable = Meta.parse("OMBackend.$(modelName)Simulate($(tspan))")
-      res = @eval $modelRunnable
-      return res
-    catch #= The model is not compiled yet. Proceeding.. =#
-    end    
     try
       @eval $(:(import OMBackend))
       strippedModel = CodeGeneration.stripBeginBlocks(modelCode)
@@ -320,6 +329,24 @@ function simulateModel(modelName::String; MODE = MTK_MODE ,tspan=(0.0, 1.0))
     end
   else
     throw("Unsupported mode")
+  end
+end
+
+"""
+  Resimulates an already compiled model
+"""
+function resimulateModel(modelName::String; MODE = MTK_MODE ,tspan=(0.0, 1.0))
+  #=
+  Check if a compiled instance of the model already exists in the backend.
+  If that is the case we do not have to recompile it.
+  =#
+  try
+    local modelRunnable = Meta.parse("OMBackend.$(modelName)Simulate($(tspan))")
+    res = @eval $modelRunnable
+    return res
+  catch #= The model is not compiled yet. Proceeding.. =#
+    availModels = availableModels()
+    @error "The model $(modelName) is not compiled. Available models are: $(availModels)"        
   end
 end
 
