@@ -38,9 +38,10 @@ module BDAECreate
 using MetaModelica
 using ExportAll
 
-import DAE
 import ..BDAE
 import ..BDAEUtil
+import Absyn
+import DAE
 import OMFrontend
 
 """
@@ -72,8 +73,8 @@ function lower(lst::DAE.DAE_LIST)::BDAE.BACKEND_DAE
   @debug "varArray:" length(variableLst)
   @debug "eqLst:" length(equationLst)
   #= We start with an array of one system =#
-  eqSystems = [BDAEUtil.createEqSystem(variables, eqArray)]
-  outBDAE = BDAE.BACKEND_DAE(name, eqSystems, BDAE.SHARED([], [], listArray(initialEquations)))
+  eqSystems = [BDAE.EQSYSTEM(name, variables, eqArray, [], [])]
+  outBDAE = BDAE.BACKEND_DAE(name, eqSystems, BDAE.SHARED([], []))
 end
 
 """
@@ -83,16 +84,59 @@ end
   3. We return backend DAE to be used in the remainder of the compilation before code generation.
 """
 function lower(frontendDAE::OMFrontend.Main.FlatModel)
-  local equations = [equationToBackendEquation(eq) for eq in OMFrontend.Main.convertEquations(frontendDAE.equations)]
-  local variables = [variableToBackendVariable(var) for var in OMFrontend.Main.convertVariables(frontendDAE.variables, list())] 
-  local algorithms = [alg for alg in frontendDAE.algorithms]
-  local iAlgorithms = [iAlg for iAlg in frontendDAE.initialAlgorithms]
-  local initialEquations = [equationToBackendEquation(ieq) for ieq in OMFrontend.Main.convertEquations(frontendDAE.initialEquations)]  
-  eqSystems = [BDAEUtil.createEqSystem(variables, equations)]
-  #= 
-  The resulting backend DAE.   
-  =#
-  outBDAE = BDAE.BACKEND_DAE(frontendDAE.name, eqSystems, BDAE.SHARED([], [], initialEquations))
+  #= Creates a list of flat equation systems =#
+  local eqSystems = createEqSystems(frontendDAE)
+  #= The resulting backend DAE. =#
+  return createBackendDAE(frontendDAE.name, eqSystems, BDAE.SHARED([], []))
+end
+
+function createBackendDAE(name, eqSystems, shared)
+  local outBDAE = BDAE.BACKEND_DAE(name, eqSystems, shared)
+  return outBDAE
+end
+
+"""
+  Creates one or more equation systems
+"""
+function createEqSystems(frontendDAE::OMFrontend.Main.FlatModel)::Vector{BDAE.EQSYSTEM}
+  #= Create the first main equation system. =#
+  local eqSystems = Any[createEqSystem(frontendDAE)]
+  if ! listEmpty(frontendDAE.structuralSubmodels)
+    local res = createEqSystemsWork(frontendDAE.structuralSubmodels)
+    push!(eqSystems, res)
+  end
+  #= But what if a submodel in turn has more equation systems in it..  Currently this only handles one level. =#
+  local res2 = vcat(eqSystems...)
+  return res2
+end
+
+"""
+  Creates a flat list of equation systems.
+"""
+function createEqSystemsWork(structuralSubmodels::List{OMFrontend.Main.FlatModel})
+  local eqSystems = BDAE.EQSYSTEM[]
+  for subModel in structuralSubmodels
+    push!(eqSystems, createEqSystem(subModel))
+  end
+  return eqSystems
+end
+
+"""
+  Creates a single equation system
+"""
+function createEqSystem(flatModel::OMFrontend.Main.FlatModel)
+  local name = flatModel.name
+  local equations = [equationToBackendEquation(eq)
+                     for eq in OMFrontend.Main.convertEquations(flatModel.equations)]
+  local variables = [variableToBackendVariable(var)
+                     for var in OMFrontend.Main.convertVariables(flatModel.variables, list())] 
+  local algorithms = [alg for alg in flatModel.algorithms]
+  local iAlgorithms = [iAlg for iAlg in flatModel.initialAlgorithms]
+  local initialEquations = [equationToBackendEquation(ieq)
+                            for ieq in OMFrontend.Main.convertEquations(flatModel.initialEquations)]
+  #= TODO Extract the simple equations =#
+  local simpleEquations = []
+  return BDAE.EQSYSTEM(name, variables, equations, simpleEquations, initialEquations)
 end
 
 function convertVariableIntoBDAEVariable(var::OMFrontend.Main.Variable)
@@ -199,8 +243,32 @@ function equationToBackendEquation(elem::DAE.Element)
     DAE.COMP(__) => begin
       variableLst,equationLst,initialEquationLst = splitEquationsAndVars(elem.dAElist)
     end
+    #= An equation of type NORETCALL =#
+    DAE.NORETCALL(DAE.CALL(path, expLst)) => begin
+      #=
+      Currently there are two options here.
+      Either we have an initialStructuralState 
+      or we have some transisiton between structural some states.
+      =#
+      res = @match path begin
+        Absyn.IDENT("initialStructuralState") => begin          
+          BDAE.INITIAL_STRUCTURAL_STATE(string(listHead(expLst)))
+        end
+        Absyn.IDENT("structuralTransistion") => begin
+          @match fromStateExp <| toStateExp <| conditionExp <| nil = expLst
+          local fromStateIdent = string(fromStateExp)
+          local toStateIdent = string(toStateExp)
+          BDAE.STRUCTURAL_TRANSISTION(fromStateIdent, toStateIdent, conditionExp)
+        end
+        _ => begin
+          @error "Unknown NORETCALL of type:" path
+          throw("Unknown NORETCALL")
+        end
+      end
+      res
+    end
     _ => begin
-      @error "Skipped:" elem
+      @error "Skipped processing" elem
       throw("Unsupported equation: $elem")
     end
   end

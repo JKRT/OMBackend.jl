@@ -34,9 +34,9 @@
 
 using MetaModelica
 
-const HEAD_LINE = "############################################"::String
-const DOUBLE_LINE = "============================================"::String
-const LINE = "---------------------------------------------"::String
+const HEAD_LINE = "############################################"
+const DOUBLE_LINE = "============================================"
+const LINE = "---------------------------------------------"
 
 function stringHeading1(i::Any, heading::String)::String
   str = heading1(heading) + "\n" + string(i)
@@ -275,7 +275,7 @@ end
 """ 
   `Base.string(cr::DAE.ComponentRef; seprator=".")` 
    Converts a `DAE.ComponentRef` to a Julia string.
-TODO: Discuss separators. A different one should maybe be used..
+   TODO: Discuss separators. A different one should maybe be used..
 """
 function Base.string(cr::DAE.ComponentRef; separator="_")
   str = begin

@@ -1,4 +1,4 @@
-#= /*
+#=
 * This file is part of OpenModelica.
 *
 * Copyright (c) 1998-2020, Open Source Modelica Consortium (OSMC),
@@ -112,6 +112,64 @@ function flattenExprs(eqs::Vector{Expr})
   quote
     $(eqs...)
   end
+end
+
+"""
+Returns:
+stateVariables, algebraicVariables, stateVariablesLoop, algebraicVariablesLoop
+"""
+function separateVariables(simCode)::Tuple
+  local stringToSimVarHT = simCode.stringToSimVarHT
+  local parameters::Vector = []
+  local stateDerivatives::Vector = []
+  local stateVariables::Vector = []
+  local algebraicVariables::Vector = []
+  local discreteVariables::Vector = []
+  #= Loop arrays=#
+  local stateDerivativesLoop::Vector = []
+  local stateVariablesLoop::Vector = []
+  local algebraicVariablesLoop::Vector = []
+  local discreteVariablesLoop::Vector = []
+  #= Separate the variables =#
+  for varName in keys(stringToSimVarHT)
+    (idx, var) = stringToSimVarHT[varName]
+    if simCode.matchOrder[idx] in loop
+      local varType = var.varKind
+      @match varType  begin
+        SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
+        SimulationCode.STATE(__) => push!(stateVariablesLoop, varName)
+        SimulationCode.PARAMETER(__) => push!(parameters, varName)
+        SimulationCode.ALG_VARIABLE(__) => begin
+          if idx in simCode.matchOrder
+            push!(algebraicVariablesLoop, varName)
+          else #= We have a variable that is not contained in continious system =#
+            #= Treat discrete variables separate =#
+            push!(discreteVariablesLoop, varName)
+          end
+        end
+        #=TODO: Do I need to modify this?=#
+        SimulationCode.STATE_DERIVATIVE(__) => push!(stateDerivativesLoop, varName)
+      end
+    else #= Someplace else=#
+      local varType = var.varKind
+      @match varType  begin
+        SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
+        SimulationCode.STATE(__) => push!(stateVariables, varName)
+        SimulationCode.PARAMETER(__) => push!(parameters, varName)
+        SimulationCode.ALG_VARIABLE(__) => begin
+          if idx in simCode.matchOrder
+            push!(algebraicVariables, varName)
+          else #= We have a variable that is not contained in continious system =#
+            #= Treat discrete variables separate =#
+            push!(discreteVariables, varName)
+          end
+        end
+        #=TODO: Do I need to modify this?=#
+        SimulationCode.STATE_DERIVATIVE(__) => push!(stateDerivatives, varName)
+      end
+    end
+  end
+  return (stateVariables, algebraicVariables, stateVariablesLoop, algebraicVariablesLoop)
 end
 
 
@@ -287,16 +345,26 @@ function DAECallExpressionToJuliaCallExpression(pathStr::String, expLst::List, s
   end
 end
 
-"
+function getActiveModel(simCode)
+  local activeModelName = simCode.activeModel
+  for sm in simCode.subModels
+    if sm.name == activeModelName
+      return sm
+    end
+  end
+  throw("No active model found in simCode")
+end
+
+
+"""
   TODO: Keeping it simple for now, we assume we only have one argument in the call..
   Also the der as symbol is really ugly..
-"
+"""
 function DAECallExpressionToMTKCallExpression(pathStr::String, expLst::List,
                                               simCode::SimulationCode.SimCode, ht; varPrefix=varPrefix, derAsSymbol=false)::Expr
   @match pathStr begin
     "der" => begin
       varName = SimulationCode.string(listHead(expLst))
-      (index, _) = ht[varName]
       if derAsSymbol
         quote
           $(Symbol("der_$(varName)"))
@@ -317,9 +385,10 @@ function DAECallExpressionToMTKCallExpression(pathStr::String, expLst::List,
   end
 end
 
-"
+
+"""
   Removes all comments from a given exp
-"
+"""
 function stripComments(ex::Expr)::Expr
   return Base.remove_linenums!(ex)
 end
@@ -483,7 +552,7 @@ function expToJuliaExpMTK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuf
           false
         end
         if ! builtin
-          #= If we refeer to time, we simply return t instead of a concrete variable =#
+          #= If we refer to time, we simply return t instead of a concrete variable =#
           indexAndVar = hashTable[varName]
           varKind::SimulationCode.SimVarType = indexAndVar[2].varKind
           @match varKind begin

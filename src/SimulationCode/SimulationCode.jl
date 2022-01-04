@@ -38,6 +38,7 @@ module SimulationCode
 using MetaModelica
 using DataStructures
 using Setfield
+using ImmutableList
 
 using ..FrontendUtil
 using ..Backend

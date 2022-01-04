@@ -64,7 +64,7 @@ equation
 end BouncingBallReals;
 ```
 
-Simply pass the given DAE to the function translate. 
+Simply pass the given DAE or FlatModelica to the function translate. 
 
 ```
 julia> OMBackend.translate(BouncingBallReals)

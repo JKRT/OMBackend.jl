@@ -28,7 +28,7 @@
 * See the full OSMC Public License conditions for more details.
 *
 =#
-
+using DataStructures
 """
   File: simCodeDump.jl
   Dumping functions for simulation code structures.
@@ -40,7 +40,7 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String)
 
   print("SimCodeVars" + "\n")
   print(BDAE.LINE + "\n")
-  BDAE.dictPrettyPrint(simCode.stringToSimVarHT)
+  dictPrettyPrint(simCode.stringToSimVarHT)
   print("\n")
 
   print("SimCode residual equations" + "\n")
@@ -52,9 +52,19 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String)
   print("\n")
 end
 
+function string(ht::OrderedDict{T1, Tuple{T2, SimVar}}) where {T1, T2}
+  ks = keys(ht)
+  res = ""
+  for k in ks
+    res *= "Variable name:" * k * " Index:" * string(first(ht[k])) * " Attributes:{" * string(last(ht[k])) * "}\n"
+  end
+  return res
+end
+
 function Base.string(simCode::SimulationCode.SIM_CODE)::String
-  str = BDAEUtil.stringHeading3(simCode.stringToSimVarHT, "SimCodeVars")
-  str = str + BDAEUtil.heading3("SimCodeEquations")
+  str = BDAEUtil.stringHeading3("", "SimCode Variables")
+  str =  str * string(simCode.stringToSimVarHT)
+  str = str + BDAEUtil.heading3("SimCode Equations")
   for eq in simCode.residualEquations
     str = str + string(eq)
   end
@@ -74,4 +84,8 @@ end
 """
 function string(element)
   BDAE.string(element)
+end
+
+function string(v::SIMVAR)
+  return v.name  * "," * string(v.index) * ","  * string(v.varKind)
 end

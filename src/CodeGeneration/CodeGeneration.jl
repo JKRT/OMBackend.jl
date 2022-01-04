@@ -30,6 +30,7 @@
 Author: John Tinnerholm, john.tinnerholm@liu.se
 =#
 
+#= TODO make CodeGenerationUtil its own module.. =#
 module CodeGeneration
 
 using DataStructures
@@ -47,8 +48,8 @@ import Absyn
 import MetaGraphs
 #= For symbolic math operations =#
 
-
 include("./CodeGenerationUtil.jl")
+include("./structuralCallbacks.jl")
 include("./MTK_CodeGeneration.jl")
 
 #= Pure DifferentialEquations.jl code generation =#

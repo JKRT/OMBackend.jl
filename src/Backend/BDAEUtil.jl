@@ -41,6 +41,7 @@ import OMBackend
 import ..Util
 import Absyn
 import DAE
+import OMFrontend
 
 """
 This function converts an array of variables to the BDAE variable structure
@@ -50,8 +51,36 @@ function convertVarArrayToBDAE_Variables(vars::Vector{BDAE.VAR})::Vector
   return variables
 end
 
-function createEqSystem(vars::Vector, eqs::Vector)::BDAE.EQSYSTEM
+"""
+  Creates a flat list of equation systems.
+"""
+function createEqSystems(frontendDAE::OMFrontend.Main.FlatModel)::BDAE.EQSYSTEM
+  #= Create the first main equation system. =#
+  local eqSystems = BDAE.EQSYSTEM[createEqSystem(frontendDAE)]
+  for subModel in frontendDAE.structuralSubmodels
+    push!(eqSystem, createEqSystems(subModel))
+  end
+  #=
+  We will have a list of lists.
+  For code generation this does not matter.
+  Return a flat list.
+  =#
+  return [eqSystems...]
+end
+
+"""
+  Creates a single equation system
+"""
+function createEqSystem(flatModel::OMFrontend.Main.FlatModel)
   #= TODO Extract the simple equations =#
+  local equations = [equationToBackendEquation(eq) for eq in OMFrontend.Main.convertEquations(flatModel.equations)]
+  local variables = [variableToBackendVariable(var) for var in OMFrontend.Main.convertVariables(flatModel.variables, list())] 
+  local algorithms = [alg for alg in flatModel.algorithms]
+  local iAlgorithms = [iAlg for iAlg in flatModel.initialAlgorithms]
+  local initialEquations = [equationToBackendEquation(ieq) for ieq in OMFrontend.Main.convertEquations(flatModel.initialEquations)]  
+  eqSystems = [BDAEUtil.createEqSystem(flatModel.name, variables, equations)]
+  #= Treat structural submodels =#
+  subModels = []
   BDAE.EQSYSTEM(vars, eqs, [])
 end
 
@@ -231,6 +260,11 @@ function DAE_VarKind_to_BDAE_VarKind(kind::DAE.VarKind)::BDAE.VarKind
     DAE.PARAM(__) => BDAE.PARAM()
     DAE.CONST(__) => BDAE.CONST()
   end
+end
+
+function isStateOrVariable(var::BDAE.VAR)
+  local kind = var.varKind
+  return isStateOrVariable(kind)
 end
 
 function isStateOrVariable(kind::BDAE.VarKind)

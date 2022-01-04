@@ -1,9 +1,38 @@
 #=
-  Author: John Tinnerholm
+* This file is part of OpenModelica.
+*
+* Copyright (c) 1998-2020, Open Source Modelica Consortium (OSMC),
+* c/o Linköpings universitet, Department of Computer and Information Science,
+* SE-58183 Linköping, Sweden.
+*
+* All rights reserved.
+*
+* THIS PROGRAM IS PROVIDED UNDER THE TERMS OF GPL VERSION 3 LICENSE OR
+* THIS OSMC PUBLIC LICENSE (OSMC-PL) VERSION 1.2.
+* ANY USE, REPRODUCTION OR DISTRIBUTION OF THIS PROGRAM CONSTITUTES
+* RECIPIENT'S ACCEPTANCE OF THE OSMC PUBLIC LICENSE OR THE GPL VERSION 3,
+* ACCORDING TO RECIPIENTS CHOICE.
+*
+* The OpenModelica software and the Open Source Modelica
+* Consortium (OSMC) Public License (OSMC-PL) are obtained
+* from OSMC, either from the above address,
+* from the URLs: http:www.ida.liu.se/projects/OpenModelica or
+* http:www.openmodelica.org, and in the OpenModelica distribution.
+* GNU version 3 is obtained from: http:www.gnu.org/copyleft/gpl.html.
+*
+* This program is distributed WITHOUT ANY WARRANTY; without
+* even the implied warranty of  MERCHANTABILITY or FITNESS
+* FOR A PARTICULAR PURPOSE, EXCEPT AS EXPRESSLY SET FORTH
+* IN THE BY RECIPIENT SELECTED SUBSIDIARY LICENSE CONDITIONS OF OSMC-PL.
+*
+* See the full OSMC Public License conditions for more details.
+*
+=#
 
-  TODO: Remember the state derivative scheme. What the heck did I mean  with that?
+#=
+  Author: John Tinnerholm
+  TODO: Remember the state derivative scheme. What the  did I mean with that?
   TODO: Make duplicate code better...
-  TODO: Fix the redundant string conversion scheme
   TODO: Investigate the once again broken if equations
 =#
 using ModelingToolkit
@@ -18,13 +47,98 @@ function generateMTKCode(simCode::SimulationCode.SIM_CODE)
   ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
 end
 
+"""
+  The entry point of MTK code generation.
+  Either calls ODE_MODE_MTK_PROGRAM_GENERATION
+  or do code generation for a model with structural submodels.
+"""
 function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
-  @debug "Runnning: generateMTKCode"
+    #=If our model name is separated by . replace it with __ =#
+  local MODEL_NAME = replace(simCode.name, "." => "__")
+  if length(simCode.subModels) < 1
+    #= Generate using the standard name =#
+    return ODE_MODE_MTK_PROGRAM_GENERATION(simCode, simCode.name)
+  end
+  #= Handle structural submodels =#  
+  #= TODO: Extract the active model =#
+  local activeModelSimCode = getActiveModel(simCode)
+  local activeModelName = simCode.activeModel
+  local structuralModes = Expr[]
+  for mode in simCode.subModels
+    push!(structuralModes, ODE_MODE_MTK_MODEL_GENERATION(mode, mode.name))
+  end  
+  local structuralCallbacks = createStructuralCallbacks(simCode, simCode.structuralTransistions)
+  local structuralAssignments = createStructuralAssignments(simCode, simCode.structuralTransistions)
+  #= Initialize array where the common variables are stored. That is variables all modes have =#
+  local commonVariables = createCommonVariables(simCode.sharedVariables)
+  #= END =#
+  code = quote
+    import OMBackend
+    $(structuralModes...)
+    $(structuralCallbacks...)
+    function $(Symbol(MODEL_NAME * "Model"))(tspan = (0.0, 1.0))
+      #=  Assign the initial model  =#
+      (subModel, initialValues, reducedSystem, _, pars, vars1) = $(Symbol(simCode.activeModel  * "Model"))(tspan)
+      #= Assign the structural callbacks =#
+      $(structuralAssignments)
+      $(commonVariables)
+      #= END =#
+      #= Create the composite model =#
+      compositeProblem = ModelingToolkit.ODEProblem(
+        reducedSystem,
+        initialValues,
+        tspan,
+        pars,
+        callback = $(if isempty(structuralCallbacks)
+                       :(CallbackSet())
+                     else
+                       quote
+                         CallbackSet(Tuple(callbackSet), ())
+                       end
+                     end),
+      )
+      result = OMBackend.Runtime.OM_ProblemStructural($(activeModelName), compositeProblem, structuralCallbacks, commonVariables)
+      return result
+    end
+    function $(Symbol("$(MODEL_NAME)Simulate"))(tspan = (0.0, 1.0); solver=Rodas5())
+      $(Symbol("$(MODEL_NAME)Model_problem")) = $(Symbol("$(MODEL_NAME)Model"))(tspan)
+      OMBackend.Runtime.solve($(Symbol("$(MODEL_NAME)Model_problem")), tspan, solver)
+    end
+  end
+  return (MODEL_NAME, code)
+end
+
+"""
+  Generates a  MTK program with a model
+"""
+function ODE_MODE_MTK_PROGRAM_GENERATION(simCode::SimulationCode.SIM_CODE, modelName)
+  local MODEL_NAME = replace(modelName, "." => "__")
+  local model = ODE_MODE_MTK_MODEL_GENERATION(simCode, modelName)
+  program = quote
+    using ModelingToolkit
+    using DifferentialEquations
+    $(model)
+    ($(Symbol("$(MODEL_NAME)Model_problem")), _, _, _, _,_) = $(Symbol("$(MODEL_NAME)Model"))()
+    function $(Symbol("$(MODEL_NAME)Simulate"))(tspan)
+      solve($(Symbol("$(MODEL_NAME)Model_problem")), tspan=tspan)
+    end
+    function $(Symbol("$(MODEL_NAME)Simulate"))(tspan = (0.0, 1.0); solver=Rodas5())
+      solve($(Symbol("$(MODEL_NAME)Model_problem")), tspan=tspan, solver)
+    end
+  end
+  #= MODEL_NAME is preprocessed with . replaced with _=#
+  return MODEL_NAME, program
+end
+
+"""
+  Generates a MTK model
+"""
+function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelName)
+  @debug "Runnning: ODE_MODE_MTK_MODEL"
   RESET_CALLBACKS()
   local stringToSimVarHT = simCode.stringToSimVarHT
   local equations::Array = BDAE.RESIDUAL_EQUATION[]
   local exp::DAE.Exp
-  local modelName::String = simCode.name
   local parameters::Vector = String[]
   local stateDerivatives::Vector = String[]
   local stateVariables::Vector = String[]
@@ -80,7 +194,6 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   local discreteVariablesSym = [:($(Symbol(v))) for v in discreteVariables]
   #= Reset the callback counter=#
   RESET_CALLBACKS()
-
   #=
   Formulate the problem as a DAE Problem.
   For this variant we keep t on its own line
@@ -88,11 +201,8 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   =#
   #=If our model name is separated by . replace it with __ =#
   local MODEL_NAME = replace(modelName, "." => "__")
-  program = quote
-    using ModelingToolkit
-    using DiffEqBase
-    using DifferentialEquations
-
+  model = quote
+    $(CALL_BACK_EQUATIONS)
     function $(Symbol(MODEL_NAME * "Model"))(tspan = (0.0, 1.0))
       @variables t
       parameters = ModelingToolkit.@parameters begin
@@ -132,17 +242,8 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
                                            callback=$(Symbol("$(MODEL_NAME)CallbackSet"))(aux))
       return (problem, initialValues, reducedSystem, tspan, pars, vars)
     end
-    $(CALL_BACK_EQUATIONS)
-    ($(Symbol("$(MODEL_NAME)Model_problem")), _, _, _, _,_) = $(Symbol("$(MODEL_NAME)Model"))()
-    function $(Symbol("$(MODEL_NAME)Simulate"))(tspan)
-      solve($(Symbol("$(MODEL_NAME)Model_problem")), tspan=tspan)
-    end
-    function $(Symbol("$(MODEL_NAME)Simulate"))(tspan = (0.0, 1.0); solver=Rodas5())
-      solve($(Symbol("$(MODEL_NAME)Model_problem")), tspan=tspan, solver)
-    end
   end
-  #= MODEL_NAME is preprocessed with . replaced with _=#
-  return MODEL_NAME, program
+  return model
 end
 
 """
@@ -156,84 +257,32 @@ function ODE_MODE_MTK_LOOP(simCode::SimulationCode.SIM_CODE)
   local equations::Array = []
   local exp::DAE.Exp
   local modelName::String = simCode.name
-  local parameters::Array = []
-  local stateDerivatives::Array = []
-  local stateVariables::Array = []
-  local algebraicVariables::Array = []
-  local discreteVariables::Vector = []
-  #= Loop arrays=#
-  local stateDerivativesLoop::Array = []
-  local stateVariablesLoop::Array = []
-  local algebraicVariablesLoop::Array = []
-  local discreteVariablesLoop::Vector = []  
+  (stateVariables, algebraicVariables, stateVariablesLoop, algebraicVariablesLoop) = separateVariables(simCode)
   #= 
     We have a cycle! 
   =#
   loop = getCycleInSCCs(simCode.stronglyConnectedComponents)
-  
-  for varName in keys(stringToSimVarHT)
-    (idx, var) = stringToSimVarHT[varName]
-    if simCode.matchOrder[idx] in loop
-      local varType = var.varKind
-      @match varType  begin
-        SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
-        SimulationCode.STATE(__) => push!(stateVariablesLoop, varName)
-        SimulationCode.PARAMETER(__) => push!(parameters, varName)
-        SimulationCode.ALG_VARIABLE(__) => begin
-          if idx in simCode.matchOrder
-            push!(algebraicVariablesLoop, varName)
-          else #= We have a variable that is not contained in continious system =#
-            #= Treat discrete variables separate =#
-            push!(discreteVariablesLoop, varName)
-          end
-        end
-        #=TODO: Do I need to modify this?=#
-        SimulationCode.STATE_DERIVATIVE(__) => push!(stateDerivativesLoop, varName)
-      end
-    else #= Someplace else=#
-      local varType = var.varKind
-      @match varType  begin
-        SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
-        SimulationCode.STATE(__) => push!(stateVariables, varName)
-        SimulationCode.PARAMETER(__) => push!(parameters, varName)
-        SimulationCode.ALG_VARIABLE(__) => begin
-          if idx in simCode.matchOrder
-            push!(algebraicVariables, varName)
-          else #= We have a variable that is not contained in continious system =#
-            #= Treat discrete variables separate =#
-            push!(discreteVariables, varName)
-          end
-        end
-        #=TODO: Do I need to modify this?=#
-        SimulationCode.STATE_DERIVATIVE(__) => push!(stateDerivatives, varName)
-      end
-    end
-  end
+  (stateVariables, algebraicVariables, stateVariablesLoop, algebraicVariablesLoop) = 
   local allVariables = vcat(stateVariables, algebraicVariables, stateVariablesLoop, algebraicVariablesLoop)
   #= Create equations for variables not in a loop + parameters and stuff=#
   local equations = createSortedEquations(stateVariables,
                                           simCode; arrayName = "u")
   local parVariablesSym = [Symbol(p) for p in parameters]  
   local START_CONDTIONS_EQUATIONS = getStartConditions(allVariables, "reals", simCode)
-  
   local DISCRETE_START_VALUES = getStartConditionsMTK(discreteVariables, simCode)
   local PARAMETER_EQUATIONS = createParameterEquationsMTK(parameters, simCode)
   local PARAMETER_RAW_ARRAY = createParameterArray(parameters, simCode)
   #= Create callback equations. For MTK we disable the saving function for now. =#
   local CALL_BACK_EQUATIONS = createCallbackCode(modelName, simCode; generateSaveFunction = true)
   #= Symbolic names =#
-  
   local stateVariablesSym = [:($(Symbol(v))(t)) for v in stateVariables]
   local algebraicVariablesSym = [:($(Symbol(v))(t)) for v in algebraicVariables]
-
   local stateVariablesSymNoT = [:($(Symbol(v))) for v in stateVariables]
   local algebraicVariablesSymNoT = [:($(Symbol(v))) for v in algebraicVariables]
-
   DUMMY_EQUATION_OUTSIDE_LOOP = Expr[]
   for v in vcat(stateVariablesSymNoT, algebraicVariablesSymNoT)
     push!(DUMMY_EQUATION_OUTSIDE_LOOP, :($v ~ $v))
   end
-  
   local discreteVariablesSym = [:($(Symbol(v))) for v in discreteVariables]
   RESET_CALLBACKS()
   #= Create loop variables and the loop itself=#
@@ -448,7 +497,7 @@ function getStartConditionsMTK(vars::Array, simCode::SimulationCode.SimCode)::Ar
             #= We have a variable of sorts =#
             push!(startExprs,
                   quote
-                  $(Symbol("$varName")) => pars[$(Symbol(start.ident))]
+                  $(Symbol("$varName")) => pars[$(Symbol(string(start)))]
                   end)
             ()
           end

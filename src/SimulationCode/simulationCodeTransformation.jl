@@ -58,18 +58,23 @@ end
   mode specifies what mode we should use for code generation.
 """
 function transformToSimCode(backendDAE::BDAE.BACKEND_DAE; mode)::SimulationCode.SIM_CODE
-  #= Fetch the different components of the model.=#
-  local equationSystems::Vector = backendDAE.eqs
-  local allOrderedVars::Vector{BDAE.VAR} = [v for es in equationSystems for v in es.orderedVars]
-  local allSharedVars::Vector{BDAE.VAR} = getSharedVariablesLocalsAndGlobals(backendDAE.shared)
+  transformToSimCode(backendDAE.eqs, backendDAE.shared; mode = mode)
+end
+
+function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode)::SimulationCode.SIM_CODE
+  #=  Fech the main equation system. =#
+  @match [equationSystem, auxEquationSystems...] = equationSystems
+  #= Fetch the different components of the model.=#  
+  local allOrderedVars::Vector{BDAE.VAR} = [v  for v in equationSystem.orderedVars]
+  local allSharedVars::Vector{BDAE.VAR} = getSharedVariablesLocalsAndGlobals(shared)
   local allBackendVars = vcat(allOrderedVars, allSharedVars)
   local simVars::Vector{SimulationCode.SIMVAR} = allocateAndCollectSimulationVariables(allBackendVars)
   # Assign indices and put all variable into an hash table
   local stringToSimVarHT = createIndices(simVars)
-  local equations = [eq for es in equationSystems for eq in es.orderedEqs]
+  local equations = [eq for eq in equationSystem.orderedEqs]
   #= Split equations into three parts. Residuals whenEquations and If-equations =#
-  (resEqs::Vector{BDAE.RESIDUAL_EQUATION}, whenEqs::Vector{BDAE.WHEN_EQUATION}, ifEqs::Vector{BDAE.IF_EQUATION}) =
-    allocateAndCollectSimulationEquations(equations)
+  (resEqs::Vector{BDAE.RESIDUAL_EQUATION}, whenEqs::Vector{BDAE.WHEN_EQUATION},
+   ifEqs::Vector{BDAE.IF_EQUATION}, structuralTransistions::Vector{BDAE.STRUCTURAL_TRANSISTION}) = allocateAndCollectSimulationEquations(equations)
   #= Sorting/Matching for the set of residual equations (This is used for the start condtions) =#
   local eqVariableMapping = createEquationVariableBidirectionGraph(resEqs, allBackendVars, stringToSimVarHT)
   local numberOfVariablesInMapping = length(eqVariableMapping.keys)
@@ -84,8 +89,15 @@ function transformToSimCode(backendDAE::BDAE.BACKEND_DAE; mode)::SimulationCode.
                                                                         resEqs,
                                                                         allBackendVars,
                                                                         stringToSimVarHT)
+  local structuralSubModels = []
+  local initialState = initialModeInference(equationSystem)
+  #= Use recursion to generate submodels =#
+  local sharedVariables = computeSharedVariables(auxEquationSystems)
+  for auxSys in auxEquationSystems
+    push!(structuralSubModels, transformToSimCode([auxSys], shared; mode = mode))
+  end
   #= Construct SIM_CODE =#
-  SimulationCode.SIM_CODE(backendDAE.name,
+  SimulationCode.SIM_CODE(equationSystem.name,
                           stringToSimVarHT,
                           resEqs,
                           #= TODO: fix initial equations here =#
@@ -95,7 +107,51 @@ function transformToSimCode(backendDAE::BDAE.BACKEND_DAE; mode)::SimulationCode.
                           isSingular,
                           matchOrder,
                           digraph,
-                          stronglyConnectedComponents)
+                          stronglyConnectedComponents,
+                          structuralTransistions,
+                          structuralSubModels,
+                          sharedVariables,
+                          initialState)
+end
+
+"""
+ Compute the state and algebraic variables that exists between one system and possible subsystems.
+ We do so by looking at the final identifier for the given auxEquationSystems.
+ Foo.x in one system is equal to bar.x in the other system.
+"""
+function computeSharedVariables(auxEquationSystems)
+  local setOfVariables = []
+  local result = String[]
+  for auxSystem in auxEquationSystems
+    namesAsIdentifiers = map(getLastIdentOfVar,
+                             filter(BDAEUtil.isStateOrVariable, auxSystem.orderedVars))
+    push!(setOfVariables, namesAsIdentifiers)
+  end
+  result = if !isempty(setOfVariables)
+    intersect(setOfVariables...)
+  else
+    String[]
+  end
+  #= Returns the set of common variables =#
+  return result
+end
+
+"""
+  Fetch initial structural state from a BDAE equation system
+"""
+function initialModeInference(equationSystem::BDAE.EQSYSTEM)
+  #= Possible very expensive check. Maybe this should be marked earlier.. =#
+  for eq in equationSystem.orderedEqs
+    @match eq begin
+      BDAE.INITIAL_STRUCTURAL_STATE(initialState) => begin
+        return initialState
+      end
+      _ => begin
+        continue
+      end
+    end
+  end
+  return equationSystem.name
 end
 
 """
@@ -243,10 +299,11 @@ end
   Splits a given set of equations into different types
 """
 function allocateAndCollectSimulationEquations(equations::T)::Tuple where {T}
-  local isRe(eq) = typeof(eq) == BDAE.RESIDUAL_EQUATION
-  local isWhen(eq) = typeof(eq) == BDAE.WHEN_EQUATION
-  local isIf(eq) = typeof(eq) == BDAE.IF_EQUATION
-  (filter(isRe, equations), filter(isWhen, equations), filter(isIf, equations))
+  local isIf(eq) = typeof(eq) === BDAE.IF_EQUATION
+  local isWhen(eq) = typeof(eq) === BDAE.WHEN_EQUATION
+  local isRe(eq) = typeof(eq) === BDAE.RESIDUAL_EQUATION
+  local isStructuralTransistion(eq) = typeof(eq) === BDAE.STRUCTURAL_TRANSISTION
+  (filter(isRe, equations), filter(isWhen, equations), filter(isIf, equations), filter(isStructuralTransistion, equations))
 end
 
 """
