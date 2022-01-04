@@ -105,7 +105,6 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
       OMBackend.Runtime.solve($(Symbol("$(MODEL_NAME)Model_problem")), tspan, solver)
     end
   end
-  @info "Codegen done?"
   return (MODEL_NAME, code)
 end
 

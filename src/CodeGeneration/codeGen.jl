@@ -215,8 +215,6 @@ function createRealToStateVariableMapping(stateVariables::Array, simCode::Simula
   return daeStateUpdateVector
 end
 
-
-
 """
   Creates the set of if equations
 """

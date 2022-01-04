@@ -90,27 +90,27 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
   local indicesOfCommonVariablesForStartingMode = getIndicesOfCommonVariables(symsOfInitialMode, commonVariableSet; destinationPrefix = activeModeName)
   #= Create integrator =#
   integrator = init(problem, alg, dtmax = 0.01, kwargs...)
-  @info "Value of tspan[2]" tspan[2]
+  #@info "Value of tspan[2]" tspan[2]
   add_tstop!(integrator, tspan[2])
   local oldSols = Tuple[]
   #= Run the integrator=#
   @label START_OF_INTEGRATION
-  @info "START OF INTEGRATION"
+  #@info "START OF INTEGRATION"
   for i in integrator
     #= Check structural callbacks in order =#
     retCode = check_error(integrator)
-    @info "Value of retCide" retCode
-    @info "SOLVER STEP:"
+    #@info "Value of retCide" retCode
+    #@info "SOLVER STEP:"
     for cb in structuralCallbacks
       if cb.structureChanged
-        println("STRUCTURE CHANGED!")
-        println("Status of i: $(i)")
+        #@info("STRUCTURE CHANGED!")
+        #@info("Status of i: $(i)")
         #= Find the correct variables and map them between the two models  =#
         local newSystem = cb.system
         indicesOfCommonVariables = getIndicesOfCommonVariables(getSyms(newSystem),
                                                                commonVariableSet;
                                                                destinationPrefix = cb.name)
-        @info "DONE COMPUTING INDICES"
+        #@info "DONE COMPUTING INDICES"
         newU0 = Float64[i.u[idx] for idx in indicesOfCommonVariables]
         #= Save the old solution together with the name and the mode that was active =#
         push!(oldSols, (integrator.sol, getSyms(problem), activeModeName))
@@ -131,7 +131,7 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
         activeModeName = cb.name
         reinit!(integrator, newU0; t0 = i.t, reset_dt = true)
         cb.structureChanged = false
-        @info "!!DONE CHANGING THE STRUCTURE!! Restarting"
+        #@info "!!DONE CHANGING THE STRUCTURE!! Restarting"
         #= goto to save preformance =#
         @goto START_OF_INTEGRATION
       end
@@ -139,7 +139,7 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
   end
   #= The solution of the integration procedure =#
   local solution = integrator.sol
-  @info "Solution:" solution  
+  #@info "Solution:" solution  
   #= The final solution =#
   #= in oldSols we have the old solution. =#
   local startingSol = if ! isempty(oldSols)
@@ -156,11 +156,11 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
   #= The starting point is the initial variables of our starting mode =#
   local newUs = [startingSol[i,:]  for i in indicesOfCommonVariablesForStartingMode]
   #= Now we need to merge these with the latest solution =#
-  @info "Common variable set:" commonVariableSet
-  @info "DestinationPrefix:" activeModeName
-  @info "Syms from the solution:" getSymsFromSolution(solution)
+  #@info "Common variable set:" commonVariableSet
+  #@info "DestinationPrefix:" activeModeName
+  #@info "Syms from the solution:" getSymsFromSolution(solution)
   local tmp = getIndicesOfCommonVariables(getSymsFromSolution(solution), commonVariableSet; destinationPrefix = activeModeName)
-  @info "Value of tmp:" tmp
+  #@info "Value of tmp:" tmp
   for i in 1:length(commonVariableSet)
     newUs[i] = vcat(newUs[i], solution[tmp[i],:])
   end
@@ -239,7 +239,7 @@ function solve(omProblem::StructuralChangeRecompilation, tspan, alg; kwargs...)
         activeModeName = cb.name
         reinit!(integrator, newU0; t0 = i.t, reset_dt = true)
         cb.structureChanged = false
-        @info "!!DONE CHANGING THE STRUCTURE!! Restarting"
+ #       @info "!!DONE CHANGING THE STRUCTURE!! Restarting"
         #= goto to save preformance =#
         @goto START_OF_INTEGRATION
       end
@@ -247,7 +247,7 @@ function solve(omProblem::StructuralChangeRecompilation, tspan, alg; kwargs...)
   end
   #= The solution of the integration procedure =#
   local solution = integrator.sol
-  @info "Solution:" solution  
+#  @info "Solution:" solution  
   #= The final solution =#
   #= in oldSols we have the old solution. =#
   local startingSol = if ! isempty(oldSols)
@@ -264,11 +264,11 @@ function solve(omProblem::StructuralChangeRecompilation, tspan, alg; kwargs...)
   #= The starting point is the initial variables of our starting mode =#
   local newUs = [startingSol[i,:]  for i in indicesOfCommonVariablesForStartingMode]
   #= Now we need to merge these with the latest solution =#
-  @info "Common variable set:" commonVariableSet
-  @info "DestinationPrefix:" activeModeName
-  @info "Syms from the solution:" getSymsFromSolution(solution)
+  #@info "Common variable set:" commonVariableSet
+  #@info "DestinationPrefix:" activeModeName
+  #@info "Syms from the solution:" getSymsFromSolution(solution)
   local tmp = getIndicesOfCommonVariables(getSymsFromSolution(solution), commonVariableSet; destinationPrefix = activeModeName)
-  @info "Value of tmp:" tmp
+  #@info "Value of tmp:" tmp
   for i in 1:length(commonVariableSet)
     newUs[i] = vcat(newUs[i], solution[tmp[i],:])
   end
