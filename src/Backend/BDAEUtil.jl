@@ -160,7 +160,7 @@ function mapEqSystemVariablesNoUpdate(syst::BDAE.EQSYSTEM, traversalOperation::F
         for i in 1:arrayLength(varArr)
           extArg = traversalOperation(varArr[i], extArg)
         end
-        (extArg)
+        extArg
       end
     end
   end

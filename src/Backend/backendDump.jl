@@ -81,7 +81,7 @@ function stringTraverse(in, str)::String
   str = str + string(in)
 end
 
-function Base.string(var::BDAE.Var)::String
+function Base.string(var::BDAE.VAR)::String
   str = string(var.varType) * " " * string(var.varName) * " | " * string(var.varKind)
   str *= begin
     local exp::DAE.Exp
@@ -90,6 +90,7 @@ function Base.string(var::BDAE.Var)::String
       _ => begin "" end
     end
   end
+  str *= " | Array-dimensions:" * string(var.arryDim)
   return str + "\n"
 end
 
@@ -177,7 +178,7 @@ function Base.string(exprs::List{DAE.Exp})
   return res
 end
 
-function Base.string(eq::BDAE.Equation)
+function Base.string(@nospecialize(eq::BDAE.Equation))
   str = begin
     local lhs::DAE.Exp
     local rhs::DAE.Exp
@@ -198,6 +199,14 @@ function Base.string(eq::BDAE.Equation)
 
       BDAE.WHEN_EQUATION(whenEquation = whenEquation) => begin
         string(whenEquation)
+      end
+
+      BDAE.INITIAL_STRUCTURAL_STATE(__) => begin
+        "INITIAL_STRUCTURAL_STATE(" * eq.initialState * ")"
+      end
+
+      BDAE.STRUCTURAL_TRANSISTION(__) => begin
+        "STRUCTURAL_TRANSISTION " * eq.fromState * " -> " * eq.toState * "| if:" * string(eq.transistionCondition)
       end
 
       BDAE.IF_EQUATION(__) => begin
@@ -286,7 +295,7 @@ function Base.string(cr::DAE.ComponentRef; separator="_")
         ident * separator * string(cref)
       end
       DAE.CREF_IDENT(ident = ident) => begin
-        ident
+        if !listEmpty(cr.subscriptLst) ident * string(cr.subscriptLst) else ident end
       end
       DAE.CREF_ITER(ident = ident) => begin
         ident
@@ -403,11 +412,7 @@ function Base.string(exp::DAE.Exp)::String
       end
 
       DAE.CREF(cr, _)  => begin
-        if isArray(cr)
-          string(cr) + string(cr.subscriptLst)
-        else          
-          string(cr)
-        end
+        string(cr)
       end
 
       DAE.UNARY(operator = op, exp = e1) => begin
@@ -562,7 +567,7 @@ end
 function Base.string(ss::Cons{DAE.Subscript})::String
   local str = ""
   for ix in ss
-    str *= "[$(string(ix))]"
+    str *= "_$(string(ix))"
   end
   return str
 end
