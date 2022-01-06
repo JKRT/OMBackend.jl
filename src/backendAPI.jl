@@ -151,7 +151,7 @@ end
 """
 function lower(frontendDAE::OMFrontend.Main.FlatModel)
   local bDAE = BDAECreate.lower(frontendDAE)
-  @debug(BDAEUtil.stringHeading1(bDAE, "translated"));
+  @info(BDAEUtil.stringHeading1(bDAE, "translated"));
   #= Expand arrays =#
   (bDAE, expandedVars) = Causalize.expandArrayVariables(bDAE)
   @debug(BDAEUtil.stringHeading1(bDAE, "Array variables expanded"));
