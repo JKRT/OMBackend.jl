@@ -241,6 +241,9 @@ function traverseWhenEquation!(whenEq, traversalOperation, extArg)
         (rhs, extArg) = Util.traverseExpTopDown(stmt.right, traversalOperation, extArg)
         newWhenStmtLst = BDAE.ASSIGN(lhs, rhs, stmt.source) <| newWhenStmtLst
       end
+      BDAE.NORETCALL(__) => begin
+        (exp, extArg) = Util.traverseExpTopDown(stmt.exp, traversalOperation, extArg)
+      end
       _ => begin
         throw(string(stmt) * " is not implemented yet!")
       end

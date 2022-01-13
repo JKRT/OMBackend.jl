@@ -42,9 +42,10 @@ function createStructuralCallbacks(simCode, structuralTransistions::Vector{ST}) 
 end
 
 """
-  Creates a single structural callback.
+  Creates a single structural callback for an explicit transition.
 """
-function createStructuralCallback(simCode, structuralTransistion::ST) where {ST}
+function createStructuralCallback(simCode, simCodeStructuralTransistion::SimulationCode.EXPLICIT_STRUCTURAL_TRANSISTION)
+  local structuralTransistion = simCodeStructuralTransistion.structuralTransistion
   local cond = transformToZeroCrossingCondition(structuralTransistion.transistionCondition)
   local callbackName = createCallbackName(structuralTransistion)
   quote
@@ -64,6 +65,14 @@ function createStructuralCallback(simCode, structuralTransistion::ST) where {ST}
   end
 end
 
+"""
+  Creates an implicit structural callback.
+  That is a structural callback where the final state is unknown. 
+"""
+function createStructuralCallback(simCode, structuralTransistion::SimulationCode.IMPLICIT_STRUCTURAL_TRANSISTION)
+  throw("IMPLICIT_STRUCTURAL_TRANSISTION Not yet implemented!")  
+end
+
 function createStructuralAssignments(simCode, structuralTransistions::Vector{ST}) where {ST}
   local structuralAssignments = Expr[]
     for structuralTransisiton in structuralTransistions
@@ -81,7 +90,8 @@ end
   This function creates a structural assignment.
   That is the constructor for a structural callback guiding structural change.
 """
-function createStructuralAssignment(simCode, structuralTransistion::ST) where {ST}
+function createStructuralAssignment(simCode, simCodeStructuralTransistion::ST) where {ST}
+  local structuralTransistion = simCodeStructuralTransistion.structuralTransistion
   local callbackName = createCallbackName(structuralTransistion)
   local toState = structuralTransistion.toState
   local toStateProblem = Symbol(toState * "Problem")

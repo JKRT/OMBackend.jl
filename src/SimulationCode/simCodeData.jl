@@ -97,6 +97,16 @@ struct IF_EQUATION{Branches <: Vector{BRANCH}} <: Construct
   branches::Branches
 end
 
+abstract type StructuralTransistion end
+
+struct EXPLICIT_STRUCTURAL_TRANSISTION <: StructuralTransistion
+  structuralTransistion::BDAE.STRUCTURAL_TRANSISTION
+end
+
+struct IMPLICIT_STRUCTURAL_TRANSISTION <: StructuralTransistion
+  structuralWhenEquation::BDAE.STRUCTURAL_WHEN_EQUATION
+end
+
 
 """
   Root data structure containing information required for code generation to
@@ -116,7 +126,7 @@ struct SIM_CODE{T0<:String,
                 T7<:Vector{Int},
                 T8<:Graphs.AbstractGraph,
                 T9<:Vector,
-                T10 <: Vector{BDAE.STRUCTURAL_TRANSISTION},
+                T10 <: Vector{StructuralTransistion},
                 T11 <: Vector,
                 T12 <: Vector{String},
                 T13 <: String} <: SimCode
@@ -154,4 +164,6 @@ struct SIM_CODE{T0<:String,
   sharedVariables::T12
   "Initial model"
   activeModel::T13
+  "The MetaModel. That is a reference from the model to a higher order representation of the model itself."
+  metaModel::Option
 end

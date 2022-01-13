@@ -345,6 +345,10 @@ function DAECallExpressionToJuliaCallExpression(pathStr::String, expLst::List, s
   end
 end
 
+"""
+  Get the name of the active model.
+  The default is the original model.
+"""
 function getActiveModel(simCode)
   local activeModelName = simCode.activeModel
   for sm in simCode.subModels
@@ -352,7 +356,7 @@ function getActiveModel(simCode)
       return sm
     end
   end
-  throw("No active model found in simCode")
+  return activeModelName
 end
 
 

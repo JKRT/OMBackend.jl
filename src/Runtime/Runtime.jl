@@ -21,6 +21,16 @@ struct OMSolution{T1, T2} <: AbstractOMSolution
 end
 
 """
+  Wrapper object for equation based models that contain several solutions
+"""
+struct OMSolutions{T1, T2} <: AbstractOMSolution
+  "Set of solutions given by DifferentialEquations.jl"
+  diffEqSol::Vector{T1}
+  "Various metadata for the specific model"
+  idxToName::T2
+end
+
+"""
   Wrapper callback for a static structural change.
   That is the model
   we are simulating changes during the simulation but the future model can be predicted statically
@@ -53,6 +63,15 @@ mutable struct OM_ProblemStructural{T0 <: String, T1, T2, T3}
   structuralCallbacks::T2
   """ Variables that all modes have in common """
   commonVariables::T3
+end
+
+mutable struct OM_ProblemRecompilation{T0 <: String, T1, T2}
+  "The name of the active mode"
+  activeModeName::T0
+  "The problem we are currently solving"
+  problem::T1
+  "The set of structural callbacks"
+  structuralCallbacks::T2
 end
 
 mutable struct OM_Problem{T0, T1}
@@ -179,14 +198,11 @@ end
   Custom solver function for Modelica code with structuralCallbacks to monitor the solving process
   (Using the integrator interface) from DifferentialEquations.jl
 """
-function solve(omProblem::StructuralChangeRecompilation, tspan, alg; kwargs...)
+function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
   local problem = omProblem.problem
   local structuralCallbacks = omProblem.structuralCallbacks
-  local commonVariableSet = omProblem.commonVariables
   local symsOfInitialMode = getSyms(problem)
   local activeModeName = omProblem.activeModeName
-  #= The issue here is that the symbols might differ due to a change in the cref scheme =#
-  local indicesOfCommonVariablesForStartingMode = getIndicesOfCommonVariables(symsOfInitialMode, commonVariableSet; destinationPrefix = activeModeName)
   #= Create integrator =#
   @assign problem.tspan = tspan
   integrator = init(problem, alg, dtmax = 0.01, kwargs...)
@@ -205,7 +221,7 @@ function solve(omProblem::StructuralChangeRecompilation, tspan, alg; kwargs...)
         println("STRUCTURE CHANGED!")
         println("Status of i: $(i)")
         #=  Recompilation =#
-        #= Have the Absyn =#
+        #= Have the SCode =#
         #=
         - 1) Fetch the parameter from the structural callback 
         - 2) Change the parameters in the SCode via API (Absyn is stored somewhere...)
@@ -214,10 +230,6 @@ function solve(omProblem::StructuralChangeRecompilation, tspan, alg; kwargs...)
         =#
         local newSystem = cb.system
         #= End recompilation =#
-        @info "We try to switch"
-        indicesOfCommonVariables = getIndicesOfCommonVariables(getSyms(newSystem),
-                                                               commonVariableSet;
-                                                               destinationPrefix = cb.name)
         @info "DONE COMPUTING INDICES"
         newU0 = Float64[i.u[idx] for idx in indicesOfCommonVariables]
         #= Save the old solution together with the name and the mode that was active =#
@@ -245,40 +257,6 @@ function solve(omProblem::StructuralChangeRecompilation, tspan, alg; kwargs...)
       end
     end
   end
-  #= The solution of the integration procedure =#
-  local solution = integrator.sol
-#  @info "Solution:" solution  
-  #= The final solution =#
-  #= in oldSols we have the old solution. =#
-  local startingSol = if ! isempty(oldSols)
-    first(first(oldSols))
-  else #= If we have no old solution we are done =#
-    return solution
-  end
-#  @info "Starting solution" startingSol
-  local newTimePoints = vcat(startingSol.t, solution.t) #TODO should be a loop here.
-  #= We are creating a new Vector{Vector{Float64}}: =#
-  #= Each solution in oldSol is solution to some subsolution of the VSS, before structural change =#
-  #= If the dimensions between the solutions are not equivivalent we should only keep the columns we need =#
-#  indicesOfCommonVariables = getIndicesOfCommonVariables(getSyms(problem), getSyms(cb.system))
-  #= The starting point is the initial variables of our starting mode =#
-  local newUs = [startingSol[i,:]  for i in indicesOfCommonVariablesForStartingMode]
-  #= Now we need to merge these with the latest solution =#
-  #@info "Common variable set:" commonVariableSet
-  #@info "DestinationPrefix:" activeModeName
-  #@info "Syms from the solution:" getSymsFromSolution(solution)
-  local tmp = getIndicesOfCommonVariables(getSymsFromSolution(solution), commonVariableSet; destinationPrefix = activeModeName)
-  #@info "Value of tmp:" tmp
-  for i in 1:length(commonVariableSet)
-    newUs[i] = vcat(newUs[i], solution[tmp[i],:])
-  end
-  #=Convert into a matrix and then into a vector of vector again to get the right dimensions. =#
-  newUs = transpose(hcat(newUs...))
-  newUs = [newUs[:,i] for i in 1:size(newUs,2)]
-  #= For anyone reading this.. this the transformations above could have been done better! =#
-  #= Should be the common varibles =#  
-  local sol = SciMLBase.build_solution(solution.prob, solution.alg, newTimePoints, newUs)
-  #= Return the final solution =#
   return sol
 end
 
