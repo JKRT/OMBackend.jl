@@ -107,7 +107,6 @@ struct IMPLICIT_STRUCTURAL_TRANSISTION <: StructuralTransistion
   structuralWhenEquation::BDAE.STRUCTURAL_WHEN_EQUATION
 end
 
-
 """
   Root data structure containing information required for code generation to
   generate simulation code for a Modelica model.
