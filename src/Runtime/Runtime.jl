@@ -2,7 +2,9 @@
   Simulation runtime implemented based on the integrator interface
 =#
 module Runtime
-
+include("RuntimeUtil.jl")
+import .RuntimeUtil
+import Absyn
 import SCode
 import OMBackend
 import OMFrontend
@@ -222,12 +224,9 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
   for i in integrator
     #= Check structural callbacks in order =#
     retCode = check_error(integrator)
-    @info "Value of retcode" retCode
-    @info "SOLVER STEP:"
     for cb in structuralCallbacks
       if cb.structureChanged
-        println("STRUCTURE CHANGED!")
-        println("Status of i: $(i)")
+        @info "STRUCTURAL CHANGE DETECTED"
         #= Recompile the system =#
         @info "RECOMPILING"
         local newSystem = recompilation(cb.name, cb, integrator.u, tspan)
@@ -277,21 +276,24 @@ function recompilation(activeModeName, structuralCallback, u, tspan)
   #= - 1) Fetch the parameter from the structural callback =#
   local metaModel = structuralCallback.metaModel
   local modification = structuralCallback.modification
+  local inProgram = MetaModelica.list(metaModel)
+  local elementToChange = first(modification)
+  local newValue = last(modification)
   #= - 2) Change the parameters in the SCode via API =#
   #= !!!TODO!!! =#
-    #=  2.1 Change the parameter so that it is the same as the modifcation. =#
+  #=  2.1 Change the parameter so that it is the same as the modifcation. =#
+  newProgram = MetaModelica.list(RuntimeUtil.setElementInSCodeProgram!(elementToChange, newValue, metaModel))
+  local classToInstantiate = activeModeName
   #=- 3) Call the frontend + the backend + JIT compile Julia code in memory =#
-  local elementToInstantiate = activeModeName
-  @info "Active mode name is:" activeModeName
-  local inProgram = MetaModelica.list(metaModel)
-  local flatModelica = first(OMFrontend.instantiateSCodeToFM(elementToInstantiate, inProgram))
+  local flatModelica = first(OMFrontend.instantiateSCodeToFM(classToInstantiate, newProgram))
+  @info "Modified model!"
+  println(OMFrontend.toString(flatModelica))
+  @info "DONE"
   local bdae = OMBackend.lower(flatModelica)
   local simulationCode = OMBackend.generateSimulationCode(bdae; mode = OMBackend.MTK_MODE)
   #= Here I also have a new index mapping. That is I know what the new var -> u is. =#
-  local resultingModel = CodeGeneration.ODE_MODE_MTK_MODEL_GENERATION(simulationCode, elementToInstantiate)
-  @info "Hello"
+  local resultingModel = OMBackend.CodeGeneration.ODE_MODE_MTK_MODEL_GENERATION(simulationCode, classToInstantiate)
   local modelName = replace(activeModeName, "." => "__") * "Model"
-  @info typeof(resultingModel)
   @eval $(resultingModel)
   modelCall = quote
     $(Symbol(modelName))($(tspan))
