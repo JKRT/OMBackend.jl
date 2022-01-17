@@ -4,7 +4,7 @@ import SCode
 import OMFrontend
 import OMFrontend.Main.SCodeUtil
 
-using Setfield
+using MetaModelica
 
 """
   Wrapper to a function in SCode util.
