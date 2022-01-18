@@ -218,6 +218,7 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
   integrator = init(problem, alg, dtmax = 0.01, kwargs...)
   @info "Value of tspan[2]" tspan[2]
   local oldSols = []
+  local solutions = []
   #= Run the integrator=#
   @label START_OF_INTEGRATION
   @info "START OF INTEGRATION"
@@ -234,8 +235,9 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
         #= End recompilation =#
         @info "DONE COMPUTING INDICES"
         #= Assuming the indices are the same (Which is not neccesary the same) =#
-        local newU0 = Float64[integrator.u[idx] for idx in 1:10]        
+        local newU0 = Float64[integrator.u[idx] for idx in 1:10]    
         #= Save the old solution together with the name and the mode that was active =#
+        push!(solutions, integrator.sol)
         push!(oldSols, (integrator.sol, getSyms(problem), activeModeName))
         #= Now we have the start values for the next part of the system=#
         @info "Making a new integrator"
@@ -262,9 +264,8 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
       end
     end
   end
-  sol = integrator.sol
-  push!(oldSols, sol)
-  return oldSols
+  push!(solutions, integrator.sol)
+  return solutions
 end
 
 """
@@ -280,7 +281,6 @@ function recompilation(activeModeName, structuralCallback, u, tspan)
   local elementToChange = first(modification)
   local newValue = last(modification)
   #= - 2) Change the parameters in the SCode via API =#
-  #= !!!TODO!!! =#
   #=  2.1 Change the parameter so that it is the same as the modifcation. =#
   newProgram = MetaModelica.list(RuntimeUtil.setElementInSCodeProgram!(elementToChange, newValue, metaModel))
   local classToInstantiate = activeModeName
@@ -292,7 +292,8 @@ function recompilation(activeModeName, structuralCallback, u, tspan)
   local bdae = OMBackend.lower(flatModelica)
   local simulationCode = OMBackend.generateSimulationCode(bdae; mode = OMBackend.MTK_MODE)
   #= Here I also have a new index mapping. That is I know what the new var -> u is. =#
-  local resultingModel = OMBackend.CodeGeneration.ODE_MODE_MTK_MODEL_GENERATION(simulationCode, classToInstantiate)
+  local resultingModel = OMBackend.CodeGeneration.ODE_MODE_MTK_MODEL_GENERATION(simulationCode,
+                                                                                classToInstantiate)
   local modelName = replace(activeModeName, "." => "__") * "Model"
   @eval $(resultingModel)
   modelCall = quote
