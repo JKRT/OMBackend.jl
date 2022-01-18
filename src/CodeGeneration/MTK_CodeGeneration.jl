@@ -80,6 +80,8 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   #= END =#
   code = quote
     import OMBackend
+    using ModelingToolkit
+    using DifferentialEquations
     $(structuralModes...)
     $(structuralCallbacks...)
     function $(Symbol(MODEL_NAME * "Model"))(tspan = (0.0, 1.0))
