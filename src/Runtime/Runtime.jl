@@ -55,16 +55,22 @@ mutable struct StructuralChange{SYS} <: AbstractStructuralChange
 end
 
 """
-  Wrapper callback for structural change that triggers a recompilation
+  Wrapper callback for structural change that triggers a recompilation.  
 """
 mutable struct StructuralChangeRecompilation{MOD} <: AbstractStructuralChange
   "The name of the next mode"
   name::String
   "Indicates if the structure has changed"
   structureChanged::Bool
-  "The meta model"
+  "The meta model. That is a SCode representation of the model itself"
   metaModel::SCode.CLASS
+  "The modification to be applied during recompilation"
   modification::MOD
+  "
+  The symbol table for the old model.
+  This is used to map indices of variables when the structure of the model changes
+  "
+  stringToSimVarHT
 end
 
 mutable struct OM_ProblemStructural{T0 <: String, T1, T2, T3}
@@ -85,6 +91,7 @@ mutable struct OM_ProblemRecompilation{T0 <: String, T1, T2}
   problem::T1
   "The set of structural callbacks"
   structuralCallbacks::T2
+  ""
 end
 
 mutable struct OM_Problem{T0, T1}
@@ -127,22 +134,16 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
   local oldSols = Tuple[]
   #= Run the integrator=#
   @label START_OF_INTEGRATION
-  #@info "START OF INTEGRATION"
   for i in integrator
     #= Check structural callbacks in order =#
     retCode = check_error(integrator)
-    #@info "Value of retCide" retCode
-    #@info "SOLVER STEP:"
     for cb in structuralCallbacks
       if cb.structureChanged
-        #@info("STRUCTURE CHANGED!")
-        #@info("Status of i: $(i)")
         #= Find the correct variables and map them between the two models  =#
         local newSystem = cb.system
         indicesOfCommonVariables = getIndicesOfCommonVariables(getSyms(newSystem),
                                                                commonVariableSet;
                                                                destinationPrefix = cb.name)
-        #@info "DONE COMPUTING INDICES"
         newU0 = Float64[i.u[idx] for idx in indicesOfCommonVariables]
         #= Save the old solution together with the name and the mode that was active =#
         push!(oldSols, (integrator.sol, getSyms(problem), activeModeName))
@@ -157,13 +158,12 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
                           tstop = tspan[2],
                           kwargs...)
         #=
-        Reset with the new values of u0
-        and set the active moed to the mode we are currently using.
+          Reset with the new values of u0
+          and set the active moed to the mode we are currently using.
         =#
         activeModeName = cb.name
         reinit!(integrator, newU0; t0 = i.t, reset_dt = true)
         cb.structureChanged = false
-        #@info "!!DONE CHANGING THE STRUCTURE!! Restarting"
         #= goto to save preformance =#
         @goto START_OF_INTEGRATION
       end
@@ -179,7 +179,6 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
   else #= If we have no old solution we are done =#
     return solution
   end
-#  @info "Starting solution" startingSol
   local newTimePoints = vcat(startingSol.t, solution.t) #TODO should be a loop here.
   #= We are creating a new Vector{Vector{Float64}}: =#
   #= Each solution in oldSol is solution to some subsolution of the VSS, before structural change =#
@@ -188,11 +187,7 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
   #= The starting point is the initial variables of our starting mode =#
   local newUs = [startingSol[i,:]  for i in indicesOfCommonVariablesForStartingMode]
   #= Now we need to merge these with the latest solution =#
-  #@info "Common variable set:" commonVariableSet
-  #@info "DestinationPrefix:" activeModeName
-  #@info "Syms from the solution:" getSymsFromSolution(solution)
   local tmp = getIndicesOfCommonVariables(getSymsFromSolution(solution), commonVariableSet; destinationPrefix = activeModeName)
-  #@info "Value of tmp:" tmp
   for i in 1:length(commonVariableSet)
     newUs[i] = vcat(newUs[i], solution[tmp[i],:])
   end
@@ -216,32 +211,32 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
   local structuralCallbacks = omProblem.structuralCallbacks
   local activeModeName = omProblem.activeModeName
   integrator = init(problem, alg, dtmax = 0.01, kwargs...)
-  @info "Value of tspan[2]" tspan[2]
   local oldSols = []
   local solutions = []
   #= Run the integrator=#
   @label START_OF_INTEGRATION
-  @info "START OF INTEGRATION"
   for i in integrator
     #= Check structural callbacks in order =#
     retCode = check_error(integrator)
     for cb in structuralCallbacks
       if cb.structureChanged
-        @info "STRUCTURAL CHANGE DETECTED"
         #= Recompile the system =#
-        @info "RECOMPILING"
-        local newSystem = recompilation(cb.name, cb, integrator.u, tspan)
-        @info "RECOMPILATION DONE"
+        (newProblem, newSymbolTable, initialValues) = recompilation(cb.name, cb, integrator.u, tspan)
         #= End recompilation =#
-        @info "DONE COMPUTING INDICES"
-        #= Assuming the indices are the same (Which is not neccesary the same) =#
-        local newU0 = Float64[integrator.u[idx] for idx in 1:10]    
+        #= Assuming the indices are the same (Which is not neccesary true) =#
+        local symsOfOldProblem = getSyms(problem)
+        local symsOfNewProlem = getSyms(newProblem)
+        local newU0 = RuntimeUtil.createNewU0(symsOfOldProblem,
+                                              symsOfNewProlem,
+                                              cb.stringToSimVarHT,
+                                              newSymbolTable,
+                                              initialValues,
+                                              integrator)
         #= Save the old solution together with the name and the mode that was active =#
         push!(solutions, integrator.sol)
         push!(oldSols, (integrator.sol, getSyms(problem), activeModeName))
         #= Now we have the start values for the next part of the system=#
-        @info "Making a new integrator"
-        integrator = init(newSystem,
+        integrator = init(newProblem,
                           alg;
                           t0 = i.t,
                           u0 = newU0,
@@ -249,7 +244,6 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
                           dt = 0.01,
                           dtmax = 0.01,
                           kwargs...)
-        @info "We have a new integrator"
         #=
         Reset with the new values of u0
         and set the active moed to the mode we are currently using.
@@ -258,7 +252,8 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
         activeModeName = cb.name
         reinit!(integrator, newU0; t0 = i.t, reset_dt = true)
         cb.structureChanged = false
- #       @info "!!DONE CHANGING THE STRUCTURE!! Restarting"
+        #= Point the problem to the new problem =#
+        problem = newProblem
         #= goto to save preformance =#
         @goto START_OF_INTEGRATION
       end
@@ -269,9 +264,10 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
 end
 
 """
-  Recompiles the metamodel with some component changed
+  Recompile the metamodel with some component changed.
+  Returns a tuple of a new problem together with a new symbol table.
 """
-function recompilation(activeModeName, structuralCallback, u, tspan)
+function recompilation(activeModeName, structuralCallback, u, tspan)::Tuple
   #=  Recompilation =#
   #= Have the SCode =#        
   #= - 1) Fetch the parameter from the structural callback =#
@@ -286,12 +282,9 @@ function recompilation(activeModeName, structuralCallback, u, tspan)
   local classToInstantiate = activeModeName
   #=- 3) Call the frontend + the backend + JIT compile Julia code in memory =#
   local flatModelica = first(OMFrontend.instantiateSCodeToFM(classToInstantiate, newProgram))
-  @info "Modified model!"
-  println(OMFrontend.toString(flatModelica))
-  @info "DONE"
+  #println(OMFrontend.toString(flatModelica))
   local bdae = OMBackend.lower(flatModelica)
   local simulationCode = OMBackend.generateSimulationCode(bdae; mode = OMBackend.MTK_MODE)
-  #= Here I also have a new index mapping. That is I know what the new var -> u is. =#
   local resultingModel = OMBackend.CodeGeneration.ODE_MODE_MTK_MODEL_GENERATION(simulationCode,
                                                                                 classToInstantiate)
   local modelName = replace(activeModeName, "." => "__") * "Model"
@@ -301,7 +294,7 @@ function recompilation(activeModeName, structuralCallback, u, tspan)
   end
   (problem, initialValues, reducedSystem, tspan, pars, vars) = @eval $(modelCall)
   #= - 4) Assign this system to newSystem. =#
-  return problem
+  return (problem, simulationCode.stringToSimVarHT, initialValues)
 end
 
 

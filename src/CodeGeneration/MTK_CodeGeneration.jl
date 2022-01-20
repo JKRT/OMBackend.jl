@@ -121,7 +121,7 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
 end
 
 """
-  Generates a  MTK program with a model
+  Generates a MTK program with a model
 """
 function ODE_MODE_MTK_PROGRAM_GENERATION(simCode::SimulationCode.SIM_CODE, modelName)
   local MODEL_NAME = replace(modelName, "." => "__")

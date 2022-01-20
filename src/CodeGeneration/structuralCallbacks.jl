@@ -96,10 +96,12 @@ function createStructuralCallback(simCode, simCodeStructuralTransistion::Simulat
       #= The recompilation directive. =#
       local modification = $(modification)
       #= Represent structural change. =#
-      local structuralChange = OMBackend.Runtime.StructuralChangeRecompilation($(simCode.name #=NOTE: For the implicit callbacks the model is assumed to be the same=#),
+      #=NOTE: For the implicit callbacks the model is assumed to be the same=#
+      local structuralChange = OMBackend.Runtime.StructuralChangeRecompilation($(simCode.name),
                                                                                false,
                                                                                $(metaModel),
-                                                                               modification)
+                                                                               modification,
+                                                                               $(simCode.stringToSimVarHT))
       #= The affect simply activates the structural callback informing us to generate code for a new system =#
       function affect!(integrator)
         #= Expand the when operators =#

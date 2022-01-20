@@ -56,5 +56,51 @@ makeCondition(val) = begin
   throw("Only primitive values {Integer, Boolean, Real} are currently supported in a Recompilation call")
 end
 
+"""
+  Converts a symbol (of a MTK variable) to a string.
+"""
+function convertSymbolToString(symbol::Symbol)
+  replace(String(symbol), "(t)" => "")
+end
+
+"""
+  Converts a list of symbols to a list of strings
+"""
+function convertSymbolsToStrings(symbols::Vector{Symbol})
+  map(convertSymbolToString, symbols)
+end
+
+"""
+  This function maps variables between two models during a structural change.
+  It returns a new vector of u₀ variables to initialize the new model.
+  We do so by assigning the old values when the structural change occured for all variables
+  that occured in the model before the structural change.
+"""
+function createNewU0(symsOfOldProblem::Vector{Symbol},
+                     symsOfNewProblem::Vector{Symbol},
+                     oldHT,
+                     newHT,
+                     initialValues,
+                     integrator)
+  local newU0 = Float64[last(initialValues[idx]) for idx in 1:length(symsOfNewProblem)]
+  local variableNames  = RuntimeUtil.convertSymbolsToStrings(symsOfOldProblem)
+  local oldKeys = keys(oldHT)
+  local newKeys = keys(newHT)
+  for varName in variableNames
+    if varName in oldKeys && varName in newKeys      
+      local idxOldVar = getIdxFromEntry(oldHT[varName])
+      local idxNewVar = getIdxFromEntry(newHT[varName])
+      newU0[idxNewVar] = integrator.u[idxOldVar]
+    end
+  end
+  return newU0
+end
+
+"""
+  Gets the index from an entry to the symbol table
+"""
+function getIdxFromEntry(entry::Tuple)::Int
+  first(entry)
+end
 
 end #= RuntimeUtil =#
