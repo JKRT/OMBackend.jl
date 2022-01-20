@@ -74,7 +74,7 @@ function lower(lst::DAE.DAE_LIST)::BDAE.BACKEND_DAE
   @debug "eqLst:" length(equationLst)
   #= We start with an array of one system =#
   eqSystems = [BDAE.EQSYSTEM(name, variables, eqArray, [], [])]
-  outBDAE = BDAE.BACKEND_DAE(name, eqSystems, BDAE.SHARED([], []))
+  outBDAE = BDAE.BACKEND_DAE(name, eqSystems, BDAE.SHARED([], [], NONE()))
 end
 
 """
@@ -87,7 +87,7 @@ function lower(frontendDAE::OMFrontend.Main.FlatModel)
   #= Creates a list of flat equation systems =#
   local eqSystems = createEqSystems(frontendDAE)
   #= The resulting backend DAE. =#
-  return createBackendDAE(frontendDAE.name, eqSystems, BDAE.SHARED([], []))
+  return createBackendDAE(frontendDAE.name, eqSystems, BDAE.SHARED([], [], frontendDAE.scodeProgram))
 end
 
 function createBackendDAE(name, eqSystems, shared)
@@ -293,18 +293,25 @@ function variableToBackendVariable(elem::DAE.Element)
 end
 
 
-function lowerWhenEquation(eq::DAE.Element)::BDAE.WHEN_EQUATION
+function lowerWhenEquation(eq::DAE.Element)::BDAE.Equation
   local whenOperatorLst::List{BDAE.WhenOperator} = nil
   local whenEquation::BDAE.WhenEquation
   local elseOption::Option{BDAE.WhenEquation} = NONE()
   local elseEq::BDAE.Element
   whenOperatorLst = createWhenOperators(eq.equations, whenOperatorLst)
+  #= Check if the list of whenOperators contains a BDAE.RECOMPILATION call. =#
+  local containsRecompilation = length(findall(elem->typeof(elem)==BDAE.RECOMPILATION, listArray(whenOperatorLst))) >= 1
   if isSome(eq.elsewhen_)
     SOME(elseEq) = eq.elsewhen_
     elseOption = SOME(lowerWhenEquation(elseEq))
   end
   whenEquation = BDAE.WHEN_STMTS(eq.condition, whenOperatorLst, elseOption)
-  return BDAE.WHEN_EQUATION(1, whenEquation, eq.source, BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
+  result = if !containsRecompilation
+    BDAE.WHEN_EQUATION(1, whenEquation, eq.source, BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
+  else
+    BDAE.STRUCTURAL_WHEN_EQUATION(1, whenEquation, eq.source, BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
+  end
+  return result
 end
 
 function createWhenOperators(elementLst::List{DAE.Element},lst::List{BDAE.WhenOperator})::List{BDAE.WhenOperator}
@@ -339,6 +346,11 @@ function createWhenOperators(elementLst::List{DAE.Element},lst::List{BDAE.WhenOp
         end
         local crefExp = DAE.CREF(cref, expTy)
         acc = BDAE.REINIT(crefExp, e1, source) <| lst
+        createWhenOperators(rest, acc)
+      end
+      DAE.NORETCALL(exp = DAE.CALL(Absyn.IDENT("recompilation"), expLst, attr), source = source) <| rest => begin
+        @match componentToChange <| newValue <| nil = expLst
+        acc = BDAE.RECOMPILATION(componentToChange, newValue) <| lst
         createWhenOperators(rest, acc)
       end
       DAE.NORETCALL(exp = e1, source = source) <| rest => begin

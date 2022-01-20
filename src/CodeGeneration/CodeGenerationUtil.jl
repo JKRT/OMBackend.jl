@@ -345,6 +345,10 @@ function DAECallExpressionToJuliaCallExpression(pathStr::String, expLst::List, s
   end
 end
 
+"""
+  Get the name of the active model.
+  The default is the original model.
+"""
 function getActiveModel(simCode)
   local activeModelName = simCode.activeModel
   for sm in simCode.subModels
@@ -352,7 +356,7 @@ function getActiveModel(simCode)
       return sm
     end
   end
-  throw("No active model found in simCode")
+  return activeModelName
 end
 
 
@@ -605,8 +609,7 @@ function expToJuliaExpMTK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuf
       end
       DAE.RELATION(exp1 = e1, operator = op, exp2 = e2) => begin
         quote 
-          $(expToJuliaExpMTK(e1, simCode,
-                             varPrefix=varPrefix,derSymbol = derSymbol)
+          $(expToJuliaExpMTK(e1, simCode, varPrefix=varPrefix,derSymbol = derSymbol)
             + " "
             + SimulationCode.string(op)
             + " "

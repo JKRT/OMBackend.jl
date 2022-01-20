@@ -73,8 +73,12 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
   local stringToSimVarHT = createIndices(simVars)
   local equations = [eq for eq in equationSystem.orderedEqs]
   #= Split equations into three parts. Residuals whenEquations and If-equations =#
-  (resEqs::Vector{BDAE.RESIDUAL_EQUATION}, whenEqs::Vector{BDAE.WHEN_EQUATION},
-   ifEqs::Vector{BDAE.IF_EQUATION}, structuralTransistions::Vector{BDAE.STRUCTURAL_TRANSISTION}) = allocateAndCollectSimulationEquations(equations)
+  (resEqs::Vector{BDAE.RESIDUAL_EQUATION},
+   whenEqs::Vector{BDAE.WHEN_EQUATION},
+   ifEqs::Vector{BDAE.IF_EQUATION},
+   structuralTransistions::Vector{BDAE.Equation}) = allocateAndCollectSimulationEquations(equations)
+  #=  Convert the structural transistions to the simcode representation. =#
+  local simCodeStructuralTransistions = createSimCodeStructuralTransistions(structuralTransistions)
   #= Sorting/Matching for the set of residual equations (This is used for the start condtions) =#
   local eqVariableMapping = createEquationVariableBidirectionGraph(resEqs, allBackendVars, stringToSimVarHT)
   local numberOfVariablesInMapping = length(eqVariableMapping.keys)
@@ -108,10 +112,12 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
                           matchOrder,
                           digraph,
                           stronglyConnectedComponents,
-                          structuralTransistions,
+                          simCodeStructuralTransistions,
                           structuralSubModels,
                           sharedVariables,
-                          initialState)
+                          initialState,
+                          shared.metaModel
+                          )
 end
 
 """
@@ -152,6 +158,18 @@ function initialModeInference(equationSystem::BDAE.EQSYSTEM)
     end
   end
   return equationSystem.name
+end
+
+function createSimCodeStructuralTransistions(structuralTransistions::Vector{ST}) where {ST}
+  local transistions = StructuralTransistion[]
+  for st in structuralTransistions
+    sst = @match st begin
+      BDAE.STRUCTURAL_TRANSISTION(__) => SimulationCode.EXPLICIT_STRUCTURAL_TRANSISTION(st)
+      BDAE.STRUCTURAL_WHEN_EQUATION(__) => SimulationCode.IMPLICIT_STRUCTURAL_TRANSISTION(st)      
+    end
+    push!(transistions, sst)
+  end
+  return transistions
 end
 
 """
@@ -303,7 +321,16 @@ function allocateAndCollectSimulationEquations(equations::T)::Tuple where {T}
   local isWhen(eq) = typeof(eq) === BDAE.WHEN_EQUATION
   local isRe(eq) = typeof(eq) === BDAE.RESIDUAL_EQUATION
   local isStructuralTransistion(eq) = typeof(eq) === BDAE.STRUCTURAL_TRANSISTION
-  (filter(isRe, equations), filter(isWhen, equations), filter(isIf, equations), filter(isStructuralTransistion, equations))
+  local isStructuralWhenEquation(eq) = typeof(eq) === BDAE.STRUCTURAL_WHEN_EQUATION
+  local isStructuralWhenOrTransistion(eq) = begin
+    (isStructuralWhenEquation(eq) || isStructuralTransistion(eq))
+  end
+  #= Split the representation =#
+  regularEquations = filter(isRe, equations)
+  whenEquations = filter(isWhen, equations)
+  ifEquations = filter(isIf, equations)
+  structuralTransistions = filter(isStructuralWhenOrTransistion, equations)
+  return (regularEquations, whenEquations, ifEquations, structuralTransistions)
 end
 
 """

@@ -137,6 +137,7 @@ end
 struct SHARED
   globalKnownVars::Vector
   localKnownVars::Vector
+  metaModel::Option
 end
 
 """ THE LOWERED DAE consist of variables and equations. The variables are split into
@@ -445,6 +446,13 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
     source #= origin of equation =#::DAE.ElementSource
     attr::EquationAttributes
   end
+  #= Similar to a when equation but might trigger a structural change=#
+  @Record STRUCTURAL_WHEN_EQUATION begin
+    size #= size of equation =#::Integer
+    whenEquation::WhenEquation
+    source #= origin of equation =#::DAE.ElementSource
+    attr::EquationAttributes
+  end
 
   @Record COMPLEX_EQUATION begin
     size #= size of equation =#::Integer
@@ -525,6 +533,11 @@ end
     exp::DAE.Exp
     source #= the origin of the component/equation/algorithm =#::DAE.ElementSource
   end
+  #= I'd argue it only make sense for this construct to occur in when equations =#
+  @Record RECOMPILATION begin
+    componentToChange::DAE.CREF
+    newValue::DAE.Exp
+  end  
 end
 
 #= class of external objects =#

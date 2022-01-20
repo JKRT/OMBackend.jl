@@ -55,7 +55,7 @@ end
 function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
     #=If our model name is separated by . replace it with __ =#
   local MODEL_NAME = replace(simCode.name, "." => "__")
-  if length(simCode.subModels) < 1
+  if (isempty(simCode.structuralTransistions) && length(simCode.subModels) < 1)
     #= Generate using the standard name =#
     return ODE_MODE_MTK_PROGRAM_GENERATION(simCode, simCode.name)
   end
@@ -66,7 +66,13 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   local structuralModes = Expr[]
   for mode in simCode.subModels
     push!(structuralModes, ODE_MODE_MTK_MODEL_GENERATION(mode, mode.name))
-  end  
+  end
+  if isempty(simCode.subModels)
+    local modelName = simCode.name * "DEFAULT"
+    defaultModel = ODE_MODE_MTK_MODEL_GENERATION(simCode, modelName)
+    activeModelName = modelName
+    push!(structuralModes, defaultModel)
+  end
   local structuralCallbacks = createStructuralCallbacks(simCode, simCode.structuralTransistions)
   local structuralAssignments = createStructuralAssignments(simCode, simCode.structuralTransistions)
   #= Initialize array where the common variables are stored. That is variables all modes have =#
@@ -74,11 +80,13 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   #= END =#
   code = quote
     import OMBackend
+    using ModelingToolkit
+    using DifferentialEquations
     $(structuralModes...)
     $(structuralCallbacks...)
     function $(Symbol(MODEL_NAME * "Model"))(tspan = (0.0, 1.0))
       #=  Assign the initial model  =#
-      (subModel, initialValues, reducedSystem, _, pars, vars1) = $(Symbol(simCode.activeModel  * "Model"))(tspan)
+      (subModel, initialValues, reducedSystem, _, pars, vars1) = $(Symbol(activeModelName  * "Model"))(tspan)
       #= Assign the structural callbacks =#
       $(structuralAssignments)
       $(commonVariables)
@@ -97,7 +105,11 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
                        end
                      end),
       )
-      result = OMBackend.Runtime.OM_ProblemStructural($(activeModelName), compositeProblem, structuralCallbacks, commonVariables)
+      result = $(if simCode.metaModel == nothing
+                 :(OMBackend.Runtime.OM_ProblemStructural($(activeModelName), compositeProblem, structuralCallbacks, commonVariables))
+                 else
+                 :(OMBackend.Runtime.OM_ProblemRecompilation($(activeModelName), compositeProblem, structuralCallbacks))
+                 end)
       return result
     end
     function $(Symbol("$(MODEL_NAME)Simulate"))(tspan = (0.0, 1.0); solver=Rodas5())
@@ -109,7 +121,7 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
 end
 
 """
-  Generates a  MTK program with a model
+  Generates a MTK program with a model
 """
 function ODE_MODE_MTK_PROGRAM_GENERATION(simCode::SimulationCode.SIM_CODE, modelName)
   local MODEL_NAME = replace(modelName, "." => "__")
@@ -187,7 +199,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
   local PARAMETER_EQUATIONS = createParameterEquationsMTK(parameters, simCode)
   local PARAMETER_RAW_ARRAY = createParameterArray(parameters, simCode)
   #= Create callback equations. For MTK we disable the saving function for now. =#
-  local CALL_BACK_EQUATIONS = createCallbackCode(modelName, simCode; generateSaveFunction = true)
+  local CALL_BACK_EQUATIONS = createCallbackCode(modelName, simCode; generateSaveFunction = false)
   #= Symbolic names =#
   local stateVariablesSym = [:($(Symbol(v))(t)) for v in stateVariables]
   local algebraicVariablesSym = [:($(Symbol(v))(t)) for v in algebraicVariables]
@@ -273,7 +285,7 @@ function ODE_MODE_MTK_LOOP(simCode::SimulationCode.SIM_CODE)
   local PARAMETER_EQUATIONS = createParameterEquationsMTK(parameters, simCode)
   local PARAMETER_RAW_ARRAY = createParameterArray(parameters, simCode)
   #= Create callback equations. For MTK we disable the saving function for now. =#
-  local CALL_BACK_EQUATIONS = createCallbackCode(modelName, simCode; generateSaveFunction = true)
+  local CALL_BACK_EQUATIONS = createCallbackCode(modelName, simCode; generateSaveFunction = false)
   #= Symbolic names =#
   local stateVariablesSym = [:($(Symbol(v))(t)) for v in stateVariables]
   local algebraicVariablesSym = [:($(Symbol(v))(t)) for v in algebraicVariables]
