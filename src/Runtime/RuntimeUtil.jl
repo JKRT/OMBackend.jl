@@ -60,7 +60,9 @@ end
   Converts a symbol (of a MTK variable) to a string.
 """
 function convertSymbolToString(symbol::Symbol)
-  replace(String(symbol), "(t)" => "")
+  res = replace(String(symbol), "(t)" => "")
+  #= Remove prefixes in front of variables =#
+  return res
 end
 
 """
@@ -83,13 +85,18 @@ function createNewU0(symsOfOldProblem::Vector{Symbol},
                      initialValues,
                      integrator)
   local newU0 = Float64[last(initialValues[idx]) for idx in 1:length(symsOfNewProblem)]
-  local variableNames  = RuntimeUtil.convertSymbolsToStrings(symsOfOldProblem)
-  local oldKeys = keys(oldHT)
-  local newKeys = keys(newHT)
-  for varName in variableNames
-    if varName in oldKeys && varName in newKeys      
-      local idxOldVar = getIdxFromEntry(oldHT[varName])
-      local idxNewVar = getIdxFromEntry(newHT[varName])
+  local variableNamesOldProblem  = RuntimeUtil.convertSymbolsToStrings(symsOfOldProblem)
+  local variableNamesNewProblem  = RuntimeUtil.convertSymbolsToStrings(symsOfNewProblem)
+  local variableNamesWithoutPrefixes = [replace(k, r".*_" => "") for k in variableNamesOldProblem]
+  local oldKeys = [replace(k, r".*_" => "") for k in keys(oldHT)]
+  local newKeys = [replace(k, r".*_" => "") for k in keys(newHT)]
+  for i in 1:min(length(variableNamesOldProblem), length(variableNamesNewProblem))
+    local varNameWithoutPrefix = variableNamesWithoutPrefixes[i]
+    if varNameWithoutPrefix in oldKeys && varNameWithoutPrefix in newKeys
+      local varNameOld = variableNamesOldProblem[i]
+      local idxOldVar = getIdxFromEntry(oldHT[varNameOld])
+      local varNameNew = variableNamesNewProblem[i]
+      local idxNewVar = getIdxFromEntry(newHT[varNameNew])
       newU0[idxNewVar] = integrator.u[idxOldVar]
     end
   end
