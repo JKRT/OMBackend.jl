@@ -248,11 +248,20 @@ function writeModelToFile(modelName::String, filePath::String; keepComments = tr
     else
       modelStr
     end
-    CodeGeneration.writeDAE_equationsToFile(filePath, formattedModel,)
+    writeStringToFile(filePath, formattedModel)
   catch e
     @info "Failed writing $model to file: $fileName"
     @error e
   end
+end
+
+"""
+    Write the contents of a string to file.
+"""
+function writeStringToFile(fileName::String, contents::String)
+  local fdesc = open(fileName, "w")
+  write(fdesc, contents)
+  close(fdesc)
 end
 
 """
@@ -333,9 +342,10 @@ function simulateModel(modelName::String; MODE = MTK_MODE ,tspan=(0.0, 1.0))
 end
 
 """
-  Resimulates an already compiled model
+  Resimulates an already compiled model given a model that is already active in th environment
+  along with a set of parameters as key value pairs.
 """
-function resimulateModel(modelName::String; MODE = MTK_MODE ,tspan=(0.0, 1.0))
+function resimulateModel(modelName::String; MODE = MTK_MODE , tspan=(0.0, 1.0), parameters::Dict)
   #=
   Check if a compiled instance of the model already exists in the backend.
   If that is the case we do not have to recompile it.
