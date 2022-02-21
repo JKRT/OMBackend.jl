@@ -225,14 +225,21 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
         This means that certain algebraic variables should not be listed among the variables (These are the discrete variables).
       =#
       $(decomposeContinuousVariables(stateVariablesSym, algebraicVariablesSym))
+      componentVars = []
       for constructor in variableConstructors
-        eval(ModelingToolkit.Symbolics._parse_vars("CustomCall", Real, constructor()))
+        res = eval(ModelingToolkit.Symbolics._parse_vars("CustomCall", Real, constructor()))
+        #= t is no longer needed here =#
+        push!(componentVars, res[2:end])
       end
-      vars = ModelingToolkit.@variables begin
-        ($(stateVariablesSym...), $(algebraicVariablesSym...))
-      end
+      vars =  collect(Iterators.flatten(componentVars))
       der = Differential(t)
-      eqs = [$(equations...)]
+      equationComponents = []
+      $(decomposeEquations(equations))
+      for constructor in equationConstructors
+        push!(equationComponents, constructor())
+      end
+      eqs =  collect(Iterators.flatten(equationComponents))
+      #eqs = [$(equations...)]
       nonLinearSystem = ModelingToolkit.ODESystem(eqs, t, vars, parameters, name=:($(Symbol($modelName))))
       pars = Dict($(PARAMETER_EQUATIONS...), $(DISCRETE_START_VALUES...))
       #= Initial values for the continious system. =#
@@ -625,24 +632,91 @@ end
 function decomposeContinuousVariables(stateVariables, algebraicVariables)
   local nStateVars = length(stateVariables)
   local nAlgVars = length(algebraicVariables)
-  if nStateVars < 50 &&  nAlgVars < 50
+  if  1 < nStateVars < 50 &&  1 < nAlgVars < 50
     expr = quote 
       function generateStateVariables()
-        $(Tuple(stateVariables))
+        $(Tuple([:t, stateVariables...]))
       end
       function generateAlgebraicVariables()
         $(Tuple(algebraicVariables))
       end
       variableConstructors = Function[generateStateVariables, generateAlgebraicVariables]
     end
-    return expr
+  elseif (1 < nStateVars < 50)
+    expr = quote
+      function generateStateVariables()
+        $(Tuple([:t, stateVariables...]))
+      end
+      variableConstructors = Function[generateStateVariables]
+    end
+  else    
+    #= Split the array in chunks of 50  for the state and algebraic variables=#
+    local stateVectors = collect(Iterators.partition(stateVariables, 50))
+    local algVectors = collect(Iterators.partition(algebraicVariables, 50))
+    #= For each vector in stateVectors create a constructor for the variables =#
+    local i = 1::Int
+    local exprs = Expr[]
+    constructors = quote
+      variableConstructors = Function[]
+    end
+    push!(exprs, constructors)
+    for stateVector in stateVectors
+      stateConstructorExpr = quote
+        function $(Symbol("generateStateVariables" * string(i)))()
+          $(Tuple([:t, stateVector...]))
+        end
+        push!(variableConstructors, $(Symbol("generateStateVariables" * string(i))))
+      end
+      push!(exprs, stateConstructorExpr)
+      i += 1
+    end
+    local i = 1
+    #= decompose the algebraic variables if needed =#
+    for algVector in algVectors
+      algConstructorExpr = quote
+        function $(Symbol("generateAlgebraicVariables" * string(i)))()
+          $(Tuple([:t, stateVector...]))
+        end
+        push!(variableConstructors, $(Symbol("generateAlgebraicVariables" * string(i))))
+      end
+      push!(exprs, algConstructorExpr)
+      i += 1
+    end
+    #= Generate the composite expression =#
+    expr = quote
+      $(exprs...)
+    end
   end
-  throw("Systems with more than 50 variables are not supported!")
-  #= Split the array in chunks of 50  for the state and algebraic variables=#
-  local stateVectors = collect(Iterators.partition(stateVariables, 50))
-  local algVectors = collect(Iterators.partition(algebraicVariables, 50))
-  #= For each vector in stateVectors create a constructor for the variables =#
-  
+  return expr
+end
+
+"""
+  Similar to decompose variables, however, decomposes the set of equations instead.
+  This function is suppose to be called after decompose variables.
+"""
+function decomposeEquations(equations)
+  local nStateVars = length(equations)
+  local equationVectors = collect(Iterators.partition(equations, 50))
+  local exprs = Expr[]
+  local constructors = quote
+    equationConstructors = Function[]
+  end
+  push!(exprs, constructors)
+  local i = 0
+  for equationVector in equationVectors
+    equationConstructorExpr = quote
+      function $(Symbol("generateEquations" * string(i)))()
+        [$(equationVector...)]
+      end
+      push!(equationConstructors, $(Symbol("generateEquations" * string(i))))
+    end
+    push!(exprs, equationConstructorExpr)
+    i += 1
+  end
+  expr = quote
+    $(exprs...)
+  end
+  return expr
 end
 
 function createVariableViaConstructor(constructor)
