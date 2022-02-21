@@ -221,9 +221,13 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
         ($(parVariablesSym...), $(discreteVariablesSym...))
       end
       #=
-      Only variables that are present in the equation system later should be a part of the variables in the MTK system.
-      This means that certain algebraic variables should not be listed among the variables (These are the discrete variables).
+        Only variables that are present in the equation system later should be a part of the variables in the MTK system.
+        This means that certain algebraic variables should not be listed among the variables (These are the discrete variables).
       =#
+      $(decomposeContinuousVariables(stateVariablesSym, algebraicVariablesSym))
+      for constructor in variableConstructors
+        eval(ModelingToolkit.Symbolics._parse_vars("CustomCall", Real, constructor()))
+      end
       vars = ModelingToolkit.@variables begin
         ($(stateVariablesSym...), $(algebraicVariablesSym...))
       end
@@ -611,4 +615,36 @@ function generateCastExpressionMTK(ty, exp, simCode, varPrefix)
     end
     _ => throw("Cast $ty: for exp: $exp not yet supported in codegen!")
   end
+end
+
+"""
+ This function decomposes the continuous variables. 
+ This means that if the set of variables are greater than 50 a new inner function is generated as to not 
+ impact the JIT of the system to much.
+"""
+function decomposeContinuousVariables(stateVariables, algebraicVariables)
+  local nStateVars = length(stateVariables)
+  local nAlgVars = length(algebraicVariables)
+  if nStateVars < 50 &&  nAlgVars < 50
+    expr = quote 
+      function generateStateVariables()
+        $(Tuple(stateVariables))
+      end
+      function generateAlgebraicVariables()
+        $(Tuple(algebraicVariables))
+      end
+      variableConstructors = Function[generateStateVariables, generateAlgebraicVariables]
+    end
+    return expr
+  end
+  throw("Systems with more than 50 variables are not supported!")
+  #= Split the array in chunks of 50  for the state and algebraic variables=#
+  local stateVectors = collect(Iterators.partition(stateVariables, 50))
+  local algVectors = collect(Iterators.partition(algebraicVariables, 50))
+  #= For each vector in stateVectors create a constructor for the variables =#
+  
+end
+
+function createVariableViaConstructor(constructor)
+  eval(ModelingToolkit.Symbolics._parse_vars("CustomCall", Real, constructor()))
 end
