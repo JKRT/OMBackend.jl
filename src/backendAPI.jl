@@ -345,7 +345,7 @@ end
   Resimulates an already compiled model given a model that is already active in th environment
   along with a set of parameters as key value pairs.
 """
-function resimulateModel(modelName::String; MODE = MTK_MODE , tspan=(0.0, 1.0), parameters::Dict)
+function resimulateModel(modelName::String; MODE = MTK_MODE , tspan=(0.0, 1.0), parameters::Dict = Dict())
   #=
   Check if a compiled instance of the model already exists in the backend.
   If that is the case we do not have to recompile it.
