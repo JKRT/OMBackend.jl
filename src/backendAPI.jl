@@ -306,7 +306,7 @@ end
 `simulateModel(modelName::String; MODE = DAE_MODE ,tspan=(0.0, 1.0))`
   Simulates model interactivly.
 """
-function simulateModel(modelName::String; MODE = MTK_MODE ,tspan=(0.0, 1.0))
+function simulateModel(modelName::String; MODE = MTK_MODE ,tspan=(0.0, 1.0), solver = Rodas5())
   #= Strings containing . need to be in a format suitable for Julia =#
   modelName = replace(modelName, "." => "__")
   local modelCode::Expr  
@@ -323,7 +323,7 @@ function simulateModel(modelName::String; MODE = MTK_MODE ,tspan=(0.0, 1.0))
       @eval $(:(import OMBackend))
       strippedModel = CodeGeneration.stripBeginBlocks(modelCode)
       @eval $strippedModel
-      local modelRunnable = Meta.parse("OMBackend.$(modelName)Simulate($(tspan))")
+      local modelRunnable = Meta.parse("OMBackend.$(modelName)Simulate($(tspan); solver = $(solver))")
       #= Run the model with the supplied tspan. =#
       @eval Main $modelRunnable
       #=
