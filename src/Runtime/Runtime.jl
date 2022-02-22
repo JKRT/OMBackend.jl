@@ -221,7 +221,8 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
     for cb in structuralCallbacks
       if cb.structureChanged
         #= Recompile the system =#
-        (newProblem, newSymbolTable, initialValues) = recompilation(cb.name, cb, integrator.u, tspan)
+        println("Recompiling the model due to the structural change")
+        @time (newProblem, newSymbolTable, initialValues) = recompilation(cb.name, cb, integrator.u, tspan)
         #= End recompilation =#
         #= Assuming the indices are the same (Which is not neccesary true) =#
         local symsOfOldProblem = getSyms(problem)

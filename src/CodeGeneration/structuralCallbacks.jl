@@ -58,8 +58,8 @@ function createStructuralCallback(simCode, simCodeStructuralTransistion::Simulat
       function affect!(integrator)
         structuralChange.structureChanged = true
       end
-      function condition(u, t, integrator)
-        return $(expToJuliaExpMTK(cond, simCode))
+      function condition(x, t, integrator)
+        return $(expToJuliaExp(cond, simCode))
       end    
       local cb = ContinuousCallback(condition, affect!)
       return (cb, structuralChange)
@@ -109,8 +109,9 @@ function createStructuralCallback(simCode, simCodeStructuralTransistion::Simulat
         #= Change the struct to mark that a structural change have occured=#
         structuralChange.structureChanged = true
       end
-      function condition(u, t, integrator)
-        return $(expToJuliaExpMTK(zeroCrossingCond, simCode))
+      function condition(x, t, integrator)
+        str = $callbackName
+        return $(expToJuliaExp(zeroCrossingCond, simCode))
       end    
       local cb = ContinuousCallback(condition, affect!)
       return (cb, structuralChange)

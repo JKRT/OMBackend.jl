@@ -591,30 +591,27 @@ function expToJuliaExpMTK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuf
         end
       end
       DAE.BINARY(exp1 = e1, operator = op, exp2 = e2) => begin
-        a = expToJuliaExpMTK(e1, simCode, varPrefix=varPrefix, derSymbol = derSymbol)
-        b = expToJuliaExpMTK(e2, simCode, varPrefix=varPrefix, derSymbol = derSymbol)
-        o = DAE_OP_toJuliaOperator(op)
-        :($o($(a), $(b)))
+        local lhs = expToJuliaExpMTK(e1, simCode, varPrefix=varPrefix, derSymbol = derSymbol)
+        local rhs = expToJuliaExpMTK(e2, simCode, varPrefix=varPrefix, derSymbol = derSymbol)
+        local op = DAE_OP_toJuliaOperator(op)
+        :($op($(lhs), $(rhs)))
       end
       DAE.LUNARY(operator = op, exp = e1)  => begin
-        quote
-          $("(" + SimulationCode.string(op) + " " + expToJuliaExpMTK(e1, simCode, varPrefix=varPrefix, derSymbol = derSymbol) + ")")
-        end
+        local operand = expToJuliaExpMTK(e1, simCode, varPrefix=varPrefix, derSymbol = derSymbol)
+        local op = DAE_OP_toJuliaOperator(op)
+        :($op($(op)))
       end
       DAE.LBINARY(exp1 = e1, operator = op, exp2 = e2) => begin
-        quote 
-          $(expToJuliaExpMTK(e1, simCode, varPrefix=varPrefix, derSymbol = derSymbol) + " " + SimulationCode.string(op) + " "
-            + expToJuliaExpMTK(e2, simCode, varPrefix=varPrefix, derSymbol = derSymbol))
-        end
+        local lhs = expToJuliaExpMTK(e1, simCode, varPrefix=varPrefix, derSymbol = derSymbol)
+        local rhs = expToJuliaExpMTK(e2, simCode, varPrefix=varPrefix, derSymbol = derSymbol)
+        local op = DAE_OP_toJuliaOperator(op)
+        :($op($(lhs), $(rhs)))
       end
       DAE.RELATION(exp1 = e1, operator = op, exp2 = e2) => begin
-        quote 
-          $(expToJuliaExpMTK(e1, simCode, varPrefix=varPrefix,derSymbol = derSymbol)
-            + " "
-            + SimulationCode.string(op)
-            + " "
-            + expToJuliaExpMTK(e2, simCode,varPrefix=varPrefix, derSymbol=derSymbol))
-        end
+        local lhs = expToJuliaExpMTK(e1, simCode, varPrefix=varPrefix,derSymbol = derSymbol)
+        local rhs = expToJuliaExpMTK(e2, simCode,varPrefix=varPrefix, derSymbol = derSymbol)
+        local op = DAE_OP_toJuliaOperator(op)
+        :($op($(lhs), $(rhs)))
       end
       DAE.IFEXP(expCond = e1, expThen = e2, expElse = e3) => begin
         throw(ErrorException("If expressions not allowed in backend code"))
