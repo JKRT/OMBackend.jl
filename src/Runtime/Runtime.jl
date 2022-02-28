@@ -9,6 +9,7 @@ import SCode
 import OMBackend
 import OMFrontend
 import ..CodeGeneration
+import DAE
 
 using DataStructures
 using ModelingToolkit
@@ -84,14 +85,15 @@ mutable struct OM_ProblemStructural{T0 <: String, T1, T2, T3}
   commonVariables::T3
 end
 
-mutable struct OM_ProblemRecompilation{T0 <: String, T1, T2}
+mutable struct OM_ProblemRecompilation{T0 <: String, T1, T2, T3}
   "The name of the active mode"
   activeModeName::T0
   "The problem we are currently solving"
   problem::T1
   "The set of structural callbacks"
   structuralCallbacks::T2
-  ""
+  "The set of callback conditons"
+  callbackConditions::T3
 end
 
 mutable struct OM_Problem{T0, T1}
@@ -209,6 +211,7 @@ end
 function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
   local problem = omProblem.problem
   local structuralCallbacks = omProblem.structuralCallbacks
+  local callbackConditions = omProblem.callbackConditions
   local activeModeName = omProblem.activeModeName
   integrator = init(problem, alg, dtmax = 0.01, kwargs...)
   local oldSols = []
@@ -217,11 +220,13 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
   @label START_OF_INTEGRATION
   for i in integrator
     #= Check structural callbacks in order =#
+    @info "Integration step:" i.t
     retCode = check_error(integrator)
     for cb in structuralCallbacks
-      if cb.structureChanged
+      if cb.structureChanged && i.t < tspan[2]
+        @info "Recompilation"
         #= Recompile the system =#
-        (newProblem, newSymbolTable, initialValues) = recompilation(cb.name, cb, integrator.u, tspan)
+        (newProblem, newSymbolTable, initialValues) = recompilation(cb.name, cb, integrator.u, tspan, callbackConditions)
         #= End recompilation =#
         #= Assuming the indices are the same (Which is not neccesary true) =#
         local symsOfOldProblem = getSyms(problem)
@@ -235,30 +240,38 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
         #= Save the old solution together with the name and the mode that was active =#
         push!(solutions, integrator.sol)
         push!(oldSols, (integrator.sol, getSyms(problem), activeModeName))
+        @info "Old solution is saved"
         #= Now we have the start values for the next part of the system=#
         integrator = init(newProblem,
                           alg;
                           t0 = i.t,
                           u0 = newU0,
                           tstop = tspan[2],
-                          dt = 0.01,
+                          dt = 0.001,
                           dtmax = 0.01,
                           kwargs...)
+        @info "We have constructed a new integrator"
         #=
-        Reset with the new values of u0
-        and set the active moed to the mode we are currently using.
-       =#
+          Reset with the new values of u0
+          and set the active moed to the mode we are currently using.
+        =#
+        cb.structureChanged = false
         add_tstop!(integrator, tspan[2])
         activeModeName = cb.name
-        reinit!(integrator, newU0; t0 = i.t, reset_dt = true)
-        cb.structureChanged = false
+        reinit!(integrator, newU0; t0 = i.t)
         #= Point the problem to the new problem =#
         problem = newProblem
+        #= Take one integration step, s.t the zero crossing function is not triggered directly =#
+        step!(integrator)
+        retCode = check_error(integrator)
+        @info retCode
+        @info i.t
         #= goto to save preformance =#
         @goto START_OF_INTEGRATION
       end
     end
   end
+  @label END_OF_INTEGRATION
   push!(solutions, integrator.sol)
   return solutions
 end
@@ -267,7 +280,7 @@ end
   Recompile the metamodel with some component changed.
   Returns a tuple of a new problem together with a new symbol table.
 """
-function recompilation(activeModeName, structuralCallback, u, tspan)::Tuple
+function recompilation(activeModeName, structuralCallback, u, tspan, callbackConditions)::Tuple
   #=  Recompilation =#
   #= Have the SCode =#        
   #= - 1) Fetch the parameter from the structural callback =#
@@ -276,7 +289,7 @@ function recompilation(activeModeName, structuralCallback, u, tspan)::Tuple
   local inProgram = MetaModelica.list(metaModel)
   local elementToChange = first(modification)
   local newValue = last(modification)
-  #= - 2) Change the parameters in the SCode via API =#
+  #= - 2) Change the parameters in the SCode via API (As specified by the modification)=#
   #=  2.1 Change the parameter so that it is the same as the modifcation. =#
   newProgram = MetaModelica.list(RuntimeUtil.setElementInSCodeProgram!(elementToChange, newValue, metaModel))
   local classToInstantiate = activeModeName
@@ -287,14 +300,26 @@ function recompilation(activeModeName, structuralCallback, u, tspan)::Tuple
   local simulationCode = OMBackend.generateSimulationCode(bdae; mode = OMBackend.MTK_MODE)
   local resultingModel = OMBackend.CodeGeneration.ODE_MODE_MTK_MODEL_GENERATION(simulationCode,
                                                                                 classToInstantiate)
+  #= 4.0 Revaulate the model=#
   local modelName = replace(activeModeName, "." => "__") * "Model"
   @eval $(resultingModel)
   modelCall = quote
     $(Symbol(modelName))($(tspan))
   end
   (problem, initialValues, reducedSystem, tspan, pars, vars) = @eval $(modelCall)
+  #= Reconstruct the composite problem to keep the callbacks =#
+  compositeProblem = ModelingToolkit.ODEProblem(
+    reducedSystem,
+    initialValues,
+    tspan,
+    pars,
+    #= 
+      TODO currently only handles a single structural callback.
+    =#
+    callback = callbackConditions
+  )
   #= - 4) Assign this system to newSystem. =#
-  return (problem, simulationCode.stringToSimVarHT, initialValues)
+  return (compositeProblem, simulationCode.stringToSimVarHT, initialValues)
 end
 
 
@@ -314,7 +339,7 @@ function solve(omProblem::OM_Problem, tspan, alg; kwargs...)
 end
 
 """
-  Fetches the symbolic variables from a problem.
+    Fetches the symbolic variables from a problem.
 """
 function getSyms(problem::ODEProblem)
   return problem.f.syms

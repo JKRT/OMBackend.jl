@@ -105,6 +105,9 @@ function transformToZeroCrossingCondition(conditonalExpression::DAE.Exp)
   return res
 end
 
+
+
+
 """
   Flattens a vector of expressions.
 """

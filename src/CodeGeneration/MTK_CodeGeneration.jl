@@ -31,7 +31,7 @@
 
 #=
   Author: John Tinnerholm
-  TODO: Remember the state derivative scheme. What the  did I mean with that?
+  TODO: Remember the state derivative scheme. What did I mean with that?
   TODO: Make duplicate code better...
   TODO: Investigate the once again broken if equations
 =#
@@ -59,7 +59,7 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
     #= Generate using the standard name =#
     return ODE_MODE_MTK_PROGRAM_GENERATION(simCode, simCode.name)
   end
-  #= Handle structural submodels =#  
+  #= Handle structural submodels =#
   #= TODO: Extract the active model =#
   local activeModelSimCode = getActiveModel(simCode)
   local activeModelName = simCode.activeModel
@@ -79,11 +79,19 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   local commonVariables = createCommonVariables(simCode.sharedVariables)
   #= END =#
   code = quote
+    import DAE
+    import DataStructures.OrderedCollections
+    import SCode
     import OMBackend
     using ModelingToolkit
+    using OrdinaryDiffEq
     using DifferentialEquations
     $(structuralModes...)
     $(structuralCallbacks...)
+    #=
+      This function can be used to fetch the top level callbacks that is the collected callbacks of the model.
+      Each callback is coupled to each when with recompilation expression.
+    =#
     function $(Symbol(MODEL_NAME * "Model"))(tspan = (0.0, 1.0))
       #=  Assign the initial model  =#
       (subModel, initialValues, reducedSystem, _, pars, vars1) = $(Symbol(activeModelName  * "Model"))(tspan)
@@ -91,24 +99,31 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
       $(structuralAssignments)
       $(commonVariables)
       #= END =#
+      callbackConditions = $(if isempty(structuralCallbacks)
+                               :(CallbackSet())
+                             elseif length(structuralCallbacks) == 1
+                               :(CallbackSet(first(callbackSet)))
+                             else
+                               :(CallbackSet(Tuple(callbackSet), ())) #TODO: I think this only applies to continious callbacks.
+                             end)
       #= Create the composite model =#
       compositeProblem = ModelingToolkit.ODEProblem(
         reducedSystem,
         initialValues,
         tspan,
         pars,
-        callback = $(if isempty(structuralCallbacks)
-                       :(CallbackSet())
-                     else
-                       quote
-                         CallbackSet(Tuple(callbackSet), ())
-                       end
-                     end),
+        callback = callbackConditions,
       )
       result = $(if simCode.metaModel == nothing
-                 :(OMBackend.Runtime.OM_ProblemStructural($(activeModelName), compositeProblem, structuralCallbacks, commonVariables))
+                 :(OMBackend.Runtime.OM_ProblemStructural($(activeModelName),
+                                                          compositeProblem,
+                                                          structuralCallbacks,
+                                                          commonVariables))
                  else
-                 :(OMBackend.Runtime.OM_ProblemRecompilation($(activeModelName), compositeProblem, structuralCallbacks))
+                 :(OMBackend.Runtime.OM_ProblemRecompilation($(activeModelName),
+                                                             compositeProblem,
+                                                             structuralCallbacks,
+                                                             callbackConditions))
                  end)
       return result
     end
@@ -129,6 +144,7 @@ function ODE_MODE_MTK_PROGRAM_GENERATION(simCode::SimulationCode.SIM_CODE, model
   program = quote
     using ModelingToolkit
     using DifferentialEquations
+    using OrdinaryDiffEq
     $(model)
     ($(Symbol("$(MODEL_NAME)Model_problem")), _, _, _, _,_) = $(Symbol("$(MODEL_NAME)Model"))()
     function $(Symbol("$(MODEL_NAME)Simulate"))(tspan)
@@ -276,7 +292,7 @@ end
 
 """
  This generates code targetting modeling toolkit (but separates algebraic loops from the rest of the system).
- Discrete variables are treated as parameters 
+ Discrete variables are treated as parameters
 """
 function ODE_MODE_MTK_LOOP(simCode::SimulationCode.SIM_CODE)
   @debug "Runnning: generateMTKCode"
@@ -286,16 +302,16 @@ function ODE_MODE_MTK_LOOP(simCode::SimulationCode.SIM_CODE)
   local exp::DAE.Exp
   local modelName::String = simCode.name
   (stateVariables, algebraicVariables, stateVariablesLoop, algebraicVariablesLoop) = separateVariables(simCode)
-  #= 
-    We have a cycle! 
+  #=
+    We have a cycle!
   =#
   loop = getCycleInSCCs(simCode.stronglyConnectedComponents)
-  (stateVariables, algebraicVariables, stateVariablesLoop, algebraicVariablesLoop) = 
+  (stateVariables, algebraicVariables, stateVariablesLoop, algebraicVariablesLoop) =
   local allVariables = vcat(stateVariables, algebraicVariables, stateVariablesLoop, algebraicVariablesLoop)
   #= Create equations for variables not in a loop + parameters and stuff=#
   local equations = createSortedEquations(stateVariables,
                                           simCode; arrayName = "u")
-  local parVariablesSym = [Symbol(p) for p in parameters]  
+  local parVariablesSym = [Symbol(p) for p in parameters]
   local START_CONDTIONS_EQUATIONS = getStartConditions(allVariables, "reals", simCode)
   local DISCRETE_START_VALUES = getStartConditionsMTK(discreteVariables, simCode)
   local PARAMETER_EQUATIONS = createParameterEquationsMTK(parameters, simCode)
@@ -321,9 +337,9 @@ function ODE_MODE_MTK_LOOP(simCode::SimulationCode.SIM_CODE)
   local algebraicVariablesSymLoop = [:($(Symbol(v))) for v in algebraicVariablesLoop]
   local stateVariablesSymLoop = [:($(Symbol(v))) for v in stateVariablesLoop]
   local START_CONDTIONS_EQUATIONS_LOOP = createStartConditionsEquationsMTK(stateVariablesLoop, algebraicVariablesLoop, simCode)
-  #= 
+  #=
   Formulate the problem as a DAE Problem.ac
-  For this variant we keep t on its own line 
+  For this variant we keep t on its own line
   https://github.com/SciML/ModelingToolkit.jl/issues/998
   =#
   program = quote
@@ -368,17 +384,17 @@ function ODE_MODE_MTK_LOOP(simCode::SimulationCode.SIM_CODE)
       odeF = $(Symbol("$(modelName)Model_ODE"))
       ODEProblem(odeF, x, tspan, aux)
     end
-    
+
     $(CALL_BACK_EQUATIONS)
     $(Symbol("$(modelName)Model_problemInstance")) = $(Symbol("$(modelName)Model_problem"))((0.0,1.))
-    function $(Symbol("$(modelName)Simulate"))(tspan)     
+    function $(Symbol("$(modelName)Simulate"))(tspan)
       solve($(Symbol("$(modelName)Model_problemInstance")), tspan=tspan)
     end
     function $(Symbol("$(modelName)Simulate"))(tspan = (0.0, 1.0); solver=Tsit5())
       solve($(Symbol("$(modelName)Model_problemInstance")), tspan=tspan, solver)
     end
   end
-  
+
   return (modelName, program)
 
 end
@@ -630,15 +646,15 @@ function generateCastExpressionMTK(ty, exp, simCode, varPrefix)
 end
 
 """
- This function decomposes the continuous variables. 
- This means that if the set of variables are greater than 50 a new inner function is generated as to not 
+ This function decomposes the continuous variables.
+ This means that if the set of variables are greater than 50 a new inner function is generated as to not
  impact the JIT of the system to much.
 """
 function decomposeVariables(stateVariables, algebraicVariables)
   local nStateVars = length(stateVariables)
   local nAlgVars = length(algebraicVariables)
   if  1 < nStateVars < 50 &&  1 < nAlgVars < 50
-    expr = quote 
+    expr = quote
       function generateStateVariables()
         $(Tuple([:t, stateVariables...]))
       end
@@ -654,7 +670,7 @@ function decomposeVariables(stateVariables, algebraicVariables)
       end
       variableConstructors = Function[generateStateVariables]
     end
-  else    
+  else
     #= Split the array in chunks of 50  for the state and algebraic variables=#
     local stateVectors = collect(Iterators.partition(stateVariables, 50))
     local algVectors = collect(Iterators.partition(algebraicVariables, 50))
