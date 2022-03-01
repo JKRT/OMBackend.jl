@@ -655,3 +655,18 @@ end
 function involvedInEvent(idx, simCode)
   return false
 end
+
+
+"""
+  This functions evaluate a single DAE-constant:{Bool, Integer, Real, String}.
+  If the argument  to this function is not a constant it throws an error.
+"""
+function evalDAEConstant(daeConstant::DAE.Exp)
+  @match daeConstant begin
+    DAE.BCONST(bool) => bool
+    DAE.ICONST(int) => int
+    DAE.RCONST(real) => real
+    DAE.SCONST(tmpStr) => tmpStr
+    _ => throw("$(daeConstant) is not a constant")
+  end
+end

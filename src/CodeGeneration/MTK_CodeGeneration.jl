@@ -68,7 +68,7 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
     push!(structuralModes, ODE_MODE_MTK_MODEL_GENERATION(mode, mode.name))
   end
   if isempty(simCode.subModels)
-    local modelName = simCode.name * "DEFAULT"
+    local modelName = MODEL_NAME * "DEFAULT"
     defaultModel = ODE_MODE_MTK_MODEL_GENERATION(simCode, modelName)
     activeModelName = modelName
     push!(structuralModes, defaultModel)
@@ -84,7 +84,6 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
     import SCode
     import OMBackend
     using ModelingToolkit
-    using OrdinaryDiffEq
     using DifferentialEquations
     $(structuralModes...)
     $(structuralCallbacks...)
@@ -144,7 +143,6 @@ function ODE_MODE_MTK_PROGRAM_GENERATION(simCode::SimulationCode.SIM_CODE, model
   program = quote
     using ModelingToolkit
     using DifferentialEquations
-    using OrdinaryDiffEq
     $(model)
     ($(Symbol("$(MODEL_NAME)Model_problem")), _, _, _, _,_) = $(Symbol("$(MODEL_NAME)Model"))()
     function $(Symbol("$(MODEL_NAME)Simulate"))(tspan)

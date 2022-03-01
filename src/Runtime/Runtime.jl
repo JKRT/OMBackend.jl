@@ -7,8 +7,9 @@ import .RuntimeUtil
 import Absyn
 import SCode
 import OMBackend
+import OMBackend.SimulationCode
+import OMBackend.CodeGeneration
 import OMFrontend
-import ..CodeGeneration
 import DAE
 
 using DataStructures
@@ -58,7 +59,7 @@ end
 """
   Wrapper callback for structural change that triggers a recompilation.  
 """
-mutable struct StructuralChangeRecompilation{MOD} <: AbstractStructuralChange
+mutable struct StructuralChangeRecompilation{MOD <: Tuple} <: AbstractStructuralChange
   "The name of the next mode"
   name::String
   "Indicates if the structure has changed"
@@ -213,20 +214,19 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
   local structuralCallbacks = omProblem.structuralCallbacks
   local callbackConditions = omProblem.callbackConditions
   local activeModeName = omProblem.activeModeName
-  integrator = init(problem, alg, dtmax = 0.01, kwargs...)
+  integrator = init(problem, alg, dtmax = 1, kwargs...)
   local oldSols = []
   local solutions = []
   #= Run the integrator=#
   @label START_OF_INTEGRATION
   for i in integrator
     #= Check structural callbacks in order =#
-    @info "Integration step:" i.t
     retCode = check_error(integrator)
     for cb in structuralCallbacks
       if cb.structureChanged && i.t < tspan[2]
-        @info "Recompilation"
         #= Recompile the system =#
-        (newProblem, newSymbolTable, initialValues) = recompilation(cb.name, cb, integrator.u, tspan, callbackConditions)
+        println("Time of recompilation")
+        @time (newProblem, newSymbolTable, initialValues) = recompilation(cb.name, cb, integrator.u, tspan, callbackConditions)
         #= End recompilation =#
         #= Assuming the indices are the same (Which is not neccesary true) =#
         local symsOfOldProblem = getSyms(problem)
@@ -240,7 +240,6 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
         #= Save the old solution together with the name and the mode that was active =#
         push!(solutions, integrator.sol)
         push!(oldSols, (integrator.sol, getSyms(problem), activeModeName))
-        @info "Old solution is saved"
         #= Now we have the start values for the next part of the system=#
         integrator = init(newProblem,
                           alg;
@@ -248,9 +247,8 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
                           u0 = newU0,
                           tstop = tspan[2],
                           dt = 0.001,
-                          dtmax = 0.01,
+                          dtmax = 1,
                           kwargs...)
-        @info "We have constructed a new integrator"
         #=
           Reset with the new values of u0
           and set the active moed to the mode we are currently using.
@@ -264,8 +262,6 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
         #= Take one integration step, s.t the zero crossing function is not triggered directly =#
         step!(integrator)
         retCode = check_error(integrator)
-        @info retCode
-        @info i.t
         #= goto to save preformance =#
         @goto START_OF_INTEGRATION
       end
@@ -288,7 +284,13 @@ function recompilation(activeModeName, structuralCallback, u, tspan, callbackCon
   local modification = structuralCallback.modification
   local inProgram = MetaModelica.list(metaModel)
   local elementToChange = first(modification)
-  local newValue = last(modification)
+  #= Get the symbol table, using this we  evaluate the new value based on the value of some parameter.=#
+  local newValueExpr = Meta.parse(last(modification))
+  newValueExpr = quote
+    stringToSimVarHT = $(structuralCallback.stringToSimVarHT)
+    $(newValueExpr)
+  end
+  local newValue = eval(newValueExpr)
   #= - 2) Change the parameters in the SCode via API (As specified by the modification)=#
   #=  2.1 Change the parameter so that it is the same as the modifcation. =#
   newProgram = MetaModelica.list(RuntimeUtil.setElementInSCodeProgram!(elementToChange, newValue, metaModel))
@@ -318,7 +320,11 @@ function recompilation(activeModeName, structuralCallback, u, tspan, callbackCon
     =#
     callback = callbackConditions
   )
-  #= - 4) Assign this system to newSystem. =#
+  #= 4.1 Update the structural callback with the new situation =#
+  @match SOME(newMetaModel) = simulationCode.metaModel
+  structuralCallback.metaModel = newMetaModel
+  structuralCallback.stringToSimVarHT = simulationCode.stringToSimVarHT
+  #= 4.x) Assign this system to newSystem. =#
   return (compositeProblem, simulationCode.stringToSimVarHT, initialValues)
 end
 

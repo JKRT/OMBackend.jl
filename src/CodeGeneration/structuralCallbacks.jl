@@ -80,6 +80,7 @@ function createStructuralCallback(simCode, simCodeStructuralTransistion::Simulat
   local whenCondition = structuralTransistion.whenEquation.condition
   local zeroCrossingCond = transformToZeroCrossingCondition(whenCondition)
   local stmtLst = structuralTransistion.whenEquation.whenStmtLst
+  local stringToSimVarHT = simCode.stringToSimVarHT
   (whenOperators, recompilationDirective) = createStructuralWhenStatements(stmtLst, simCode)  
   local affect::Expr = quote
     function affect!(integrator)
@@ -113,30 +114,45 @@ function createStructuralCallback(simCode, simCodeStructuralTransistion::Simulat
     For now assume that we only change some parameter.
   =#
   local componentToModify = string(recompilationDirective.componentToChange)
-  local newValue = if typeof(recompilationDirective.newValue) === DAE.CREF
+  local newValue::Expr = if typeof(recompilationDirective.newValue) === DAE.CREF
     #= The type we are modifying is either a parameter or a constant =#
     local variableSpec = last(simCode.stringToSimVarHT[string(recompilationDirective.newValue)])
     @match SimulationCode.SIMVAR(name, index, SimulationCode.PARAMETER(SOME(bindExp)), _) =  variableSpec
     #= Above might throw. In that case it is an error.=#
     expToJuliaExpMTK(bindExp, simCode)
   else
-    expToJuliaExpMTK(recompilationDirective.newValue, simCode)
+    newValue = expToJuliaExpMTK(recompilationDirective.newValue, simCode)
+    #= Get the component we are currently modifying =#
+    evalExpr = quote
+        variableSpec = last(stringToSimVarHT[$(componentToModify)])
+        @match SimulationCode.SIMVAR(name, index, SimulationCode.PARAMETER(SOME(bindExp)), _) =  variableSpec
+        parameterVal = OMBackend.CodeGeneration.evalDAEConstant(bindExp)
+        $(Symbol(componentToModify)) = parameterVal
+        $(newValue)
+      end
+    #expToJuliaExpMTK(evalExpr, simCode)
+    evalExpr
   end
   modification = quote
-    ($(componentToModify), $(newValue))
-  end
+    ($(componentToModify), $("$(newValue)"))
+     end
   @match SOME(metaModel) = simCode.metaModel
   structuralCallback = quote
     function $(Symbol(callbackName))()
       #= The recompilation directive. =#
-      local modification = $(modification)
+      stringToSimVarHT = $(simCode.stringToSimVarHT)
+      #=
+      We quote the modifcation.
+      This is to evaluate it in the correct context later when recompiling.
+      =#
+      local modification::Tuple{String, String} = $(modification)
       #= Represent structural change. =#
       #=NOTE: For the implicit callbacks the model is assumed to be the same=#
       local structuralChange = OMBackend.Runtime.StructuralChangeRecompilation($(simCode.name),
                                                                                false,
                                                                                $(metaModel),
                                                                                modification,
-                                                                               $(simCode.stringToSimVarHT))
+                                                                               stringToSimVarHT)
       #= TODO, here we need to change the code generation to encompass other types of callbacks not relying on zero crossing functions...=#
       #= The affect simply activates the structural callback informing us to generate code for a new system =#
       $(callback)

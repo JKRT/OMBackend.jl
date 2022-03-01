@@ -388,6 +388,20 @@ function plot(sol)
 end
 
 """
+  Plotting program for an OMSolution that contains several sub solutions.
+  Plots all part of the solution on the same graph.
+"""
+function plot(sol::Runtime.OMSolutions; legend = false, limX = 0.0, limY = 1.0)
+  local sols = sol.diffEqSol
+  local prevP = Plots.plot!(sols[1]; legend = legend, xlim=limX, ylim = limY)
+  for sol in sols[2:end]
+    p = Plots.plot!(prevP; legend = legend, xlim=limX, ylim = limY)
+    prevP = p
+  end
+  return prevP
+end
+
+"""
 `turnOnLogging(mod = "OMBackend"::String)`\n
 Turns on logging. An optional parameter `mod` can be used to specify which model should be logged for more granuality.
 """

@@ -46,7 +46,6 @@ import ..Backend.BDAE
 import DAE
 import Absyn
 import MetaGraphs
-#= For symbolic math operations =#
 
 include("./CodeGenerationUtil.jl")
 include("./structuralCallbacks.jl")
