@@ -221,17 +221,17 @@ end
 function equationToBackendEquation(elem::DAE.Element)
   @match elem begin
     DAE.EQUATION(__) => begin
-      equationLst = BDAE.EQUATION(elem.exp,
-                                  elem.scalar,
-                                  elem.source,
-                                  #=TODO: Below might need to be changed =#
-                                  BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
+      BDAE.EQUATION(elem.exp,
+                    elem.scalar,
+                    elem.source,
+                    #=TODO: Below might need to be changed =#
+                    BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
     end
     DAE.WHEN_EQUATION(__) => begin
-      equationLst = lowerWhenEquation(elem)
+      lowerWhenEquation(elem)
     end
     DAE.IF_EQUATION(__) => begin
-      equationLst = lowerIfEquation(elem)
+      lowerIfEquation(elem)
     end
     DAE.INITIALEQUATION(__) => begin
       initialEquationLst = BDAE.EQUATION(elem.exp1,
@@ -241,7 +241,7 @@ function equationToBackendEquation(elem::DAE.Element)
                                          BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
     end
     DAE.COMP(__) => begin
-      variableLst,equationLst,initialEquationLst = splitEquationsAndVars(elem.dAElist)
+      throw("Components not directly allowed in equation sections")
     end
     #= An equation of type NORETCALL =#
     DAE.NORETCALL(DAE.CALL(path, expLst)) => begin
@@ -267,6 +267,10 @@ function equationToBackendEquation(elem::DAE.Element)
       end
       res
     end
+    DAE.ASSERT(__) => begin
+      #=TODO: Currently skipping assert.. Just return the list of equations.. =# 
+      BDAE.DUMMY_EQUATION()
+    end      
     _ => begin
       @error "Skipped processing" elem
       throw("Unsupported equation: $elem")
