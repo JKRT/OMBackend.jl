@@ -638,13 +638,13 @@ function expToJuliaExpMTK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuf
 end
 
 """
-If the system needs to conduct index reduction generate code for that.
+  If the system needs to conduct index reduction make sure to inform MTK.
 """
 function MTK_indexReduction(indexReduction)::Expr
   if (indexReduction)
     :(reducedSystem = ModelingToolkit.dae_index_lowering(firstOrderSystem))
   else
-    :(reducedSystem = firstOrderSystem)
+    :(reducedSystem = firstOrderSystem) #ModelingToolkit.dae_index_lowering(firstOrderSystem))
   end
 end
 

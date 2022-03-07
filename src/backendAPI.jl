@@ -43,6 +43,7 @@ import .Backend.BDAECreate
 import .Backend.BDAEUtil
 import .Backend.Causalize
 import ..CodeGeneration
+import OMBackend.CodeGeneration
 import .SimulationCode
 import ..Runtime
 import Base.Meta

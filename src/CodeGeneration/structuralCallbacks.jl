@@ -135,7 +135,7 @@ function createStructuralCallback(simCode, simCodeStructuralTransistion::Simulat
   end
   modification = quote
     ($(componentToModify), $("$(newValue)"))
-     end
+  end
   @match SOME(metaModel) = simCode.metaModel
   structuralCallback = quote
     function $(Symbol(callbackName))()
