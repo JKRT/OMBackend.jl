@@ -55,7 +55,7 @@ end
 function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
     #=If our model name is separated by . replace it with __ =#
   local MODEL_NAME = replace(simCode.name, "." => "__")
-  if (isempty(simCode.structuralTransistions) && length(simCode.subModels) < 1)
+  if (isempty(simCode.structuralTransitions) && length(simCode.subModels) < 1)
     #= Generate using the standard name =#
     return ODE_MODE_MTK_PROGRAM_GENERATION(simCode, simCode.name)
   end
@@ -73,8 +73,8 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
     activeModelName = modelName
     push!(structuralModes, defaultModel)
   end
-  local structuralCallbacks = createStructuralCallbacks(simCode, simCode.structuralTransistions)
-  local structuralAssignments = createStructuralAssignments(simCode, simCode.structuralTransistions)
+  local structuralCallbacks = createStructuralCallbacks(simCode, simCode.structuralTransitions)
+  local structuralAssignments = createStructuralAssignments(simCode, simCode.structuralTransitions)
   #= Initialize array where the common variables are stored. That is variables all modes have =#
   local commonVariables = createCommonVariables(simCode.sharedVariables)
   #= END =#

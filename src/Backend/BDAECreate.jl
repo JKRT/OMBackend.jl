@@ -254,7 +254,7 @@ function equationToBackendEquation(elem::DAE.Element)
         Absyn.IDENT("initialStructuralState") => begin          
           BDAE.INITIAL_STRUCTURAL_STATE(string(listHead(expLst)))
         end
-        Absyn.IDENT("structuralTransistion") => begin
+        Absyn.IDENT("structuralTransition") => begin
           @match fromStateExp <| toStateExp <| conditionExp <| nil = expLst
           local fromStateIdent = string(fromStateExp)
           local toStateIdent = string(toStateExp)

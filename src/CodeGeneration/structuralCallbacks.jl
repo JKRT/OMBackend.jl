@@ -33,10 +33,10 @@
 """
   Creates the structural callbacks
 """
-function createStructuralCallbacks(simCode, structuralTransistions::Vector{ST}) where {ST}
+function createStructuralCallbacks(simCode, structuralTransitions::Vector{ST}) where {ST}
   local structuralCallbacks = Expr[]
   local idx = 1
-  for structuralTransisiton in structuralTransistions
+  for structuralTransisiton in structuralTransitions
     push!(structuralCallbacks, createStructuralCallback(simCode, structuralTransisiton, idx))
     idx += 1
   end
@@ -46,14 +46,14 @@ end
 """
   Creates a single structural callback for an explicit transition.
 """
-function createStructuralCallback(simCode, simCodeStructuralTransistion::SimulationCode.EXPLICIT_STRUCTURAL_TRANSISTION, idx)
-  local structuralTransistion = simCodeStructuralTransistion.structuralTransistion
-  local cond = transformToZeroCrossingCondition(structuralTransistion.transistionCondition)
-  local callbackName = createCallbackName(structuralTransistion, 0)
+function createStructuralCallback(simCode, simCodeStructuralTransition::SimulationCode.EXPLICIT_STRUCTURAL_TRANSISTION, idx)
+  local structuralTransition = simCodeStructuralTransition.structuralTransition
+  local cond = transformToZeroCrossingCondition(structuralTransition.transistionCondition)
+  local callbackName = createCallbackName(structuralTransition, 0)
   quote
     function $(Symbol(callbackName))(destinationSystem)
       #= Represent structural change. =#
-      local structuralChange = OMBackend.Runtime.StructuralChange($(structuralTransistion.toState), false, destinationSystem)
+      local structuralChange = OMBackend.Runtime.StructuralChange($(structuralTransition.toState), false, destinationSystem)
       #= The affect simply activates the structural callback informing us to generate code for a new system =#
       function affect!(integrator)
         structuralChange.structureChanged = true
@@ -74,12 +74,12 @@ end
 TODO:
 Also make sure to create possible other elements in the structural when equation
 """
-function createStructuralCallback(simCode, simCodeStructuralTransistion::SimulationCode.IMPLICIT_STRUCTURAL_TRANSISTION, idx)
-  local structuralTransistion = simCodeStructuralTransistion.structuralWhenEquation
-  local callbackName = createCallbackName(structuralTransistion, idx)
-  local whenCondition = structuralTransistion.whenEquation.condition
+function createStructuralCallback(simCode, simCodeStructuralTransition::SimulationCode.IMPLICIT_STRUCTURAL_TRANSISTION, idx)
+  local structuralTransition = simCodeStructuralTransition.structuralWhenEquation
+  local callbackName = createCallbackName(structuralTransition, idx)
+  local whenCondition = structuralTransition.whenEquation.condition
   local zeroCrossingCond = transformToZeroCrossingCondition(whenCondition)
-  local stmtLst = structuralTransistion.whenEquation.whenStmtLst
+  local stmtLst = structuralTransition.whenEquation.whenStmtLst
   local stringToSimVarHT = simCode.stringToSimVarHT
   (whenOperators, recompilationDirective) = createStructuralWhenStatements(stmtLst, simCode)  
   local affect::Expr = quote
@@ -164,10 +164,10 @@ end
 
 """
 """
-function createStructuralAssignments(simCode, structuralTransistions::Vector{ST}) where {ST}
+function createStructuralAssignments(simCode, structuralTransitions::Vector{ST}) where {ST}
   local structuralAssignments = Expr[]
   local idx = 1
-  for structuralTransisiton in structuralTransistions
+  for structuralTransisiton in structuralTransitions
     @match structuralTransisiton begin
       SimulationCode.EXPLICIT_STRUCTURAL_TRANSISTION(__) => begin
         push!(structuralAssignments, createStructuralAssignment(simCode, structuralTransisiton))
@@ -190,14 +190,14 @@ end
   This function creates a structural assignment.
   That is the constructor for a structural callback guiding structural change.
 """
-function createStructuralAssignment(simCode, simCodeStructuralTransistion::SimulationCode.EXPLICIT_STRUCTURAL_TRANSISTION)
-  local structuralTransistion = simCodeStructuralTransistion.structuralTransistion
-  local callbackName = createCallbackName(structuralTransistion)
-  local toState = structuralTransistion.toState
+function createStructuralAssignment(simCode, simCodeStructuralTransition::SimulationCode.EXPLICIT_STRUCTURAL_TRANSISTION)
+  local structuralTransition = simCodeStructuralTransition.structuralTransition
+  local callbackName = createCallbackName(structuralTransition)
+  local toState = structuralTransition.toState
   local toStateProblem = Symbol(toState * "Problem")
   local toStateModel = Symbol(toState * "Model")
-  local integratorCallbackName = structuralTransistion.fromState * structuralTransistion.toState * "_CALLBACK"
-  local structuralChangeStructure = structuralTransistion.fromState * structuralTransistion.toState * "_STRUCTURAL_CHANGE"
+  local integratorCallbackName = structuralTransition.fromState * structuralTransition.toState * "_CALLBACK"
+  local structuralChangeStructure = structuralTransition.fromState * structuralTransition.toState * "_STRUCTURAL_CHANGE"
   quote
     ($(toStateProblem), _, _, _, _, _) = ($(toStateModel))(tspan)
     ($(Symbol(integratorCallbackName)), $(Symbol(structuralChangeStructure))) = $(Symbol(callbackName))($(toStateProblem))
@@ -210,9 +210,9 @@ end
 Creates a structural assignment for an implicit structural transisiton.
 These are numbered from 1->N
 """
-function createStructuralAssignment(simCode, simCodeStructuralTransistion::SimulationCode.IMPLICIT_STRUCTURAL_TRANSISTION, idx::Int)
-  local structuralTransistion = simCodeStructuralTransistion.structuralWhenEquation
-  local callbackName = createCallbackName(structuralTransistion, idx)
+function createStructuralAssignment(simCode, simCodeStructuralTransition::SimulationCode.IMPLICIT_STRUCTURAL_TRANSISTION, idx::Int)
+  local structuralTransition = simCodeStructuralTransition.structuralWhenEquation
+  local callbackName = createCallbackName(structuralTransition, idx)
   local integratorCallbackName = callbackName * "_CALLBACK"
   local structuralChangeStructure = callbackName * "_STRUCTURAL_CHANGE"
   quote
