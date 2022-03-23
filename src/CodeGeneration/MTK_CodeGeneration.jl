@@ -264,7 +264,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
         push!(equationComponents, constructor())
       end
       eqs =  collect(Iterators.flatten(equationComponents))
-      nonLinearSystem = OMBackend.CodeGeneration.makeODESystem(eqs, t, vars, parameters, name=:($(Symbol($modelName))))
+      nonLinearSystem = OMBackend.CodeGeneration.makeODESystem(eqs, t, vars, parameters, $(performIndexReduction); name=:($(Symbol($modelName))))
       firstOrderSystem = nonLinearSystem #ModelingToolkit.ode_order_lowering(nonLinearSystem)
       $(MTK_indexReduction(performIndexReduction))
       #=
@@ -315,7 +315,7 @@ function ODE_MODE_MTK_LOOP(simCode::SimulationCode.SIM_CODE)
   local START_CONDTIONS_EQUATIONS = getStartConditions(allVariables, "reals", simCode)
   local DISCRETE_START_VALUES = getStartConditionsMTK(discreteVariables, simCode)
   local PARAMETER_EQUATIONS = createParameterEquationsMTK(parameters, simCode)
-#  local PARAMETER_ASSIGNMENTS = createParameterAssignmentsMTK(parameters, simCode)
+  local PARAMETER_ASSIGNMENTS = createParameterAssignmentsMTK(parameters, simCode)
   local PARAMETER_RAW_ARRAY = createParameterArray(parameters, simCode)
   #= Create callback equations. For MTK we disable the saving function for now. =#
   local CALL_BACK_EQUATIONS = createCallbackCode(modelName, simCode; generateSaveFunction = false)

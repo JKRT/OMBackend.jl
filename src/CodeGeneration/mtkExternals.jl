@@ -53,7 +53,12 @@ function move_diffs(eq::Equation; rewrite)
   return res
 end
 
-function makeODESystem(deqs, iv, vars, pars; name)
+"""
+If index reduction is needed we currently do a hack.
+That is we do an eval of the system, this is computationally expensive, however, it seems to work for now.
+Related to issue https://github.com/SciML/ModelingToolkit.jl/issues/1493
+"""
+function makeODESystem(deqs, iv, vars, pars, idxReduction; name)
   # Equation is not in the canonical form
   # Use a rule to find all g(u)*D(u) terms
   # and move those to the lhs
@@ -63,28 +68,39 @@ function makeODESystem(deqs, iv, vars, pars; name)
   debugRewrite(deqs, iv, vars, pars)
   remove_diffs = SymbolicUtils.Postwalk(SymbolicUtils.Chain([r1,r2]))
   deqs = [move_diffs(eq, rewrite = remove_diffs) for eq in deqs]
-  debugRewrite(deqs, iv, vars, pars)
-  res = ModelingToolkit.ODESystem(deqs, iv, vars, pars; name = name)
-  return res
+  #= Special computationally heavy routine for systems that need index reduction.. =#
+  if idxReduction
+    res = debugRewrite(deqs, iv, vars, pars)
+    println(res)
+    expr = Meta.parse(res)
+    eval(expr)
+    res = ModelingToolkit.ODESystem(eqs2, iv, vars2, pars; name = name)
+    res2 = ModelingToolkit.dae_index_lowering(res)
+    return res2
+  end
+  return ModelingToolkit.ODESystem(deqs, iv, vars, pars; name = name)
 end
 
 function debugRewrite(deqs, t, vars, parameters)
-  print("@variables")
-  print("(")
+  local buffer = IOBuffer()
+  print(buffer, "@variables t;")
+  print(buffer, "vars2 = @variables")
+  print(buffer, "(")
   for v in vars
-    print(v, ",")
+    print(buffer, v, ",")
   end
-  println(")")
-  print("eqs =")
-  println("[")
+  # print(buffer, ");")
+  # print(buffer, "pars2 = @parameters")
+  # print(buffer, "(")
+  # for p in parameters
+  #   print(buffer, p, ",")
+  # end
+  print(buffer, ");")
+  print(buffer, "eqs2 =")
+  print(buffer, "[")
   for eq in deqs
-    println(eq, ",")
+    print(buffer, replace(string(eq), "(t)" => "", "Differential" => "D"), ",")
   end
-  println("]")
-  print("@parameters")
-  print("(")
-  for p in parameters
-    print(p, ",")
-  end
-  println(")")
+  print(buffer, "];")
+  return String(take!(buffer))
 end

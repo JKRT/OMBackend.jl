@@ -642,9 +642,9 @@ end
 """
 function MTK_indexReduction(indexReduction)::Expr
   if (indexReduction)
-    :(reducedSystem = firstOrderSystem) #ModelingToolkit.structural_simplify(firstOrderSystem; simplify=true))#)
+    :(reducedSystem = firstOrderSystem)#ModelingToolkit.structural_simplify(firstOrderSystem; simplify=true))
   else
-    :(reducedSystem = firstOrderSystem) #ModelingToolkit.dae_index_lowering(firstOrderSystem))
+    :(reducedSystem = firstOrderSystem)#ModelingToolkit.dae_index_lowering(firstOrderSystem))
   end
 end
 
