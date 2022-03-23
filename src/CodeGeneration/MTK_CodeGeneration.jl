@@ -145,7 +145,7 @@ function ODE_MODE_MTK_PROGRAM_GENERATION(simCode::SimulationCode.SIM_CODE, model
     using ModelingToolkit
     using DifferentialEquations
     $(model)
-    ($(Symbol("$(MODEL_NAME)Model_problem")), _, _, _, _,_) = $(Symbol("$(MODEL_NAME)Model"))()
+    ($(Symbol("$(MODEL_NAME)Model_problem")), ivs, $(Symbol("$(MODEL_NAME)Model_ReducedSystem")), tspan, pars, vars) = $(Symbol("$(MODEL_NAME)Model"))()
     function $(Symbol("$(MODEL_NAME)Simulate"))(tspan)
       solve($(Symbol("$(MODEL_NAME)Model_problem")), tspan=tspan)
     end
@@ -265,7 +265,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
       end
       eqs =  collect(Iterators.flatten(equationComponents))
       nonLinearSystem = OMBackend.CodeGeneration.makeODESystem(eqs, t, vars, parameters, name=:($(Symbol($modelName))))
-      firstOrderSystem = ModelingToolkit.ode_order_lowering(nonLinearSystem)
+      firstOrderSystem = nonLinearSystem #ModelingToolkit.ode_order_lowering(nonLinearSystem)
       $(MTK_indexReduction(performIndexReduction))
       #=
       These arrays are introduced to handle the bolted on event handling using callbacks.
@@ -315,7 +315,7 @@ function ODE_MODE_MTK_LOOP(simCode::SimulationCode.SIM_CODE)
   local START_CONDTIONS_EQUATIONS = getStartConditions(allVariables, "reals", simCode)
   local DISCRETE_START_VALUES = getStartConditionsMTK(discreteVariables, simCode)
   local PARAMETER_EQUATIONS = createParameterEquationsMTK(parameters, simCode)
-  local PARAMETER_ASSIGNMENTS = createParameterAssignmentsMTK(parameters, simCode)
+#  local PARAMETER_ASSIGNMENTS = createParameterAssignmentsMTK(parameters, simCode)
   local PARAMETER_RAW_ARRAY = createParameterArray(parameters, simCode)
   #= Create callback equations. For MTK we disable the saving function for now. =#
   local CALL_BACK_EQUATIONS = createCallbackCode(modelName, simCode; generateSaveFunction = false)
@@ -689,6 +689,8 @@ function decomposeEquations(equations, parameterAssignments)
   local nStateVars = length(equations)
   local equationVectors = collect(Iterators.partition(equations, 50))
   local exprs = Expr[]
+  r1 = SymbolicUtils.@rule ~~a * D(~~b) * ~~c => 0
+  r2 = SymbolicUtils.@rule D(~~b) => 0
   local constructors = quote
     equationConstructors = Function[]
   end
@@ -696,7 +698,7 @@ function decomposeEquations(equations, parameterAssignments)
   local i = 0
   for equationVector in equationVectors
     equationConstructorExpr = quote
-      $(parameterAssignments...)
+      $(parameterAssignments...) #TODO: It does not seem to work to use parameters as constants, something goes wrong in the substitution. 
       function $(Symbol("generateEquations" * string(i)))()
         [$(equationVector...)]
       end
@@ -712,7 +714,7 @@ function decomposeEquations(equations, parameterAssignments)
 end
 
 """
-Note duplicated from the method above. Please clean me up..
+  Similar to decompose equations but does so for start equations instead.
 """
 function decomposeStartEquations(equations)
   local nStateVars = length(equations)
