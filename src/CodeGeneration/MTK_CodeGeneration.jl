@@ -31,7 +31,7 @@
 
 #=
   Author: John Tinnerholm
-  TODO: Remember the state derivative scheme. What the  did I mean with that?
+  TODO: Remember the state derivative scheme. What did I mean with that?
   TODO: Make duplicate code better...
   TODO: Investigate the once again broken if equations
 =#
@@ -55,11 +55,11 @@ end
 function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
     #=If our model name is separated by . replace it with __ =#
   local MODEL_NAME = replace(simCode.name, "." => "__")
-  if (isempty(simCode.structuralTransistions) && length(simCode.subModels) < 1)
+  if (isempty(simCode.structuralTransitions) && length(simCode.subModels) < 1)
     #= Generate using the standard name =#
     return ODE_MODE_MTK_PROGRAM_GENERATION(simCode, simCode.name)
   end
-  #= Handle structural submodels =#  
+  #= Handle structural submodels =#
   #= TODO: Extract the active model =#
   local activeModelSimCode = getActiveModel(simCode)
   local activeModelName = simCode.activeModel
@@ -68,22 +68,30 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
     push!(structuralModes, ODE_MODE_MTK_MODEL_GENERATION(mode, mode.name))
   end
   if isempty(simCode.subModels)
-    local modelName = simCode.name * "DEFAULT"
+    local modelName = MODEL_NAME * "DEFAULT"
     defaultModel = ODE_MODE_MTK_MODEL_GENERATION(simCode, modelName)
     activeModelName = modelName
     push!(structuralModes, defaultModel)
   end
-  local structuralCallbacks = createStructuralCallbacks(simCode, simCode.structuralTransistions)
-  local structuralAssignments = createStructuralAssignments(simCode, simCode.structuralTransistions)
+  local structuralCallbacks = createStructuralCallbacks(simCode, simCode.structuralTransitions)
+  local structuralAssignments = createStructuralAssignments(simCode, simCode.structuralTransitions)
   #= Initialize array where the common variables are stored. That is variables all modes have =#
   local commonVariables = createCommonVariables(simCode.sharedVariables)
   #= END =#
   code = quote
+    import DAE
+    import DataStructures.OrderedCollections
+    import SCode
     import OMBackend
+    import OMBackend.CodeGeneration
     using ModelingToolkit
     using DifferentialEquations
     $(structuralModes...)
     $(structuralCallbacks...)
+    #=
+      This function can be used to fetch the top level callbacks that is the collected callbacks of the model.
+      Each callback is coupled to each when with recompilation expression.
+    =#
     function $(Symbol(MODEL_NAME * "Model"))(tspan = (0.0, 1.0))
       #=  Assign the initial model  =#
       (subModel, initialValues, reducedSystem, _, pars, vars1) = $(Symbol(activeModelName  * "Model"))(tspan)
@@ -91,24 +99,31 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
       $(structuralAssignments)
       $(commonVariables)
       #= END =#
+      callbackConditions = $(if isempty(structuralCallbacks)
+                               :(CallbackSet())
+                             elseif length(structuralCallbacks) == 1
+                               :(CallbackSet(first(callbackSet)))
+                             else
+                               :(CallbackSet(Tuple(callbackSet), ())) #TODO: I think this only applies to continious callbacks.
+                             end)
       #= Create the composite model =#
       compositeProblem = ModelingToolkit.ODEProblem(
         reducedSystem,
         initialValues,
         tspan,
         pars,
-        callback = $(if isempty(structuralCallbacks)
-                       :(CallbackSet())
-                     else
-                       quote
-                         CallbackSet(Tuple(callbackSet), ())
-                       end
-                     end),
+        callback = callbackConditions,
       )
       result = $(if simCode.metaModel == nothing
-                 :(OMBackend.Runtime.OM_ProblemStructural($(activeModelName), compositeProblem, structuralCallbacks, commonVariables))
+                 :(OMBackend.Runtime.OM_ProblemStructural($(activeModelName),
+                                                          compositeProblem,
+                                                          structuralCallbacks,
+                                                          commonVariables))
                  else
-                 :(OMBackend.Runtime.OM_ProblemRecompilation($(activeModelName), compositeProblem, structuralCallbacks))
+                 :(OMBackend.Runtime.OM_ProblemRecompilation($(activeModelName),
+                                                             compositeProblem,
+                                                             structuralCallbacks,
+                                                             callbackConditions))
                  end)
       return result
     end
@@ -130,7 +145,7 @@ function ODE_MODE_MTK_PROGRAM_GENERATION(simCode::SimulationCode.SIM_CODE, model
     using ModelingToolkit
     using DifferentialEquations
     $(model)
-    ($(Symbol("$(MODEL_NAME)Model_problem")), _, _, _, _,_) = $(Symbol("$(MODEL_NAME)Model"))()
+    ($(Symbol("$(MODEL_NAME)Model_problem")), ivs, $(Symbol("$(MODEL_NAME)Model_ReducedSystem")), tspan, pars, vars) = $(Symbol("$(MODEL_NAME)Model"))()
     function $(Symbol("$(MODEL_NAME)Simulate"))(tspan)
       solve($(Symbol("$(MODEL_NAME)Model_problem")), tspan=tspan)
     end
@@ -176,9 +191,9 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
           push!(discreteVariables, varName)
         elseif simCode.isSingular
           #=
-            If the variable is not involved in an event and the index is not in match order and
-            the system is singular.
-            This means that the variable is probably algebraic however, we need to perform index reduction.
+          If the variable is not involved in an event and the index is not in match order and
+          the system is singular.
+          This means that the variable is probably algebraic however, we need to perform index reduction.
           =#
           push!(algebraicVariables, varName)
         end
@@ -197,6 +212,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
   local START_CONDTIONS_EQUATIONS = createStartConditionsEquationsMTK(stateVariables, algebraicVariables, simCode)
   local DISCRETE_START_VALUES = getStartConditionsMTK(discreteVariables, simCode)
   local PARAMETER_EQUATIONS = createParameterEquationsMTK(parameters, simCode)
+  local PARAMETER_ASSIGNMENTS = createParameterAssignmentsMTK(parameters, simCode)
   local PARAMETER_RAW_ARRAY = createParameterArray(parameters, simCode)
   #= Create callback equations. For MTK we disable the saving function for now. =#
   local CALL_BACK_EQUATIONS = createCallbackCode(modelName, simCode; generateSaveFunction = false)
@@ -216,13 +232,14 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
   model = quote
     $(CALL_BACK_EQUATIONS)
     function $(Symbol(MODEL_NAME * "Model"))(tspan = (0.0, 1.0))
-      @variables t
+      ModelingToolkit.@variables t
+      der = ModelingToolkit.Differential(t)
       parameters = ModelingToolkit.@parameters begin
         ($(parVariablesSym...), $(discreteVariablesSym...))
       end
       #=
-        Only variables that are present in the equation system later should be a part of the variables in the MTK system.
-        This means that certain algebraic variables should not be listed among the variables (These are the discrete variables).
+      Only variables that are present in the equation system later should be a part of the variables in the MTK system.
+      This means that certain algebraic variables should not be listed among the variables (These are the discrete variables).
       =#
       $(decomposeVariables(stateVariablesSym, algebraicVariablesSym))
       componentVars = []
@@ -232,16 +249,8 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
         push!(componentVars, res[2:end])
       end
       vars =  collect(Iterators.flatten(componentVars))
-      der = Differential(t)
-      equationComponents = []
-      $(decomposeEquations(equations))
-      for constructor in equationConstructors
-        push!(equationComponents, constructor())
-      end
-      eqs =  collect(Iterators.flatten(equationComponents))
-      nonLinearSystem = ModelingToolkit.ODESystem(eqs, t, vars, parameters, name=:($(Symbol($modelName))))
-      pars = Dict($(PARAMETER_EQUATIONS...), $(DISCRETE_START_VALUES...))
       #= Initial values for the continious system. =#
+      pars = Dict($(PARAMETER_EQUATIONS...), $(DISCRETE_START_VALUES...))
       startEquationComponents = []
       $(decomposeStartEquations(START_CONDTIONS_EQUATIONS))
       for constructor in startEquationConstructors
@@ -249,7 +258,14 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
       end
       initialValues = collect(Iterators.flatten(startEquationComponents))
       #= End construction of initial values =#
-      firstOrderSystem = ModelingToolkit.ode_order_lowering(nonLinearSystem)
+      equationComponents = []
+      $(decomposeEquations(equations, PARAMETER_ASSIGNMENTS))
+      for constructor in equationConstructors
+        push!(equationComponents, constructor())
+      end
+      eqs =  collect(Iterators.flatten(equationComponents))
+      nonLinearSystem = OMBackend.CodeGeneration.makeODESystem(eqs, t, vars, parameters, $(performIndexReduction); name=:($(Symbol($modelName))))
+      firstOrderSystem = nonLinearSystem #ModelingToolkit.ode_order_lowering(nonLinearSystem)
       $(MTK_indexReduction(performIndexReduction))
       #=
       These arrays are introduced to handle the bolted on event handling using callbacks.
@@ -276,7 +292,7 @@ end
 
 """
  This generates code targetting modeling toolkit (but separates algebraic loops from the rest of the system).
- Discrete variables are treated as parameters 
+ Discrete variables are treated as parameters
 """
 function ODE_MODE_MTK_LOOP(simCode::SimulationCode.SIM_CODE)
   @debug "Runnning: generateMTKCode"
@@ -286,19 +302,20 @@ function ODE_MODE_MTK_LOOP(simCode::SimulationCode.SIM_CODE)
   local exp::DAE.Exp
   local modelName::String = simCode.name
   (stateVariables, algebraicVariables, stateVariablesLoop, algebraicVariablesLoop) = separateVariables(simCode)
-  #= 
-    We have a cycle! 
+  #=
+    We have a cycle!
   =#
   loop = getCycleInSCCs(simCode.stronglyConnectedComponents)
-  (stateVariables, algebraicVariables, stateVariablesLoop, algebraicVariablesLoop) = 
+  (stateVariables, algebraicVariables, stateVariablesLoop, algebraicVariablesLoop) =
   local allVariables = vcat(stateVariables, algebraicVariables, stateVariablesLoop, algebraicVariablesLoop)
   #= Create equations for variables not in a loop + parameters and stuff=#
   local equations = createSortedEquations(stateVariables,
                                           simCode; arrayName = "u")
-  local parVariablesSym = [Symbol(p) for p in parameters]  
+  local parVariablesSym = [Symbol(p) for p in parameters]
   local START_CONDTIONS_EQUATIONS = getStartConditions(allVariables, "reals", simCode)
   local DISCRETE_START_VALUES = getStartConditionsMTK(discreteVariables, simCode)
   local PARAMETER_EQUATIONS = createParameterEquationsMTK(parameters, simCode)
+  local PARAMETER_ASSIGNMENTS = createParameterAssignmentsMTK(parameters, simCode)
   local PARAMETER_RAW_ARRAY = createParameterArray(parameters, simCode)
   #= Create callback equations. For MTK we disable the saving function for now. =#
   local CALL_BACK_EQUATIONS = createCallbackCode(modelName, simCode; generateSaveFunction = false)
@@ -321,9 +338,9 @@ function ODE_MODE_MTK_LOOP(simCode::SimulationCode.SIM_CODE)
   local algebraicVariablesSymLoop = [:($(Symbol(v))) for v in algebraicVariablesLoop]
   local stateVariablesSymLoop = [:($(Symbol(v))) for v in stateVariablesLoop]
   local START_CONDTIONS_EQUATIONS_LOOP = createStartConditionsEquationsMTK(stateVariablesLoop, algebraicVariablesLoop, simCode)
-  #= 
+  #=
   Formulate the problem as a DAE Problem.ac
-  For this variant we keep t on its own line 
+  For this variant we keep t on its own line
   https://github.com/SciML/ModelingToolkit.jl/issues/998
   =#
   program = quote
@@ -368,17 +385,17 @@ function ODE_MODE_MTK_LOOP(simCode::SimulationCode.SIM_CODE)
       odeF = $(Symbol("$(modelName)Model_ODE"))
       ODEProblem(odeF, x, tspan, aux)
     end
-    
+
     $(CALL_BACK_EQUATIONS)
     $(Symbol("$(modelName)Model_problemInstance")) = $(Symbol("$(modelName)Model_problem"))((0.0,1.))
-    function $(Symbol("$(modelName)Simulate"))(tspan)     
+    function $(Symbol("$(modelName)Simulate"))(tspan)
       solve($(Symbol("$(modelName)Model_problemInstance")), tspan=tspan)
     end
     function $(Symbol("$(modelName)Simulate"))(tspan = (0.0, 1.0); solver=Tsit5())
       solve($(Symbol("$(modelName)Model_problemInstance")), tspan=tspan, solver)
     end
   end
-  
+
   return (modelName, program)
 
 end
@@ -391,100 +408,44 @@ function createResidualEquationsMTK(stateVariables::Array, algebraicVariables::A
     return Expr[]
   end
   local eqs::Vector{Expr} = Expr[]
-  local ht = simCode.stringToSimVarHT
-  local lhsVariables = Set([])
-  local usedEquations = []
-  for i in 1:length(stateVariables)
-    local variableIdx = ht[stateVariables[i]][1]
-    local equationIdx = simCode.matchOrder[variableIdx]
-    local equation = equations[equationIdx]
-    push!(usedEquations, equationIdx)
-    push!(eqs, residualEqtoJuliaMTK(equation, simCode, equationIdx))
-  end
-  #=
-  Generate algebraic equations.
-  It might be the case that the algebraic variables are solved someplace else and not in
-  the main set of equations. For instance a particular algebraic variable might be solved in some when equation.
-  This sitaution is assumed to have been checked statically prior to this by the frontend.
-  If there is no equation for which a algebraic variable is not solved we ignore it.
-  =#
-  local totalEquations = [i for i in 1:length(equations)]
-  local remainingEquations = setdiff(totalEquations, usedEquations)
-  #= Additional note. MTK does not require algebraic equations to follow a specific format.
-  So we can just generate our remaining equations =#
-  for eqIdx in remainingEquations
-    local equation = equations[eqIdx]
-    local eqDAEExp = equation.exp
-    local eqExp = :(0 ~ $(stripBeginBlocks(expToJuliaExpMTK(eqDAEExp, simCode ;derSymbol=false))))
+  # local ht = simCode.stringToSimVarHT
+  # local lhsVariables = Set([])
+  # local usedEquations = []
+  # for i in 1:length(stateVariables)
+  #   local variableIdx = ht[stateVariables[i]][1]
+  #   local equationIdx = simCode.matchOrder[variableIdx]
+  #   local equation = equations[equationIdx]
+  #   push!(usedEquations, equationIdx)
+  #   push!(eqs, residualEqtoJuliaMTK(equation, simCode, equationIdx))
+  # end
+  # #=
+  # Generate algebraic equations.
+  # It might be the case that the algebraic variables are solved someplace else and not in
+  # the main set of equations. For instance a particular algebraic variable might be solved in some when equation.
+  # This sitaution is assumed to have been checked statically prior to this by the frontend.
+  # If there is no equation for which a algebraic variable is not solved we ignore it.
+  # =#
+  # local totalEquations = [i for i in 1:length(equations)]
+  # local remainingEquations = setdiff(totalEquations, usedEquations)
+  # #= Additional note. MTK does not require algebraic equations to follow a specific format.
+  # So we can just generate our remaining equations =#
+  # for eqIdx in remainingEquations
+  #   local equation = equations[eqIdx]
+  #   local eqDAEExp = equation.exp
+  #   local eqExp = :(0 ~ $(stripBeginBlocks(expToJuliaExpMTK(eqDAEExp, simCode ;derSymbol=false))))
+  #   push!(eqs, eqExp)
+  # end
+
+  for eq in equations
+    local eqDAEExp = eq.exp
+    local eqExp = :(0 ~ $(expToJuliaExpMTK(eqDAEExp, simCode ;derSymbol=false)))
     push!(eqs, eqExp)
   end
+  
   return eqs
 end
 
-"""
-  Transforms a given equation into MTK Julia code.
-  This function uses Symbolics to rewrite the equation into a matching format for MTK.
-"""
-function residualEqtoJuliaMTK(eq::BDAE.Equation, simCode::SimulationCode.SIM_CODE, equationIdx::Int64)::Expr
-  local ht = SimulationCode.makeIndexVarNameDict(simCode.matchOrder, simCode.stringToSimVarHT)
-  @debug "Called residual equation to Julia"
-  local result::Expr = @match eq begin
-    BDAE.RESIDUAL_EQUATION(exp = daeExp) => begin
-      #= TODO: Using Symbolics to rewrite equations... Same limitations apply here as well=#
-      local variableIdx = MetaGraphs.get_prop(simCode.equationGraph, equationIdx, :vID)
-      local varToSolve = simCode.stringToSimVarHT[ht[variableIdx]][2]
-      local derSymbolString = "der_" * varToSolve.name
-      local solveForState = SimulationCode.isState(varToSolve)
-      #= If we solve for state we solve for der_<var-name>=#
-      #= Why did I do this. Ask Lennart! =#
-      local varToSolveExpr::Symbol =  solveForState ? Symbol(derSymbolString) : Symbol(varToSolve.name)
-      #= These are the variables present in this specific equation. =#
-      local daeVariables = getVariablesInDAE_Exp(daeExp, simCode, Set([]))
-      #= Simple quation rewrite..=#
-      function eqRewrite()
-        eqExpr = quote
-          ModelingToolkit.@variables begin
-            $(daeVariables...)
-            $(varToSolveExpr)
-          end
-          leq = 0 ~ $(stripBeginBlocks(expToJuliaExpMTK(daeExp, simCode ;derSymbol=true)))
-          Symbolics.solve_for([leq], [$varToSolveExpr]; check = false #= Does not check for linearity!.. =#)
-        end
-        res = eval(eqExpr)
-        return res
-      end
-      local evEqExpr = eqRewrite()
-      #=
-        The value return here will be of a Symbolics type.
-        We need to convert it into a regular symbol to proceed
-      =#
-      #=
-      Dangerous conversion hack.
-      We convert the SymbolicUtils exp to a string and then back to an exp again.
-      This is currently done to avoid errors in module paths.
-      =#
-      evEqExprStr = string(evEqExpr[1])
-      #= We convert from a string back to an expr =#
-      evEqExprExpr = Meta.parse(evEqExprStr)
-      if solveForState
-        sol = quote
-          der($(Symbol(varToSolve.name))) ~ $(evEqExprExpr)
-        end
-      else #= For non state variables =#
-        sol = quote
-          $(Symbol(varToSolve.name)) ~ $(evEqExprExpr)
-        end
-      end
-      #= Return sol. Assign to results =#
-      sol
-    end
-    _ => begin
-      throw("traversalError for $eq")
-    end
-  end
-  return result
-end
-
+include("mtkExternals.jl")
 
 """
   Generates the initial value for the equations
@@ -573,6 +534,29 @@ function createParameterEquationsMTK(parameters::Array, simCode::SimulationCode.
   return parameterEquations
 end
 
+"""
+  Creates parameters assignments on a MTK parameters compatible format.
+"""
+function createParameterAssignmentsMTK(parameters::Array, simCode::SimulationCode.SimCode)::Array{Expr}
+  local parameterEquations::Array = []
+  local hT = simCode.stringToSimVarHT
+  for param in parameters
+    (index, simVar) = hT[param]
+    local simVarType::SimulationCode.SimVarType = simVar.varKind
+    bindExp = @match simVarType begin
+      SimulationCode.PARAMETER(bindExp = SOME(exp)) => exp
+      _ => ErrorException("Unknown SimulationCode.SimVarType for parameter.")
+    end
+    #= Solution for https://github.com/SciML/ModelingToolkit.jl/issues/991 =#
+    push!(parameterEquations,
+          quote
+            $(LineNumberNode(@__LINE__, "$param eq"))
+            $(Symbol(simVar.name)) = float($((expToJuliaExpMTK(bindExp, simCode))))
+          end
+          )
+  end
+  return parameterEquations
+end
 
 """
   Creates a parameter array.
@@ -630,15 +614,15 @@ function generateCastExpressionMTK(ty, exp, simCode, varPrefix)
 end
 
 """
- This function decomposes the continuous variables. 
- This means that if the set of variables are greater than 50 a new inner function is generated as to not 
+ This function decomposes the continuous variables.
+ This means that if the set of variables are greater than 50 a new inner function is generated as to not
  impact the JIT of the system to much.
 """
 function decomposeVariables(stateVariables, algebraicVariables)
   local nStateVars = length(stateVariables)
   local nAlgVars = length(algebraicVariables)
   if  1 < nStateVars < 50 &&  1 < nAlgVars < 50
-    expr = quote 
+    expr = quote
       function generateStateVariables()
         $(Tuple([:t, stateVariables...]))
       end
@@ -654,7 +638,7 @@ function decomposeVariables(stateVariables, algebraicVariables)
       end
       variableConstructors = Function[generateStateVariables]
     end
-  else    
+  else
     #= Split the array in chunks of 50  for the state and algebraic variables=#
     local stateVectors = collect(Iterators.partition(stateVariables, 50))
     local algVectors = collect(Iterators.partition(algebraicVariables, 50))
@@ -699,11 +683,14 @@ end
   Similar to decompose variables, however, decomposes the set of equations instead.
   This function does so by dividing the total number of equations into separate blocks with 50 equations in each block.
   This function is suppose to be called after decompose variables.
+Parameter assignments contains the set of values assigned to parameters at the beginning of the simulation.
 """
-function decomposeEquations(equations)
+function decomposeEquations(equations, parameterAssignments)
   local nStateVars = length(equations)
   local equationVectors = collect(Iterators.partition(equations, 50))
   local exprs = Expr[]
+  r1 = SymbolicUtils.@rule ~~a * D(~~b) * ~~c => 0
+  r2 = SymbolicUtils.@rule D(~~b) => 0
   local constructors = quote
     equationConstructors = Function[]
   end
@@ -711,6 +698,7 @@ function decomposeEquations(equations)
   local i = 0
   for equationVector in equationVectors
     equationConstructorExpr = quote
+      $(parameterAssignments...) #TODO: It does not seem to work to use parameters as constants, something goes wrong in the substitution. 
       function $(Symbol("generateEquations" * string(i)))()
         [$(equationVector...)]
       end
@@ -726,7 +714,7 @@ function decomposeEquations(equations)
 end
 
 """
-Note duplicated from the method above. Please clean me up..
+  Similar to decompose equations but does so for start equations instead.
 """
 function decomposeStartEquations(equations)
   local nStateVars = length(equations)

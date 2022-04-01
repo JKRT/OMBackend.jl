@@ -33,7 +33,7 @@ Author: John Tinnerholm, john.tinnerholm@liu.se
 #= TODO make CodeGenerationUtil its own module.. =#
 module CodeGeneration
 
-using DataStructures
+import DataStructures
 using MetaModelica
 using Setfield
 using DocStringExtensions
@@ -46,7 +46,6 @@ import ..Backend.BDAE
 import DAE
 import Absyn
 import MetaGraphs
-#= For symbolic math operations =#
 
 include("./CodeGenerationUtil.jl")
 include("./structuralCallbacks.jl")

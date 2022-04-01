@@ -97,13 +97,13 @@ struct IF_EQUATION{Branches <: Vector{BRANCH}} <: Construct
   branches::Branches
 end
 
-abstract type StructuralTransistion end
+abstract type StructuralTransition end
 
-struct EXPLICIT_STRUCTURAL_TRANSISTION <: StructuralTransistion
-  structuralTransistion::BDAE.STRUCTURAL_TRANSISTION
+struct EXPLICIT_STRUCTURAL_TRANSISTION <: StructuralTransition
+  structuralTransition::BDAE.STRUCTURAL_TRANSISTION
 end
 
-struct IMPLICIT_STRUCTURAL_TRANSISTION <: StructuralTransistion
+struct IMPLICIT_STRUCTURAL_TRANSISTION <: StructuralTransition
   structuralWhenEquation::BDAE.STRUCTURAL_WHEN_EQUATION
 end
 
@@ -125,7 +125,7 @@ struct SIM_CODE{T0<:String,
                 T7<:Vector{Int},
                 T8<:Graphs.AbstractGraph,
                 T9<:Vector,
-                T10 <: Vector{StructuralTransistion},
+                T10 <: Vector{StructuralTransition},
                 T11 <: Vector,
                 T12 <: Vector{String},
                 T13 <: String} <: SimCode
@@ -156,7 +156,7 @@ struct SIM_CODE{T0<:String,
   " The reverse topological sort of the equation-graph "
   stronglyConnectedComponents::T9
   "Contains all structural transistions"
-  structuralTransistions::T10  
+  structuralTransitions::T10  
   "Structural submodels"
   subModels::T11
   " Variables that different submodels have in common"

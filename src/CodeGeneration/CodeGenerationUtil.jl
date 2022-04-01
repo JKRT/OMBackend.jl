@@ -105,6 +105,9 @@ function transformToZeroCrossingCondition(conditonalExpression::DAE.Exp)
   return res
 end
 
+
+
+
 """
   Flattens a vector of expressions.
 """
@@ -632,13 +635,13 @@ function expToJuliaExpMTK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuf
 end
 
 """
-If the system needs to conduct index reduction generate code for that.
+  If the system needs to conduct index reduction make sure to inform MTK.
 """
 function MTK_indexReduction(indexReduction)::Expr
   if (indexReduction)
-    :(reducedSystem = ModelingToolkit.dae_index_lowering(firstOrderSystem))
+    :(reducedSystem = firstOrderSystem)#ModelingToolkit.structural_simplify(firstOrderSystem; simplify=true))
   else
-    :(reducedSystem = firstOrderSystem)
+    :(reducedSystem = firstOrderSystem)#ModelingToolkit.dae_index_lowering(firstOrderSystem))
   end
 end
 
@@ -648,4 +651,19 @@ end
 """
 function involvedInEvent(idx, simCode)
   return false
+end
+
+
+"""
+  This functions evaluate a single DAE-constant:{Bool, Integer, Real, String}.
+  If the argument  to this function is not a constant it throws an error.
+"""
+function evalDAEConstant(daeConstant::DAE.Exp)
+  @match daeConstant begin
+    DAE.BCONST(bool) => bool
+    DAE.ICONST(int) => int
+    DAE.RCONST(real) => real
+    DAE.SCONST(tmpStr) => tmpStr
+    _ => throw("$(daeConstant) is not a constant")
+  end
 end

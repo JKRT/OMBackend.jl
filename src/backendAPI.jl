@@ -35,6 +35,7 @@ using Absyn
 #= For interactive evaluation. =#
 using ModelingToolkit
 using SymbolicUtils
+using DifferentialEquations
 
 
 import .Backend.BDAE
@@ -42,6 +43,7 @@ import .Backend.BDAECreate
 import .Backend.BDAEUtil
 import .Backend.Causalize
 import ..CodeGeneration
+import OMBackend.CodeGeneration
 import .SimulationCode
 import ..Runtime
 import Base.Meta
@@ -303,10 +305,12 @@ function availableModels()::String
 end
 
 """
-`simulateModel(modelName::String; MODE = DAE_MODE ,tspan=(0.0, 1.0))`
+`simulateModel(modelName::String; MODE = DAE_MODE ,tspan=(0.0, 1.0), solver = :solver)
   Simulates model interactivly.
+The solver need to be passed with a : before the name, example:
+OMBackend.simulateModel(modelName, tspan = (0.0, 1.0), solver = :(Tsit5()));
 """
-function simulateModel(modelName::String; MODE = MTK_MODE ,tspan=(0.0, 1.0))
+function simulateModel(modelName::String; MODE = MTK_MODE, tspan=(0.0, 1.0), solver = :(Rodas5()))
   #= Strings containing . need to be in a format suitable for Julia =#
   modelName = replace(modelName, "." => "__")
   local modelCode::Expr  
@@ -321,11 +325,12 @@ function simulateModel(modelName::String; MODE = MTK_MODE ,tspan=(0.0, 1.0))
     end
     try
       @eval $(:(import OMBackend))
+      #= Below is needed to pass the custom solver=#
       strippedModel = CodeGeneration.stripBeginBlocks(modelCode)
       @eval $strippedModel
-      local modelRunnable = Meta.parse("OMBackend.$(modelName)Simulate($(tspan))")
+      local modelRunnable = Meta.parse("OMBackend.$(modelName)Simulate($(tspan); solver = $solver)")
       #= Run the model with the supplied tspan. =#
-      @eval Main $modelRunnable
+      @eval $modelRunnable
       #=
       The model is now compiled and a part of the OMBackend module.
       In the following path OMBackend.<modelName>Simulate
@@ -380,6 +385,20 @@ end
 "
 function plot(sol)
   Plots.plot(sol)
+end
+
+"""
+  Plotting program for an OMSolution that contains several sub solutions.
+  Plots all part of the solution on the same graph.
+"""
+function plot(sol::Runtime.OMSolutions; legend = false, limX = 0.0, limY = 1.0)
+  local sols = sol.diffEqSol
+  local prevP = Plots.plot!(sols[1]; legend = legend, xlim=limX, ylim = limY)
+  for sol in sols[2:end]
+    p = Plots.plot!(prevP; legend = legend, xlim=limX, ylim = limY)
+    prevP = p
+  end
+  return prevP
 end
 
 """

@@ -152,17 +152,6 @@ function makeResidualExp(lhs::DAE.Exp, rhs::DAE.Exp)::DAE.Exp
   DAE.BINARY(lhs, DAE.SUB(DAE.T_REAL_DEFAULT), rhs)
 end
 
-"""
-    kabdelhak:
-    create a single array with all equations
-"""
-function concenateEquations(eqs::Array{BDAE.EqSystem})::Array{BDAE.Equation}
-  eqArr::Array{BDAE.Equation} = []
-  for eq in eqs
-    eqArr = vcat(eqArr, eq.orderedEqs)
-  end
-  return eqArr
-end
 
 @exportAll()
 end

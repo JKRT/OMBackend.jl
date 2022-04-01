@@ -9,6 +9,7 @@ using MetaModelica
 """
   Wrapper to a function in SCode util.
   inIdent is a string since frontend automatically remove certain parameters.
+  TODO: Also search for components in the innermost class.
 """
 function getElementFromSCodeProgram(inIdent::String, inClass::SCode.Element)
   result = SCodeUtil.getElementNamed(inIdent, inClass)
