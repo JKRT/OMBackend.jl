@@ -74,7 +74,7 @@ function convertSymbolsToStrings(symbols::Vector{Symbol})
 end
 
 """
-  This function maps variables between two models during a structural change.
+  This function maps variables between two models during a structural change with recompilation.
   It returns a new vector of u₀ variables to initialize the new model.
   We do so by assigning the old values when the structural change occured for all variables
   that occured in the model before the structural change.
