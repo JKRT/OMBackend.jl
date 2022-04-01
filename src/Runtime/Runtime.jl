@@ -68,10 +68,10 @@ mutable struct StructuralChangeRecompilation{MOD <: Tuple} <: AbstractStructural
   metaModel::SCode.CLASS
   "The modification to be applied during recompilation"
   modification::MOD
-  "
+  """
   The symbol table for the old model.
   This is used to map indices of variables when the structure of the model changes
-  "
+  """
   stringToSimVarHT
 end
 
@@ -226,6 +226,7 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
       for cb in structuralCallbacks
         if cb.structureChanged && i.t < tspan[2]
           #= Recompile the system =#
+          local oldHT = cb.stringToSimVarHT
           (newProblem, newSymbolTable, initialValues) = recompilation(cb.name, cb, integrator.u, tspan, callbackConditions)
           #= End recompilation =#
           #= Assuming the indices are the same (Which is not neccesary true) =#
@@ -233,7 +234,7 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
           local symsOfNewProlem = getSyms(newProblem)
           local newU0 = RuntimeUtil.createNewU0(symsOfOldProblem,
                                                 symsOfNewProlem,
-                                                cb.stringToSimVarHT,
+                                                oldHT,
                                                 newSymbolTable,
                                                 initialValues,
                                                 integrator)
@@ -266,7 +267,6 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
         end
       end
     end
-#  end
   @label END_OF_INTEGRATION
   push!(solutions, integrator.sol)
   return solutions
