@@ -70,10 +70,12 @@ function makeODESystem(deqs, iv, vars, pars, idxReduction; name)
   deqs = [move_diffs(eq, rewrite = remove_diffs) for eq in deqs]
   #= Special computationally heavy routine for systems that need index reduction.. =#
   if idxReduction
+    #= Convert the system to a string=#
     res = debugRewrite(deqs, iv, vars, pars)
-    println(res)
+    #= Parse and evaluate it =#
     expr = Meta.parse(res)
     eval(expr)
+    #= Generate a new system with metadata...=#
     res = ModelingToolkit.ODESystem(eqs2, iv, vars2, pars; name = name)
     res2 = ModelingToolkit.dae_index_lowering(res)
     return res2

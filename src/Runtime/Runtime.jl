@@ -16,12 +16,8 @@ using DataStructures
 using ModelingToolkit
 using DifferentialEquations
 using MetaModelica
-using TimerOutputs
 
 abstract type AbstractOMSolution end
-
-const to = TimerOutput()
-const t1 = TimerOutput()
 
 """
   Wrapper
@@ -224,21 +220,13 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
   #= Run the integrator=#
   @label START_OF_INTEGRATION
   #  @timeit to "Loop" begin
-  enable_timer!(to)
     for i in integrator
       #= Check structural callbacks in order =#
       retCode = check_error(integrator)
       for cb in structuralCallbacks
         if cb.structureChanged && i.t < tspan[2]
-          println("\nTime simulating at $(i.t)\n")
-          show(to)
-          println("\nEnd time simulating at $(i.t)")
-          reset_timer!(to)
-          enable_timer!(t1)
           #= Recompile the system =#
           (newProblem, newSymbolTable, initialValues) = recompilation(cb.name, cb, integrator.u, tspan, callbackConditions)
-          show(t1)
-          reset_timer!(t1)
           #= End recompilation =#
           #= Assuming the indices are the same (Which is not neccesary true) =#
           local symsOfOldProblem = getSyms(problem)
@@ -266,7 +254,6 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
             and set the active moed to the mode we are currently using.
           =#
           cb.structureChanged = false
-          add_tstop!(integrator, tspan[2])
           activeModeName = cb.name
           reinit!(integrator, newU0; t0 = i.t)
           #= Point the problem to the new problem =#
@@ -281,9 +268,6 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
     end
 #  end
   @label END_OF_INTEGRATION
-  println("\nTime simulating at $(integrator.t)\n")
-  show(to)
-  println("\nEnd time simulating at $(integrator.t)")
   push!(solutions, integrator.sol)
   return solutions
 end
@@ -312,15 +296,10 @@ function recompilation(activeModeName, structuralCallback, u, tspan, callbackCon
   newProgram = MetaModelica.list(RuntimeUtil.setElementInSCodeProgram!(elementToChange, newValue, metaModel))
   local classToInstantiate = activeModeName
   #=- 3) Call the frontend + the backend + JIT compile Julia code in memory =#
-  @timeit t1 "Symbolic processing" begin    
-    local flatModelica = first(OMFrontend.instantiateSCodeToFM(classToInstantiate, newProgram))
+  local flatModelica = first(OMFrontend.instantiateSCodeToFM(classToInstantiate, newProgram))
   #= 3.1 Run the backend=#
-  end
-  @timeit t1 "Backend Processing" begin
-    (resultingModel, simulationCode) = runBackend(flatModelica, classToInstantiate)
-  end
-  @timeit t1 "Machine code generation" begin
-    #= 4.0 Revaulate the model=#
+  (resultingModel, simulationCode) = runBackend(flatModelica, classToInstantiate)
+  #= 4.0 Revaulate the model=#
     local modelName = replace(activeModeName, "." => "__") * "Model"
     @eval $(resultingModel)
     modelCall = quote
@@ -342,7 +321,6 @@ function recompilation(activeModeName, structuralCallback, u, tspan, callbackCon
     @match SOME(newMetaModel) = simulationCode.metaModel
     structuralCallback.metaModel = newMetaModel
     structuralCallback.stringToSimVarHT = simulationCode.stringToSimVarHT
-  end
   #= 4.x) Assign this system to newSystem. =#
   return (compositeProblem, simulationCode.stringToSimVarHT, initialValues)
 end
@@ -350,8 +328,8 @@ end
 function runBackend(flatModelica, classToInstantiate)
   local bdae = OMBackend.lower(flatModelica)
   local simulationCode = OMBackend.generateSimulationCode(bdae; mode = OMBackend.MTK_MODE)
-  return (OMBackend.CodeGeneration.ODE_MODE_MTK_MODEL_GENERATION(simulationCode, classToInstantiate),
-          simulationCode)
+  local newModel = OMBackend.CodeGeneration.ODE_MODE_MTK_MODEL_GENERATION(simulationCode, classToInstantiate)
+  return (newModel, simulationCode)
 end
 
 

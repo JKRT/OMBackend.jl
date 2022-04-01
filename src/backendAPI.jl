@@ -329,7 +329,6 @@ function simulateModel(modelName::String; MODE = MTK_MODE, tspan=(0.0, 1.0), sol
       strippedModel = CodeGeneration.stripBeginBlocks(modelCode)
       @eval $strippedModel
       local modelRunnable = Meta.parse("OMBackend.$(modelName)Simulate($(tspan); solver = $solver)")
-      println(modelRunnable)
       #= Run the model with the supplied tspan. =#
       @eval $modelRunnable
       #=
