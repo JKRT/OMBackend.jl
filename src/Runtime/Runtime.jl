@@ -147,7 +147,7 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
         indicesOfCommonVariables = getIndicesOfCommonVariables(getSyms(newSystem),
                                                                commonVariableSet;
                                                                destinationPrefix = cb.name)
-        newU0 = Float64[i.u[idx] for idx in indicesOfCommonVariables]
+        newU0 = Float64[i.u[idx] for idx in indicesOfCommonVariablesForStartingMode]
         #= Save the old solution together with the name and the mode that was active =#
         push!(oldSols, (integrator.sol, getSyms(problem), activeModeName))
         #= Now we have the start values for the next part of the system=#
@@ -166,7 +166,7 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
         =#
         activeModeName = cb.name
         reinit!(integrator, newU0; t0 = i.t, reset_dt = true)
-        cb.structureChanged = false
+        cb.structureChanged = false        
         #= goto to save preformance =#
         @goto START_OF_INTEGRATION
       end
@@ -214,60 +214,61 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
   local structuralCallbacks = omProblem.structuralCallbacks
   local callbackConditions = omProblem.callbackConditions
   local activeModeName = omProblem.activeModeName
-  integrator = init(problem, alg, dtmax = 1, kwargs...)
+  local integrator = init(problem, alg, dtmax = 0.1, kwargs...)
   local oldSols = []
   local solutions = []
   #= Run the integrator=#
   @label START_OF_INTEGRATION
-  #  @timeit to "Loop" begin
-    for i in integrator
-      #= Check structural callbacks in order =#
-      retCode = check_error(integrator)
-      for cb in structuralCallbacks
-        if cb.structureChanged && i.t < tspan[2]
-          #= Recompile the system =#
-          local oldHT = cb.stringToSimVarHT
-          (newProblem, newSymbolTable, initialValues) = recompilation(cb.name, cb, integrator.u, tspan, callbackConditions)
-          #= End recompilation =#
-          #= Assuming the indices are the same (Which is not neccesary true) =#
-          local symsOfOldProblem = getSyms(problem)
-          local symsOfNewProlem = getSyms(newProblem)
-          local newU0 = RuntimeUtil.createNewU0(symsOfOldProblem,
-                                                symsOfNewProlem,
-                                                oldHT,
-                                                newSymbolTable,
-                                                initialValues,
-                                                integrator)
-          #= Save the old solution together with the name and the mode that was active =#
-          push!(solutions, integrator.sol)
-          push!(oldSols, (integrator.sol, getSyms(problem), activeModeName))
-          #= Now we have the start values for the next part of the system=#
-          integrator = init(newProblem,
-                            alg;
-                            t0 = i.t,
-                            u0 = newU0,
-                            tstop = tspan[2],
-                            dt = 0.001,
-                            dtmax = 1,
-                            kwargs...)
-          #=
-            Reset with the new values of u0
-            and set the active moed to the mode we are currently using.
-          =#
-          cb.structureChanged = false
-          activeModeName = cb.name
-          reinit!(integrator, newU0; t0 = i.t)
-          #= Point the problem to the new problem =#
-          problem = newProblem
-          #= Take one integration step, s.t the zero crossing function is not triggered directly =#
-          step!(integrator)
-          retCode = check_error(integrator)
-          #= goto to save preformance =#
-          @goto START_OF_INTEGRATION
-        end
+  for i in integrator
+    #= Check structural callbacks in order =#
+    retCode = check_error(integrator)
+    for j in 1:length(structuralCallbacks)
+      local cb = structuralCallbacks[j]
+      if cb.structureChanged && i.t < tspan[2]
+        #= Recompile the system =#
+        local oldHT = cb.stringToSimVarHT
+        (newProblem, newSymbolTable, initialValues) = recompilation(cb.name, cb, integrator.u, tspan, callbackConditions)
+        #= End recompilation =#
+        #= Assuming the indices are the same (Which is not neccesary true) =#
+        local symsOfOldProblem = getSyms(problem)
+        local symsOfNewProlem = getSyms(newProblem)
+        local newU0 = RuntimeUtil.createNewU0(symsOfOldProblem,
+                                              symsOfNewProlem,
+                                              oldHT,
+                                              newSymbolTable,
+                                              initialValues,
+                                              integrator)
+        #= Save the old solution together with the name and the mode that was active =#
+        push!(solutions, integrator.sol)
+        push!(oldSols, (integrator.sol, getSyms(problem), activeModeName))
+        #= Now we have the start values for the next part of the system=#
+        integrator = init(newProblem,
+                          alg;
+                          t0 = i.t,
+                          u0 = newU0,
+                          dtmax = 0.1,
+                          tstop = tspan[2],
+                          kwargs...)
+        #=
+        Reset with the new values of u0
+        and set the active moed to the mode we are currently using.
+        =#
+        activeModeName = cb.name
+        reinit!(integrator, newU0; t0 = i.t, reset_dt = true)
+        #= Point the problem to the new problem =#
+        problem = newProblem
+        #= Note that the structural event might be triggered again here (We kill it later) =#
+        step!(integrator, true)
+        #=
+         We reset the structural change pointer again here just to make sure
+         that we do not trigger the callback again.
+        =#
+        cb.structureChanged = false
+        #= goto to save preformance =#
+        @goto START_OF_INTEGRATION
       end
     end
-  @label END_OF_INTEGRATION
+  end
   push!(solutions, integrator.sol)
   return solutions
 end
@@ -276,7 +277,7 @@ end
   Recompile the metamodel with some component changed.
   Returns a tuple of a new problem together with a new symbol table.
 """
-function recompilation(activeModeName, structuralCallback, u, tspan, callbackConditions)::Tuple
+function recompilation(activeModeName, structuralCallback, integrator_u, tspan, callbackConditions)::Tuple
   #=  Recompilation =#
   #= Have the SCode =#        
   #= - 1) Fetch the parameter from the structural callback =#

@@ -88,15 +88,24 @@ function createNewU0(symsOfOldProblem::Vector{Symbol},
   local newU0 = Float64[last(initialValues[idx]) for idx in 1:length(symsOfNewProblem)]
   local variableNamesOldProblem  = RuntimeUtil.convertSymbolsToStrings(symsOfOldProblem)
   local variableNamesNewProblem  = RuntimeUtil.convertSymbolsToStrings(symsOfNewProblem)
-  local variableNamesWithoutPrefixes = [replace(k, r".*_" => "") for k in variableNamesOldProblem]
-  local oldKeys = [replace(k, r".*_" => "") for k in keys(oldHT)]
-  local newKeys = [replace(k, r".*_" => "") for k in keys(newHT)]
-  for i in 1:min(length(variableNamesOldProblem), length(variableNamesNewProblem))
-    local varNameWithoutPrefix = variableNamesWithoutPrefixes[i]
-    if varNameWithoutPrefix in oldKeys && varNameWithoutPrefix in newKeys
-      local varNameOld = variableNamesOldProblem[i]
-      local idxOldVar = getIdxFromEntry(oldHT[varNameOld])
-      local varNameNew = variableNamesNewProblem[i]
+  local variableNamesWithoutPrefixesOP = [replace(k, r".*_" => "") for k in variableNamesOldProblem]
+  local variableNamesWithoutPrefixesNP = [replace(k, r".*_" => "") for k in variableNamesNewProblem]
+  local largestProblem = if length(variableNamesOldProblem) > length(variableNamesOldProblem)
+    variableNamesWithoutPrefixesOP
+  else
+    variableNamesWithoutPrefixesNP
+  end
+  for v in largestProblem
+    local varNameWithoutPrefix = v
+    if varNameWithoutPrefix in variableNamesWithoutPrefixesOP && varNameWithoutPrefix in variableNamesWithoutPrefixesNP
+      local oldIndices = findall((x)-> x == varNameWithoutPrefix, variableNamesWithoutPrefixesOP)
+      @assert(length(oldIndices) == 1, "Zero or more than one variable with that name!")
+      idxOldVar = first(oldIndices)
+      #= Locate the index of a variable with that name in the set of new variables=#
+      local indices = findall((x)-> x == varNameWithoutPrefix, variableNamesWithoutPrefixesNP)
+      #= I assume here that there are no duplicate variables =#
+      @assert(length(indices) == 1, "Zero or more than one variable with that name!")
+      local varNameNew = variableNamesNewProblem[first(indices)]
       local idxNewVar = getIdxFromEntry(newHT[varNameNew])
       newU0[idxNewVar] = integrator.u[idxOldVar]
     end
