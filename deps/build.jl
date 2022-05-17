@@ -19,7 +19,6 @@ function buildDeps()
   Pkg.add("LightGraphs")
   Pkg.add("MetaGraphs")
   Pkg.add("JuliaFormatter")
-  Pkg.add("Reduce")
   Pkg.add("MacroTools")
   #= This packages are available using the OpenModelica Julia registry=#
   Pkg.add("ImmutableList")
