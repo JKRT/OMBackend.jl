@@ -34,10 +34,16 @@
 import CSV
 import Tables
 
+import Absyn
+import SCode
+import DAE
+using MetaModelica
 #=
-Danger: Do not remove this using line it is needed to init the parser.
+  Danger: Do not remove this using line it is needed to init the parser.
 =#
-using OMParser
+import OMParser
+import OMFrontend
+
 #= **** =#
 
 using OMBackend
