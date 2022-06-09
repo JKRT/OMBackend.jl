@@ -153,12 +153,12 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
         #= Now we have the start values for the next part of the system=#
         integrator = init(cb.system,
                           alg;
-                          t0 = i.t,
-                          u0 = newU0,
+#                         t0 = i.t,
+#                          u0 = newU0,
                           dt = 0.01,
                           dtmax = 0.01,
-                          tstart = tspan[1],
-                          tstop = tspan[2],
+#                          tstart = tspan[1],
+#                          tstop = tspan[2],
                           kwargs...)
         #=
           Reset with the new values of u0
@@ -242,12 +242,10 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
         push!(solutions, integrator.sol)
         push!(oldSols, (integrator.sol, getSyms(problem), activeModeName))
         #= Now we have the start values for the next part of the system=#
+        @info "test"
         integrator = init(newProblem,
                           alg;
-                          t0 = i.t,
-                          u0 = newU0,
                           dtmax = 0.1,
-                          tstop = tspan[2],
                           kwargs...)
         #=
         Reset with the new values of u0

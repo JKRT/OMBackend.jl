@@ -192,6 +192,7 @@ function generateTargetCode(simCode::SimulationCode.SIM_CODE)
   (modelName::String, modelCode::Expr) = CodeGeneration.generateCode(simCode)
   @debug "Functions:" modelCode
   @debug "Model:" modelName
+  #= TODO: This replacement should ideally be done earlier. Or be solved in a nicer way. =#
   modelName = replace(modelName, "." => "__")
   COMPILED_MODELS[modelName] = modelCode
   return (modelName, modelCode)
