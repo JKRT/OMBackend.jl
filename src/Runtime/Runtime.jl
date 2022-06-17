@@ -242,7 +242,6 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
         push!(solutions, integrator.sol)
         push!(oldSols, (integrator.sol, getSyms(problem), activeModeName))
         #= Now we have the start values for the next part of the system=#
-        @info "test"
         integrator = init(newProblem,
                           alg;
                           dtmax = 0.1,
