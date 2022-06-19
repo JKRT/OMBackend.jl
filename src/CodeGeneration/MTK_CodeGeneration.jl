@@ -145,11 +145,8 @@ function ODE_MODE_MTK_PROGRAM_GENERATION(simCode::SimulationCode.SIM_CODE, model
     using ModelingToolkit
     using DifferentialEquations
     $(model)
-    ($(Symbol("$(MODEL_NAME)Model_problem")), ivs, $(Symbol("$(MODEL_NAME)Model_ReducedSystem")), tspan, pars, vars) = $(Symbol("$(MODEL_NAME)Model"))()
-    function $(Symbol("$(MODEL_NAME)Simulate"))()
-      solve($(Symbol("$(MODEL_NAME)Model_problem")))
-    end
     function $(Symbol("$(MODEL_NAME)Simulate"))(tspan = (0.0, 1.0); solver=Rodas5())
+      ($(Symbol("$(MODEL_NAME)Model_problem")), ivs, $(Symbol("$(MODEL_NAME)Model_ReducedSystem")), tspan, pars, vars) = $(Symbol("$(MODEL_NAME)Model"))(tspan)
       solve($(Symbol("$(MODEL_NAME)Model_problem")), solver)
     end
   end
@@ -223,9 +220,9 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
   #= Reset the callback counter=#
   RESET_CALLBACKS()
   #=
-  Formulate the problem as a DAE Problem.
-  For this variant we keep t on its own line
-  https://github.com/SciML/ModelingToolkit.jl/issues/998
+    Formulate the problem as a DAE Problem.
+    For this variant we keep it on its own line
+    https://github.com/SciML/ModelingToolkit.jl/issues/998
   =#
   #=If our model name is separated by . replace it with __ =#
   local MODEL_NAME = replace(modelName, "." => "__")
@@ -268,8 +265,8 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
       firstOrderSystem = nonLinearSystem #ModelingToolkit.ode_order_lowering(nonLinearSystem)
       $(MTK_indexReduction(performIndexReduction))
       #=
-      These arrays are introduced to handle the bolted on event handling using callbacks.
-      The callback handling for MTK is subject of change should hybrid system be implemented for MTK.
+        These arrays are introduced to handle the bolted on event handling using callbacks.
+        The callback handling for MTK is subject of change should hybrid system be implemented for MTK.
       =#
       local event_p = [$(PARAMETER_RAW_ARRAY...)]
       local discreteVars = collect(values(Dict([$(DISCRETE_START_VALUES...)])))
