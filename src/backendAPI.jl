@@ -1,3 +1,4 @@
+
 #=
 * This file is part of OpenModelica.
 *
@@ -192,6 +193,7 @@ function generateTargetCode(simCode::SimulationCode.SIM_CODE)
   (modelName::String, modelCode::Expr) = CodeGeneration.generateCode(simCode)
   @debug "Functions:" modelCode
   @debug "Model:" modelName
+  #= TODO: This replacement should ideally be done earlier. Or be solved in a nicer way. =#
   modelName = replace(modelName, "." => "__")
   COMPILED_MODELS[modelName] = modelCode
   return (modelName, modelCode)
@@ -310,12 +312,14 @@ end
 The solver need to be passed with a : before the name, example:
 OMBackend.simulateModel(modelName, tspan = (0.0, 1.0), solver = :(Tsit5()));
 """
-function simulateModel(modelName::String; MODE = MTK_MODE, tspan=(0.0, 1.0), solver = :(Rodas5()))
+function simulateModel(modelName::String;
+                       MODE = MTK_MODE,
+                       tspan=(0.0, 1.0), solver = :(Rodas5()))
   #= Strings containing . need to be in a format suitable for Julia =#
   modelName = replace(modelName, "." => "__")
   local modelCode::Expr  
   if MODE == MTK_MODE
-    #= This does a redudant string conversion for now due to modeling toolkit being as is...=#
+    #= This does a redundant string conversion for now due to modeling toolkit being as is...=#
     try
       modelCode = getCompiledModel(modelName)
     catch err
@@ -350,18 +354,23 @@ end
   Resimulates an already compiled model given a model that is already active in th environment
   along with a set of parameters as key value pairs.
 """
-function resimulateModel(modelName::String; MODE = MTK_MODE , tspan=(0.0, 1.0), parameters::Dict = Dict())
+function resimulateModel(modelName::String;
+                         solver = Rodas5(),
+                         MODE = MTK_MODE,
+                         tspan=(0.0, 1.0),
+                         parameters::Dict = Dict())
   #=
   Check if a compiled instance of the model already exists in the backend.
   If that is the case we do not have to recompile it.
   =#
   try
-    local modelRunnable = Meta.parse("OMBackend.$(modelName)Simulate($(tspan))")
+    local modelRunnable = Meta.parse("OMBackend.$(modelName)Simulate($(tspan); solver = $(solver))")
+    @info modelRunnable
     res = @eval $modelRunnable
     return res
   catch #= The model is not compiled yet. Proceeding.. =#
     availModels = availableModels()
-    @error "The model $(modelName) is not compiled. Available models are: $(availModels)"        
+    @error "The model $(modelName) is not compiled.\n Available models are: $(availModels)"        
   end
 end
 

@@ -145,12 +145,9 @@ function ODE_MODE_MTK_PROGRAM_GENERATION(simCode::SimulationCode.SIM_CODE, model
     using ModelingToolkit
     using DifferentialEquations
     $(model)
-    ($(Symbol("$(MODEL_NAME)Model_problem")), ivs, $(Symbol("$(MODEL_NAME)Model_ReducedSystem")), tspan, pars, vars) = $(Symbol("$(MODEL_NAME)Model"))()
-    function $(Symbol("$(MODEL_NAME)Simulate"))(tspan)
-      solve($(Symbol("$(MODEL_NAME)Model_problem")), tspan=tspan)
-    end
     function $(Symbol("$(MODEL_NAME)Simulate"))(tspan = (0.0, 1.0); solver=Rodas5())
-      solve($(Symbol("$(MODEL_NAME)Model_problem")), tspan=tspan, solver)
+      ($(Symbol("$(MODEL_NAME)Model_problem")), ivs, $(Symbol("$(MODEL_NAME)Model_ReducedSystem")), tspan, pars, vars) = $(Symbol("$(MODEL_NAME)Model"))(tspan)
+      solve($(Symbol("$(MODEL_NAME)Model_problem")), solver)
     end
   end
   #= MODEL_NAME is preprocessed with . replaced with _=#
@@ -223,9 +220,9 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
   #= Reset the callback counter=#
   RESET_CALLBACKS()
   #=
-  Formulate the problem as a DAE Problem.
-  For this variant we keep t on its own line
-  https://github.com/SciML/ModelingToolkit.jl/issues/998
+    Formulate the problem as a DAE Problem.
+    For this variant we keep it on its own line
+    https://github.com/SciML/ModelingToolkit.jl/issues/998
   =#
   #=If our model name is separated by . replace it with __ =#
   local MODEL_NAME = replace(modelName, "." => "__")
@@ -238,8 +235,8 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
         ($(parVariablesSym...), $(discreteVariablesSym...))
       end
       #=
-      Only variables that are present in the equation system later should be a part of the variables in the MTK system.
-      This means that certain algebraic variables should not be listed among the variables (These are the discrete variables).
+        Only variables that are present in the equation system later should be a part of the variables in the MTK system.
+        This means that certain algebraic variables should not be listed among the variables (These are the discrete variables).
       =#
       $(decomposeVariables(stateVariablesSym, algebraicVariablesSym))
       componentVars = []
@@ -268,8 +265,8 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
       firstOrderSystem = nonLinearSystem #ModelingToolkit.ode_order_lowering(nonLinearSystem)
       $(MTK_indexReduction(performIndexReduction))
       #=
-      These arrays are introduced to handle the bolted on event handling using callbacks.
-      The callback handling for MTK is subject of change should hybrid system be implemented for MTK.
+        These arrays are introduced to handle the bolted on event handling using callbacks.
+        The callback handling for MTK is subject of change should hybrid system be implemented for MTK.
       =#
       local event_p = [$(PARAMETER_RAW_ARRAY...)]
       local discreteVars = collect(values(Dict([$(DISCRETE_START_VALUES...)])))
@@ -290,152 +287,15 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
   return model
 end
 
-"""
- This generates code targetting modeling toolkit (but separates algebraic loops from the rest of the system).
- Discrete variables are treated as parameters
-"""
-function ODE_MODE_MTK_LOOP(simCode::SimulationCode.SIM_CODE)
-  @debug "Runnning: generateMTKCode"
-  RESET_CALLBACKS()
-  local stringToSimVarHT = simCode.stringToSimVarHT
-  local equations::Array = []
-  local exp::DAE.Exp
-  local modelName::String = simCode.name
-  (stateVariables, algebraicVariables, stateVariablesLoop, algebraicVariablesLoop) = separateVariables(simCode)
-  #=
-    We have a cycle!
-  =#
-  loop = getCycleInSCCs(simCode.stronglyConnectedComponents)
-  (stateVariables, algebraicVariables, stateVariablesLoop, algebraicVariablesLoop) =
-  local allVariables = vcat(stateVariables, algebraicVariables, stateVariablesLoop, algebraicVariablesLoop)
-  #= Create equations for variables not in a loop + parameters and stuff=#
-  local equations = createSortedEquations(stateVariables,
-                                          simCode; arrayName = "u")
-  local parVariablesSym = [Symbol(p) for p in parameters]
-  local START_CONDTIONS_EQUATIONS = getStartConditions(allVariables, "reals", simCode)
-  local DISCRETE_START_VALUES = getStartConditionsMTK(discreteVariables, simCode)
-  local PARAMETER_EQUATIONS = createParameterEquationsMTK(parameters, simCode)
-  local PARAMETER_ASSIGNMENTS = createParameterAssignmentsMTK(parameters, simCode)
-  local PARAMETER_RAW_ARRAY = createParameterArray(parameters, simCode)
-  #= Create callback equations. For MTK we disable the saving function for now. =#
-  local CALL_BACK_EQUATIONS = createCallbackCode(modelName, simCode; generateSaveFunction = false)
-  #= Symbolic names =#
-  local stateVariablesSym = [:($(Symbol(v))(t)) for v in stateVariables]
-  local algebraicVariablesSym = [:($(Symbol(v))(t)) for v in algebraicVariables]
-  local stateVariablesSymNoT = [:($(Symbol(v))) for v in stateVariables]
-  local algebraicVariablesSymNoT = [:($(Symbol(v))) for v in algebraicVariables]
-  DUMMY_EQUATION_OUTSIDE_LOOP = Expr[]
-  for v in vcat(stateVariablesSymNoT, algebraicVariablesSymNoT)
-    push!(DUMMY_EQUATION_OUTSIDE_LOOP, :($v ~ $v))
-  end
-  local discreteVariablesSym = [:($(Symbol(v))) for v in discreteVariables]
-  RESET_CALLBACKS()
-  #= Create loop variables and the loop itself=#
-  local equations_loop = createResidualEquationsMTK(stateVariablesLoop,
-                                                    algebraicVariablesLoop,
-                                                    simCode.residualEquations,
-                                                    simCode::SimulationCode.SIM_CODE)
-  local algebraicVariablesSymLoop = [:($(Symbol(v))) for v in algebraicVariablesLoop]
-  local stateVariablesSymLoop = [:($(Symbol(v))) for v in stateVariablesLoop]
-  local START_CONDTIONS_EQUATIONS_LOOP = createStartConditionsEquationsMTK(stateVariablesLoop, algebraicVariablesLoop, simCode)
-  #=
-  Formulate the problem as a DAE Problem.ac
-  For this variant we keep t on its own line
-  https://github.com/SciML/ModelingToolkit.jl/issues/998
-  =#
-  program = quote
-    using ModelingToolkit
-    using DiffEqBase
-    using DifferentialEquations
-    using NLsolve
-    #= t for time=#
-    function $(Symbol(modelName, "AlgebraicLoop"))()
-      parameters = ModelingToolkit.@parameters begin
-        ($(parVariablesSym...), $(discreteVariablesSym...), t)
-      end
-      vars = ModelingToolkit.@variables begin
-        ($(stateVariablesSym...), $(stateVariablesSymLoop...), $(algebraicVariablesSymLoop...))
-      end
-      eqs = [$(equations_loop...), $(DUMMY_EQUATION_OUTSIDE_LOOP...)]
-      nonLinearSystem = ModelingToolkit.NonlinearSystem(eqs, vars, parameters, name=:($(Symbol($modelName))))
-      return nonLinearSystem
-    end
-
-    function makeNLProblem()
-      loop = $(Symbol(modelName, "AlgebraicLoop"))()
-      nlsys_function = generate_function(loop, expression=Val{false})[2]
-    end
-    $(Symbol(modelName, "NonLinearFunction")) = makeNLProblem()
-    function $(Symbol("$(modelName)Model_ODE"))(dx, x, aux, t)
-      p = aux[1]
-      u = aux[2]
-      func!(res, u) = $(Symbol(modelName, "NonLinearFunction"))(res, u, vcat(p,[t]))
-      sol = nlsolve(func!, u, ftol=1e-8; method = :newton)
-      aux[2] = sol.zero
-      #= Equations goes here =#
-      $(equations...)
-    end
-    function $(Symbol("$(modelName)Model_problem"))(tspan)
-      aux = [[$(PARAMETER_RAW_ARRAY...)], fill(0.0, $(length(allVariables)))]
-      pars = aux[1]
-      reals = aux[2]
-      $(START_CONDTIONS_EQUATIONS)
-      x = fill(0.0, $(length(stateVariables)))
-      dx = fill(0.0, $(length(stateVariables)))
-      odeF = $(Symbol("$(modelName)Model_ODE"))
-      ODEProblem(odeF, x, tspan, aux)
-    end
-
-    $(CALL_BACK_EQUATIONS)
-    $(Symbol("$(modelName)Model_problemInstance")) = $(Symbol("$(modelName)Model_problem"))((0.0,1.))
-    function $(Symbol("$(modelName)Simulate"))(tspan)
-      solve($(Symbol("$(modelName)Model_problemInstance")), tspan=tspan)
-    end
-    function $(Symbol("$(modelName)Simulate"))(tspan = (0.0, 1.0); solver=Tsit5())
-      solve($(Symbol("$(modelName)Model_problemInstance")), tspan=tspan, solver)
-    end
-  end
-
-  return (modelName, program)
-
-end
 
 """
-     Creates the residual equations in unsorted order
-  """
+  Creates the residual equations in unsorted order
+"""
 function createResidualEquationsMTK(stateVariables::Array, algebraicVariables::Array, equations::Array, simCode::SimulationCode.SIM_CODE)::Array{Expr}
   if isempty(equations)
     return Expr[]
   end
   local eqs::Vector{Expr} = Expr[]
-  # local ht = simCode.stringToSimVarHT
-  # local lhsVariables = Set([])
-  # local usedEquations = []
-  # for i in 1:length(stateVariables)
-  #   local variableIdx = ht[stateVariables[i]][1]
-  #   local equationIdx = simCode.matchOrder[variableIdx]
-  #   local equation = equations[equationIdx]
-  #   push!(usedEquations, equationIdx)
-  #   push!(eqs, residualEqtoJuliaMTK(equation, simCode, equationIdx))
-  # end
-  # #=
-  # Generate algebraic equations.
-  # It might be the case that the algebraic variables are solved someplace else and not in
-  # the main set of equations. For instance a particular algebraic variable might be solved in some when equation.
-  # This sitaution is assumed to have been checked statically prior to this by the frontend.
-  # If there is no equation for which a algebraic variable is not solved we ignore it.
-  # =#
-  # local totalEquations = [i for i in 1:length(equations)]
-  # local remainingEquations = setdiff(totalEquations, usedEquations)
-  # #= Additional note. MTK does not require algebraic equations to follow a specific format.
-  # So we can just generate our remaining equations =#
-  # for eqIdx in remainingEquations
-  #   local equation = equations[eqIdx]
-  #   local eqDAEExp = equation.exp
-  #   local eqExp = :(0 ~ $(stripBeginBlocks(expToJuliaExpMTK(eqDAEExp, simCode ;derSymbol=false))))
-  #   push!(eqs, eqExp)
-  # end
-
   for eq in equations
     local eqDAEExp = eq.exp
     local eqExp = :(0 ~ $(expToJuliaExpMTK(eqDAEExp, simCode ;derSymbol=false)))
