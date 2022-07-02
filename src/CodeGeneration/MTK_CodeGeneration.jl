@@ -161,7 +161,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
   @debug "Runnning: ODE_MODE_MTK_MODEL"
   RESET_CALLBACKS()
   local stringToSimVarHT = simCode.stringToSimVarHT
-  local equations::Array = BDAE.RESIDUAL_EQUATION[]
+  local equations::Vector = BDAE.RESIDUAL_EQUATION[]
   local exp::DAE.Exp
   local parameters::Vector = String[]
   local stateDerivatives::Vector = String[]
@@ -272,9 +272,9 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
       local discreteVars = collect(values(Dict([$(DISCRETE_START_VALUES...)])))
       local event_vars = vcat(collect(values(Dict([initialValues...]))),
                               #=Discrete variables=# discreteVars)
-      local aux = Array{Array{Float64}}(undef, 2)
-      aux[1] = event_p
+      local aux = Vector{Vector{Float64}}(undef, 2)
       #= TODO init them with the initial values of them =#
+      aux[1] = event_p
       aux[2] = event_vars
       problem = ModelingToolkit.ODEProblem(reducedSystem,
                                            initialValues,
@@ -289,16 +289,16 @@ end
 
 
 """
-  Creates the residual equations in unsorted order
+ Creates equations from the residual equations in unsorted order
 """
-function createResidualEquationsMTK(stateVariables::Array, algebraicVariables::Array, equations::Array, simCode::SimulationCode.SIM_CODE)::Array{Expr}
+function createResidualEquationsMTK(stateVariables::Vector, algebraicVariables::Vector, equations::Vector{BDAE.RESIDUAL_EQUATION}, simCode::SimulationCode.SIM_CODE)::Vector{Expr}
   if isempty(equations)
     return Expr[]
   end
   local eqs::Vector{Expr} = Expr[]
   for eq in equations
     local eqDAEExp = eq.exp
-    local eqExp = :(0 ~ $(expToJuliaExpMTK(eqDAEExp, simCode ;derSymbol=false)))
+    local eqExp = :(0 ~ $(expToJuliaExpMTK(eqDAEExp, simCode; derSymbol=false)))
     push!(eqs, eqExp)
   end
   
@@ -311,18 +311,59 @@ include("mtkExternals.jl")
   Generates the initial value for the equations
   TODO: Currently unable to generate start condition in order
 """
-function createStartConditionsEquationsMTK(states::Array,
-                                        algebraics::Array,
-                                        simCode::SimulationCode.SimCode)::Array{Expr}
+function createStartConditionsEquationsMTK(states::Vector,
+                                        algebraics::Vector,
+                                        simCode::SimulationCode.SimCode)::Vector{Expr}
   #  local startEquations = createSortedEquations([algVariables..., stateVariables...], simCode; arrayName = "reals")
   local algInit = getStartConditionsMTK(algebraics, simCode)
   local stateInit = getStartConditionsMTK(states, simCode)
-  return vcat(algInit, stateInit)
+  local initialEquations = simCode.initialEquations
+  local ieqInit = generateInitialEquations(initialEquations, simCode)
+  #=
+    Start with the start conditions above.
+    Generate the equations in order afterwards
+  =#
+  #= Place the initial equations last =#
+  return vcat(algInit, stateInit, ieqInit)
 end
 
+"""
+  Generates initial equations.
+  Currently unsorted unless they are sorted before being passed to the simulation code phase.
+"""
+function generateInitialEquations(initialEqs, simCode::SimulationCode.SimCode)::Vector{Expr}
+  local initialEqsExps = Expr[]
+  for ieq in initialEqs
+    #= LHS will typically be a variable. Don't have to be though.. =#
+    lhs = expToJuliaExpMTK(ieq.lhs, simCode)
+    rhs = @match ieq.rhs begin
+      DAE.CREF(__) => begin
+        #= Evaluate the right hand side at this point =#
+        local crefAsStr = string(ieq.rhs)
+        local simCodeVar = last(simCode.stringToSimVarHT[crefAsStr])
+        local res = if SimulationCode.isStateOrAlgebraic(simCodeVar)
+          #= Otherwise get the start attribute =#
+          expToJuliaExpMTK(ieq.rhs, simCode)
+        else
+          evalSimCodeParameter(simCodeVar)
+        end
+      end
+      #= For more complicated expressions, we do local constant folding. =#
+      _ => begin
+        res = evalDAE_Expression(ieq.rhs, simCode)
+        res
+      end
+    end
+    push!(initialEqsExps,
+          quote
+            $(lhs) => $(rhs)
+          end)
+  end
+  return initialEqsExps
+end
 
-function getStartConditionsMTK(vars::Array, simCode::SimulationCode.SimCode)::Array{Expr}
-  local startExprs::Array{Expr} = []
+function getStartConditionsMTK(vars::Vector, simCode::SimulationCode.SimCode)::Vector{Expr}
+  local startExprs::Vector{Expr} = Expr[]
   local residuals = simCode.residualEquations
   local ht::Dict = simCode.stringToSimVarHT
   if length(vars) == 0
@@ -343,7 +384,10 @@ function getStartConditionsMTK(vars::Array, simCode::SimulationCode.SimCode)::Ar
         () = @match (attributes.start, attributes.fixed) begin
           (SOME(DAE.CREF(start)), SOME(__)) || (SOME(DAE.CREF(start)), _)  => begin
 #            push!(startExprs, :($(Symbol("$varName")) => $(exp))) what is this?
-            #= We have a variable of sorts =#
+            #=
+              We have a variable of sorts.
+              We look evaluate the value in the pars list.
+            =#
             push!(startExprs,
                   quote
                   $(Symbol("$varName")) => pars[$(Symbol(string(start)))]
@@ -373,15 +417,19 @@ end
 """
   Creates parameters on a MTK parameters compatible format.
 """
-function createParameterEquationsMTK(parameters::Array, simCode::SimulationCode.SimCode)::Array{Expr}
-  local parameterEquations::Array = []
+function createParameterEquationsMTK(parameters::Vector, simCode::SimulationCode.SimCode)::Vector{Expr}
+  local parameterEquations::Vector = []
   local hT = simCode.stringToSimVarHT
   for param in parameters
     (index, simVar) = hT[param]
     local simVarType::SimulationCode.SimVarType = simVar.varKind
     bindExp = @match simVarType begin
-      SimulationCode.PARAMETER(bindExp = SOME(exp)) => exp
-      _ => ErrorException("Unknown SimulationCode.SimVarType for parameter.")
+      SimulationCode.PARAMETER(bindExp = SOME(exp)) => begin
+        exp
+      end
+      _ => begin
+        throw(ErrorException("Unknown SimulationCode.SimVarType for parameter: " * string(simVarType)))
+      end
     end
     #= Solution for https://github.com/SciML/ModelingToolkit.jl/issues/991 =#
     push!(parameterEquations,
@@ -397,8 +445,8 @@ end
 """
   Creates parameters assignments on a MTK parameters compatible format.
 """
-function createParameterAssignmentsMTK(parameters::Array, simCode::SimulationCode.SimCode)::Array{Expr}
-  local parameterEquations::Array = []
+function createParameterAssignmentsMTK(parameters::Vector, simCode::SimulationCode.SimCode)::Vector{Expr}
+  local parameterEquations::Vector = []
   local hT = simCode.stringToSimVarHT
   for param in parameters
     (index, simVar) = hT[param]
@@ -543,7 +591,7 @@ end
   Similar to decompose variables, however, decomposes the set of equations instead.
   This function does so by dividing the total number of equations into separate blocks with 50 equations in each block.
   This function is suppose to be called after decompose variables.
-Parameter assignments contains the set of values assigned to parameters at the beginning of the simulation.
+  Parameter assignments contains the set of values assigned to parameters at the beginning of the simulation.
 """
 function decomposeEquations(equations, parameterAssignments)
   local nStateVars = length(equations)

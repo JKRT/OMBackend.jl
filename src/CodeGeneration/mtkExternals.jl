@@ -42,7 +42,6 @@ function move_diffs(eq::Equation; rewrite)
       #= This code is probably quite flaky, however, it should not be needed after similar things are introduced in MTK. =#
       newRhs = substitute(rhs, rhs => rhs / arguments(lhs)[1])
       newLhs = substitute(lhs, lhs => arguments(lhs)[2])
-     #lhs = lhs_
       ~(newLhs, -newRhs)
     else
       -lhs ~ rhs
@@ -54,9 +53,9 @@ function move_diffs(eq::Equation; rewrite)
 end
 
 """
-If index reduction is needed we currently do a hack.
-That is we do an eval of the system, this is computationally expensive, however, it seems to work for now.
-Related to issue https://github.com/SciML/ModelingToolkit.jl/issues/1493
+  If index reduction is needed we currently do a hack.
+  That is we do an eval of the system, this is computationally expensive, however, it seems to work for now.
+  Related to issue https://github.com/SciML/ModelingToolkit.jl/issues/1493
 """
 function makeODESystem(deqs, iv, vars, pars, idxReduction; name)
   # Equation is not in the canonical form
@@ -65,31 +64,52 @@ function makeODESystem(deqs, iv, vars, pars, idxReduction; name)
   D = Differential(iv)
   r1 = SymbolicUtils.@rule ~~a * D(~~b) * ~~c => 0
   r2 = SymbolicUtils.@rule D(~~b) => 0
-  debugRewrite(deqs, iv, vars, pars)
+  #println(debugRewrite(deqs, iv, vars, pars))
   remove_diffs = SymbolicUtils.Postwalk(SymbolicUtils.Chain([r1,r2]))
-  deqs = [move_diffs(eq, rewrite = remove_diffs) for eq in deqs]
+  usedStates = Set()
+  local rewrittenDeqs = Symbolics.Equation[]
+  for eq in deqs
+    req = move_diffs(eq, rewrite = remove_diffs)
+    #    @info "Left hand side of the equation" req.lhs
+    if req.lhs isa Real
+      push!(rewrittenDeqs, req)
+    elseif !(req.lhs in usedStates)
+      #      @info "Not a duplicate" req.lhs
+      #      @info "Used equations are" usedStates
+      push!(rewrittenDeqs, req)
+      push!(usedStates, req.lhs)
+    else
+      #      @info "Duplicate:" req.lhs
+      push!(rewrittenDeqs, eq)
+    end
+  end
   #= Special computationally heavy routine for systems that need index reduction.. =#
+#  println(debugRewrite(rewrittenDeqs, iv, vars, pars; separator = "\n"))
   if idxReduction
+    #    @info "We are doing index reduction"
     #= Convert the system to a string=#
-    res = debugRewrite(deqs, iv, vars, pars)
+    res = debugRewrite(rewrittenDeqs, iv, vars, pars)
+    #    println(res)
     #= Parse and evaluate it =#
     expr = Meta.parse(res)
     eval(expr)
     #= Generate a new system with metadata...=#
     res = ModelingToolkit.ODESystem(eqs2, iv, vars2, pars; name = name)
     res2 = ModelingToolkit.dae_index_lowering(res)
+    structural_simplify(res2; simplify = true, allow_symbolic = true, allow_parameter = true)
     return res2
   end
-  return ModelingToolkit.ODESystem(deqs, iv, vars, pars; name = name)
+  #println(debugRewrite(deqs, iv, vars, pars))
+  return ModelingToolkit.ODESystem(rewrittenDeqs, iv, vars, pars; name = name)
 end
 
-function debugRewrite(deqs, t, vars, parameters)
+function debugRewrite(deqs, t, vars, parameters; separator = ",")
   local buffer = IOBuffer()
   print(buffer, "@variables t;")
   print(buffer, "vars2 = @variables")
   print(buffer, "(")
   for v in vars
-    print(buffer, v, ",")
+    print(buffer, v, separator)
   end
   # print(buffer, ");")
   # print(buffer, "pars2 = @parameters")
@@ -101,7 +121,7 @@ function debugRewrite(deqs, t, vars, parameters)
   print(buffer, "eqs2 =")
   print(buffer, "[")
   for eq in deqs
-    print(buffer, replace(string(eq), "(t)" => "", "Differential" => "D"), ",")
+    print(buffer, replace(string(eq), "(t)" => "", "Differential" => "D"), separator)
   end
   print(buffer, "];")
   return String(take!(buffer))

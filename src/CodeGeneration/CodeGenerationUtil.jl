@@ -667,3 +667,39 @@ function evalDAEConstant(daeConstant::DAE.Exp)
     _ => throw("$(daeConstant) is not a constant")
   end
 end
+
+"""
+  Evaluates a simulation code parameter.
+  Fails if the function is not a parameter.
+"""
+function evalSimCodeParameter(v::V) where V
+  @match SimulationCode.SIMVAR(name, _, SimulationCode.PARAMETER(SOME(bindExp)), _) = v
+  local val = evalDAEConstant(bindExp)
+  return val
+end
+
+"""
+ Evalutates the components in a DAE expression (Currently if the components are parameters)
+"""
+function evalDAE_Expression(expr, simCode)::Expr
+  function replaceParameterVariable(exp, ht)
+    if Util.isCref(exp)
+      local simVar = last(simCode.stringToSimVarHT[string(exp)])
+      if ! SimulationCode.isStateOrAlgebraic(simVar)
+        @match SimulationCode.SIMVAR(name, _, SimulationCode.PARAMETER(SOME(bindExp)), _) = simVar
+        return (bindExp, true, ht)
+      else
+        @error "Not supported states and algebraics in initial equations is not supported"
+        fail()
+      end
+      println("End one level")
+    end
+    (exp, true, ht)
+  end
+  local a = 0
+  #= Replaces all known variables in the daeExp =#
+  local daeExp = first(Util.traverseExpBottomUp(expr, replaceParameterVariable, 0))
+  local jlExpr = expToJuliaExpMTK(daeExp, simCode)
+  local evaluatedJLExpr = eval(jlExpr)
+  return quote $(evaluatedJLExpr) end
+end

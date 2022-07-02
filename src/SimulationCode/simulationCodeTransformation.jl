@@ -105,7 +105,7 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
                           stringToSimVarHT,
                           resEqs,
                           #= TODO: fix initial equations here =#
-                          BDAE.RESIDUAL_EQUATION[],
+                          equationSystem.initialEqs,
                           whenEqs,
                           simCodeIfEquations,
                           isSingular,

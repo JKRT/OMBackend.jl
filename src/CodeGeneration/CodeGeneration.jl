@@ -34,6 +34,7 @@ Author: John Tinnerholm, john.tinnerholm@liu.se
 module CodeGeneration
 
 import DataStructures
+import ..Util
 using MetaModelica
 using Setfield
 using DocStringExtensions
