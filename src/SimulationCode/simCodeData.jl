@@ -114,6 +114,7 @@ end
 struct SIM_CODE{T0<:String,
                 T1<:AbstractDict{String, Tuple{Integer, SimVar}},
                 T2<:Vector{BDAE.RESIDUAL_EQUATION},
+                T22,
                 #= When equations are discret events (In the sense they occur once, the condition is checked per time step. ) =#
                 T4<:Vector{BDAE.WHEN_EQUATION},
                 #=
@@ -135,7 +136,7 @@ struct SIM_CODE{T0<:String,
   "Different equations stored within simulation code"
   residualEquations::T2
   "The Initial equations"
-  initialEquations::T2
+  initialEquations::T22
   "When equations"
   whenEquations::T4
   "If Equations (Simulation code branches). Each branch contains a condition a set of residual equations and a set of targets"
