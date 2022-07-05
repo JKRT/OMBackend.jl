@@ -295,6 +295,13 @@ function isState(kind::BDAE.VarKind)
   return res
 end
 
+function isDiscrete(kind::BDAE.VarKind)
+  res = @match kind begin
+    BDAE.DISCRETE(__) => true
+    _ => false
+  end
+  return res
+end
 
 function isWhenEquation(eq::BDAE.Equation)
   @match eq begin
@@ -352,16 +359,15 @@ function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Vector{BDAE.VAR})::Ve
   local componentReferences::List = Util.getAllCrefs(eq.exp)
   local stateCrefs = Dict{DAE.ComponentRef, Bool}()
   (_, stateElements)  = traverseEquationExpressions(eq, detectStateExpression, stateCrefs)
-  local stateElementArray = collect(keys(stateElements))
-  local componentReferencesNotStates = [componentReferences...]
-  local componentReferencesArr = [componentReferences..., stateElementArray...]
-  variablesInEq::Array = []
+  local stateElementArray = [string(cr) for cr in collect(keys(stateElements))]
+  local componentReferencesNotStates = [string(cr) for cr in componentReferences]
+  variablesInEq::Vector = []
   for var in vars
-    local vn = var.varName
+    local vn = string(var.varName)
     if vn in componentReferencesNotStates && isVariable(var.varKind)
-      push!(variablesInEq, vn)
+      push!(variablesInEq, var.varName)
     elseif vn in stateElementArray
-      push!(variablesInEq, vn)
+      push!(variablesInEq, var.varName)
     else
     end
   end
@@ -375,11 +381,11 @@ end
   input: All existing variables
   output All variable in that specific equation except the state variables
 """
-function getAllVariablesExceptStates(eq::BDAE.RESIDUAL_EQUATION, vars::Array{BDAE.Var})::Array{DAE.ComponentRef}
+function getAllVariablesExceptStates(eq::BDAE.RESIDUAL_EQUATION, vars::Vector{BDAE.VAR})::Array{DAE.ComponentRef}
   local componentReferences::List = Util.getAllCrefs(eq.exp)
   local componentReferencesArr::Array = [componentReferences...]
   local varNames = [v.varName for v in vars]
-  variablesInEq::Array = []
+  variablesInEq::Vector = []
   for vn in varNames
     if vn in componentReferencesArr
       push!(variablesInEq, vn)

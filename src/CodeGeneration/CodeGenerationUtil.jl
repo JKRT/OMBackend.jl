@@ -576,9 +576,13 @@ function expToJuliaExpMTK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuf
               $(LineNumberNode(@__LINE__, "$varName, algebraic"))
               $(Symbol(indexAndVar[2].name))
             end
+            SimulationCode.DISCRETE(__) => quote
+              $(LineNumberNode(@__LINE__, "$varName, discrete"))
+              $(Symbol(indexAndVar[2].name))
+            end
             _ => begin
               @error "Unsupported varKind: $(varKind)"
-              throw()
+              fail()
             end
           end
         else #= Currently only time is a builtin variable. Time is represented as t in the generated code =#

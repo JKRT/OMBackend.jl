@@ -30,10 +30,13 @@
 =#
 
 function bDAEVarKindToSimCodeVarKind(backendVar::BDAE.VAR)::SimulationCode.SimVarType
-  varKind = @match backendVar.varKind begin
-    BDAE.STATE(__) => SimulationCode.STATE()
-    BDAE.PARAM(__) || BDAE.CONST(__) => SimulationCode.PARAMETER(backendVar.bindExp)
-    BDAE.VARIABLE(__) => SimulationCode.ALG_VARIABLE()
+  varKind = @match (backendVar.varKind, backendVar.varType) begin
+    (BDAE.STATE(__), _) => SimulationCode.STATE()
+    (BDAE.PARAM(__) || BDAE.CONST(__), _) => SimulationCode.PARAMETER(backendVar.bindExp)
+    (BDAE.VARIABLE(__), DAE.T_REAL(__)) => SimulationCode.ALG_VARIABLE()
+    #= And no of the other cases above. =#
+    (BDAE.DISCRETE(__), _) => SimulationCode.DISCRETE()
+    (_, DAE.T_INTEGER(__) || DAE.T_BOOL(__)) => SimulationCode.DISCRETE()
     _ => @error("Kind $(typeof(backendVar.varKind)) of backend variable not handled.")
   end
 end
@@ -80,10 +83,10 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
   #=  Convert the structural transistions to the simcode representation. =#
   local simCodeStructuralTransitions = createSimCodeStructuralTransitions(structuralTransitions)
   #= Sorting/Matching for the set of residual equations (This is used for the start condtions) =#
-  local eqVariableMapping = createEquationVariableBidirectionGraph(resEqs, allBackendVars, stringToSimVarHT)
+  local eqVariableMapping = createEquationVariableBidirectionGraph(resEqs, ifEqs, allBackendVars, stringToSimVarHT)
   local numberOfVariablesInMapping = length(eqVariableMapping.keys)
   (isSingular, matchOrder, digraph, stronglyConnectedComponents) =
-    matchAndCheckStronglyConnectedComponents(equations, eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT; mode = mode)
+    matchAndCheckStronglyConnectedComponents(resEqs, eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT; mode = mode)
   #= 
     The set of if equations needs to be handled in a separate way. 
     Each branch might contain a separate section of variables etc that needs to be sorted and processed. 
@@ -181,12 +184,13 @@ TODO:
 Possible rework the identifier scheme.
 Unique identifier, static variable?
 """
-function constructSimCodeIFEquations(BDAE_ifEquations::Vector{BDAE.IF_EQUATION},
+function constructSimCodeIFEquations(ifEquations::Vector{BDAE.IF_EQUATION},
                                      resEqs::Vector{BDAE.RESIDUAL_EQUATION},
                                      allBackendVars::Vector,
                                      stringToSimVarHT)::Vector{IF_EQUATION}
-  simCodeIfEquations::Vector{IF_EQUATION} = IF_EQUATION[]
-  for BDAE_ifEquation in BDAE_ifEquations
+  local simCodeIfEquations::Vector{IF_EQUATION} = IF_EQUATION[]
+  for BDAE_ifEquation in ifEquations
+    local eqs::Vector = listArray(listGet(BDAE_ifEquation.eqnstrue, 1))
     #= Enumerate the branches of the if equation =#
     #= Handle if and else if branches=#
     local conditions = BDAE_ifEquation.conditions
@@ -202,8 +206,8 @@ function constructSimCodeIFEquations(BDAE_ifEquations::Vector{BDAE.IF_EQUATION},
     for conditionIdx in 1:length(conditions)
       condition = listGet(conditions, conditionIdx)
       #= Merge the given residual equations with the equations of this particular branch. =#
-      equations::Vector{BDAE.RESIDUAL_EQUATION} = listArray(listAppend(listGet(BDAE_ifEquation.eqnstrue, conditionIdx),
-                                                                       arrayList(resEqs)))
+      local branchEquations::Vector{BDAE.RESIDUAL_EQUATION} = listArray(listGet(BDAE_ifEquation.eqnstrue, conditionIdx))
+      local equations = vcat(resEqs, branchEquations)
       target = conditionIdx + 1
       identifier = conditionIdx
       local eqVariableMapping = createEquationVariableBidirectionGraph(equations, allBackendVars, stringToSimVarHT)
@@ -213,7 +217,7 @@ function constructSimCodeIFEquations(BDAE_ifEquations::Vector{BDAE.IF_EQUATION},
         matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT)
       #= Add the branch to the collection. =#
       branch = BRANCH(condition,
-                      equations,
+                      branchEquations,
                       identifier,
                       target,
                       isSingular,
@@ -236,7 +240,9 @@ function constructSimCodeIFEquations(BDAE_ifEquations::Vector{BDAE.IF_EQUATION},
       break
     end
     condition = DAE.SCONST("ELSE_BRANCH")
-    equations = listArray(listAppend(BDAE_ifEquation.eqnsfalse, arrayList(resEqs)))
+    branchEquations::Vector{BDAE.RESIDUAL_EQUATION} = listArray(BDAE_ifEquation.eqnsfalse)
+    #= Equations here consists of all residual equations of the system and the equations in the if-equation =#
+    equations = vcat(resEqs, branchEquations)
     lastConditionIdx += 1
     target = lastConditionIdx + 1
     identifier = ELSE_BRANCH #= Indicate else =#
@@ -245,9 +251,9 @@ function constructSimCodeIFEquations(BDAE_ifEquations::Vector{BDAE.IF_EQUATION},
     (isSingular, matchOrder, digraph, stronglyConnectedComponents) =
       matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT)
     branch = BRANCH(condition,
-                    equations,
+                    branchEquations,
                     identifier,
-                    target,
+                    ELSE_BRANCH, #The target of the else branch is -1
                     isSingular,
                     matchOrder,
                     digraph,
@@ -266,11 +272,11 @@ Author:johti17
 If the system is singular we try index reduction before proceeding.
 """ 
 function matchAndCheckStronglyConnectedComponents(equations, eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT; mode)::Tuple
+  @debug "#Variables" numberOfVariablesInMapping
+  @debug "#Equations" length(equations)
   (isSingular::Bool, matchOrder::Vector) = GraphAlgorithms.matching(eqVariableMapping, numberOfVariablesInMapping)
   local digraph::MetaGraphs.MetaDiGraph
-
   #=
-    If the equation is singular this means our system is singular.
     Index reduction might resolve the issues with this system.
   =#
   if isSingular && mode == OMBackend.MTK_MODE

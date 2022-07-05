@@ -35,6 +35,11 @@ struct PARAMETER <: SimVarType
 end
 
 """
+  Discrete Variable
+"""
+struct DISCRETE <: SimVarType end
+
+"""
 Abstract type for a simulation variable
 """
 abstract type SimVar end

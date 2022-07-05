@@ -134,6 +134,9 @@ function createEqSystem(flatModel::OMFrontend.Main.FlatModel)
   local iAlgorithms = [iAlg for iAlg in flatModel.initialAlgorithms]
   local initialEquations = [equationToBackendEquation(ieq)
                             for ieq in OMFrontend.Main.convertEquations(flatModel.initialEquations)]
+  #= The set of equations might also contain a  set of "binding equations" =#
+  local bindingEquations = createBindingEquations(variables)
+  equations = vcat(equations, bindingEquations)
   #= TODO Extract the simple equations =#
   local simpleEquations = []
   return BDAE.EQSYSTEM(name, variables, equations, simpleEquations, initialEquations)
@@ -297,19 +300,26 @@ function variableToBackendVariable(elem::DAE.Element)
 end
 
 
-function lowerWhenEquation(eq::DAE.Element)::BDAE.Equation
+function lowerWhenEquation(eq::DAE.WHEN_EQUATION)::BDAE.Equation
   local whenOperatorLst::List{BDAE.WhenOperator} = nil
   local whenEquation::BDAE.WhenEquation
-  local elseOption::Option{BDAE.WhenEquation} = NONE()
-  local elseEq::BDAE.Element
+  local elseOption
+  local elseEq::DAE.Element
   whenOperatorLst = createWhenOperators(eq.equations, whenOperatorLst)
   #= Check if the list of whenOperators contains a BDAE.RECOMPILATION call. =#
   local containsRecompilation = length(findall(elem->typeof(elem)==BDAE.RECOMPILATION, listArray(whenOperatorLst))) >= 1
-  if isSome(eq.elsewhen_)
-    SOME(elseEq) = eq.elsewhen_
-    elseOption = SOME(lowerWhenEquation(elseEq))
+  elseOption = if isSome(eq.elsewhen_)
+    @match SOME(elseEq) = eq.elsewhen_
+    bdaeElse = lowerWhenEquation(elseEq)
+    SOME(bdaeElse)
+  else
+    NONE()
   end
-  whenEquation = BDAE.WHEN_STMTS(eq.condition, whenOperatorLst, elseOption)
+  whenEquation = if isSome(elseOption)
+    BDAE.WHEN_STMTS(eq.condition, whenOperatorLst, elseOption)
+  else
+    BDAE.WHEN_STMTS(eq.condition, whenOperatorLst, NONE())
+  end
   result = if !containsRecompilation
     BDAE.WHEN_EQUATION(1, whenEquation, eq.source, BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
   else
@@ -391,6 +401,29 @@ function lowerIfEquation(eq::IF_EQ)::BDAE.IF_EQUATION where {IF_EQ}
                          eq.source,
                          BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
   return res
+end
+
+"""
+  Create binding equations.
+  See: https://specification.modelica.org/master/equations.html
+TODO:
+Add discrete binding equations in some other  pile.
+"""
+function createBindingEquations(variables::Vector)
+  bindingEqs = BDAE.EQUATION[]
+  for v in variables
+    @match v begin
+      BDAE.VAR(vName, BDAE.STATE() || BDAE.VARIABLE(), _, DAE.T_REAL(__),
+               SOME(bindExp), _, _, _, _, _) => begin
+                 local lhs = DAE.CREF(vName ,v.varType)
+                 local rhs = bindExp
+                 push!(bindingEqs,
+                       BDAE.EQUATION(lhs, rhs, v.source, nothing))
+      end
+      _ => continue
+    end
+  end
+  return bindingEqs
 end
 
 @exportAll()

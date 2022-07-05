@@ -500,7 +500,7 @@ end
   @Record WHEN_STMTS begin
     condition #= the when-condition =#::DAE.Exp
     whenStmtLst::List{WhenOperator}
-    elsewhenPart #= elsewhen equation with the same cref on the left hand side. =#::Option{WhenEquation}
+    elsewhenPart #= elsewhen equation with the same cref on the left hand side. =##::Option{WHEN_STMTS}
   end
 end
 

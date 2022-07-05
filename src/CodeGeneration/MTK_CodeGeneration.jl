@@ -177,6 +177,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
       SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
       SimulationCode.STATE(__) => push!(stateVariables, varName)
       SimulationCode.PARAMETER(__) => push!(parameters, varName)
+      SimulationCode.DISCRETE(__) => push!(discreteVariables, varName)
       SimulationCode.ALG_VARIABLE(__) => begin
         #=TODO: Seems to be unable to find variables in some cases...
         should there be an and here? Keep track of variables that are also involved in if/when structures
@@ -201,7 +202,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
   end
   performIndexReduction = simCode.isSingular
   #= Create equations for variables not in a loop + parameters and stuff=#
-  local equations = createResidualEquationsMTK(stateVariables,
+  local EQUATIONS = createResidualEquationsMTK(stateVariables,
                                                algebraicVariables,
                                                simCode.residualEquations,
                                                simCode::SimulationCode.SIM_CODE)
@@ -211,8 +212,11 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
   local PARAMETER_EQUATIONS = createParameterEquationsMTK(parameters, simCode)
   local PARAMETER_ASSIGNMENTS = createParameterAssignmentsMTK(parameters, simCode)
   local PARAMETER_RAW_ARRAY = createParameterArray(parameters, simCode)
-  #= Create callback equations. For MTK we disable the saving function for now. =#
+  #= Create callback equations.
+  For MTK we disable the saving function for now.
+  =#
   local CALL_BACK_EQUATIONS = createCallbackCode(modelName, simCode; generateSaveFunction = false)
+  local IF_EQUATIONS = createIfEquations(stateVariables, algebraicVariables, simCode)
   #= Symbolic names =#
   local stateVariablesSym = [:($(Symbol(v))(t)) for v in stateVariables]
   local algebraicVariablesSym = [:($(Symbol(v))(t)) for v in algebraicVariables]
@@ -256,7 +260,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
       initialValues = collect(Iterators.flatten(startEquationComponents))
       #= End construction of initial values =#
       equationComponents = []
-      $(decomposeEquations(equations, PARAMETER_ASSIGNMENTS))
+      $(decomposeEquations(EQUATIONS, PARAMETER_ASSIGNMENTS))
       for constructor in equationConstructors
         push!(equationComponents, constructor())
       end
@@ -413,6 +417,126 @@ function getStartConditionsMTK(vars::Vector, simCode::SimulationCode.SimCode)::V
   end
   return startExprs
 end
+
+function createIfEquations(stateVariables, algebraicVariables, simCode)
+  ifEquations = Tuple{Expr, Expr, Vector{Expr}}[]
+  for ifEq in simCode.ifEquations
+    push!(ifEquations, createIfEquation(stateVariables, algebraicVariables, ifEq, simCode))
+  end
+  test = ifEquations[1]
+  g = quote
+    events = $(test[1])
+    $(test[2])
+    $(test[3]...)
+  end
+  @info g
+  return ifEquations
+end
+
+
+"""
+This function creates symbolic if equations for use in MTK.
+The function returns a tuple.
+Where the first part of the tuple represent the conditions and the affect of the if-equation on the form:
+  continuous_events = [
+    <Condtion> => <affect> 
+    <Condtion> => <affect>
+    ....
+  ]
+Each condition generates one variable with zero dynamics the variable being true or not depending on the branch.
+  Example:
+  if <condtion> then
+    <equations>
+  elseif then
+    <equations>
+  else
+    <equations>
+  end if;
+Would result in:
+continuous_events = [
+    <condition> => [ifCond1 ~ true, ifCond2 ~ false]
+    <condition> => [ifCond1 ~ false, ifCond2 ~ true]
+]
+An if equation with a single condition would only generate one condtion:
+continuous_events = [
+    <condition> => [ifCond1 ~ true]
+]
+
+The second value in the return tuble represent the if-equations itself:
+<lhs> = IfElse.ifelse(<condition>, <value>, IfElse.ifelse(<condition>, <value>, <value>))
+  lhs can be one or several variables. (TODO, fix the case for several variables in this kind of branch)
+
+The following part returns zero dynamic equations for the condition variables:
+See https://github.com/SciML/ModelingToolkit.jl/issues/1523
+"""
+function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCode.IF_EQUATION, simCode)::Tuple{Expr, Expr, Vector{Expr}}
+  local result::Tuple{Expr, Expr, Vector{Expr}}
+  generateAffects(n, nConditions) = begin
+    local exprs = Expr[]
+    local e
+    for nI in 1:nConditions
+      e = if nI == n 
+        :(Symbol($("Ifcond$(nI)")) ~ true)
+      else
+        :(Symbol($("Ifcond$(nI)")) ~ false)
+      end
+      push!(exprs, e)
+    end
+    return exprs
+  end
+
+  #= TODO. We currently assume residuals that we have made causal and that the original equations are written in a certain form.=#
+  deCausalize(eq) = begin
+    @match eq.exp begin 
+      DAE.BINARY(exp1, _, exp2) => begin
+        (:($(expToJuliaExpMTK(exp2, simCode))), :($(expToJuliaExpMTK(exp1, simCode))))
+      end
+      _ => begin
+        throw("Unsupported equation:" * string(eq))
+      end
+    end
+  end
+
+  generateIfExpressions(branches, target) = begin
+    if branches[target].targets == -1
+      return :($(first(deCausalize(branches[target].residualEquations[1]))))
+    end
+    #= Otherwise generate code for the other part =#
+    local branch = branches[target]
+    local cond = :( $(Symbol("ifCond$(target)")) == true )
+    #= Assume single equations for now =#
+    :(ifelse($(cond), $(first(deCausalize(branch.residualEquations[1]))), $(generateIfExpressions(branches, branches[target].targets))))
+  end
+  
+  local i::Int = 0
+  local nBranches::Int = length(ifEq.branches)
+  local conditions = Expr[]
+  for branch in ifEq.branches
+    i += 1
+    @match branch begin
+      SimulationCode.BRANCH(condition, residuals, -1#=Else=#, targets, _, _, _, _, _) => begin        
+      end
+      SimulationCode.BRANCH(condition, residuals, _, targets, _, _, _, _, _) => begin
+        branchesWithConds::Int = nBranches - 1
+        affects::Vector{Expr} = generateAffects(i, branchesWithConds)
+        cond = :(($(expToJuliaExpMTK(branch.condition, simCode))) => [$(affects...)])
+        push!(conditions, cond)
+      end
+    end
+  end
+  local target = 1
+  local resEq = ifEq.branches[target].residualEquations[1]
+  ifExpressions = :($(last(deCausalize(resEq))) ~ $(generateIfExpressions(ifEq.branches, target)))
+  #= Generate zero dynamic equations for the conditions =#
+  conditionEquations = Expr[]
+  for i in 1:length(conditions)
+    push!(conditionEquations, :(D($(Symbol("ifCond$(i)"))) ~ 0))
+  end
+  conditionExpr = :([$(conditions...)])
+  result = (conditionExpr, ifExpressions, conditionEquations)
+  return result
+end
+
 
 """
   Creates parameters on a MTK parameters compatible format.

@@ -242,16 +242,14 @@ function Base.string(@nospecialize(eq::BDAE.Equation))
 end
 
 function Base.string(whenEq::BDAE.WhenEquation)::String
-  local elseWhen::BDAE.WhenEquation
+  local elseWhen
   str = "when " + string(whenEq.condition) + " then\n"
-
   for op in whenEq.whenStmtLst
     str = str + "  " + string(op) + "\n"
   end
-
   if isSome(whenEq.elsewhenPart)
-    SOME(elseWhen) = whenEq.elseWhenPart
-    str = str + "else \n" + string(elseWhen)
+    @match SOME(elseWhen) = whenEq.elsewhenPart
+    str = str + "else" + string(elseWhen)
   end
   return str + "end;\n"
 end

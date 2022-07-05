@@ -176,7 +176,7 @@ global function replaceIfExpressionWithTmpVar(exp::DAE.Exp, tmpVarToElement::Dic
           local backendVar = BDAE.VAR(DAE.CREF_IDENT(varName, DAE.T_UNKNOWN_DEFAULT, nil),
                                       BDAE.VARIABLE(), varType)
           tmpVarToElement[backendVar] = BDAE.IF_EQUATION(list(cond),
-                                                         list(BDAE.EQUATION(varAsCREF, expThen, emptySource, attr)),
+                                                         list(list(BDAE.EQUATION(varAsCREF, expThen, emptySource, attr))),
                                                          list(BDAE.EQUATION(varAsCREF, expElse, emptySource, attr)),
                                                          emptySource,
                                                          BDAE.EQ_ATTR_DEFAULT_UNKNOWN)

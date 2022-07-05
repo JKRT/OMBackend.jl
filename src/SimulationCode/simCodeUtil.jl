@@ -143,11 +143,13 @@ It executes the following steps:
 2. Search all states (e.g. x and y) and give them indices starting at 1 (so x=1, y=2). Then give the corresponding state derivatives (x' and y') the same indices.
 3. Remaining algebraic variables will get indices starting with i+1, where i is the number of states.
 4. Parameters will get own set of indices, starting at 1.
+5. Discrete variables will also get their own set of indices, starting at 1.
 """
 function createIndices(simulationVars::Array{SimulationCode.SIMVAR})::OrderedDict{String, Tuple{Integer, SimulationCode.SimVar}}
   local ht::OrderedDict{String, Tuple{Integer, SimulationCode.SimVar}} = OrderedDict()
   local stateCounter = 0
   local parameterCounter = 0
+  local discreteCounter = 0
   local numberOfStates = 0
   for var in simulationVars
     @match var.varKind begin
@@ -162,6 +164,10 @@ function createIndices(simulationVars::Array{SimulationCode.SIMVAR})::OrderedDic
       SimulationCode.PARAMETER(__) => begin
         parameterCounter += 1
         push!(ht, var.name => (parameterCounter, var))
+      end
+      SimulationCode.DISCRETE(__) => begin
+        discreteCounter += 1
+        push!(ht, var.name => (discreteCounter, var))
       end
       _ => continue
     end
@@ -181,30 +187,66 @@ function createIndices(simulationVars::Array{SimulationCode.SIMVAR})::OrderedDic
 end
 
 """
-  Given the available residual equations and the set of backend variables 
-  create a bidrection graph between these equations and the supplied variables.
-Note: If we need to do index reduction there might be empty equations here.
-
+  Given a set of residual equations, a set of if-equations and the set of all backend variables. 
+  This function creates a bidrectional graph between these equations and the supplied variables.
+  (Note: If we need to do index reduction there might be empty equations here).
 """
 function createEquationVariableBidirectionGraph(equations::RES_T,
+                                                ifEquations::IF_T,
                                                 allBackendVars::VECTOR_VAR,
-                                                stringToSimVarHT)::OrderedDict where{RES_T, VECTOR_VAR}
+                                                stringToSimVarHT)::OrderedDict where{RES_T, IF_T, VECTOR_VAR}
   local eqCounter::Int = 0
   local variableEqMapping = OrderedDict()
   local unknownVariables = filter((x) -> BDAEUtil.isVariable(x.varKind), allBackendVars)
+  #=TODO: The set of discrete variables are currently not in use. =#
+  local discreteVariables = filter((x) -> BDAEUtil.isDiscrete(x.varKind), allBackendVars)
   local stateVariables = filter((x) -> BDAEUtil.isState(x.varKind), allBackendVars)
   local algebraicAndStateVariables = vcat(unknownVariables, stateVariables)
-  #= Treat states as solved =#
-  nEquations = length(equations)  - length(stateVariables)
+  @info "#stateVariables" length(stateVariables)
+  @info "#algebraic" length(unknownVariables)  
+  @info "#equations" length(equations)
+  #= Treat states + discrete as solved =#
+  nEquations = length(equations)  - length(stateVariables) - length(discreteVariables)
   nVariables = length(unknownVariables)
-  #= 
-  TODO:
-  Assert that the set of known variables has potential equations in which they can be used 
-  (Introduction of IF equations made this operation more complicated)
-  Assumed to have been checked by the frontend?
-  =#
   for eq in equations
-    #= Fetch all variables belonging to the specific equation =#
+    eqCounter += 1
+    variablesForEq = Backend.BDAEUtil.getAllVariables(eq, algebraicAndStateVariables)
+    variableEqMapping["e$(eqCounter)"] = sort(getIndiciesOfVariables(variablesForEq, stringToSimVarHT))
+  end
+  #=
+   There is an additional case to consider.
+   If some variables are solved by some branch (The branches are required to be balanced for ordinary if-equations) in an if equation it should be included in the mapping.
+  =#
+  for ifEq in ifEquations
+    ifEqBranch = listArray(listGet(ifEq.eqnstrue, 1))
+    #= Go through one of the branches =#
+    for eq in ifEqBranch
+      eqCounter += 1
+      variablesForEq = Backend.BDAEUtil.getAllVariables(eq, algebraicAndStateVariables)
+      variableEqMapping["e$(eqCounter)"] = sort(getIndiciesOfVariables(variablesForEq, stringToSimVarHT))
+    end
+  end
+  return variableEqMapping
+end
+
+"""
+ Same as the other createEquationVariableBidirectionGraph however, here we assume a system that have no if-equations.
+"""
+function createEquationVariableBidirectionGraph(equations::RES_T,
+                                                allBackendVars::VECTOR_VAR,
+                                                stringToSimVarHT)::OrderedDict where{RES_T, IF_T, VECTOR_VAR}
+  local eqCounter::Int = 0
+  local variableEqMapping = OrderedDict()
+  local unknownVariables = filter((x) -> BDAEUtil.isVariable(x.varKind), allBackendVars)
+  local discreteVariables = filter((x) -> BDAEUtil.isDiscrete(x.varKind), allBackendVars)
+  local stateVariables = filter((x) -> BDAEUtil.isState(x.varKind), allBackendVars)
+  local algebraicAndStateVariables = vcat(unknownVariables, stateVariables)
+  @debug "#stateVariables" length(stateVariables)
+  @debug "#algebraic" length(unknownVariables)  
+  @debug "#equations" length(equations)
+  #local nEquations = length(equations)  - length(stateVariables) - length(discreteVariables)
+  #local nVariables = length(unknownVariables)
+  for eq in equations
     eqCounter += 1
     variablesForEq = Backend.BDAEUtil.getAllVariables(eq, algebraicAndStateVariables)
     variableEqMapping["e$(eqCounter)"] = sort(getIndiciesOfVariables(variablesForEq, stringToSimVarHT))
@@ -212,12 +254,11 @@ function createEquationVariableBidirectionGraph(equations::RES_T,
   return variableEqMapping
 end
 
-
 """
-  Given a set of variables and a ordered dict that maps the component reference 
-  to a simulation code variable returns the indices of these variables.
+  Given a set of variables and a dictonary that maps the component reference 
+  to some simulation code variable. This function returns the indices of these variables.
 """
-function getIndiciesOfVariables(variables, stringToSimVarHT::OrderedDict{String, Tuple{Integer, SimVar}})::Array
+function getIndiciesOfVariables(variables, stringToSimVarHT::OrderedDict{String, Tuple{Integer, SimVar}})
   local indicies = Int[]
   for v in variables
     candidate = stringToSimVarHT[string(v)]

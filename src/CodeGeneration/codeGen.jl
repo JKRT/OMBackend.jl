@@ -35,6 +35,8 @@ end
   By default a saving function is generated.
   This function can be disabled by setting the named argument 
   generateSaveFunction to false.
+TODO:
+Deprecated generation of if-equations for MTK. 
 """
 function createCallbackCode(modelName::N, simCode::S; generateSaveFunction = true) where {N, S}
   local WHEN_EQUATIONS = createEquations(simCode.whenEquations, simCode)
@@ -42,7 +44,7 @@ function createCallbackCode(modelName::N, simCode::S; generateSaveFunction = tru
     For if equations we create zero crossing functions (Based on the conditions). 
     The body of these equations are evaluated in the main body of the solver itself.
   =#
-  local IF_EQUATIONS = createIfEquationCallbacks(simCode.ifEquations, simCode)
+  #local IF_EQUATIONS = createIfEquationCallbacks(simCode.ifEquations, simCode) Deprecated
   local SAVE_FUNCTION = if generateSaveFunction
     createSaveFunction(modelName)
   else    
@@ -57,7 +59,7 @@ function createCallbackCode(modelName::N, simCode::S; generateSaveFunction = tru
       $(LineNumberNode((@__LINE__), "WHEN EQUATIONS"))
       $(WHEN_EQUATIONS...)
       $(LineNumberNode((@__LINE__), "IF EQUATIONS"))
-      $(IF_EQUATIONS...)
+#      $(IF_EQUATIONS...)
       $(SAVE_FUNCTION)
       return $(Expr(:call, :CallbackSet, returnCallbackSet()...))
     end
@@ -496,6 +498,10 @@ function expToJuliaExp(exp::DAE.Exp, context::C, varSuffix=""; varPrefix="x")::E
             SimulationCode.ALG_VARIABLE(__) => quote
               $(LineNumberNode(@__LINE__, "$varName, algebraic"))
               $(Symbol(varPrefix))[$(indexAndVar[1])]
+            end
+            SimulationCode.DISCRETE(__) => quote
+              $(LineNumberNode(@__LINE__, "$varName, Discrete"))
+              $(Symbol("DISCRETE_" * varPrefix))[$(indexAndVar[1])]
             end
             SimulationCode.STATE_DERIVATIVE(__) => :(dx$(varSuffix)[$(indexAndVar[1])] #= der($varName) =#)
           end

@@ -40,7 +40,7 @@ function matching(dict::DataStructures.OrderedDict, n::Int)
   function pathFound(i)
     eMark[i] = true
     local success = false
-    local equationsI = dict.vals[i]
+    local equationsI = dict.vals[i]    
     for j in equationsI 
       if assign[j] == 0
         assign[j] = i
@@ -229,8 +229,5 @@ function tarjan(g::OrderedDict, n)::Array
   end
   return sccs
 end
-
-
-
 
 end #= GraphAlgorithms =#
