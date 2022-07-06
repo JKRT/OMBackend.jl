@@ -202,9 +202,9 @@ function createEquationVariableBidirectionGraph(equations::RES_T,
   local discreteVariables = filter((x) -> BDAEUtil.isDiscrete(x.varKind), allBackendVars)
   local stateVariables = filter((x) -> BDAEUtil.isState(x.varKind), allBackendVars)
   local algebraicAndStateVariables = vcat(unknownVariables, stateVariables)
-  @info "#stateVariables" length(stateVariables)
-  @info "#algebraic" length(unknownVariables)  
-  @info "#equations" length(equations)
+  @debug "#stateVariables" length(stateVariables)
+  @debug "#algebraic" length(unknownVariables)  
+  @debug "#equations" length(equations)
   #= Treat states + discrete as solved =#
   nEquations = length(equations)  - length(stateVariables) - length(discreteVariables)
   nVariables = length(unknownVariables)

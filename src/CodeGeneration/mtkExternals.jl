@@ -39,16 +39,26 @@ function move_diffs(eq::Equation; rewrite)
     if !(lhs isa Number) && (operation(lhs) isa Differential)
       lhs ~ -rhs
     elseif !(lhs isa Number) && (operation(lhs) == *)
+      @info "We are in this case!" eq
       #= This code is probably quite flaky, however, it should not be needed after similar things are introduced in MTK. =#
-      newRhs = substitute(rhs, rhs => rhs / arguments(lhs)[1])
+      local newRhs
+      for arg in arguments(lhs)
+        @info "arg" arg typeof(arg)
+        if arg isa Number || (arg isa Term && !(operation(arg) isa Differential))
+          @info "Rewriting"
+          newRhs = substitute(rhs, rhs => rhs / arg)
+          rhs = newRhs
+        end
+      end
       newLhs = substitute(lhs, lhs => arguments(lhs)[2])
-      ~(newLhs, -newRhs)
+      ~(D(newLhs), -newRhs)
     else
       -lhs ~ rhs
     end
   else
     eq
   end
+  @info res
   return res
 end
 
@@ -57,19 +67,23 @@ end
   That is we do an eval of the system, this is computationally expensive, however, it seems to work for now.
   Related to issue https://github.com/SciML/ModelingToolkit.jl/issues/1493
 """
-function makeODESystem(deqs, iv, vars, pars, idxReduction; name)
+function makeODESystem(deqs, iv, vars, pars, idxReduction; name, continuous_events = [])
   # Equation is not in the canonical form
   # Use a rule to find all g(u)*D(u) terms
   # and move those to the lhs
   D = Differential(iv)
   r1 = SymbolicUtils.@rule ~~a * D(~~b) * ~~c => 0
   r2 = SymbolicUtils.@rule D(~~b) => 0
-  #println(debugRewrite(deqs, iv, vars, pars))
+  @info "BEFORE REWRITING"
+  println(debugRewrite(deqs, iv, vars, pars; separator = "\n"))
   remove_diffs = SymbolicUtils.Postwalk(SymbolicUtils.Chain([r1,r2]))
   usedStates = Set()
   local rewrittenDeqs = Symbolics.Equation[]
+  local req
   for eq in deqs
-    req = move_diffs(eq, rewrite = remove_diffs)
+#    if !(operation(eq.lhs) isa Differential)
+      req = move_diffs(eq, rewrite = remove_diffs)
+#    end
     #    @info "Left hand side of the equation" req.lhs
     if req.lhs isa Real
       push!(rewrittenDeqs, req)
@@ -84,9 +98,12 @@ function makeODESystem(deqs, iv, vars, pars, idxReduction; name)
     end
   end
   #= Special computationally heavy routine for systems that need index reduction.. =#
-#  println(debugRewrite(rewrittenDeqs, iv, vars, pars; separator = "\n"))
+  @info "AFTER REWRITING"
+  println(debugRewrite(rewrittenDeqs, iv, vars, pars; separator = "\n"))
+  
   if idxReduction
-    #    @info "We are doing index reduction"
+    @info "We need index reduction"
+    #@info "We are doing index reduction"
     #= Convert the system to a string=#
     res = debugRewrite(rewrittenDeqs, iv, vars, pars)
     #    println(res)
@@ -96,11 +113,16 @@ function makeODESystem(deqs, iv, vars, pars, idxReduction; name)
     #= Generate a new system with metadata...=#
     res = ModelingToolkit.ODESystem(eqs2, iv, vars2, pars; name = name)
     res2 = ModelingToolkit.dae_index_lowering(res)
-    structural_simplify(res2; simplify = true, allow_symbolic = true, allow_parameter = true)
+    #structural_simplify(res2; simplify = true, allow_symbolic = true, allow_parameter = true)
     return res2
   end
   #println(debugRewrite(deqs, iv, vars, pars))
-  return ModelingToolkit.ODESystem(rewrittenDeqs, iv, vars, pars; name = name)
+  res = if ! isempty(continuous_events)
+    ModelingToolkit.ODESystem(rewrittenDeqs, iv, vars, pars; name = name, continuous_events = continuous_events)
+  else
+    ModelingToolkit.ODESystem(rewrittenDeqs, iv, vars, pars; name = name)
+  end
+  return res  
 end
 
 function debugRewrite(deqs, t, vars, parameters; separator = ",")

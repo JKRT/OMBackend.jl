@@ -105,8 +105,18 @@ function transformToZeroCrossingCondition(conditonalExpression::DAE.Exp)
   return res
 end
 
-
-
+function transformToMTKConditionEquation(cond::DAE.Exp, simCode)
+  res = @match cond begin
+    DAE.RELATION(e1, DAE.LESS(__), e2) => begin
+      :($(expToJuliaExpMTK(e1, simCode)) - $(expToJuliaExpMTK(e2, simCode)) ~ 0)
+      #DAE.BINARY(e1, DAE.SUB(DAE.T_REAL_DEFAULT), e2)
+    end
+    _ => begin
+      throw("Operator: " * string(cond.op) * "in: " * string(cond) * "is not supported")
+    end
+  end
+  return res
+end
 
 """
   Flattens a vector of expressions.
@@ -641,11 +651,11 @@ end
 """
   If the system needs to conduct index reduction make sure to inform MTK.
 """
-function MTK_indexReduction(indexReduction)::Expr
-  if (indexReduction)
-    :(reducedSystem = firstOrderSystem)#ModelingToolkit.structural_simplify(firstOrderSystem; simplify=true))
+function performStructuralSimplify(simplify)::Expr
+  if (simplify)
+    :(reducedSystem = firstOrderSystem) #ModelingToolkit.structural_simplify(firstOrderSystem))
   else
-    :(reducedSystem = firstOrderSystem)#ModelingToolkit.dae_index_lowering(firstOrderSystem))
+    :(reducedSystem = firstOrderSystem)
   end
 end
 

@@ -86,14 +86,13 @@ const COMPILED_MODELS_MTK = Dict()
 
 function translate(frontendDAE::Union{DAE.DAE_LIST, OMFrontend.Main.FlatModel}; BackendMode = MTK_MODE)::Tuple{String, Expr}
   local bDAE = lower(frontendDAE)
-  @info "Lowering done"
   local simCode
   if BackendMode == DAE_MODE
     throw("DAE-mode is temporarily removed.")
   elseif BackendMode == MTK_MODE
-    @info "Generate simulation code"
+    @debug "Generate simulation code"
     simCode = generateSimulationCode(bDAE; mode = MTK_MODE)
-    @info "Simulation code generated"
+    @debug "Simulation code generated"
     SimulationCode.dumpSimCode(simCode)
     return generateMTKTargetCode(simCode)
   else

@@ -86,7 +86,7 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
   local eqVariableMapping = createEquationVariableBidirectionGraph(resEqs, ifEqs, allBackendVars, stringToSimVarHT)
   local numberOfVariablesInMapping = length(eqVariableMapping.keys)
   (isSingular, matchOrder, digraph, stronglyConnectedComponents) =
-    matchAndCheckStronglyConnectedComponents(resEqs, eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT; mode = mode)
+    matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT; mode = mode)
   #= 
     The set of if equations needs to be handled in a separate way. 
     Each branch might contain a separate section of variables etc that needs to be sorted and processed. 
@@ -271,11 +271,16 @@ Author:johti17
   This function does matching, it also checks for strongly connected components.
 If the system is singular we try index reduction before proceeding.
 """ 
-function matchAndCheckStronglyConnectedComponents(equations, eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT; mode)::Tuple
-  @debug "#Variables" numberOfVariablesInMapping
-  @debug "#Equations" length(equations)
+function matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT; mode = OMBackend.MTK_MODE)::Tuple
   (isSingular::Bool, matchOrder::Vector) = GraphAlgorithms.matching(eqVariableMapping, numberOfVariablesInMapping)
   local digraph::MetaGraphs.MetaDiGraph
+  local sccs::Array
+  if OMBackend.PLOT_EQUATION_GRAPH
+    @info "Dumping the equation graph"
+    local labels = makeLabels(digraph, matchOrder, stringToSimVarHT)
+    GraphAlgorithms.plotEquationGraphPNG("./digraphOutput.png", digraph, labels)
+  end
+  
   #=
     Index reduction might resolve the issues with this system.
   =#
@@ -284,38 +289,17 @@ function matchAndCheckStronglyConnectedComponents(equations, eqVariableMapping, 
     # throw("Error: Singular system")
     #= TODO: Try index reduction =#
     digraph = GraphAlgorithms.merge(matchOrder, eqVariableMapping)
-    stronglyConnectedComponents::Array = GraphAlgorithms.stronglyConnectedComponents(digraph)
-    return (isSingular, matchOrder, digraph, stronglyConnectedComponents)
+    sccs = GraphAlgorithms.stronglyConnectedComponents(digraph)
+    return (isSingular, matchOrder, digraph, sccs)
   end
 
   if isSingular && mode == DAE_MODE
     throw("TODO: index reduction not implemented for DAE-mode")
     #= TODO do index reduction here. =#
   end
-  #= We will not get here... For now:) =#
-  return matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT)
-end
-
-
-"""
-  This function conducts matching and checks for strongly connected components.
-  If the system is singular after matching it throws an error.
-"""
-function matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT)::Tuple
-  (isSingular::Bool, matchOrder::Vector) = GraphAlgorithms.matching(eqVariableMapping, numberOfVariablesInMapping)
-  if isSingular
-    @error "The system of equations is Singular"
-    throw("Error: Singular system")
-  end
-  #= The merge algortihm takes a matching and produces a resulting digraph =#
-  local digraph::MetaGraphs.MetaDiGraph = GraphAlgorithms.merge(matchOrder, eqVariableMapping)
-  if OMBackend.PLOT_EQUATION_GRAPH
-    @info "Dumping the equation graph"
-    local labels = makeLabels(digraph, matchOrder, stringToSimVarHT)
-    GraphAlgorithms.plotEquationGraphPNG("./digraphOutput.png", digraph, labels)
-  end
-  stronglyConnectedComponents::Vector = GraphAlgorithms.stronglyConnectedComponents(digraph)
-  return (isSingular, matchOrder, digraph, stronglyConnectedComponents)
+  digraph = GraphAlgorithms.merge(matchOrder, eqVariableMapping)
+  sccs = GraphAlgorithms.stronglyConnectedComponents(digraph)
+  return (isSingular, matchOrder, digraph, sccs)
 end
 
 """
