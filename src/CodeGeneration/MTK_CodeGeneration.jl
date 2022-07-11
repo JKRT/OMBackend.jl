@@ -1,7 +1,7 @@
 #=
 * This file is part of OpenModelica.
 *
-* Copyright (c) 1998-2020, Open Source Modelica Consortium (OSMC),
+* Copyright (c) 1998-CurrentYear, Open Source Modelica Consortium (OSMC),
 * c/o Linköpings universitet, Department of Computer and Information Science,
 * SE-58183 Linköping, Sweden.
 *
@@ -33,7 +33,6 @@
   Author: John Tinnerholm
   TODO: Remember the state derivative scheme. What did I mean with that?
   TODO: Make duplicate code better...
-  TODO: Investigate the once again broken if equations
 =#
 using ModelingToolkit
 import OMBackend
@@ -144,6 +143,7 @@ function ODE_MODE_MTK_PROGRAM_GENERATION(simCode::SimulationCode.SIM_CODE, model
   program = quote
     using ModelingToolkit
     using DifferentialEquations
+    import ModelingToolkit.IfElse
     $(model)
     function $(Symbol("$(MODEL_NAME)Simulate"))(tspan = (0.0, 1.0); solver=Rodas5())
       ($(Symbol("$(MODEL_NAME)Model_problem")), ivs, $(Symbol("$(MODEL_NAME)Model_ReducedSystem")), tspan, pars, vars) = $(Symbol("$(MODEL_NAME)Model"))(tspan)
@@ -208,7 +208,8 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
                                                simCode::SimulationCode.SIM_CODE)
   local parVariablesSym = [Symbol(p) for p in parameters]
   local START_CONDTIONS_EQUATIONS = createStartConditionsEquationsMTK(stateVariables, algebraicVariables, simCode)
-  local DISCRETE_START_VALUES = getStartConditionsMTK(discreteVariables, simCode)
+  local DISCRETE_START_VALUES = vcat(generateInitialEquations(simCode.initialEquations, simCode; parameterAssignment = true),
+                                     getStartConditionsMTK(discreteVariables, simCode))
   local PARAMETER_EQUATIONS = createParameterEquationsMTK(parameters, simCode)
   local PARAMETER_ASSIGNMENTS = createParameterAssignmentsMTK(parameters, simCode)
   local PARAMETER_RAW_ARRAY = createParameterArray(parameters, simCode)
@@ -216,7 +217,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
     For MTK we disable the saving function for now.
   =#
   local CALL_BACK_EQUATIONS = createCallbackCode(modelName, simCode; generateSaveFunction = false)
-  local IF_EQUATION_COMPONENTS::Vector{Tuple{Expr, Expr, Vector{Expr}, Vector{Expr}, Vector{String}}} = createIfEquations(stateVariables, algebraicVariables, simCode)
+  local IF_EQUATION_COMPONENTS::Vector{Tuple{Expr, Expr, Vector{Expr}, Vector{Expr}, Vector{Tuple}}} = createIfEquations(stateVariables, algebraicVariables, simCode)
   #= Symbolic names =#
   local stateVariablesSym = [:($(Symbol(v))(t)) for v in stateVariables]
   local algebraicVariablesSym = [:($(Symbol(v))(t)) for v in algebraicVariables]
@@ -229,17 +230,22 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
     :(events = $(IF_EQUATION_EVENTS...))
   end
   local conditionalEquations = [component[2] for component in IF_EQUATION_COMPONENTS]
-  local ifConditionVariableNames = collect(Iterators.flatten([component[5] for component in IF_EQUATION_COMPONENTS]))
+  local ifConditionNameAndIV = collect(Iterators.flatten([component[5] for component in IF_EQUATION_COMPONENTS]))
   local ifConditionalVariables = collect(Iterators.flatten([component[4] for component in IF_EQUATION_COMPONENTS]))
   local zeroDynamicsConditionalEquations = collect(Iterators.flatten([component[3] for component in IF_EQUATION_COMPONENTS]))
-  #= Expand the start conditions with initial equations for the zero dynamic equations for the conditional equations =#
-  local ifConditionalStartEquations = [:($(Symbol("$v")) => false) for v in ifConditionVariableNames]
+  #= Expand the start conditions with initial equations for the zero dynamic equations for the conditional equations =#  
+  local ifConditionalStartEquations = [:($(Symbol(first(v))) => $(last(v))) for v in ifConditionNameAndIV]
   START_CONDTIONS_EQUATIONS = vcat(START_CONDTIONS_EQUATIONS, ifConditionalStartEquations)
   #=
     Merge the ifConditional components into the rest of the system and merge the state conditionals with the sates
   =#
-  EQUATIONS = vcat(EQUATIONS, zeroDynamicsConditionalEquations, conditionalEquations)
   stateVariablesSym = vcat(ifConditionalVariables,stateVariablesSym)
+  EQUATIONS = vcat(EQUATIONS, zeroDynamicsConditionalEquations, conditionalEquations)
+  EQUATIONS = rewriteEquations(EQUATIONS,
+                               t,
+                               vcat(stateVariablesSym, algebraicVariablesSym),
+                               vcat(parVariablesSym, discreteVariablesSym),
+                               performIndexReduction)
   #= Reset the callback counter=#
   RESET_CALLBACKS()
   #=
@@ -253,7 +259,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
     $(CALL_BACK_EQUATIONS)
     function $(Symbol(MODEL_NAME * "Model"))(tspan = (0.0, 1.0))
       ModelingToolkit.@variables t
-      der = ModelingToolkit.Differential(t)
+      D = ModelingToolkit.Differential(t)
       parameters = ModelingToolkit.@parameters begin
         ($(parVariablesSym...), $(discreteVariablesSym...))
       end   
@@ -285,9 +291,9 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
       end
       eqs = collect(Iterators.flatten(equationComponents))
       $(IF_EQUATION_EVENT_DECLARATION)
-      nonLinearSystem = OMBackend.CodeGeneration.makeODESystem(eqs, t, vars, parameters, $(performIndexReduction); name=:($(Symbol($modelName))), continuous_events = events)
+      nonLinearSystem = ODESystem(eqs, t, vars, parameters,  name=:($(Symbol($modelName))), continuous_events = events)
       firstOrderSystem = nonLinearSystem
-      $(performStructuralSimplify(!isempty(IF_EQUATION_EVENTS))) #TODO. Causes issues for some systems... my own simplify?
+      $(performStructuralSimplify(performIndexReduction)) #TODO. Causes issues for some systems... my own simplify?
       #=
         These arrays are introduced to handle the bolted on event handling using callbacks.
         The callback handling for MTK is subject of change should hybrid system be implemented for MTK.
@@ -296,10 +302,11 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
       local discreteVars = collect(values(Dict([$(DISCRETE_START_VALUES...)])))
       local event_vars = vcat(collect(values(Dict([initialValues...]))),
                               #=Discrete variables=# discreteVars)
-      local aux = Vector{Vector{Float64}}(undef, 2)
+      local aux = Vector{Vector{Float64}}(undef, 3)
       #= TODO init them with the initial values of them =#
       aux[1] = event_p
       aux[2] = event_vars
+      aux[3] = discreteVars
       problem = ModelingToolkit.ODEProblem(reducedSystem,
                                            initialValues,
                                            tspan,
@@ -338,7 +345,6 @@ include("mtkExternals.jl")
 function createStartConditionsEquationsMTK(states::Vector,
                                         algebraics::Vector,
                                         simCode::SimulationCode.SimCode)::Vector{Expr}
-  #  local startEquations = createSortedEquations([algVariables..., stateVariables...], simCode; arrayName = "reals")
   local algInit = getStartConditionsMTK(algebraics, simCode)
   local stateInit = getStartConditionsMTK(states, simCode)
   local initialEquations = simCode.initialEquations
@@ -355,7 +361,7 @@ end
   Generates initial equations.
   Currently unsorted unless they are sorted before being passed to the simulation code phase.
 """
-function generateInitialEquations(initialEqs, simCode::SimulationCode.SimCode)::Vector{Expr}
+function generateInitialEquations(initialEqs, simCode::SimulationCode.SimCode; parameterAssignment = true)::Vector{Expr}
   local initialEqsExps = Expr[]
   for ieq in initialEqs
     #= LHS will typically be a variable. Don't have to be though.. =#
@@ -378,10 +384,17 @@ function generateInitialEquations(initialEqs, simCode::SimulationCode.SimCode)::
         res
       end
     end
-    push!(initialEqsExps,
-          quote
-            $(lhs) => $(rhs)
-          end)
+    if parameterAssignment
+      push!(initialEqsExps,
+            quote
+              $lhs => $rhs
+            end)
+    else
+      push!(initialEqsExps,
+            quote
+              $lhs = $rhs
+            end)
+    end
   end
   return initialEqsExps
 end
@@ -433,8 +446,10 @@ function getStartConditionsMTK(vars::Vector, simCode::SimulationCode.SimCode)::V
           (_, _) => ()
         end
         NONE() => begin
-          warnings *= "\n Assumed starting value of 0.0 for variable: " * varName * "\n"
-          push!(startExprs, :($(Symbol(varName)) => 0.0))
+          if ! (simVarType isa SimulationCode.STATE || simVarType isa SimulationCode.DISCRETE)
+            warnings *= "\n Assumed starting value of 0.0 for variable: " * varName * "\n"
+            push!(startExprs, :($(Symbol(varName)) => 0.0))
+          end
         end
       end
     end
@@ -450,7 +465,7 @@ end
   Creates the components of the If-Equations
 """
 function createIfEquations(stateVariables, algebraicVariables, simCode)
-  local ifEquations::Vector{Tuple{Expr, Expr, Vector{Expr}, Vector{Expr}, Vector{String}}} = Tuple{Expr, Expr, Vector{Expr}, Vector{Expr}, Vector{String}}[]
+  local ifEquations::Vector{Tuple{Expr, Expr, Vector{Expr}, Vector{Expr}, Vector{Tuple}}} = Tuple{Expr, Expr, Vector{Expr}, Vector{Expr}, Vector{Tuple}}[]
   local i::Int = 0
   for ifEq in simCode.ifEquations
     i += 1
@@ -497,17 +512,20 @@ See the following issue: https://github.com/SciML/ModelingToolkit.jl/issues/1523
 The forth part of the tuple contains a vector of symbolic variables.
 One for each conditional variable created.
 """
-function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCode.IF_EQUATION, identifier, simCode)::Tuple{Expr, Expr, Vector{Expr}, Vector{Expr}, Vector{String}}
-  local result::Tuple{Expr, Expr, Vector{Expr}, Vector{Expr}, Vector{String}}
+function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCode.IF_EQUATION, identifier, simCode)
+  local result::Tuple{Expr, Expr, Vector{Expr}, Vector{Expr}, Vector{Tuple}}
   
-  generateAffects(n, nConditions) = begin
+  generateAffects(n, nConditions, condRes) = begin
+    #=
+      The cond res is what we are going to evaluate it to.
+    =#
     local exprs = Expr[]
     local e
     for i in 1:nConditions
       e = if i == n 
-        :($(Symbol(("ifCond$(i)"))) ~ true)
+        :($(Symbol(("ifCond$(i)"))) ~ $(condRes))
       else
-        :($(Symbol(("ifCond$(i)"))) ~ false)
+        :($(Symbol(("ifCond$(i)"))) ~ !($(condRes)))
       end
       push!(exprs, e)
     end
@@ -534,22 +552,28 @@ function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCo
     local branch = branches[target]
     local cond = :( $(Symbol("ifCond$(target)")) == true )
     #= Assume single equations for now =#
-    :(ModelingToolkit.IfElse.ifelse($(cond), $(first(deCausalize(branch.residualEquations[1]))), $(generateIfExpressions(branches, branches[target].targets))))
+    :(ModelingToolkit.IfElse.ifelse($(cond),
+                                    $(first(deCausalize(branch.residualEquations[1]))),
+                                    $(generateIfExpressions(branches, branches[target].targets))))
   end
   
   local i::Int = 0
   local nBranches::Int = length(ifEq.branches)
   local conditions = Expr[]
+  local ivConditions = Bool[]
   for branch in ifEq.branches
     i += 1
     @match branch begin
       SimulationCode.BRANCH(condition, residuals, -1#=Else=#, targets, _, _, _, _, _) => begin        
       end
       SimulationCode.BRANCH(condition, residuals, _, targets, _, _, _, _, _) => begin
-        branchesWithConds::Int = nBranches - 1
-        affects::Vector{Expr} = generateAffects(i, branchesWithConds)
-        cond = :([($(transformToMTKConditionEquation(branch.condition, simCode)))] => [$(affects...)])
+        local mtkCond = transformToMTKConditionEquation(branch.condition, simCode)
+        local ivCond = evalInitialCondition(mtkCond)
+        local branchesWithConds::Int = nBranches - 1
+        local affects::Vector{Expr} = generateAffects(i, branchesWithConds, ivCond)
+        local cond = :([$(mtkCond)] => [$(affects...)])
         push!(conditions, cond)
+        push!(ivConditions, ivCond)
       end
     end
   end
@@ -559,11 +583,11 @@ function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCo
   #= Generate zero dynamic equations for the conditions =#
   conditionEquations = Expr[]
   conditionVariables = Expr[]
-  conditionVariableNames = String[]
+  conditionVariableNames = Tuple{String, Bool}[]
   for i in 1:length(conditions)
     push!(conditionEquations, :(der($(Symbol("ifCond$(i)"))) ~ 0))
     push!(conditionVariables, :($(Symbol("ifCond$(i)"))(t)))
-    push!(conditionVariableNames, "ifCond$(i)")
+    push!(conditionVariableNames, ("ifCond$(i)", !(ivConditions[i])))
   end
   conditionExpr = :([$(conditions...)])
   result = (conditionExpr, ifExpressions, conditionEquations, conditionVariables, conditionVariableNames)
@@ -748,7 +772,8 @@ end
   Similar to decompose variables, however, decomposes the set of equations instead.
   This function does so by dividing the total number of equations into separate blocks with 50 equations in each block.
   This function is suppose to be called after decompose variables.
-  Parameter assignments contains the set of values assigned to parameters at the beginning of the simulation.
+  the parameter assignments contains the set of values assigned to parameters at the beginning of the simulation, furthermore the initialEquation contains the initial equations.
+  The reason for including them here is to be able to perform additional simplifications.
 """
 function decomposeEquations(equations, parameterAssignments)
   local nStateVars = length(equations)
@@ -760,10 +785,11 @@ function decomposeEquations(equations, parameterAssignments)
   push!(exprs, constructors)
   local i = 0
   for equationVector in equationVectors
+    eqv = [rewriteEq(i) for i in equationVector]
     equationConstructorExpr = quote
-      $(parameterAssignments...) #TODO: It does not seem to work to use parameters as constants, something goes wrong in the substitution. 
+      $(parameterAssignments...) #TODO: It does not seem to work to use parameters as constants, something goes wrong in the substitution.
       function $(Symbol("generateEquations" * string(i)))()
-        [$(equationVector...)]
+        [$(eqv...)]
       end
       push!(equationConstructors, $(Symbol("generateEquations" * string(i))))
     end

@@ -14,51 +14,58 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE  SOFTWARE.
-=#  
+=#
 
-#= So we know about t an der in the global scope. This is needed for the rules below to match correctly. =#
+#=
+  So we know about t an der in the global scope.
+  This is needed for the rules below to match correctly.
+=#
 @variables t
 const D = Differential(t)
 
 """
   Temporary rewrite function. Not very pretty...
-  Original code by Chris R. Modifed it to fix terms of type X * D(Y).
-  The solution to solve it is not pretty and is probably quite flaky.
+  Original code by Chris R. Expanded to fix terms of type X * D(Y).
+  The solution to solve it is not pretty and is probably flaky.
 """
 function move_diffs(eq::Equation; rewrite)
   # Do not modify `D(x) ~ ...`, already correct
-  # Ignore `δ(x) ~ ...` for now
-  res = if !(eq.lhs isa Term && operation(eq.lhs) isa Differential) &&
-    !(eq.lhs isa Term && operation(eq.lhs) isa Difference)
-    _eq = eq.rhs-eq.lhs
-    rhs = rewrite(_eq)
-    if rhs === nothing
+  res =
+    if !(eq.lhs isa Term && operation(eq.lhs) isa Differential) && !(eq.lhs isa Term && operation(eq.lhs) isa Difference)
+      _eq = eq.rhs-eq.lhs
+      rhs = rewrite(_eq)
+      if rhs === nothing
+        eq
+      end
+      lhs = _eq - rhs
+      if !(lhs isa Number) && (operation(lhs) isa Differential)
+        lhs ~ -rhs
+      elseif !(lhs isa Number) && (operation(lhs) == *)
+        #=
+          This code is probably quite flaky, however, it should not be needed after similar things are introduced in MTK.
+          TODO: Handle this more elegantly using rewrite rules instead.
+        =#
+        local newRhs
+        local newLhs
+        for arg in arguments(lhs)
+#          @info "Arg was:" arg typeof(arg)
+          if (arg isa Number || arg isa Sym) || (arg isa Term && !(operation(arg) isa Differential))
+#            @info "Rewrite case:" lhs
+            newRhs = substitute(rhs, rhs => rhs / arg)
+            rhs = newRhs
+            newLhs = substitute(lhs, lhs => lhs / arg)
+            lhs = newLhs
+          end
+        end
+        tmp = ~(newLhs, -newRhs)
+#        @info "After Rewrite" tmp
+        tmp
+      else
+        -lhs ~ rhs
+      end
+    else
       eq
     end
-    lhs = _eq - rhs
-    if !(lhs isa Number) && (operation(lhs) isa Differential)
-      lhs ~ -rhs
-    elseif !(lhs isa Number) && (operation(lhs) == *)
-      @info "We are in this case!" eq
-      #= This code is probably quite flaky, however, it should not be needed after similar things are introduced in MTK. =#
-      local newRhs
-      for arg in arguments(lhs)
-        @info "arg" arg typeof(arg)
-        if arg isa Number || (arg isa Term && !(operation(arg) isa Differential))
-          @info "Rewriting"
-          newRhs = substitute(rhs, rhs => rhs / arg)
-          rhs = newRhs
-        end
-      end
-      newLhs = substitute(lhs, lhs => arguments(lhs)[2])
-      ~(D(newLhs), -newRhs)
-    else
-      -lhs ~ rhs
-    end
-  else
-    eq
-  end
-  @info res
   return res
 end
 
@@ -74,8 +81,8 @@ function makeODESystem(deqs, iv, vars, pars, idxReduction; name, continuous_even
   D = Differential(iv)
   r1 = SymbolicUtils.@rule ~~a * D(~~b) * ~~c => 0
   r2 = SymbolicUtils.@rule D(~~b) => 0
-  @info "BEFORE REWRITING"
-  println(debugRewrite(deqs, iv, vars, pars; separator = "\n"))
+  #@info "BEFORE REWRITING"
+  #println(debugRewrite(deqs, iv, vars, pars; separator = "\n"))
   remove_diffs = SymbolicUtils.Postwalk(SymbolicUtils.Chain([r1,r2]))
   usedStates = Set()
   local rewrittenDeqs = Symbolics.Equation[]
@@ -98,11 +105,12 @@ function makeODESystem(deqs, iv, vars, pars, idxReduction; name, continuous_even
     end
   end
   #= Special computationally heavy routine for systems that need index reduction.. =#
-  @info "AFTER REWRITING"
-  println(debugRewrite(rewrittenDeqs, iv, vars, pars; separator = "\n"))
-  
+  #@info "AFTER REWRITING"
+  #println(debugRewrite(rewrittenDeqs, iv, vars, pars; separator = ",\n"))
+
   if idxReduction
     @info "We need index reduction"
+    fail()
     #@info "We are doing index reduction"
     #= Convert the system to a string=#
     res = debugRewrite(rewrittenDeqs, iv, vars, pars)
@@ -122,7 +130,65 @@ function makeODESystem(deqs, iv, vars, pars, idxReduction; name, continuous_even
   else
     ModelingToolkit.ODESystem(rewrittenDeqs, iv, vars, pars; name = name)
   end
-  return res  
+  return res
+end
+
+
+"""
+  Rewrite equations that do not conform to the requirements of MTK
+"""
+function rewriteEquations(edeqs, iv, eVars, ePars, idxReduction)
+  local der = ModelingToolkit.Differential(t)
+  preEval = quote 
+    vars = ModelingToolkit.@variables begin
+      $(eVars...)
+    end
+    pars = ModelingToolkit.@parameters begin
+      $(ePars...)
+    end
+  end
+  eval(preEval)
+  #= Make the derivative symbol known =#
+  eval(:(der = ModelingToolkit.Differential(t)))
+  eval(:(import ModelingToolkit.IfElse))
+  #@info "Test" pars
+  deqs = [eval(i) for i in edeqs]
+  #@info deqs
+  #= Rewrite equations =#
+  D = Differential(iv)
+  r1 = SymbolicUtils.@rule ~~a * D(~~b) * ~~c => 0
+  r2 = SymbolicUtils.@rule D(~~b) => 0
+  #@info "BEFORE REWRITING"
+  println(debugRewrite(deqs, iv, vars, pars; separator = "\n"))
+  remove_diffs = SymbolicUtils.Postwalk(SymbolicUtils.Chain([r1,r2]))
+  usedStates = Set()
+  local rewrittenDeqs = Symbolics.Equation[]
+  local req
+  for eq in deqs
+#    if !(operation(eq.lhs) isa Differential)
+      req = move_diffs(eq, rewrite = remove_diffs)
+#    end
+    #    @info "Left hand side of the equation" req.lhs
+    if req.lhs isa Real
+      push!(rewrittenDeqs, req)
+    elseif !(req.lhs in usedStates)
+      #      @info "Not a duplicate" req.lhs
+      #      @info "Used equations are" usedStates
+      push!(rewrittenDeqs, req)
+      push!(usedStates, req.lhs)
+    else
+      #      @info "Duplicate:" req.lhs
+      push!(rewrittenDeqs, eq)
+    end
+  end
+  #= Convert the system to a string. To remove (t) (TODO: Why does it show up if it is not allowed?) =#
+  # res = debugRewrite(rewrittenDeqs, iv, vars, pars)
+  # println(debugRewrite(deqs, iv, vars, pars; separator = "\n"))
+  # #= Parse and evaluate it =#
+  # expr = Meta.parse(res)
+  # eval(expr)
+  #println(debugRewrite(deqs, iv, vars, pars))
+  return rewrittenDeqs
 end
 
 function debugRewrite(deqs, t, vars, parameters; separator = ",")
@@ -133,12 +199,6 @@ function debugRewrite(deqs, t, vars, parameters; separator = ",")
   for v in vars
     print(buffer, v, separator)
   end
-  # print(buffer, ");")
-  # print(buffer, "pars2 = @parameters")
-  # print(buffer, "(")
-  # for p in parameters
-  #   print(buffer, p, ",")
-  # end
   print(buffer, ");")
   print(buffer, "eqs2 =")
   print(buffer, "[")
@@ -148,3 +208,5 @@ function debugRewrite(deqs, t, vars, parameters; separator = ",")
   print(buffer, "];")
   return String(take!(buffer))
 end
+
+rewriteEq(eq) = Meta.parse(replace(string(eq), "(t)" => "", "Differential" => "D"))

@@ -55,7 +55,8 @@ function createCallbackCode(modelName::N, simCode::S; generateSaveFunction = tru
     function $(Symbol("$(MODEL_NAME)CallbackSet"))(aux)
       #= These are the location of the parameters and auxilary real variables respectivly =#
       local p = aux[1]
-      local reals = aux[2] 
+      local reals = aux[2]
+      local discretes = aux[3]
       $(LineNumberNode((@__LINE__), "WHEN EQUATIONS"))
       $(WHEN_EQUATIONS...)
       $(LineNumberNode((@__LINE__), "IF EQUATIONS"))
@@ -430,7 +431,13 @@ function createWhenStatements(whenStatements::List, simCode::SimulationCode.SIM_
           exp1 = expToJuliaExp(wStmt.left, simCode, varPrefix="reals")
           exp2 = expToJuliaExp(wStmt.right, simCode)
           push!(res, :($(exp1) = $(exp2)))
-        else
+        elseif typeof(var.varKind) === SimulationCode.DISCRETE
+          #=
+            TODO: In reality a branch of a when equation should be sorted.
+          ==#
+          exp1 = expToJuliaExp(wStmt.left, simCode, varPrefix="discretes")
+          exp2 = expToJuliaExp(wStmt.right, simCode)
+          push!(res, :($(exp1) = $(exp2)))
         end
       end
       #= Handles reinit =#
@@ -501,7 +508,7 @@ function expToJuliaExp(exp::DAE.Exp, context::C, varSuffix=""; varPrefix="x")::E
             end
             SimulationCode.DISCRETE(__) => quote
               $(LineNumberNode(@__LINE__, "$varName, Discrete"))
-              $(Symbol("DISCRETE_" * varPrefix))[$(indexAndVar[1])]
+              $(Symbol(varPrefix))[$(indexAndVar[1])]
             end
             SimulationCode.STATE_DERIVATIVE(__) => :(dx$(varSuffix)[$(indexAndVar[1])] #= der($varName) =#)
           end

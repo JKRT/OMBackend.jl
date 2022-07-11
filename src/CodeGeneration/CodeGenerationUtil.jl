@@ -653,9 +653,9 @@ end
 """
 function performStructuralSimplify(simplify)::Expr
   if (simplify)
-    :(reducedSystem = firstOrderSystem) #ModelingToolkit.structural_simplify(firstOrderSystem))
+    :(reducedSystem = ModelingToolkit.structural_simplify(firstOrderSystem))
   else
-    :(reducedSystem = firstOrderSystem)
+    :(reducedSystem = ModelingToolkit.structural_simplify(firstOrderSystem))
   end
 end
 
@@ -716,4 +716,15 @@ function evalDAE_Expression(expr, simCode)::Expr
   local jlExpr = expToJuliaExpMTK(daeExp, simCode)
   local evaluatedJLExpr = eval(jlExpr)
   return quote $(evaluatedJLExpr) end
+end
+
+"""
+Decide the iv of the condition.
+This currently assumes that the simulation starts at 0.0 (which might not be the case)
+"""
+function evalInitialCondition(mtkCond)
+  local mtkCondE = eval(mtkCond)
+  local v = substitute(mtkCondE.lhs, t => 0.0)
+  local ivCond = v == 0
+  return ivCond
 end

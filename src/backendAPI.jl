@@ -316,7 +316,8 @@ OMBackend.simulateModel(modelName, tspan = (0.0, 1.0), solver = :(Tsit5()));
 """
 function simulateModel(modelName::String;
                        MODE = MTK_MODE,
-                       tspan=(0.0, 1.0), solver = :(Rodas5()))
+                       tspan=(0.0, 1.0),
+                       solver = :(Rodas5()))
   #= Strings containing . need to be in a format suitable for Julia =#
   modelName = replace(modelName, "." => "__")
   local modelCode::Expr  
