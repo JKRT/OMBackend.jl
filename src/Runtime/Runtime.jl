@@ -134,7 +134,7 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
   integrator = init(problem, alg, dtmax = 0.01, kwargs...)
   #@info "Value of tspan[2]" tspan[2]
   add_tstop!(integrator, tspan[2])
-  local oldSols = Tuple[]
+  local oldSols = []
   #= Run the integrator=#
   @label START_OF_INTEGRATION
   for i in integrator
@@ -174,34 +174,8 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
   end
   #= The solution of the integration procedure =#
   local solution = integrator.sol
-  #@info "Solution:" solution  
-  #= The final solution =#
-  #= in oldSols we have the old solution. =#
-  local startingSol = if ! isempty(oldSols)
-    first(first(oldSols))
-  else #= If we have no old solution we are done =#
-    return solution
-  end
-  local newTimePoints = vcat(startingSol.t, solution.t) #TODO should be a loop here.
-  #= We are creating a new Vector{Vector{Float64}}: =#
-  #= Each solution in oldSol is solution to some subsolution of the VSS, before structural change =#
-  #= If the dimensions between the solutions are not equivivalent we should only keep the columns we need =#
-#  indicesOfCommonVariables = getIndicesOfCommonVariables(getSyms(problem), getSyms(cb.system))
-  #= The starting point is the initial variables of our starting mode =#
-  local newUs = [startingSol[i,:]  for i in indicesOfCommonVariablesForStartingMode]
-  #= Now we need to merge these with the latest solution =#
-  local tmp = getIndicesOfCommonVariables(getSymsFromSolution(solution), commonVariableSet; destinationPrefix = activeModeName)
-  for i in 1:length(commonVariableSet)
-    newUs[i] = vcat(newUs[i], solution[tmp[i],:])
-  end
-  #=Convert into a matrix and then into a vector of vector again to get the right dimensions. =#
-  newUs = transpose(hcat(newUs...))
-  newUs = [newUs[:,i] for i in 1:size(newUs,2)]
-  #= For anyone reading this.. this the transformations above could have been done better! =#
-  #= Should be the common varibles =#  
-  local sol = SciMLBase.build_solution(solution.prob, solution.alg, newTimePoints, newUs)
-  #= Return the final solution =#
-  return sol
+  push!(oldSols, solution)
+  return oldSols
 end
 
 

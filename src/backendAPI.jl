@@ -93,7 +93,7 @@ function translate(frontendDAE::Union{DAE.DAE_LIST, OMFrontend.Main.FlatModel}; 
     @debug "Generate simulation code"
     simCode = generateSimulationCode(bDAE; mode = MTK_MODE)
     @debug "Simulation code generated"
-    SimulationCode.dumpSimCode(simCode)
+    #SimulationCode.dumpSimCode(simCode)
     return generateMTKTargetCode(simCode)
   else
     @error "No mode specificed: valid modes are:"

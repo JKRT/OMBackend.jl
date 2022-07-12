@@ -139,6 +139,8 @@ end
 """
 function rewriteEquations(edeqs, iv, eVars, ePars, idxReduction)
   local der = ModelingToolkit.Differential(t)
+  #= Remove the t's =#
+  eVars = [Symbol(replace(string(i), "(t)" => "")) for i in eVars]
   preEval = quote 
     vars = ModelingToolkit.@variables begin
       $(eVars...)
@@ -147,21 +149,17 @@ function rewriteEquations(edeqs, iv, eVars, ePars, idxReduction)
       $(ePars...)
     end
   end
-  eval(preEval)
   #= Make the derivative symbol known =#
+  eval(preEval)
   eval(:(der = ModelingToolkit.Differential(t)))
   eval(:(import ModelingToolkit.IfElse))
-  #@info "Test" pars
-  deqs = [eval(i) for i in edeqs]
-  #@info deqs
+  local deqs = [eval(i) for i in edeqs]
   #= Rewrite equations =#
   D = Differential(iv)
-  r1 = SymbolicUtils.@rule ~~a * D(~~b) * ~~c => 0
-  r2 = SymbolicUtils.@rule D(~~b) => 0
-  #@info "BEFORE REWRITING"
-  println(debugRewrite(deqs, iv, vars, pars; separator = "\n"))
-  remove_diffs = SymbolicUtils.Postwalk(SymbolicUtils.Chain([r1,r2]))
-  usedStates = Set()
+  local r1 = SymbolicUtils.@rule ~~a * D(~~b) * ~~c => 0
+  local r2 = SymbolicUtils.@rule D(~~b) => 0
+  local remove_diffs = SymbolicUtils.Postwalk(SymbolicUtils.Chain([r1,r2]))
+  local usedStates = Set()
   local rewrittenDeqs = Symbolics.Equation[]
   local req
   for eq in deqs
@@ -181,13 +179,6 @@ function rewriteEquations(edeqs, iv, eVars, ePars, idxReduction)
       push!(rewrittenDeqs, eq)
     end
   end
-  #= Convert the system to a string. To remove (t) (TODO: Why does it show up if it is not allowed?) =#
-  # res = debugRewrite(rewrittenDeqs, iv, vars, pars)
-  # println(debugRewrite(deqs, iv, vars, pars; separator = "\n"))
-  # #= Parse and evaluate it =#
-  # expr = Meta.parse(res)
-  # eval(expr)
-  #println(debugRewrite(deqs, iv, vars, pars))
   return rewrittenDeqs
 end
 
@@ -209,4 +200,8 @@ function debugRewrite(deqs, t, vars, parameters; separator = ",")
   return String(take!(buffer))
 end
 
-rewriteEq(eq) = Meta.parse(replace(string(eq), "(t)" => "", "Differential" => "D"))
+rewriteEq(eq) = begin
+  local eqStr = string(eq)
+  res = Meta.parse(replace(eqStr, "Differential(t)" => "D"))
+  res
+end

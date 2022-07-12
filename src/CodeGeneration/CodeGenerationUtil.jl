@@ -541,7 +541,7 @@ function getCycleInSCCs(sccs)
 end
 
 """
-  Converts a DAE expression into a MTK expression
+  Converts a DAE expression into a MTK expression.
 """
 function expToJuliaExpMTK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuffix=""; varPrefix="x", derSymbol::Bool=false)::Expr
   hashTable = simCode.stringToSimVarHT
@@ -650,12 +650,27 @@ end
 
 """
   If the system needs to conduct index reduction make sure to inform MTK.
+TODO: We always do index reduction now...
 """
 function performStructuralSimplify(simplify)::Expr
   if (simplify)
-    :(reducedSystem = ModelingToolkit.structural_simplify(firstOrderSystem))
+    :(reducedSystem = ModelingToolkit.structural_simplify(ModelingToolkit.dae_index_lowering(firstOrderSystem)))
   else
     :(reducedSystem = ModelingToolkit.structural_simplify(firstOrderSystem))
+  end
+end
+
+"""
+  Generates different constructors for the ODESystem depending on given parameters.
+"""
+function odeSystemWithEvents(hasEvents, modelName)
+  if hasEvents
+    :(ODESystem(eqs, t, vars, parameters;
+              name=:($(Symbol($modelName))),
+              continuous_events = events))
+  else
+    :(ODESystem(eqs, t, vars, parameters;
+              name=:($(Symbol($modelName)))))
   end
 end
 
@@ -719,12 +734,23 @@ function evalDAE_Expression(expr, simCode)::Expr
 end
 
 """
-Decide the iv of the condition.
-This currently assumes that the simulation starts at 0.0 (which might not be the case)
+  Decide the iv of the condition.
+  This currently assumes that the simulation starts at 0.0 (which might not be the case).
+This function needs to be improved so that it also evaluates static parameters.
 """
 function evalInitialCondition(mtkCond)
-  local mtkCondE = eval(mtkCond)
-  local v = substitute(mtkCondE.lhs, t => 0.0)
-  local ivCond = v == 0
-  return ivCond
+  try
+    local mtkCondE = eval(mtkCond)
+    local v = substitute(mtkCondE.lhs, t => 0.0)
+    local ivCond = (v == 0)
+    if ivCond == false
+      return ivCond
+    end      
+    if length(v.val.arguments) > 1
+      return true
+    end
+    return ivCond
+  catch #= Unable to evaluate at this point in time. =#
+    return true
+  end
 end

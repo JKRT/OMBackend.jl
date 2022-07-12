@@ -212,7 +212,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
                                      getStartConditionsMTK(discreteVariables, simCode))
   local PARAMETER_EQUATIONS = createParameterEquationsMTK(parameters, simCode)
   local PARAMETER_ASSIGNMENTS = createParameterAssignmentsMTK(parameters, simCode)
-  local PARAMETER_RAW_ARRAY = createParameterArray(parameters, simCode)
+  local PARAMETER_RAW_ARRAY = createParameterArray(parameters, PARAMETER_ASSIGNMENTS, simCode)
   #= Create callback equations.
     For MTK we disable the saving function for now.
   =#
@@ -291,7 +291,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
       end
       eqs = collect(Iterators.flatten(equationComponents))
       $(IF_EQUATION_EVENT_DECLARATION)
-      nonLinearSystem = ODESystem(eqs, t, vars, parameters,  name=:($(Symbol($modelName))), continuous_events = events)
+      nonLinearSystem = $(odeSystemWithEvents(!(isempty(ifConditionalStartEquations)), modelName))
       firstOrderSystem = nonLinearSystem
       $(performStructuralSimplify(performIndexReduction)) #TODO. Causes issues for some systems... my own simplify?
       #=
@@ -320,7 +320,7 @@ end
 
 
 """
- Creates equations from the residual equations in unsorted order
+   Creates equations from the residual equations in unsorted order
 """
 function createResidualEquationsMTK(stateVariables::Vector, algebraicVariables::Vector, equations::Vector{BDAE.RESIDUAL_EQUATION}, simCode::SimulationCode.SIM_CODE)::Vector{Expr}
   if isempty(equations)
@@ -399,6 +399,10 @@ function generateInitialEquations(initialEqs, simCode::SimulationCode.SimCode; p
   return initialEqsExps
 end
 
+"""
+  Given a vector of variables and the simulation code
+  extracts the start attributes to generate initial conditions.
+"""
 function getStartConditionsMTK(vars::Vector, simCode::SimulationCode.SimCode)::Vector{Expr}
   local startExprs::Vector{Expr} = Expr[]
   local residuals = simCode.residualEquations
@@ -525,7 +529,7 @@ function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCo
       e = if i == n 
         :($(Symbol(("ifCond$(i)"))) ~ $(condRes))
       else
-        :($(Symbol(("ifCond$(i)"))) ~ !($(condRes)))
+        :($(Symbol(("ifCond$(i)"))) ~ $(!condRes))
       end
       push!(exprs, e)
     end
@@ -653,7 +657,7 @@ end
   The index here is the index assigned by the code generator earlier in the lowering
   of the hybrid DAE.
 """
-function createParameterArray(parameters::Vector{T}, simCode::SIM_T) where {T, SIM_T}
+function createParameterArray(parameters::Vector{T1}, parameterAssignments::Vector{T2}, simCode::SIM_T) where {T1, T2, SIM_T}
   local paramArray = []
   local hT = simCode.stringToSimVarHT
   for param in parameters
@@ -668,7 +672,11 @@ function createParameterArray(parameters::Vector{T}, simCode::SIM_T) where {T, S
     try
       #= The boundvalue is known =#
       val = eval(expToJuliaExpMTK(bindExp, simCode))
-      parValue = :($(val))
+      if val isa Float64
+        parValue = :($(val))
+      else
+        parValue = :($(Symbol(param))) #:(0.0)
+      end
     catch #=If the bound value is a more complex expression. =#
       parValue = :(0) #pars[Num($(param))]) (More complex parameters are yet to be used in the benchmark..)
     end
