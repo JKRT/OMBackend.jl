@@ -40,12 +40,13 @@ using DataStructures
   Dumping functions for simulation code structures.
 """
 function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String = "Simulation-Code")
-  print(BDAEUtil.DOUBLE_LINE + "\n")
-  print("SIM_CODE: " + heading + "\n")
-  print(BDAEUtil.DOUBLE_LINE + "\n\n")
+  local buffer = IOBuffer()
+  print(buffer, BDAEUtil.DOUBLE_LINE + "\n")
+  print(buffer, "SIM_CODE: " + heading + "\n")
+  print(buffer, BDAEUtil.DOUBLE_LINE + "\n\n")
 
-  print("Simulation Code Variables:" + "\n")
-  print(BDAEUtil.LINE + "\n")
+  print(buffer, "Simulation Code Variables:" + "\n")
+  print(buffer, BDAEUtil.LINE + "\n")
   local stateVariables = []
   local parameters = []
   local algVariables = []
@@ -65,59 +66,59 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String = "Simula
     end
   end
   local algAndState = vcat(algVariables, stateVariables)
-  println("Parameters & Constants:")
+  println(buffer, "Parameters & Constants:")
   for p in parameters
-    println(p * "| Index:" * string(first(simCode.stringToSimVarHT[p])))
+    println(buffer, p * "| Index:" * string(first(simCode.stringToSimVarHT[p])))
   end
-  print(BDAEUtil.LINE + "\n")
-  println("State Variables:")
+  print(buffer, BDAEUtil.LINE + "\n")
+  println(buffer, "State Variables:")
   for s in stateVariables
-    println(s * "| Index:" * string(first(simCode.stringToSimVarHT[s])))
+    println(buffer, s * "| Index:" * string(first(simCode.stringToSimVarHT[s])))
   end
-  print(BDAEUtil.LINE + "\n")
+  print(buffer, BDAEUtil.LINE + "\n")
   println("State Derivatives:")
   for sd in stateDerivatives
-    println(sd * "| Index:" * string(first(simCode.stringToSimVarHT[sd])))
+    println(buffer, sd * "| Index:" * string(first(simCode.stringToSimVarHT[sd])))
   end
-  print(BDAEUtil.LINE + "\n")
-  println("Algebraic Variables:")
+  print(buffer, BDAEUtil.LINE + "\n")
+  println(buffer, "Algebraic Variables:")
   for a in algVariables
-    println(a * "| Index:" * string(first(simCode.stringToSimVarHT[a])))
+    println(buffer, a * "| Index:" * string(first(simCode.stringToSimVarHT[a])))
   end
-  print(BDAEUtil.LINE + "\n")
-  println("Discrete Variables:")
+  print(buffer, BDAEUtil.LINE + "\n")
+  println(buffer, "Discrete Variables:")
   for d in discreteVariables
-    println(d * "| Index:" * string(first(simCode.stringToSimVarHT[d])))
+    println(buffer, d * "| Index:" * string(first(simCode.stringToSimVarHT[d])))
   end
-  print(BDAEUtil.LINE + "\n")
-  print("\n")
-  print("Initial Equations" + "\n")
-  println(BDAEUtil.LINE)
+  print(buffer, BDAEUtil.LINE + "\n")
+  print(buffer, "\n")
+  print(buffer, "Initial Equations" + "\n")
+  println(buffer, BDAEUtil.LINE)
   for ieq in simCode.initialEquations
-    print(string(ieq))
+    print(buffer, string(ieq))
   end
-  println(BDAEUtil.LINE)
-  print("Residual Equations" + "\n")
-  print(BDAEUtil.LINE + "\n")
+  println(buffer, BDAEUtil.LINE)
+  print(buffer, "Residual Equations" + "\n")
+  print(buffer, BDAEUtil.LINE + "\n")
   i::Int = 0
   for eq in simCode.residualEquations
     i += 1
-    print("Index:" * string(i) * "|" * BDAE.string(eq))
+    print(buffer, "Index:" * string(i) * "|" * BDAE.string(eq))
   end
-  println(BDAEUtil.LINE)
-  println("If-equations")
-  print(BDAEUtil.LINE + "\n")
+  println(buffer, BDAEUtil.LINE)
+  println(buffer, "If-equations")
+  print(buffer, BDAEUtil.LINE + "\n")
   for ifEq in simCode.ifEquations
-    print(string(ifEq))
+    print(buffer, string(ifEq))
   end
-  println(BDAEUtil.LINE)
+  println(buffer, BDAEUtil.LINE)
 
-  println("When-Equations")
-  println(BDAEUtil.LINE)
+  println(buffer, "When-Equations")
+  println(buffer, BDAEUtil.LINE)
   for wEq in simCode.whenEquations
-    print(string(wEq))
+    print(buffer, string(wEq))
   end
-  println(BDAEUtil.LINE)
+  println(buffer, BDAEUtil.LINE)
   nIfEqs = 0
   for ifEq in simCode.ifEquations
     #Required to be balanced
@@ -131,19 +132,20 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String = "Simula
       nWhenEquations += length(elseW.whenEquation.whenStmtLst)
     end
   end
-  println(BDAEUtil.LINE)
-  println("Simulation Code Statistics:")
-  println(BDAEUtil.LINE)
-  println("Total Number of Variables:" * string(length(algAndState) + length(discreteVariables)))
-  println("\tNumber of Algebraic Variables:" * string(length(algVariables)))
-  println("\tNumber of State Variables:" * string(length(stateVariables)))
-  println("\tNumber of Discrete Variables:" * string(length(discreteVariables)))
+  println(buffer, BDAEUtil.LINE)
+  println(buffer, "Simulation Code Statistics:")
+  println(buffer, BDAEUtil.LINE)
+  println(buffer, "Total Number of Variables:" * string(length(algAndState) + length(discreteVariables)))
+  println(buffer, "\tNumber of Algebraic Variables:" * string(length(algVariables)))
+  println(buffer, "\tNumber of State Variables:" * string(length(stateVariables)))
+  println(buffer, "\tNumber of Discrete Variables:" * string(length(discreteVariables)))
 
-  println("Total Number of Equations:" * string(length(simCode.residualEquations) + nIfEqs + nWhenEquations))
-  println("\tNumber of Residual Equations:" * string(length(simCode.residualEquations)))
-  println("\tNumber of Equations in If-Equations:" * string(nIfEqs))
-  println("\tNumber of Equations in When-Equations:" * string(nWhenEquations))
-  println(BDAEUtil.LINE)
+  println(buffer, "Total Number of Equations:" * string(length(simCode.residualEquations) + nIfEqs + nWhenEquations))
+  println(buffer, "\tNumber of Residual Equations:" * string(length(simCode.residualEquations)))
+  println(buffer, "\tNumber of Equations in If-Equations:" * string(nIfEqs))
+  println(buffer, "\tNumber of Equations in When-Equations:" * string(nWhenEquations))
+  println(buffer, BDAEUtil.LINE)
+  return String(take!(buffer))
 end
 
 function string(ht::OrderedDict{T1, Tuple{T2, SimVar}}) where {T1, T2}
