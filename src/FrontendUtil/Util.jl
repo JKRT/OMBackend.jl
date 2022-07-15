@@ -1096,6 +1096,9 @@ end
 
 " author: lochel
   This function extracts all crefs from the input expression, except 'time'.
+
+Comment, John:
+  It seems we get time as well in some cases...
 "
 function getAllCrefs(inExp::DAE.Exp)::List{DAE.ComponentRef}
   local outCrefs::List{DAE.ComponentRef}

@@ -393,6 +393,8 @@ const defaultEvalStages = EVALUATION_STAGES(false, false, false, false)::Evaluat
     kind::EquationKind
     evalStages::EvaluationStages
   end
+  @Record NO_ATTRIBUTES begin
+  end
 end
 
 const EQ_ATTR_DEFAULT_DYNAMIC = EQUATION_ATTRIBUTES(false, DYNAMIC_EQUATION(), defaultEvalStages)::EquationAttributes
@@ -444,7 +446,7 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
     size #= size of equation =#::Integer
     whenEquation::WhenEquation
     source #= origin of equation =#::DAE.ElementSource
-    attr::EquationAttributes
+    attr#::EquationAttributes
   end
   #= Similar to a when equation but might trigger a structural change=#
   @Record STRUCTURAL_WHEN_EQUATION begin

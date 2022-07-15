@@ -1,9 +1,9 @@
 #=
-  This file contains the code generation for the DifferntialEquations.jl backend. 
+  This file contains the code generation for the DifferntialEquations.jl backend.
 
-TODO: 
-  Add support for if equations 
-  Current approach. One separate function for each branch. 
+TODO:
+  Add support for if equations
+  Current approach. One separate function for each branch.
 
   Author: John Tinnerholm
 =#
@@ -33,21 +33,21 @@ end
 """
   Creates runnable code for the different callbacks.
   By default a saving function is generated.
-  This function can be disabled by setting the named argument 
+  This function can be disabled by setting the named argument
   generateSaveFunction to false.
 TODO:
-Deprecated generation of if-equations for MTK. 
+Deprecated generation of if-equations for MTK.
 """
 function createCallbackCode(modelName::N, simCode::S; generateSaveFunction = true) where {N, S}
   local WHEN_EQUATIONS = createEquations(simCode.whenEquations, simCode)
-  #= 
-    For if equations we create zero crossing functions (Based on the conditions). 
+  #=
+    For if equations we create zero crossing functions (Based on the conditions).
     The body of these equations are evaluated in the main body of the solver itself.
   =#
   #local IF_EQUATIONS = createIfEquationCallbacks(simCode.ifEquations, simCode) Deprecated
   local SAVE_FUNCTION = if generateSaveFunction
     createSaveFunction(modelName)
-  else    
+  else
   end
   local MODEL_NAME = replace(modelName, "." => "__")
   quote
@@ -56,7 +56,6 @@ function createCallbackCode(modelName::N, simCode::S; generateSaveFunction = tru
       #= These are the location of the parameters and auxilary real variables respectivly =#
       local p = aux[1]
       local reals = aux[2]
-      local discretes = aux[3]
       $(LineNumberNode((@__LINE__), "WHEN EQUATIONS"))
       $(WHEN_EQUATIONS...)
       $(LineNumberNode((@__LINE__), "IF EQUATIONS"))
@@ -84,7 +83,7 @@ end
 
 """
   Creates equation code from the set of residual equations and a supplied set of variables.
-  This is the method used for the solver.  
+  This is the method used for the solver.
   $(SIGNATURES)
 """
 function createSolverCode(functionName::Symbol,
@@ -121,13 +120,13 @@ function createLinearRunnable(modelName::String, simCode::SimulationCode.SIM_COD
   quote
     import NonlinearSolve
     function $(Symbol("$(modelName)Simulate"))(tspan = (0.0, 1.0))
-      $(LineNumberNode((@__LINE__), "Auxilary variables"))   
+      $(LineNumberNode((@__LINE__), "Auxilary variables"))
       local aux = $(Symbol("$(modelName)ParameterVars"))()
       (x0, dx0) =$(Symbol("$(modelName)StartConditions"))(aux, tspan[1])
       local differential_vars = $(Symbol("$(modelName)DifferentialVars"))()
       #= Pass the residual equations =#
-      local problem = NonlinearProblem($(Symbol("$(modelName)DAE_equations")), dx0, x0, 
-                                       tspan, aux, differential_vars=differential_vars, 
+      local problem = NonlinearProblem($(Symbol("$(modelName)DAE_equations")), dx0, x0,
+                                       tspan, aux, differential_vars=differential_vars,
                                        callback=$(Symbol("$(modelName)CallbackSet"))(aux))
       #= Solve with IDA =#
       local solution = Runtime.solve(problem::NonlinearProblem, IDA())
@@ -162,7 +161,7 @@ function createAuxEquationCode(algVariables::Array{V},
                                simCode::SimulationCode.SIM_CODE
                                ;arrayName)::Array{Expr} where {V}
   #= Sorted equations for the algebraic variables. =#
-  local auxEquations::Array{Expr} = [] 
+  local auxEquations::Array{Expr} = []
   auxEquations = vcat(createSortedEquations([algVariables...], simCode; arrayName = "reals"))
   return auxEquations
 end
@@ -176,8 +175,8 @@ function createStateMarkings(algVariables::Array, stateVariables::Array, simCode
 end
 
 """
-  Creates the save-callback. 
-  saved_values_\$(modelName) is provided 
+  Creates the save-callback.
+  saved_values_\$(modelName) is provided
   as a shared global for the specific model under compilation.
 """
 function createSaveFunction(modelName)::Expr
@@ -206,7 +205,7 @@ function returnCallbackSet()::Array
   else
     cbs
   end
-  return cbs 
+  return cbs
 end
 
 function createRealToStateVariableMapping(stateVariables::Array, simCode::SimulationCode.SIM_CODE; toFrom::Tuple=("reals", "x"))::Array{Expr}
@@ -226,7 +225,7 @@ function createEquations(variables::Vector{V},
                          simCode::SimulationCode.SIM_CODE;
                          eqLhsName::String, eqRhsName::String) where {V}
   local if_eqs::Vector{Expr} = Expr[]
-  for if_eq in equations #= Of type if equation =#    
+  for if_eq in equations #= Of type if equation =#
     res = createIfEquation(variables,
                            if_eq,
                            simCode;
@@ -240,7 +239,7 @@ end
 """
   This function creates a single if-equation.
   It does so by creating a if-elseif-else statement
-  where the contents of each branch is casualised. 
+  where the contents of each branch is casualised.
   Which branch is active depends on the active mode
 """
 function createIfEquation(variables::Vector{V},
@@ -277,7 +276,7 @@ function createIfEquation(variables::Vector{V},
   #= We have a number of elseif branches > 0 =#
   eq = flattenExprs(createEquations(variables, branches[1].residualEquations, branches[1]; eqLhsName = eqLhsName, eqRhsName = eqRhsName))
   local ifElseList::Expr = Expr(:if, :(Mode[1] == $(branches[1].identifier)), eq)
-  #= Create the elseif branches for this if equation. 
+  #= Create the elseif branches for this if equation.
   The else if branches are indexed with i + 1 since the first index is contained by the if equation =#
   iter = ifElseList
   for i in 1:nElseIfBranches
@@ -295,7 +294,7 @@ end
 
 
 """
- Create a set for all equations T. 
+ Create a set for all equations T.
 """
 function createEquations(equations::Array{T}, simCode::SimulationCode.SIM_CODE)::Array{Expr} where T
   local eqs::Array{Expr} = Expr[]
@@ -345,7 +344,7 @@ end
     Converts a SIMCODE.IF_EQUATION into a Julia representation.
     Note that this only creates the callback for the particular equation (Not the branching logic).
     The branching logic itself is generated in the main function which is passed to a solver
-    along with the residuals for each branch. 
+    along with the residuals for each branch.
 """
 function createIfEqCallback(ifEq::SimulationCode.IF_EQUATION, simCode::SimulationCode.SIM_CODE)
   exprs = Expr[]
@@ -357,14 +356,14 @@ function createIfEqCallback(ifEq::SimulationCode.IF_EQUATION, simCode::Simulatio
     end
     ADD_CALLBACK()
     local callbacks = COUNT_CALLBACKS()
-    #=TODO: 
-    Continuous callback if the equation is a part of the system that is solved. 
+    #=TODO:
+    Continuous callback if the equation is a part of the system that is solved.
     If not some other type should be generated.
     The type should be decided depending on the kind of variable involved in the condition.
     =#
     local cond = transformToZeroCrossingCondition(branch.condition)
     local res = quote
-      function $(Symbol("condition$(callbacks)"))(x,t,integrator) 
+      function $(Symbol("condition$(callbacks)"))(x,t,integrator)
         $(expToJuliaExp(cond, simCode))
       end
       #= Active this branc =#
@@ -377,7 +376,7 @@ function createIfEqCallback(ifEq::SimulationCode.IF_EQUATION, simCode::Simulatio
       end
 
     #=Below zero triggers callback zero crossing from positive to negative. The reverse deactivates it =#
-    $(Symbol("cb$(callbacks)")) = ContinuousCallback($(Symbol("condition$(callbacks)")), 
+    $(Symbol("cb$(callbacks)")) = ContinuousCallback($(Symbol("condition$(callbacks)")),
                                                      $(Symbol("affect_neg$(callbacks)!")),
                                                      rootfind=true, save_positions=(true, true),
                                                      affect_neg! = $(Symbol("affect$(callbacks)!")),)
@@ -389,34 +388,138 @@ end
 
 """
   This function creates a representation of a when equation in Julia.
-  This function shall be called in the process of constructing the different callbacks.
+  This function shall be called in the process when constructing the different callbacks.
 """
 function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arrayIdx::Int64)::Expr
   local wEq = eq.whenEquation
   local whenStmts = createWhenStatements(wEq.whenStmtLst, simCode)
+  @info "Cond before:" string(wEq.condition)
   local cond = transformToZeroCrossingCondition(wEq.condition)
   ADD_CALLBACK()
   local callbacks = COUNT_CALLBACKS()
-  quote
-    $(Symbol("condition$(callbacks)")) = (x,t,integrator) -> begin
-      $(expToJuliaExp(cond, simCode))
+  println("Some information:\n" * string(eq))
+  #=
+    Find the type of the condition.
+    For continuous variables we should create continuous callbacks.
+    However, for discrete conditions we should create discrete callbacks.
+  =#
+  #=
+    Get all component references.
+    If this set is empty it means that we have a condition involving continuous time
+  =#
+  local allCrefs = Util.getAllCrefs(wEq.condition)
+  local isContinuousCond::Bool = false
+  if isone(length(allCrefs)) && string(first(allCrefs)) == "time"
+    isContinuousCond = true
+  else
+    for cref in allCrefs
+      local ht = simCode.stringToSimVarHT
+      local var = last(ht[string(cref)])
+      #= If one variable in the condition is continuous treat it as a conditinous callback =#
+      isContinuousCond = isContinuousCond || !(SimulationCode.isDiscrete(var))
     end
-  $(Symbol("affect$(callbacks)!")) = (integrator) -> begin
-      $(whenStmts...)
+  end
+  if isContinuousCond
+    local isElseIf = if wEq.elsewhenPart !== nothing
+      local elsePart = wEq.elsewhenPart.data
+      @info elsePart
+      local elseCond = elsePart.whenEquation.condition
+      cond2 = transformToZeroCrossingCondition(elseCond)
+      cond == cond2
     end
-    $(Symbol("cb$(callbacks)")) = ContinuousCallback($(Symbol("condition$(callbacks)")), 
-                                                            $(Symbol("affect$(callbacks)!")),
-                                                            rootfind=true, save_positions=(true, true),
-                                                     affect_neg! = $(Symbol("affect$(callbacks)!")),)
+    if isElseIf
+      quote
+        $(Symbol("condition$(callbacks)")) = (x,t,integrator) -> begin
+          $(expToJuliaExp(cond, simCode))
+        end
+        $(Symbol("affect$(callbacks)!")) = (integrator) -> begin
+          @info "Calling affect! at $(integrator.t)"
+          local t = integrator.t + integrator.dt
+          @info "t + dt = " t
+          if (Bool($(expToJuliaExp(wEq.condition, simCode; varPrefix = "reals"))))
+            @info "Taking the first branch"
+            @info "p is" p
+            @info "integrator.p is" integrator.p
+            @info "Comparing" p == integrator.p
+            $(whenStmts...)
+            integrator.p = p
+          else
+            @info "Running the else branch"
+            @info "p is" p
+            @info "integrator.p is" integrator.p
+            $(createWhenStatements(elsePart.whenEquation.whenStmtLst, simCode)...)
+            integrator.p = p
+          end
+        end
+        $(Symbol("cb$(callbacks)")) = ContinuousCallback($(Symbol("condition$(callbacks)")),
+                                                         $(Symbol("affect$(callbacks)!")),
+                                                         rootfind=true, save_positions=(true, true),
+                                                         affect_neg! = $(Symbol("affect$(callbacks)!")))        
+      end
+    else
+       quote
+        $(Symbol("condition$(callbacks)")) = (x,t,integrator) -> begin
+          $(expToJuliaExp(cond, simCode))
+        end
+        $(Symbol("affect$(callbacks)!")) = (integrator) -> begin
+          @info "Calling affect! at $(integrator.t)"
+          local t = integrator.t + integrator.dt
+          @info "t + dt = " t
+          if (Bool($(expToJuliaExp(wEq.condition, simCode; varPrefix = "reals"))))
+            @info "Hello condition"
+            @info "p is" p
+            @info "integrator.p is" integrator.p
+            $(whenStmts...)
+            integrator.p = p
+          end
+        end
+        $(Symbol("cb$(callbacks)")) = ContinuousCallback($(Symbol("condition$(callbacks)")),
+                                                         $(Symbol("affect$(callbacks)!")),
+                                                         rootfind=true, save_positions=(true, true),
+                                                         affect_neg! = $(Symbol("affect$(callbacks)!")))
+        $(if wEq.elsewhenPart !== nothing
+            eqToJulia(wEq.elsewhenPart.data, simCode, 0)
+          end)
+      end
+    end
+  else #= If none of the variables in the condition was continuous.. =#
+    quote
+      $(Symbol("condition$(callbacks)")) = (x,t,integrator) -> begin
+        Bool($(expToJuliaExp(cond, simCode)))
+      end
+    $(Symbol("affect$(callbacks)!")) = (integrator) -> begin
+      @info "Calling affect for discrete at $(integrator.t)"
+      local t = integrator.t
+      if (Bool($(expToJuliaExp(wEq.condition, simCode))))
+        @info "Here we are!"
+        @info p
+        $(whenStmts...)
+        #= TODO:
+          This will not work if the condition consists of several boolean operators.
+          The purpose is to reset the condition so that it is not triggered again at the end of the next integration step.
+        =#
+        $(expToJuliaExp(cond, simCode)) = false
+        integrator.p = p
+        @info integrator.p
+      end
+    end
+      $(Symbol("cb$(callbacks)")) = DiscreteCallback($(Symbol("condition$(callbacks)")),
+                                                     $(Symbol("affect$(callbacks)!"));
+                                                     save_positions=(true, true))
+      $(if wEq.elsewhenPart !== nothing
+          eqToJulia(wEq.elsewhenPart.data, simCode, 4)
+        end
+        )
+    end
   end
 end
 
 
 """
    Creates Julia code for the set of whenStatements in the when equation.
-   There are some constructs that may only occur in a when equations. 
+   There are some constructs that may only occur in a when equations.
 """
-function createWhenStatements(whenStatements::List, simCode::SimulationCode.SIM_CODE)::Array{Expr}
+function createWhenStatements(whenStatements::List, simCode::SimulationCode.SIM_CODE)::Vector{Expr}
   local res::Array{Expr} = []
   @debug "Calling createWhenStatements with: $whenStatements"
   for wStmt in  whenStatements
@@ -431,11 +534,11 @@ function createWhenStatements(whenStatements::List, simCode::SimulationCode.SIM_
           exp1 = expToJuliaExp(wStmt.left, simCode, varPrefix="reals")
           exp2 = expToJuliaExp(wStmt.right, simCode)
           push!(res, :($(exp1) = $(exp2)))
-        elseif typeof(var.varKind) === SimulationCode.DISCRETE
+        elseif var.varKind isa SimulationCode.DISCRETE || var.varKind isa SimulationCode.PARAMETER
           #=
             TODO: In reality a branch of a when equation should be sorted.
           ==#
-          exp1 = expToJuliaExp(wStmt.left, simCode, varPrefix="discretes")
+          exp1 = expToJuliaExp(wStmt.left, simCode)
           exp2 = expToJuliaExp(wStmt.right, simCode)
           push!(res, :($(exp1) = $(exp2)))
         end
@@ -444,7 +547,7 @@ function createWhenStatements(whenStatements::List, simCode::SimulationCode.SIM_
       BDAE.REINIT(__) => begin
         (index, var) = simCode.stringToSimVarHT[SimulationCode.string(wStmt.stateVar)]
         if typeof(var.varKind) === SimulationCode.STATE
-          push!(res, quote 
+          push!(res, quote
                 integrator.u[$(index)] = $(expToJuliaExp(wStmt.value, simCode))
                 end)
         else
@@ -508,11 +611,11 @@ function expToJuliaExp(exp::DAE.Exp, context::C, varSuffix=""; varPrefix="x")::E
             end
             SimulationCode.DISCRETE(__) => quote
               $(LineNumberNode(@__LINE__, "$varName, Discrete"))
-              $(Symbol(varPrefix))[$(indexAndVar[1])]
+              p[$(indexAndVar[1])]
             end
             SimulationCode.STATE_DERIVATIVE(__) => :(dx$(varSuffix)[$(indexAndVar[1])] #= der($varName) =#)
           end
-        else #= Currently only time is a builtin variabe. Time is represented as t in the generated code =#
+        else #= Currently only time is a builtin variable. Time is represented as t in the generated code =#
           quote
             t
           end
@@ -540,7 +643,7 @@ function expToJuliaExp(exp::DAE.Exp, context::C, varSuffix=""; varPrefix="x")::E
         end
       end
       DAE.LBINARY(exp1 = e1, operator = op, exp2 = e2) => begin
-        quote 
+        quote
           $(expToJuliaExp(e1, context, varPrefix=varPrefix) + " " + SimulationCode.string(op) + " " + expToJuliaExp(e2, simCode, varPrefix=varPrefix))
         end
       end
@@ -548,12 +651,12 @@ function expToJuliaExp(exp::DAE.Exp, context::C, varSuffix=""; varPrefix="x")::E
         lhs = expToJuliaExp(e1, context, varPrefix=varPrefix)
         o = DAE_OP_toJuliaOperator(op)
         rhs = expToJuliaExp(e2, context, varPrefix=varPrefix)
-        quote 
+        quote
           $o($(lhs), $(rhs))
         end
       end
       DAE.IFEXP(expCond = e1, expThen = e2, expElse = e3) => begin
-        throw(ErrorException("If expressions not allowed in backend code. 
+        throw(ErrorException("If expressions not allowed in backend code.
                               They should have been eliminated by a previous backend  pass."))
       end
       DAE.CALL(path = Absyn.IDENT(tmpStr), expLst = explst)  => begin

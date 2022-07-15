@@ -450,6 +450,21 @@ function getIntAsUnicodeSubscript(i::Integer)
   return reverse(subscriptStr)
 end
 
+"""
+  Inverts a given DAE.Exp
+"""
+function invertCondition(cond::DAE.Exp)
+  @match cond begin
+    DAE.RELATION(exp1, DAE.GREATER(__), exp2, index, optionExpisASUB) => begin
+      DAE.RELATION(exp1, DAE.LESS(cond.operator.ty), exp2, index, optionExpisASUB)
+    end
+    DAE.RELATION(exp1, DAE.LESS(__), exp2, index, optionExpisASUB) => begin
+      DAE.RELATION(exp1, DAE.GREATER(cond.operator.ty), exp2, index, optionExpisASUB)
+    end
+    _ => throw("Tried to invert unsupported backend condition:" * string(cond) * "type was: " * string(typeof(cond)))
+  end
+end
+
 include("backendDump.jl")
 @exportAll()
 end

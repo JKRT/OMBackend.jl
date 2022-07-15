@@ -407,20 +407,40 @@ end
   Create binding equations.
   See: https://specification.modelica.org/master/equations.html
 TODO:
-Add discrete binding equations in some other  pile.
+Add discrete binding equations in some other pile.
 """
 function createBindingEquations(variables::Vector)
-  bindingEqs = BDAE.EQUATION[]
+  bindingEqs = BDAE.Equation[]
   for v in variables
     @match v begin
       BDAE.VAR(vName, BDAE.STATE() || BDAE.VARIABLE(), _, DAE.T_REAL(__),
                SOME(bindExp), _, _, _, _, _) => begin
-                 local lhs = DAE.CREF(vName ,v.varType)
+                 local lhs = DAE.CREF(vName, v.varType)
                  local rhs = bindExp
                  push!(bindingEqs,
                        BDAE.EQUATION(lhs, rhs, v.source, nothing))
+               end
+      #= Binding equations with discrete type =#
+      BDAE.VAR(vName, BDAE.STATE() || BDAE.VARIABLE(), _, DAE.T_BOOL(__),
+               SOME(bindExp), _, _, _, _, _) => begin
+                 #= Treat discrete binding equations as when equations =#
+                 if bindExp isa DAE.IFEXP
+                   local lhs = DAE.CREF(vName, v.varType)
+                   @match DAE.IFEXP(cond, thenExp, elseExp) = bindExp
+                   local elsePart = BDAE.WHEN_STMTS(BDAEUtil.invertCondition(cond) #= The else when here has the inverted condition of the first part. =#
+                                                    ,list(BDAE.ASSIGN(lhs, elseExp, v.source))
+                                                    ,nothing)
+                   local elseWeqPart = BDAE.WHEN_EQUATION(1, elsePart, v.source, nothing)
+                   local stmts = BDAE.WHEN_STMTS(cond
+                                                 ,list(BDAE.ASSIGN(lhs, thenExp, v.source))
+                                                 ,SOME(elseWeqPart))
+                   local weq = BDAE.WHEN_EQUATION(1, stmts, v.source, nothing)
+                   push!(bindingEqs, weq)
+                 end
+               end            
+      _ => begin
+        continue
       end
-      _ => continue
     end
   end
   return bindingEqs

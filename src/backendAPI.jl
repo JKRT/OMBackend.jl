@@ -93,7 +93,7 @@ function translate(frontendDAE::Union{DAE.DAE_LIST, OMFrontend.Main.FlatModel}; 
     @debug "Generate simulation code"
     simCode = generateSimulationCode(bDAE; mode = MTK_MODE)
     @debug "Simulation code generated"
-    #SimulationCode.dumpSimCode(simCode)
+    println(SimulationCode.dumpSimCode(simCode))
     return generateMTKTargetCode(simCode)
   else
     @error "No mode specificed: valid modes are:"
@@ -171,7 +171,7 @@ function lower(frontendDAE::OMFrontend.Main.FlatModel)
   @debug(BDAEUtil.stringHeading1(bDAE, "states marked"));
   bDAE = Causalize.residualizeEveryEquation(bDAE)
   #= =#
-  @debug(BDAEUtil.stringHeading1(bDAE, "residuals"));
+  @info(BDAEUtil.stringHeading1(bDAE, "residuals"));
   return bDAE
 end
 

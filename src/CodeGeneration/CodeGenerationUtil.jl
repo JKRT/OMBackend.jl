@@ -656,7 +656,7 @@ function performStructuralSimplify(simplify)::Expr
   if (simplify)
     :(reducedSystem = ModelingToolkit.structural_simplify(ModelingToolkit.dae_index_lowering(firstOrderSystem)))
   else
-    :(reducedSystem = ModelingToolkit.structural_simplify(firstOrderSystem))
+    :(reducedSystem = ModelingToolkit.structural_simplify(firstOrderSystem; simplify = false, allow_parameter=true))
   end
 end
 

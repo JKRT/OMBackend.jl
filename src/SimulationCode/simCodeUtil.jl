@@ -1,15 +1,25 @@
 #=
   This file contains various utility functions related to simulation code.
 =#
-"
-Returns true if simvar is either a algebraic or a state variable
-"
+"""
+  Returns true if simvar is either a algebraic or a state variable
+"""
 function isStateOrAlgebraic(simvar::SimVar)::Bool
   return isAlgebraic(simvar) || isState(simvar)
 end
 
 """
-Returns true if simvar is an algebraic variable
+  Returns true if the simulation code variable is discrete.
+"""
+function isDiscrete(simVar::SimVar)::Bool
+  res = @match simVar.varKind begin
+    DISCRETE(__) => true
+    _ => false
+  end
+end
+
+"""
+  Returns true if simvar is an algebraic variable
 """
 function isAlgebraic(simvar::SimVar)::Bool
   res = @match simvar.varKind begin
@@ -143,13 +153,13 @@ It executes the following steps:
 2. Search all states (e.g. x and y) and give them indices starting at 1 (so x=1, y=2). Then give the corresponding state derivatives (x' and y') the same indices.
 3. Remaining algebraic variables will get indices starting with i+1, where i is the number of states.
 4. Parameters will get own set of indices, starting at 1.
-5. Discrete variables will also get their own set of indices, starting at 1.
+5. Discrete variables sharesthe index with the parameters and starts at #parameters + 1
 """
-function createIndices(simulationVars::Array{SimulationCode.SIMVAR})::OrderedDict{String, Tuple{Integer, SimulationCode.SimVar}}
+function createIndices(simulationVars::Vector{SimulationCode.SIMVAR})::OrderedDict{String, Tuple{Integer, SimulationCode.SimVar}}
   local ht::OrderedDict{String, Tuple{Integer, SimulationCode.SimVar}} = OrderedDict()
   local stateCounter = 0
   local parameterCounter = 0
-  local discreteCounter = 0
+  local discretes = SimulationCode.SIMVAR[]
   local numberOfStates = 0
   for var in simulationVars
     @match var.varKind begin
@@ -166,12 +176,17 @@ function createIndices(simulationVars::Array{SimulationCode.SIMVAR})::OrderedDic
         push!(ht, var.name => (parameterCounter, var))
       end
       SimulationCode.DISCRETE(__) => begin
-        discreteCounter += 1
-        push!(ht, var.name => (discreteCounter, var))
+        push!(discretes, var)
       end
       _ => continue
     end
   end
+  local discreteCounter = parameterCounter
+  for var in discretes
+    discreteCounter += 1
+    push!(ht, var.name => (discreteCounter, var))
+  end
+  #=TODO: Loop through the smaller array=#
   local algIndexCounter::Integer = stateCounter
   for var in simulationVars
     @match var.varKind begin

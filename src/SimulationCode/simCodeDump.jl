@@ -127,10 +127,10 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String = "Simula
   nWhenEquations = 0
   for wEq in simCode.whenEquations
     nWhenEquations += length(wEq.whenEquation.whenStmtLst)
-    if isSome(wEq.whenEquation.elsewhenPart)
-      @match SOME(elseW) = wEq.whenEquation.elsewhenPart
-      nWhenEquations += length(elseW.whenEquation.whenStmtLst)
-    end
+    #if isSome(wEq.whenEquation.elsewhenPart)
+    #  @match SOME(elseW) = wEq.whenEquation.elsewhenPart
+    #  nWhenEquations += length(elseW.whenEquation.whenStmtLst)
+    #end
   end
   println(buffer, BDAEUtil.LINE)
   println(buffer, "Simulation Code Statistics:")

@@ -208,8 +208,20 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
                                                simCode::SimulationCode.SIM_CODE)
   local parVariablesSym = [Symbol(p) for p in parameters]
   local START_CONDTIONS_EQUATIONS = createStartConditionsEquationsMTK(stateVariables, algebraicVariables, simCode)
-  local DISCRETE_START_VALUES = vcat(generateInitialEquations(simCode.initialEquations, simCode; parameterAssignment = true),
+  local discreteStartValues = vcat(generateInitialEquations(simCode.initialEquations, simCode; parameterAssignment = true),
                                      getStartConditionsMTK(discreteVariables, simCode))
+  tmp = quote
+    dsArr = [$(discreteStartValues...)]
+  end
+  eval(tmp)
+  local DISCRETES_ORDERED_BY_IDX = Vector{Pair}(undef, length(discreteVariables))
+  @info dsArr
+  for kv in dsArr
+    (index, var) = stringToSimVarHT[string(kv[1])]
+    #= index - #parameters gives the discrete index =#
+    DISCRETES_ORDERED_BY_IDX[index - length(parameters)] = kv
+  end
+  local DISCRETE_START_VALUES = [DISCRETES_ORDERED_BY_IDX]
   local PARAMETER_EQUATIONS = createParameterEquationsMTK(parameters, simCode)
   local PARAMETER_ASSIGNMENTS = createParameterAssignmentsMTK(parameters, simCode)
   local PARAMETER_RAW_ARRAY = createParameterArray(parameters, PARAMETER_ASSIGNMENTS, simCode)
@@ -276,7 +288,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
       end
       vars =  collect(Iterators.flatten(componentVars))
       #= Initial values for the continious system. =#
-      pars = Dict($(PARAMETER_EQUATIONS...), $(DISCRETE_START_VALUES...))
+      pars = Dict($(PARAMETER_EQUATIONS...), $(DISCRETES_ORDERED_BY_IDX...))
       startEquationComponents = []
       $(decomposeStartEquations(START_CONDTIONS_EQUATIONS))
       for constructor in startEquationConstructors
@@ -299,14 +311,15 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
         The callback handling for MTK is subject of change should hybrid system be implemented for MTK.
       =#
       local event_p = [$(PARAMETER_RAW_ARRAY...)]
-      local discreteVars = collect(values(Dict([$(DISCRETE_START_VALUES...)])))
-      local event_vars = vcat(collect(values(Dict([initialValues...]))),
+      local discreteVars = collect(values(ModelingToolkit.OrderedDict($(DISCRETES_ORDERED_BY_IDX...))))
+      local event_vars = vcat(collect(values(ModelingToolkit.OrderedDict([initialValues...]))),
                               #=Discrete variables=# discreteVars)
-      local aux = Vector{Vector{Float64}}(undef, 3)
+      #= Merge the discrete and event parameters =#
+      event_p = vcat(event_p, discreteVars)
+      local aux = Vector{Vector{Float64}}(undef, 2)
       #= TODO init them with the initial values of them =#
       aux[1] = event_p
       aux[2] = event_vars
-      aux[3] = discreteVars
       problem = ModelingToolkit.ODEProblem(reducedSystem,
                                            initialValues,
                                            tspan,
@@ -317,7 +330,6 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
   end
   return model
 end
-
 
 """
    Creates equations from the residual equations in unsorted order
@@ -332,8 +344,7 @@ function createResidualEquationsMTK(stateVariables::Vector, algebraicVariables::
     local eqExp = :(0 ~ $(expToJuliaExpMTK(eqDAEExp, simCode; derSymbol=false)))
     push!(eqs, eqExp)
   end
-  
-  return eqs
+    return eqs
 end
 
 include("mtkExternals.jl")
@@ -464,7 +475,6 @@ function getStartConditionsMTK(vars::Vector, simCode::SimulationCode.SimCode)::V
   return startExprs
 end
 
-
 """
   Creates the components of the If-Equations
 """
@@ -477,7 +487,6 @@ function createIfEquations(stateVariables, algebraicVariables, simCode)
   end
   return ifEquations
 end
-
 
 """
 This function creates symbolic if equations for use in MTK.
@@ -598,7 +607,6 @@ function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCo
   return result
 end
 
-
 """
   Creates parameters on a MTK parameters compatible format.
 """
@@ -662,6 +670,7 @@ function createParameterArray(parameters::Vector{T1}, parameterAssignments::Vect
   local hT = simCode.stringToSimVarHT
   for param in parameters
     (index, simVar) = hT[param]
+    @info "Index when creating parameter array for $(string(simVar)) : " index
     local simVarType::SimulationCode.SimVarType = simVar.varKind
     bindExp = @match simVarType begin
       SimulationCode.PARAMETER(bindExp = SOME(exp)) => exp
