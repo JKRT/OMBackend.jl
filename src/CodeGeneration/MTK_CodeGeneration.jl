@@ -144,6 +144,7 @@ function ODE_MODE_MTK_PROGRAM_GENERATION(simCode::SimulationCode.SIM_CODE, model
     using ModelingToolkit
     using DifferentialEquations
     import ModelingToolkit.IfElse
+    indexof(sym,syms) = findfirst(isequal(sym),syms)
     $(model)
     function $(Symbol("$(MODEL_NAME)Simulate"))(tspan = (0.0, 1.0); solver=Rodas5())
       ($(Symbol("$(MODEL_NAME)Model_problem")), ivs, $(Symbol("$(MODEL_NAME)Model_ReducedSystem")), tspan, pars, vars) = $(Symbol("$(MODEL_NAME)Model"))(tspan)
@@ -208,20 +209,9 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
                                                simCode::SimulationCode.SIM_CODE)
   local parVariablesSym = [Symbol(p) for p in parameters]
   local START_CONDTIONS_EQUATIONS = createStartConditionsEquationsMTK(stateVariables, algebraicVariables, simCode)
-  local discreteStartValues = vcat(generateInitialEquations(simCode.initialEquations, simCode; parameterAssignment = true),
-                                     getStartConditionsMTK(discreteVariables, simCode))
-  tmp = quote
-    dsArr = [$(discreteStartValues...)]
-  end
-  eval(tmp)
-  local DISCRETES_ORDERED_BY_IDX = Vector{Pair}(undef, length(discreteVariables))
-  @info dsArr
-  for kv in dsArr
-    (index, var) = stringToSimVarHT[string(kv[1])]
-    #= index - #parameters gives the discrete index =#
-    DISCRETES_ORDERED_BY_IDX[index - length(parameters)] = kv
-  end
-  local DISCRETE_START_VALUES = [DISCRETES_ORDERED_BY_IDX]
+  local DISCRETE_START_VALUES = vcat(generateInitialEquations(simCode.initialEquations, simCode; parameterAssignment = true),
+                                   getStartConditionsMTK(discreteVariables, simCode))
+
   local PARAMETER_EQUATIONS = createParameterEquationsMTK(parameters, simCode)
   local PARAMETER_ASSIGNMENTS = createParameterAssignmentsMTK(parameters, simCode)
   local PARAMETER_RAW_ARRAY = createParameterArray(parameters, PARAMETER_ASSIGNMENTS, simCode)
@@ -233,31 +223,31 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
   #= Symbolic names =#
   local stateVariablesSym = [:($(Symbol(v))(t)) for v in stateVariables]
   local algebraicVariablesSym = [:($(Symbol(v))(t)) for v in algebraicVariables]
-  local discreteVariablesSym = [:($(Symbol(v))) for v in discreteVariables]
+  local discreteVariablesSym = [:($(Symbol(v))(t)) for v in discreteVariables]
   #=Preprocess the component of the if equations =#
+  local DISCRETE_DUMMY_EQUATIONS = [:(der($(Symbol(dv))) ~ 0) for dv in discreteVariables]
   local IF_EQUATION_EVENTS = [component[1] for component in IF_EQUATION_COMPONENTS]
   local IF_EQUATION_EVENT_DECLARATION = if isempty(IF_EQUATION_EVENTS)
     :(events = [])
   else
     :(events = $(IF_EQUATION_EVENTS...))
   end
-  local conditionalEquations = [component[2] for component in IF_EQUATION_COMPONENTS]
+  local CONDITIONAL_EQUATIONS = [component[2] for component in IF_EQUATION_COMPONENTS]
   local ifConditionNameAndIV = collect(Iterators.flatten([component[5] for component in IF_EQUATION_COMPONENTS]))
   local ifConditionalVariables = collect(Iterators.flatten([component[4] for component in IF_EQUATION_COMPONENTS]))
-  local zeroDynamicsConditionalEquations = collect(Iterators.flatten([component[3] for component in IF_EQUATION_COMPONENTS]))
+  local ZERO_DYNAMICS_COND_EQUATIONS = collect(Iterators.flatten([component[3] for component in IF_EQUATION_COMPONENTS]))
   #= Expand the start conditions with initial equations for the zero dynamic equations for the conditional equations =#  
   local ifConditionalStartEquations = [:($(Symbol(first(v))) => $(last(v))) for v in ifConditionNameAndIV]
-  START_CONDTIONS_EQUATIONS = vcat(START_CONDTIONS_EQUATIONS, ifConditionalStartEquations)
+  START_CONDTIONS_EQUATIONS = vcat(ifConditionalStartEquations, DISCRETE_START_VALUES, START_CONDTIONS_EQUATIONS)
   #=
     Merge the ifConditional components into the rest of the system and merge the state conditionals with the sates
   =#
-  stateVariablesSym = vcat(ifConditionalVariables,stateVariablesSym)
-  EQUATIONS = vcat(EQUATIONS, zeroDynamicsConditionalEquations, conditionalEquations)
+  stateVariablesSym = vcat(ifConditionalVariables, discreteVariablesSym, stateVariablesSym)
+  EQUATIONS = vcat(EQUATIONS, DISCRETE_DUMMY_EQUATIONS, ZERO_DYNAMICS_COND_EQUATIONS, CONDITIONAL_EQUATIONS)
   EQUATIONS = rewriteEquations(EQUATIONS,
                                t,
                                vcat(stateVariablesSym, algebraicVariablesSym),
-                               vcat(parVariablesSym, discreteVariablesSym),
-                               performIndexReduction)
+                               parVariablesSym)
   #= Reset the callback counter=#
   RESET_CALLBACKS()
   #=
@@ -273,7 +263,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
       ModelingToolkit.@variables t
       D = ModelingToolkit.Differential(t)
       parameters = ModelingToolkit.@parameters begin
-        ($(parVariablesSym...), $(discreteVariablesSym...))
+        ($(parVariablesSym...))
       end   
       #=
         Only variables that are present in the equation system later should be a part of the variables in the MTK system.
@@ -288,7 +278,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
       end
       vars =  collect(Iterators.flatten(componentVars))
       #= Initial values for the continious system. =#
-      pars = Dict($(PARAMETER_EQUATIONS...), $(DISCRETES_ORDERED_BY_IDX...))
+      pars = Dict($(PARAMETER_EQUATIONS...))
       startEquationComponents = []
       $(decomposeStartEquations(START_CONDTIONS_EQUATIONS))
       for constructor in startEquationConstructors
@@ -311,15 +301,19 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
         The callback handling for MTK is subject of change should hybrid system be implemented for MTK.
       =#
       local event_p = [$(PARAMETER_RAW_ARRAY...)]
-      local discreteVars = collect(values(ModelingToolkit.OrderedDict($(DISCRETES_ORDERED_BY_IDX...))))
-      local event_vars = vcat(collect(values(ModelingToolkit.OrderedDict([initialValues...]))),
-                              #=Discrete variables=# discreteVars)
+      local discreteVars = collect(values(ModelingToolkit.OrderedDict($(DISCRETE_START_VALUES...))))
       #= Merge the discrete and event parameters =#
       event_p = vcat(event_p, discreteVars)
-      local aux = Vector{Vector{Float64}}(undef, 2)
+      local aux = Vector{Any}(undef, 3)
       #= TODO init them with the initial values of them =#
       aux[1] = event_p
-      aux[2] = event_vars
+      aux[2] = Float64[]
+      aux[3] = reducedSystem
+      #=
+       This array is used to help indexing state/discrete variables.
+       It maps the index given by OMBackend to the actual index in the states. 
+       A[i] = <true_index>
+      =#
       problem = ModelingToolkit.ODEProblem(reducedSystem,
                                            initialValues,
                                            tspan,

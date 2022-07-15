@@ -137,7 +137,7 @@ end
 """
   Rewrite equations that do not conform to the requirements of MTK
 """
-function rewriteEquations(edeqs, iv, eVars, ePars, idxReduction)
+function rewriteEquations(edeqs, iv, eVars, ePars)
   local der = ModelingToolkit.Differential(t)
   #= Remove the t's =#
   eVars = [Symbol(replace(string(i), "(t)" => "")) for i in eVars]

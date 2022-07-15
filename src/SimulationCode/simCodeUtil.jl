@@ -153,7 +153,7 @@ It executes the following steps:
 2. Search all states (e.g. x and y) and give them indices starting at 1 (so x=1, y=2). Then give the corresponding state derivatives (x' and y') the same indices.
 3. Remaining algebraic variables will get indices starting with i+1, where i is the number of states.
 4. Parameters will get own set of indices, starting at 1.
-5. Discrete variables sharesthe index with the parameters and starts at #parameters + 1
+5. Discrete variables shares the index with the states and starts at #states + 1
 """
 function createIndices(simulationVars::Vector{SimulationCode.SIMVAR})::OrderedDict{String, Tuple{Integer, SimulationCode.SimVar}}
   local ht::OrderedDict{String, Tuple{Integer, SimulationCode.SimVar}} = OrderedDict()
@@ -181,7 +181,7 @@ function createIndices(simulationVars::Vector{SimulationCode.SIMVAR})::OrderedDi
       _ => continue
     end
   end
-  local discreteCounter = parameterCounter
+  local discreteCounter = stateCounter
   for var in discretes
     discreteCounter += 1
     push!(ht, var.name => (discreteCounter, var))
