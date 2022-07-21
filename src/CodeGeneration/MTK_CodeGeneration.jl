@@ -33,6 +33,7 @@
   Author: John Tinnerholm
   TODO: Remember the state derivative scheme. What did I mean with that?
   TODO: Make duplicate code better...
+  TODO: Cleanup in general
 =#
 using ModelingToolkit
 import OMBackend
@@ -144,7 +145,6 @@ function ODE_MODE_MTK_PROGRAM_GENERATION(simCode::SimulationCode.SIM_CODE, model
     using ModelingToolkit
     using DifferentialEquations
     import ModelingToolkit.IfElse
-    indexof(sym,syms) = findfirst(isequal(sym),syms)
     $(model)
     function $(Symbol("$(MODEL_NAME)Simulate"))(tspan = (0.0, 1.0); solver=Rodas5())
       ($(Symbol("$(MODEL_NAME)Model_problem")), ivs, $(Symbol("$(MODEL_NAME)Model_ReducedSystem")), tspan, pars, vars) = $(Symbol("$(MODEL_NAME)Model"))(tspan)
@@ -380,7 +380,7 @@ function generateInitialEquations(initialEqs, simCode::SimulationCode.SimCode; p
           #= Otherwise get the start attribute =#
           expToJuliaExpMTK(ieq.rhs, simCode)
         else
-          evalSimCodeParameter(simCodeVar)
+          evalSimCodeParameter(simCodeVar, simCode)
         end
       end
       #= For more complicated expressions, we do local constant folding. =#
@@ -615,7 +615,7 @@ function createParameterEquationsMTK(parameters::Vector, simCode::SimulationCode
         exp
       end
       _ => begin
-        throw(ErrorException("Unknown SimulationCode.SimVarType for parameter: " * string(simVarType)))
+        throw(ErrorException("Unknown SimulationCode.SimVarType for parameter: " * string(param)  * " of type: " * string(simVarType)))
       end
     end
     #= Solution for https://github.com/SciML/ModelingToolkit.jl/issues/991 =#
@@ -664,7 +664,6 @@ function createParameterArray(parameters::Vector{T1}, parameterAssignments::Vect
   local hT = simCode.stringToSimVarHT
   for param in parameters
     (index, simVar) = hT[param]
-    @info "Index when creating parameter array for $(string(simVar)) : " index
     local simVarType::SimulationCode.SimVarType = simVar.varKind
     bindExp = @match simVarType begin
       SimulationCode.PARAMETER(bindExp = SOME(exp)) => exp
@@ -783,8 +782,7 @@ end
   Similar to decompose variables, however, decomposes the set of equations instead.
   This function does so by dividing the total number of equations into separate blocks with 50 equations in each block.
   This function is suppose to be called after decompose variables.
-  the parameter assignments contains the set of values assigned to parameters at the beginning of the simulation, furthermore the initialEquation contains the initial equations.
-  The reason for including them here is to be able to perform additional simplifications.
+  the parameter assignments contains the set of values assigned to parameters at the beginning of the simulation.
 """
 function decomposeEquations(equations, parameterAssignments)
   local nStateVars = length(equations)

@@ -465,6 +465,25 @@ function invertCondition(cond::DAE.Exp)
   end
 end
 
+"""
+  Maps a backend equation to a backend when equation.
+"""
+function eqToWhenOperator(eq::BDAE.Equation)
+  res = @match eq begin
+    BDAE.EQUATION(lhs, rhs, source, attributes) => begin
+      BDAE.ASSIGN(lhs, rhs, source)
+    end
+    BDAE.BRANCH(ar, br) => begin
+      BDAE.DYNAMIC_BRANCH(ar, br)
+    end
+    _ => begin
+      throw(string("Conversion from ", string(eq), " Not supported", "Type was: ", typeof(eq)))
+    end
+  end
+  return res
+end
+
+
 include("backendDump.jl")
 @exportAll()
 end

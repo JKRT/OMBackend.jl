@@ -292,6 +292,8 @@ function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arr
       local elseCond = elsePart.whenEquation.condition
       cond2 = transformToZeroCrossingCondition(elseCond)
       cond == cond2
+    else
+      false
     end
     if isElseIf
       quote
@@ -303,7 +305,7 @@ function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arr
           local t = integrator.t + integrator.dt
           local x = integrator.u
           @info "t + dt = " t
-          if (Bool($(expToJuliaExp(wEq.condition, simCode; varPrefix = "reals"))))
+          if (Bool($(expToJuliaExp(wEq.condition, simCode))))
             @info "Taking the first branch"
             @info "p is" p
             @info "integrator.p is" integrator.p
@@ -332,7 +334,7 @@ function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arr
           local t = integrator.t + integrator.dt
           local x = integrator.u
           @info "t + dt = " t
-          if (Bool($(expToJuliaExp(wEq.condition, simCode; varPrefix = "reals"))))
+          if (Bool($(expToJuliaExp(wEq.condition, simCode))))
             @info "Hello condition"
             @info "p is" p
             @info "integrator.p is" integrator.p

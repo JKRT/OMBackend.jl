@@ -119,6 +119,15 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String = "Simula
     print(buffer, string(wEq))
   end
   println(buffer, BDAEUtil.LINE)
+  if !isempty(simCode.structuralTransitions)
+    println(buffer, "Structural-Equations")
+    println(buffer, BDAEUtil.LINE)  
+    for st in simCode.structuralTransitions
+      print(buffer, string(st))
+    end
+  end
+  
+  println(buffer, BDAEUtil.LINE)
   nIfEqs = 0
   for ifEq in simCode.ifEquations
     #Required to be balanced
@@ -187,4 +196,8 @@ function string(ifEq::IF_EQUATION)
     res *= "END\n"
   end
   return res
+end
+
+function string(st::IMPLICIT_STRUCTURAL_TRANSISTION)
+  string(st.structuralWhenEquation)
 end

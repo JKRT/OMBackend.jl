@@ -142,7 +142,7 @@ function createStructuralCallback(simCode, simCodeStructuralTransition::Simulati
       #= The recompilation directive. =#
       stringToSimVarHT = $(simCode.stringToSimVarHT)
       #=
-      We quote the modifcation.
+      We quote the modification.
       This is to evaluate it in the correct context later when recompiling.
       =#
       local modification::Tuple{String, String} = $(modification)
@@ -260,7 +260,7 @@ end
 """
 function createStructuralWhenStatements(@nospecialize(whenStatements::List{BDAE.WhenOperator}),
                                         simCode::SimulationCode.SIM_CODE)
-  local res::Vector{Expr} = []
+  local res::Vector{Expr} = Expr[]
   local recompilationOperator
   for wStmt in  whenStatements
     @match wStmt begin
@@ -271,6 +271,28 @@ function createStructuralWhenStatements(@nospecialize(whenStatements::List{BDAE.
       end
       BDAE.RECOMPILATION(__) => begin
         recompilationOperator = wStmt
+      end
+      BDAE.DYNAMIC_BRANCH(__) => begin
+        #=
+        A dynamic branch directive in the when equation.
+        In the case provided by Francesco two things are to be done.
+
+        What do I need.
+        1. I need access to the connection graph, that
+           is all the connections of the original model
+        2. I need to expand the original if-equation.
+        That is, we need to expand the contents of the if-equation.
+        In the case of the fluid model we need to expand:
+        if closed then
+          Connections.branch(inlet.id, outlet.id);
+          inlet.id = outlet.id;
+        end if;
+        ====>
+          Connections.branch(inlet.id, outlet.id);
+          inlet.id = outlet.id;
+        So in pratice we need to add equations to the model.
+        Since we can't simply remove the if equation itself.
+        =#
       end
       BDAE.REINIT(__) => begin
         throw("Reinit is not allowed in a structural when equation")

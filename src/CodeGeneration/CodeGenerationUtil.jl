@@ -687,23 +687,45 @@ end
   This functions evaluate a single DAE-constant:{Bool, Integer, Real, String}.
   If the argument  to this function is not a constant it throws an error.
 """
+function evalDAEConstant(daeConstant::DAE.Exp, simCode)
+  @match daeConstant begin
+    DAE.BCONST(bool) => bool
+    DAE.ICONST(int) => int
+    DAE.RCONST(real) => real
+    DAE.SCONST(tmpStr) => tmpStr
+    #= Try to evaluate the expression =#
+    DAE.BINARY(__) => begin
+      evalDAE_Expression(daeConstant, simCode)
+    end
+    _ => begin
+      local str = string(daeConstant)
+      throw("$(str) is not a constant")
+    end
+  end
+end
+
 function evalDAEConstant(daeConstant::DAE.Exp)
   @match daeConstant begin
     DAE.BCONST(bool) => bool
     DAE.ICONST(int) => int
     DAE.RCONST(real) => real
     DAE.SCONST(tmpStr) => tmpStr
-    _ => throw("$(daeConstant) is not a constant")
+    #= Try to evaluate the expression =#
+    _ => begin
+      local str = string(daeConstant)
+      throw("$(str) is not a constant")
+    end
   end
 end
+
 
 """
   Evaluates a simulation code parameter.
   Fails if the function is not a parameter.
 """
-function evalSimCodeParameter(v::V) where V
+function evalSimCodeParameter(v::V, simCode) where V
   @match SimulationCode.SIMVAR(name, _, SimulationCode.PARAMETER(SOME(bindExp)), _) = v
-  local val = evalDAEConstant(bindExp)
+  local val = evalDAEConstant(bindExp, simCode)
   return val
 end
 

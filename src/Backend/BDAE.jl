@@ -487,9 +487,16 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
   @Record INITIAL_STRUCTURAL_STATE begin
     initialState::String
   end
+
+  #= Represents a Connections.branch call =#
+  @Record BRANCH begin
+    ar::DAE.Exp
+    br::DAE.Exp
+  end
+
   #=
-  Structural transistion has three parts
-  From the condition a structural callback is generated
+    Structural transistion has three parts
+    From the condition a structural callback is generated
   =#
   @Record STRUCTURAL_TRANSISTION begin
     fromState::String
@@ -529,6 +536,11 @@ end
   @Record TERMINATE begin
     message::DAE.Exp
     source #= the origin of the component/equation/algorithm =#::DAE.ElementSource
+  end
+  #= Represents a dynamic branch. =#
+  @Record DYNAMIC_BRANCH begin
+    ar::DAE.Exp
+    br::DAE.Exp
   end
 
   @Record NORETCALL begin

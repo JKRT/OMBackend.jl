@@ -211,6 +211,11 @@ function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple{List, List,
         DAE.COMP(__) => begin
           variableLst,equationLst,initialEquationLst = splitEquationsAndVars(elem.dAElist)
         end
+        DAE.NORETCALL(DAE.CALL(Absyn.IDENT("branch"), args)) => begin          
+          @info "Matched the branch"
+          @match arg1 <| arg2 <| nil = args
+          equationLst = BDAE.BRANCH(arg1, arg2) <| equationLst
+        end
         _ => begin
           @error "Skipped:" elem
           throw("Unsupported equation: $elem")
@@ -385,7 +390,7 @@ end
 """
   Transform a DAE if-equation into a BDAE if-equation
 """
-function lowerIfEquation(eq::IF_EQ)::BDAE.IF_EQUATION where {IF_EQ}
+function lowerIfEquation(eq::IF_EQ) where {IF_EQ}
   local trueEquations::List{List{BDAE.Equation}} = nil
   local tmpTrue::List{BDAE.Equation}
   local falseEquations::List
@@ -393,16 +398,40 @@ function lowerIfEquation(eq::IF_EQ)::BDAE.IF_EQUATION where {IF_EQ}
     (_, tmpTrue, _) = splitEquationsAndVars(lst)
     trueEquations = tmpTrue <| trueEquations
   end
-  trueEquations = listReverse(trueEquations)
   (_, falseEquations, _) = splitEquationsAndVars(eq.equations3)
-  res = BDAE.IF_EQUATION(eq.condition1,
-                         trueEquations,
-                         falseEquations,
-                         eq.source,
-                         BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
+  #= Check if this equation contains an Connections.branch call. DOCC case=#
+  local containsBranchFalseEqs = findfirst(elem->typeof(elem)==BDAE.BRANCH,
+                                           listArray(falseEquations)) !== nothing
+  local containsBranchTrueEqs = findfirst(elem->typeof(elem)==BDAE.BRANCH,
+                                          collect(Iterators.flatten(listArray(trueEquations)))) !== nothing
+  @info trueEquations
+  @info falseEquations
+  local containsBranch = containsBranchFalseEqs || containsBranchTrueEqs
+  @info "We have a branch $containsBranch"
+  res = if ! containsBranch
+    BDAE.IF_EQUATION(eq.condition1,
+                     trueEquations,
+                     falseEquations,
+                     eq.source,
+                     BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
+  else
+    trueWhenOp = list(BDAEUtil.eqToWhenOperator(i) for i in collect(Iterators.flatten(trueEquations)))
+    falseWhenOp = list(BDAEUtil.eqToWhenOperator(i) for i in collect(Iterators.flatten(falseEquations)))
+    if isempty(falseWhenOp)
+      local whenStmts = BDAE.WHEN_STMTS(listHead(eq.condition1),
+                                        trueWhenOp,
+                                        NONE())
+      return BDAE.STRUCTURAL_WHEN_EQUATION(length(trueWhenOp),
+                                      whenStmts,
+                                      eq.source,
+                                      BDAE.NO_ATTRIBUTES()) #=TODO: add attributes for code generation later...=#
+    else
+      throw("else branch not implemented for conditional branch equations...")
+    end
+  end
   return res
 end
-
+  
 """
   Create binding equations.
   See: https://specification.modelica.org/master/equations.html

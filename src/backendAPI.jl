@@ -171,7 +171,7 @@ function lower(frontendDAE::OMFrontend.Main.FlatModel)
   @debug(BDAEUtil.stringHeading1(bDAE, "states marked"));
   bDAE = Causalize.residualizeEveryEquation(bDAE)
   #= =#
-  @info(BDAEUtil.stringHeading1(bDAE, "residuals"));
+  @debug(BDAEUtil.stringHeading1(bDAE, "residuals"));
   return bDAE
 end
 

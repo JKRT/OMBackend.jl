@@ -201,12 +201,20 @@ function Base.string(@nospecialize(eq::BDAE.Equation))
         string(whenEquation)
       end
 
+      BDAE.STRUCTURAL_WHEN_EQUATION(s, weq, source, attr) => begin
+        string("STRUCTURAL|", string(weq))
+      end
+
       BDAE.INITIAL_STRUCTURAL_STATE(__) => begin
         "INITIAL_STRUCTURAL_STATE(" * eq.initialState * ")"
       end
 
       BDAE.STRUCTURAL_TRANSISTION(__) => begin
         "STRUCTURAL_TRANSISTION " * eq.fromState * " -> " * eq.toState * "| if:" * string(eq.transistionCondition)
+      end
+
+      BDAE.BRANCH(arg1, arg2) => begin
+        string("DYNAMICAL_BRANCH(", "(",string(arg1), ",", string(arg2), ")")
       end
 
       BDAE.IF_EQUATION(__) => begin
@@ -261,19 +269,25 @@ function Base.string(whenOp::BDAE.WhenOperator)::String
     local cref::DAE.ComponentRef
     @match whenOp begin
       BDAE.ASSIGN(left = e1, right = e2) => begin
-        (string(e1) + " := " + string(e2))
+        string(e1) + " := " + string(e2)
       end
       BDAE.REINIT(stateVar = cref, value = e1) => begin
-        ("reinit(" + string(cref) + ", " + string(e1) + ")")
+        "reinit(" + string(cref) + ", " + string(e1) + ")"
       end
       BDAE.ASSERT(condition = e1, message = e2) => begin
-        ("assert(" + string(e1) + ", " + string(e2) + ")")
+        "assert(" + string(e1) + ", " + string(e2) + ")"
       end
       BDAE.TERMINATE(message = e1) => begin
-        ("[TERMINATE]" + string(e1))
+        "[TERMINATE]" + string(e1)
       end
       BDAE.NORETCALL(exp = e1) => begin
-        ("[NORET]" + string(e1))
+        "[NORET]" + string(e1)
+      end
+      BDAE.DYNAMIC_BRANCH(ar, br) => begin
+        string("[DYNAMIC_BRANCH] ","(" ,string(ar),"->", string(br), ")")
+      end
+      BDAE.RECOMPILATION(componentToChange, newValue) => begin
+        string("RECOMPILATION", "(", string(componentToChange), ",", string(newValue), ")")
       end
     end
   end
