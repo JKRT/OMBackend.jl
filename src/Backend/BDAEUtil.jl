@@ -473,9 +473,6 @@ function eqToWhenOperator(eq::BDAE.Equation)
     BDAE.EQUATION(lhs, rhs, source, attributes) => begin
       BDAE.ASSIGN(lhs, rhs, source)
     end
-    BDAE.BRANCH(ar, br) => begin
-      BDAE.DYNAMIC_BRANCH(ar, br)
-    end
     _ => begin
       throw(string("Conversion from ", string(eq), " Not supported", "Type was: ", typeof(eq)))
     end

@@ -31,13 +31,16 @@
 
 #= Author: John Tinnerholm, partially automatically translated =#
 
-"""THE LOWERED DAE consist of variables and equations. The variables are split into
+"""
+  THE LOWERED DAE consist of variables and equations. The variables are split into
   two lists, one for unknown variables states and algebraic and one for known variables
   constants and parameters.
   The equations are also split into two lists, one with simple equations, a=b, a-b=0, etc., that
   are removed from the set of equations to speed up calculations.
 """
 module BDAE
+
+import OMFrontend
 
 using MetaModelica
 using ExportAll
@@ -133,11 +136,20 @@ struct EQSYSTEM
   initialEqs::Vector
 end
 
-""" Data that is shared between equation systems """
+"""
+  Data that is shared between equation systems.
+  The flat model is a reference to the flat model being translated.
+  the DOCC_equations are the equations used by the dynamic overconstrained
+  connector option.
+"""
 struct SHARED
   globalKnownVars::Vector
   localKnownVars::Vector
   metaModel::Option
+  #= The flat model of the system itself =#
+  flatModel::Option
+  #= Dynamic if equations =#
+  DOCC_equations::Vector{BDAE.Equation}
 end
 
 """ THE LOWERED DAE consist of variables and equations. The variables are split into
@@ -495,6 +507,14 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
   end
 
   #=
+  An if equation affecting the structure.
+  used as part of DOCC.
+  =#
+  @Record STRUCTURAL_IF_EQUATION begin
+    ifEquation::OMFrontend.Main.EQUATION_IF
+  end
+
+  #=
     Structural transistion has three parts
     From the condition a structural callback is generated
   =#
@@ -536,11 +556,6 @@ end
   @Record TERMINATE begin
     message::DAE.Exp
     source #= the origin of the component/equation/algorithm =#::DAE.ElementSource
-  end
-  #= Represents a dynamic branch. =#
-  @Record DYNAMIC_BRANCH begin
-    ar::DAE.Exp
-    br::DAE.Exp
   end
 
   @Record NORETCALL begin

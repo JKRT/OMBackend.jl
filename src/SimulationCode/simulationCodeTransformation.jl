@@ -81,6 +81,9 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
    ifEqs::Vector{BDAE.IF_EQUATION},
    structuralTransitions::Vector{BDAE.Equation}) = allocateAndCollectSimulationEquations(equations)
   #=  Convert the structural transistions to the simcode representation. =#
+  if ! isempty(shared.DOCC_equations)
+    append!(structuralTransitions, shared.DOCC_equations)
+  end
   local simCodeStructuralTransitions = createSimCodeStructuralTransitions(structuralTransitions)
   #= Sorting/Matching for the set of residual equations (This is used for the start condtions) =#
   local eqVariableMapping = createEquationVariableBidirectionGraph(resEqs, ifEqs, allBackendVars, stringToSimVarHT)
@@ -107,7 +110,6 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
   SimulationCode.SIM_CODE(equationSystem.name,
                           stringToSimVarHT,
                           resEqs,
-                          #= TODO: fix initial equations here =#
                           equationSystem.initialEqs,
                           whenEqs,
                           simCodeIfEquations,
@@ -119,7 +121,8 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
                           structuralSubModels,
                           sharedVariables,
                           initialState,
-                          shared.metaModel
+                          shared.metaModel,
+                          shared.flatModel
                           )
 end
 
@@ -168,7 +171,8 @@ function createSimCodeStructuralTransitions(structuralTransitions::Vector{ST}) w
   for st in structuralTransitions
     sst = @match st begin
       BDAE.STRUCTURAL_TRANSISTION(__) => SimulationCode.EXPLICIT_STRUCTURAL_TRANSISTION(st)
-      BDAE.STRUCTURAL_WHEN_EQUATION(__) => SimulationCode.IMPLICIT_STRUCTURAL_TRANSISTION(st)      
+      BDAE.STRUCTURAL_WHEN_EQUATION(__) => SimulationCode.IMPLICIT_STRUCTURAL_TRANSISTION(st)
+      BDAE.STRUCTURAL_IF_EQUATION(__) => SimulationCode.DYNAMIC_OVERCONSTRAINED_CONNECTOR_EQUATION(st)
     end
     push!(transistions, sst)
   end
@@ -189,10 +193,15 @@ function constructSimCodeIFEquations(ifEquations::Vector{BDAE.IF_EQUATION},
                                      allBackendVars::Vector,
                                      stringToSimVarHT)::Vector{IF_EQUATION}
   local simCodeIfEquations::Vector{IF_EQUATION} = IF_EQUATION[]
-  for BDAE_ifEquation in ifEquations
-    local eqs::Vector = listArray(listGet(BDAE_ifEquation.eqnstrue, 1))
+  for i in 1:length(ifEquations)
     #= Enumerate the branches of the if equation =#
-    #= Handle if and else if branches=#
+    local BDAE_ifEquation = ifEquations[i]
+    local otherIfEqs::Vector{BDAE.IF_EQUATION} = BDAE.IF_EQUATION[]
+    for j in 1:length(ifEquations)
+      if i != j
+        push!(otherIfEqs, ifEquations[j])
+      end
+    end
     local conditions = BDAE_ifEquation.conditions
     local condition
     local equations
@@ -210,7 +219,7 @@ function constructSimCodeIFEquations(ifEquations::Vector{BDAE.IF_EQUATION},
       local equations = vcat(resEqs, branchEquations)
       target = conditionIdx + 1
       identifier = conditionIdx
-      local eqVariableMapping = createEquationVariableBidirectionGraph(equations, allBackendVars, stringToSimVarHT)
+      local eqVariableMapping = createEquationVariableBidirectionGraph(equations, otherIfEqs, allBackendVars, stringToSimVarHT)
       #= Match and get the strongly connected components =#
       local numberOfVariablesInMapping = length(eqVariableMapping.keys)
       (isSingular, matchOrder, digraph, stronglyConnectedComponents) =
@@ -246,7 +255,7 @@ function constructSimCodeIFEquations(ifEquations::Vector{BDAE.IF_EQUATION},
     lastConditionIdx += 1
     target = lastConditionIdx + 1
     identifier = ELSE_BRANCH #= Indicate else =#
-    local eqVariableMapping = createEquationVariableBidirectionGraph(equations, allBackendVars, stringToSimVarHT)
+    local eqVariableMapping = createEquationVariableBidirectionGraph(equations, otherIfEqs, allBackendVars, stringToSimVarHT)
     local numberOfVariablesInMapping = length(eqVariableMapping.keys)
     (isSingular, matchOrder, digraph, stronglyConnectedComponents) =
       matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT)
@@ -337,8 +346,6 @@ end
 function allocateAndCollectSimulationVariables(bDAEVariables::Vector{BDAE.VAR})
   collectVariables(bDAEVariables)
 end
-
-
 
 """
   Collect variables from array of BDAE.Var:

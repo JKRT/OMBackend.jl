@@ -52,7 +52,7 @@ function createStructuralCallback(simCode, simCodeStructuralTransition::Simulati
   local callbackName = createCallbackName(structuralTransition, 0)
   quote
     function $(Symbol(callbackName))(destinationSystem)
-      #= Represent structural change. =#
+      #= Represents a structural change. =#
       local structuralChange = OMBackend.Runtime.StructuralChange($(structuralTransition.toState), false, destinationSystem)
       #= The affect simply activates the structural callback informing us to generate code for a new system =#
       function affect!(integrator)
@@ -62,6 +62,50 @@ function createStructuralCallback(simCode, simCodeStructuralTransition::Simulati
         return $(expToJuliaExp(cond, simCode))
       end
       local cb = ContinuousCallback(condition, affect!)
+      return (cb, structuralChange)
+    end
+  end
+end
+
+"""
+  For dynamic overconstrained connectors.
+"""
+function createStructuralCallback(simCode,
+                                  simCodeStructuralTransition::SimulationCode.DYNAMIC_OVERCONSTRAINED_CONNECTOR_EQUATION,
+                                  idx)
+  local structuralTransition = simCodeStructuralTransition.structuralDOCC_equation
+  local callbackName = createCallbackName(structuralTransition, idx)
+  (equationsToAddOnTrue, cond) = extractTransitionEquationBody(structuralTransition)
+  #=
+  The system structure is changed when the new equations are added.
+    In this case we know how the equations look like.
+    On true the structure of the system is the one with the equations of the branch active.
+    On false that same system shall change slightly.
+  =#
+  @match SOME(flatModel) = simCode.flatModel
+  flatModel = createNewFlatModel(flatModel)
+  flatModelStr = OMFrontend.toString(flatModel)
+  println("***************************************************")
+  println(flatModelStr)
+  #= Note in this way we can't print the flat model since we have some circular references... =#
+  global FLAT_MODEL = flatModel #= To be referenced as OM.OMBackend.CodeGeneration.FLAT_MODEL =#
+  quote
+    import OMBackend.CodeGeneration
+    function $(Symbol(callbackName))()
+      #= Represent structural change. =#
+      local stringToSimVarHT = Dict() #$(simCode.stringToSimVarHT)
+#      local metaModel = $(metaModel)
+      local structuralChange = OMBackend.Runtime.StructuralChangeDynamicConnection($(flatModel.name),
+                                                                                   false,
+                                                                                   OMBackend.CodeGeneration.FLAT_MODEL,
+                                                                                   $(idx), #= Assumes specific ordering =#
+                                                                                   stringToSimVarHT,
+                                                                                   $(flatModel.active_DOCC_Equations[idx]))
+      #= The affect simply activates the structural callback informing us to generate code for a new system =#
+      $(createAffectCondPairForDOCC(cond, idx, flatModel.active_DOCC_Equations, simCode))
+      local cb = DiscreteCallback(condition,
+                                  affect!;
+                                  save_positions=(true, true))
       return (cb, structuralChange)
     end
   end
@@ -153,7 +197,10 @@ function createStructuralCallback(simCode, simCodeStructuralTransition::Simulati
                                                                                $(metaModel),
                                                                                modification,
                                                                                stringToSimVarHT)
-      #= TODO, here we need to change the code generation to encompass other types of callbacks not relying on zero crossing functions...=#
+      #=
+        TODO, here we need to change the code generation
+        to encompass other types of callbacks not relying on zero crossing functions...
+      =#
       #= The affect simply activates the structural callback informing us to generate code for a new system =#
       $(callback)
       return (cb, structuralChange)
@@ -163,6 +210,8 @@ function createStructuralCallback(simCode, simCodeStructuralTransition::Simulati
 end
 
 """
+  Creates the supermodel that composes one or more submodels.
+  This is to allow the model to modify itself.
 """
 function createStructuralAssignments(simCode, structuralTransitions::Vector{ST}) where {ST}
   local structuralAssignments = Expr[]
@@ -175,6 +224,9 @@ function createStructuralAssignments(simCode, structuralTransitions::Vector{ST})
       SimulationCode.IMPLICIT_STRUCTURAL_TRANSISTION(__) => begin
         push!(structuralAssignments, createStructuralAssignment(simCode, structuralTransisiton, idx))
       end
+      SimulationCode.DYNAMIC_OVERCONSTRAINED_CONNECTOR_EQUATION(__) => begin
+        push!(structuralAssignments, createStructuralAssignment(simCode, structuralTransisiton, idx))
+      end        
     end
     idx += 1
   end
@@ -207,11 +259,23 @@ function createStructuralAssignment(simCode, simCodeStructuralTransition::Simula
 end
 
 """
-Creates a structural assignment for an implicit structural transisiton.
-These are numbered from 1->N
+  Creates a structural assignment for an implicit structural transisiton.
+  These are numbered from 1->N
 """
 function createStructuralAssignment(simCode, simCodeStructuralTransition::SimulationCode.IMPLICIT_STRUCTURAL_TRANSISTION, idx::Int)
   local structuralTransition = simCodeStructuralTransition.structuralWhenEquation
+  local callbackName = createCallbackName(structuralTransition, idx)
+  local integratorCallbackName = callbackName * "_CALLBACK"
+  local structuralChangeStructure = callbackName * "_STRUCTURAL_CHANGE"
+  quote
+    ($(Symbol(integratorCallbackName)), $(Symbol(structuralChangeStructure))) = $(Symbol(callbackName))()
+    push!(structuralCallbacks, $(Symbol(structuralChangeStructure)))
+    push!(callbackSet, ($(Symbol(integratorCallbackName))))
+  end
+end
+
+function createStructuralAssignment(simCode, simCodeStructuralTransition::SimulationCode.DYNAMIC_OVERCONSTRAINED_CONNECTOR_EQUATION, idx::Int)
+  local structuralTransition = simCodeStructuralTransition.structuralDOCC_equation
   local callbackName = createCallbackName(structuralTransition, idx)
   local integratorCallbackName = callbackName * "_CALLBACK"
   local structuralChangeStructure = callbackName * "_STRUCTURAL_CHANGE"
@@ -234,6 +298,9 @@ function createCallbackName(structuralTransisiton::BDAE.STRUCTURAL_WHEN_EQUATION
   return string("structuralCallbackWhenEquation", idx)
 end
 
+function createCallbackName(structuralTransisiton::BDAE.STRUCTURAL_IF_EQUATION, idx::Int)
+  return string("structuralCallbackDynamicConnectEquation", idx)
+end
 
 """
   Creates the variables that are shared between the structural modes of a model.
@@ -272,28 +339,6 @@ function createStructuralWhenStatements(@nospecialize(whenStatements::List{BDAE.
       BDAE.RECOMPILATION(__) => begin
         recompilationOperator = wStmt
       end
-      BDAE.DYNAMIC_BRANCH(__) => begin
-        #=
-        A dynamic branch directive in the when equation.
-        In the case provided by Francesco two things are to be done.
-
-        What do I need.
-        1. I need access to the connection graph, that
-           is all the connections of the original model
-        2. I need to expand the original if-equation.
-        That is, we need to expand the contents of the if-equation.
-        In the case of the fluid model we need to expand:
-        if closed then
-          Connections.branch(inlet.id, outlet.id);
-          inlet.id = outlet.id;
-        end if;
-        ====>
-          Connections.branch(inlet.id, outlet.id);
-          inlet.id = outlet.id;
-        So in pratice we need to add equations to the model.
-        Since we can't simply remove the if equation itself.
-        =#
-      end
       BDAE.REINIT(__) => begin
         throw("Reinit is not allowed in a structural when equation")
       end
@@ -303,4 +348,89 @@ function createStructuralWhenStatements(@nospecialize(whenStatements::List{BDAE.
     end
   end
   return (res, recompilationOperator)
+end
+
+"""
+  Returns the equations and the condition
+"""
+function extractTransitionEquationBody(structuralTransition)
+  local ifEquation = structuralTransition.ifEquation
+  local structuralTransisitonAsDAE = listHead(OMFrontend.Main.convertEquation(ifEquation, nil))
+  #= For now assumed to only allow a single statement. No else. =#
+  @assert length(structuralTransisitonAsDAE.condition1) == 1
+  @assert length(ifEquation.branches) == 1
+  local cond = listHead(structuralTransisitonAsDAE.condition1)
+  local branch = listHead(ifEquation.branches)
+  local bodyEquations = branch.body
+  return (bodyEquations, cond)
+end
+
+
+"""
+  Creates a flat model without the connectors expanded.
+  The equations in this model does not include active DOCC equations.
+"""
+function createNewFlatModel(flatModel)
+  local newFlatModel = OMFrontend.Main.FLAT_MODEL(flatModel.name,
+                                                  flatModel.variables,
+                                                  flatModel.unresolvedConnectEquations,
+                                                  flatModel.initialEquations,
+                                                  flatModel.algorithms,
+                                                  flatModel.initialAlgorithms,
+                                                  nil,
+                                                  NONE(),
+                                                  flatModel.DOCC_equations,
+                                                  flatModel.unresolvedConnectEquations,
+                                                  flatModel.active_DOCC_Equations,
+                                                  flatModel.comment)
+  println("Unresolved System:")
+  for e in newFlatModel.equations
+    println(OMFrontend.Main.toString(e))
+  end
+  println("********************************************************************")  
+  return newFlatModel
+end
+
+"""
+  If equation start as active it should be removed and the condition should be reverted.
+  If we start without the equation  equations for DOCC should be added.
+"""
+function createAffectCondPairForDOCC(cond,
+                                     idx::Int,
+                                     active_DOCC_Equations::Vector{Bool},
+                                     simCode)
+  affectCondPair = if ! active_DOCC_Equations[idx]
+    quote
+      function affect!(integrator)
+        @info "Structural callback at:" integrator.t
+        @info "Structural callback Δt" integrator.dt
+        local t = integrator.t
+        local x = integrator.u
+        structuralChange.structureChanged = true
+        $(expToJuliaExp(cond, simCode)) = false
+        auto_dt_reset!(integrator)
+        add_tstop!(integrator, integrator.t + 1E-12 #= Some small number =#)
+      end
+      function condition(x, t, integrator)
+        return Bool($(expToJuliaExp(cond, simCode)))
+      end
+    end
+  else #= The equation is active at the start =#
+    quote
+      function affect!(integrator)
+        @info "Structural callback at:" integrator.t
+        @info "Structural callback Δt" integrator.dt
+        local t = integrator.t
+        local x = integrator.u
+        structuralChange.structureChanged = true
+        $(expToJuliaExp(cond, simCode)) = true
+        auto_dt_reset!(integrator)
+        add_tstop!(integrator, integrator.t + 1E-12 #= Some small number =#)
+      end
+      function condition(x, t, integrator)
+        return Bool($(expToJuliaExp(cond, simCode))) == false
+      end
+    end
+  end
+  return affectCondPair
 end

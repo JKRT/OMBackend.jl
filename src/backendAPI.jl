@@ -171,7 +171,7 @@ function lower(frontendDAE::OMFrontend.Main.FlatModel)
   @debug(BDAEUtil.stringHeading1(bDAE, "states marked"));
   bDAE = Causalize.residualizeEveryEquation(bDAE)
   #= =#
-  @debug(BDAEUtil.stringHeading1(bDAE, "residuals"));
+  @info(BDAEUtil.stringHeading1(bDAE, "residuals"));
   return bDAE
 end
 
@@ -276,6 +276,18 @@ end
 """
 function printModel(modelName::String; MTK = true, keepComments = true, keepBeginBlocks = true)
   try
+    println(modelToString(modelName::String; MTK = MTK, keepComments = keepComments, keepBeginBlocks = keepBeginBlocks))
+  catch e 
+    @error "Model: $(modelName) is not compiled. Available models are: $(availableModels())"
+    throw("Error printing model")
+  end
+end
+
+"""
+ Converts a given backend model to a string
+"""
+function modelToString(modelName::String; MTK = true, keepComments = true, keepBeginBlocks = true)
+  try
     local model::Expr
     model = getCompiledModel(modelName)
     strippedModel = "$model"
@@ -290,7 +302,7 @@ function printModel(modelName::String; MTK = true, keepComments = true, keepBegi
     formattedResults = JuliaFormatter.format_text(modelStr;
                                                   remove_extra_newlines = true,
                                                   always_use_return = false)
-    println(formattedResults)
+    return formattedResults
   catch e 
     @error "Model: $(modelName) is not compiled. Available models are: $(availableModels())"
     throw("Error printing model")
@@ -343,8 +355,7 @@ function simulateModel(modelName::String;
       In the following path OMBackend.<modelName>Simulate
       =#
     catch err
-      @info "Interactive evaluation failed: $err with mode: $(MODE)"
-      @info err #TODO readd.
+      @info "Interactive evaluation failed with execption: $(typeof(err)) with mode: $(MODE)"
 #      println(modelCode)
       throw(err)
     end

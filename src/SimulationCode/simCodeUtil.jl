@@ -198,6 +198,9 @@ function createIndices(simulationVars::Vector{SimulationCode.SIMVAR})::OrderedDi
       _ => continue
     end
   end
+  @debug "stateCounter" stateCounter
+  @debug "discreteCounter" discreteCounter
+  @debug "algIndexCounter" algIndexCounter
   return ht
 end
 
@@ -226,7 +229,18 @@ function createEquationVariableBidirectionGraph(equations::RES_T,
   for eq in equations
     eqCounter += 1
     variablesForEq = Backend.BDAEUtil.getAllVariables(eq, algebraicAndStateVariables)
-    variableEqMapping["e$(eqCounter)"] = sort(getIndiciesOfVariables(variablesForEq, stringToSimVarHT))
+    # @debug "Variables in equation:"
+    # println("Equation:", string(eq))
+    # println("Variables:")
+    # for v in variablesForEq
+    #   println("\t", string(v))
+    # end
+    local indices = getIndiciesOfVariables(variablesForEq, stringToSimVarHT)
+    # @debug "Indices where:"
+    # for idx in indices
+    #   println("\t", string(idx))
+    # end
+    variableEqMapping["e$(eqCounter)"] = sort(indices)
   end
   #=
    There is an additional case to consider.

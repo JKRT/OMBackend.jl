@@ -44,9 +44,12 @@ using ..Backend
 using ..SimulationCode
 
 import ..Backend.BDAE
+
 import DAE
 import Absyn
 import MetaGraphs
+import OMParser
+import OMFrontend
 
 include("./CodeGenerationUtil.jl")
 include("./structuralCallbacks.jl")

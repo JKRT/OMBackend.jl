@@ -198,6 +198,10 @@ function string(ifEq::IF_EQUATION)
   return res
 end
 
+function string(ieq::SimulationCode.DYNAMIC_OVERCONSTRAINED_CONNECTOR_EQUATION)
+  BDAE.string(ieq.structuralDOCC_equation)
+end
+
 function string(st::IMPLICIT_STRUCTURAL_TRANSISTION)
   string(st.structuralWhenEquation)
 end

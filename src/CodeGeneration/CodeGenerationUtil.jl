@@ -109,10 +109,13 @@ function transformToMTKConditionEquation(cond::DAE.Exp, simCode)
   res = @match cond begin
     DAE.RELATION(e1, DAE.LESS(__), e2) => begin
       :($(expToJuliaExpMTK(e1, simCode)) - $(expToJuliaExpMTK(e2, simCode)) ~ 0)
-      #DAE.BINARY(e1, DAE.SUB(DAE.T_REAL_DEFAULT), e2)
+    end
+    #= TODO: Is this correct? =#
+    DAE.RELATION(e1, DAE.GREATER(__), e2) => begin
+      :(- $(expToJuliaExpMTK(e1, simCode)) - $(expToJuliaExpMTK(e2, simCode)) ~ 0)
     end
     _ => begin
-      throw("Operator: " * string(cond.op) * "in: " * string(cond) * "is not supported")
+      throw("Operator: " * "'" * string(cond.operator) * "' in: " * string(cond) * " is not supported")
     end
   end
   return res
@@ -774,5 +777,57 @@ function evalInitialCondition(mtkCond)
     return ivCond
   catch #= Unable to evaluate at this point in time. =#
     return true
+  end
+end
+
+function generateIfExpressions(branches, target, resEqIdx::Int, identifier::Int, simCode)
+  if branches[target].targets == -1
+    return :($(first(deCausalize(branches[target].residualEquations[resEqIdx], simCode))))
+  end
+  #= Otherwise generate code for the other part =#
+  local branch = branches[target]
+  local cond = :( $(Symbol("ifCond$(identifier)")) == true )
+  #= Assume single equations for now =#
+  quote
+    ModelingToolkit.IfElse.ifelse($(cond),
+                                  $(first(deCausalize(branch.residualEquations[resEqIdx], simCode))),
+                                  $(generateIfExpressions(branches, branches[target].targets, resEqIdx, identifier, simCode)))
+  end
+end
+
+#= TODO. We currently assume residuals that we have made causal and that the original equations are written in a certain form.=#
+function deCausalize(eq, simCode)
+  @match eq.exp begin
+    DAE.BINARY(DAE.RCONST(0.0), _, exp2) => begin
+      (:($(expToJuliaExpMTK(exp2, simCode))), :($(expToJuliaExpMTK(eq.exp.exp1, simCode))))
+    end
+    DAE.BINARY(exp1, _, DAE.RCONST(0.0)) => begin
+      (:($(expToJuliaExpMTK(exp1, simCode))), :($(expToJuliaExpMTK(eq.exp.exp2, simCode))))
+    end
+    DAE.BINARY(exp1, _, exp2) => begin
+      (:($(expToJuliaExpMTK(exp2, simCode))), :($(expToJuliaExpMTK(exp1, simCode))))
+    end
+    _ => begin
+      throw("Unsupported equation:" * string(eq))
+    end
+  end
+end
+
+
+#= TODO. REMOVE =#
+function deCausalize2(eq, simCode)
+  @match eq.exp begin
+    DAE.BINARY(DAE.RCONST(0.0), _, exp2) => begin
+      expToJuliaExpMTK(exp2, simCode)
+    end
+    DAE.BINARY(exp1, _, DAE.RCONST(0.0)) => begin
+      expToJuliaExpMTK(exp1, simCode)
+    end
+    DAE.BINARY(exp1, _, exp2) => begin
+      expToJuliaExpMTK(eq.exp, simCode)
+    end
+    _ => begin
+      throw("Unsupported equation:" * string(eq))
+    end
   end
 end

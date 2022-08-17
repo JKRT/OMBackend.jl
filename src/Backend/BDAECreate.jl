@@ -83,11 +83,16 @@ end
   2. We convert this representation into the BackendDAE representation.
   3. We return backend DAE to be used in the remainder of the compilation before code generation.
 """
-function lower(frontendDAE::OMFrontend.Main.FlatModel)
+function lower(flatModelica::OMFrontend.Main.FlatModel)
   #= Creates a list of flat equation systems =#
-  local eqSystems = createEqSystems(frontendDAE)
+  local eqSystems = createEqSystems(flatModelica)
+  local shared = BDAE.SHARED([],
+                             [],
+                             flatModelica.scodeProgram,
+                             SOME(flatModelica),
+                             createStructuralIfEquations(flatModelica.DOCC_equations))
   #= The resulting backend DAE. =#
-  return createBackendDAE(frontendDAE.name, eqSystems, BDAE.SHARED([], [], frontendDAE.scodeProgram))
+  return createBackendDAE(flatModelica.name, eqSystems, shared)
 end
 
 function createBackendDAE(name, eqSystems, shared)
@@ -400,35 +405,11 @@ function lowerIfEquation(eq::IF_EQ) where {IF_EQ}
   end
   (_, falseEquations, _) = splitEquationsAndVars(eq.equations3)
   #= Check if this equation contains an Connections.branch call. DOCC case=#
-  local containsBranchFalseEqs = findfirst(elem->typeof(elem)==BDAE.BRANCH,
-                                           listArray(falseEquations)) !== nothing
-  local containsBranchTrueEqs = findfirst(elem->typeof(elem)==BDAE.BRANCH,
-                                          collect(Iterators.flatten(listArray(trueEquations)))) !== nothing
-  @info trueEquations
-  @info falseEquations
-  local containsBranch = containsBranchFalseEqs || containsBranchTrueEqs
-  @info "We have a branch $containsBranch"
-  res = if ! containsBranch
-    BDAE.IF_EQUATION(eq.condition1,
-                     trueEquations,
-                     falseEquations,
-                     eq.source,
-                     BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
-  else
-    trueWhenOp = list(BDAEUtil.eqToWhenOperator(i) for i in collect(Iterators.flatten(trueEquations)))
-    falseWhenOp = list(BDAEUtil.eqToWhenOperator(i) for i in collect(Iterators.flatten(falseEquations)))
-    if isempty(falseWhenOp)
-      local whenStmts = BDAE.WHEN_STMTS(listHead(eq.condition1),
-                                        trueWhenOp,
-                                        NONE())
-      return BDAE.STRUCTURAL_WHEN_EQUATION(length(trueWhenOp),
-                                      whenStmts,
-                                      eq.source,
-                                      BDAE.NO_ATTRIBUTES()) #=TODO: add attributes for code generation later...=#
-    else
-      throw("else branch not implemented for conditional branch equations...")
-    end
-  end
+  res = BDAE.IF_EQUATION(eq.condition1,
+                         trueEquations,
+                         falseEquations,
+                         eq.source,
+                         BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
   return res
 end
   
@@ -473,6 +454,17 @@ function createBindingEquations(variables::Vector)
     end
   end
   return bindingEqs
+end
+
+"""
+  Wraps the special if equation in a BDAE construct.
+"""
+function createStructuralIfEquations(ifEquations::List)
+  eqs = BDAE.Equation[]
+  for ifEq in ifEquations
+    push!(eqs, BDAE.STRUCTURAL_IF_EQUATION(ifEq))
+  end
+  return eqs
 end
 
 @exportAll()

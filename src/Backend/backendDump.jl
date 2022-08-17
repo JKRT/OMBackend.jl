@@ -74,7 +74,9 @@ end
 function Base.string(eq::BDAE.EQSYSTEM)::String
   str::String = ""
   str = str + heading3("Variables") + BDAEUtil.mapEqSystemVariablesNoUpdate(eq, stringTraverse, "") + "\n"
+  str = str * "# Variables = " * string(length(eq.orderedVars), "\n")
   str = str + heading3("Equations") + BDAEUtil.mapEqSystemEquationsNoUpdate(eq, stringTraverse, "") + "\n"
+  str = str * "# Equations = " * string(length(eq.orderedEqs), "\n")
 end
 
 function stringTraverse(in, str)::String
@@ -213,10 +215,6 @@ function Base.string(@nospecialize(eq::BDAE.Equation))
         "STRUCTURAL_TRANSISTION " * eq.fromState * " -> " * eq.toState * "| if:" * string(eq.transistionCondition)
       end
 
-      BDAE.BRANCH(arg1, arg2) => begin
-        string("DYNAMICAL_BRANCH(", "(",string(arg1), ",", string(arg2), ")")
-      end
-
       BDAE.IF_EQUATION(__) => begin
         local strTmp::String
         local conditions::List{DAE.Exp}
@@ -283,9 +281,9 @@ function Base.string(whenOp::BDAE.WhenOperator)::String
       BDAE.NORETCALL(exp = e1) => begin
         "[NORET]" + string(e1)
       end
-      BDAE.DYNAMIC_BRANCH(ar, br) => begin
-        string("[DYNAMIC_BRANCH] ","(" ,string(ar),"->", string(br), ")")
-      end
+ #     BDAE.DYNAMIC_BRANCH(ar, br) => begin
+ #       string("[DYNAMIC_BRANCH] ","(" ,string(ar),"->", string(br), ")")
+ #     end
       BDAE.RECOMPILATION(componentToChange, newValue) => begin
         string("RECOMPILATION", "(", string(componentToChange), ",", string(newValue), ")")
       end
@@ -587,4 +585,10 @@ end
 function Base.string(idx::DAE.INDEX)::String
   local str = string(idx.exp)    
   return str
+end
+
+function Base.string(structuralIfEquation::BDAE.STRUCTURAL_IF_EQUATION)
+  local str = "DYNAMIC_"
+  local ifEqStr = replace(OMFrontend.Main.toString(structuralIfEquation.ifEquation), "\\n" => "\n")
+  str *= ifEqStr * "\n"
 end

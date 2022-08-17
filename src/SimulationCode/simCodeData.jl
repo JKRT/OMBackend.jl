@@ -104,12 +104,22 @@ end
 
 abstract type StructuralTransition end
 
+"""
+  An explicit transition from one system state to another.
+"""
 struct EXPLICIT_STRUCTURAL_TRANSISTION <: StructuralTransition
   structuralTransition::BDAE.STRUCTURAL_TRANSISTION
 end
 
+"""
+  Represents a structural transistion where a change of a parameter in the metamodel results in a new model.
+"""
 struct IMPLICIT_STRUCTURAL_TRANSISTION <: StructuralTransition
   structuralWhenEquation::BDAE.STRUCTURAL_WHEN_EQUATION
+end
+
+struct DYNAMIC_OVERCONSTRAINED_CONNECTOR_EQUATION <: StructuralTransition
+  structuralDOCC_equation::BDAE.STRUCTURAL_IF_EQUATION
 end
 
 """
@@ -171,4 +181,6 @@ struct SIM_CODE{T0<:String,
   activeModel::T13
   "The MetaModel. That is a reference from the model to a higher order representation of the model itself."
   metaModel::Option
+  "An alternate flat model. Used by structural if equations to add or remove connector statements affecting the virtual connection graph."
+  flatModel::Option
 end

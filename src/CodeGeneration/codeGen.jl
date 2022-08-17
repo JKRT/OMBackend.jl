@@ -181,7 +181,7 @@ end
 function createSaveFunction(modelName)::Expr
   ADD_CALLBACK()
   local callbacks = COUNT_CALLBACKS()
-  local cbSym = Symbol("cb$(callbacks)")
+  local cbSym = Symbol("cb$(callbacks)")r
   return quote
     savingFunction(u, t, integrator) = let
       (t, deepcopy(integrator.p))
@@ -259,11 +259,9 @@ end
 function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arrayIdx::Int64)::Expr
   local wEq = eq.whenEquation
   local whenStmts = createWhenStatements(wEq.whenStmtLst, simCode)
-  @info "Cond before:" string(wEq.condition)
   local cond = transformToZeroCrossingCondition(wEq.condition)
   ADD_CALLBACK()
   local callbacks = COUNT_CALLBACKS()
-  println("Some information:\n" * string(eq))
   #=
     Find the type of the condition.
     For continuous variables we should create continuous callbacks.
@@ -288,7 +286,6 @@ function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arr
   if isContinuousCond
     local isElseIf = if wEq.elsewhenPart !== nothing
       local elsePart = wEq.elsewhenPart.data
-      @info elsePart
       local elseCond = elsePart.whenEquation.condition
       cond2 = transformToZeroCrossingCondition(elseCond)
       cond == cond2
@@ -301,30 +298,32 @@ function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arr
           $(expToJuliaExp(cond, simCode))
         end
         $(Symbol("affect$(callbacks)!")) = (integrator) -> begin
-          @info "Calling affect! at $(integrator.t)"
+          @info "Calling affect! at $(integrator.t) for continuous condition"
           local t = integrator.t + integrator.dt
           local x = integrator.u
+          @info "integrator.t" integrator.t
+          @info "integrator.dt" integrator.dt
           @info "t + dt = " t
+          if integrator.dt == 0.0
+            fail()
+          end
           if (Bool($(expToJuliaExp(wEq.condition, simCode))))
             @info "Taking the first branch"
-            @info "p is" p
-            @info "integrator.p is" integrator.p
-            @info "Comparing" p == integrator.p
             $(whenStmts...)
-            integrator.p = p
+            add_tstop!(integrator, integrator.t + 1E-12) #=TODO: Some small number for now=#
           else
             @info "Running the else branch"
-            @info "p is" p
-            @info "integrator.p is" integrator.p
             $(createWhenStatements(elsePart.whenEquation.whenStmtLst, simCode)...)
+            add_tstop!(integrator, integrator.t + 1E-12) #=TODO: Some small number for now=#
           end
         end
         $(Symbol("cb$(callbacks)")) = ContinuousCallback($(Symbol("condition$(callbacks)")),
                                                          $(Symbol("affect$(callbacks)!")),
-                                                         rootfind=true, save_positions=(true, true),
-                                                         affect_neg! = $(Symbol("affect$(callbacks)!")))        
+                                                         rootfind=true,
+                                                         save_positions=(true, true),
+                                                         affect_neg! = $(Symbol("affect$(callbacks)!")))
       end
-    else
+    else #= No elseif =#
        quote
         $(Symbol("condition$(callbacks)")) = (x,t,integrator) -> begin
           $(expToJuliaExp(cond, simCode))
@@ -333,11 +332,12 @@ function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arr
           @info "Calling affect! at $(integrator.t)"
           local t = integrator.t + integrator.dt
           local x = integrator.u
+          if integrator.dt == 0.0
+            fail()
+          end
           @info "t + dt = " t
           if (Bool($(expToJuliaExp(wEq.condition, simCode))))
             @info "Hello condition"
-            @info "p is" p
-            @info "integrator.p is" integrator.p
             $(whenStmts...)
           end
         end
@@ -357,19 +357,18 @@ function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arr
       end
     $(Symbol("affect$(callbacks)!")) = (integrator) -> begin
       @info "Calling affect for discrete at $(integrator.t)"
+      @info "Δt was:" integrator.dt
       @info "Value of x is:" integrator.u
       local t = integrator.t
       local x = integrator.u
-      if (Bool($(expToJuliaExp(wEq.condition, simCode))))
-        @info "Here we are!"
-        @info x
-        $(whenStmts...)
-        #= TODO:
-          This will not work if the condition consists of several boolean operators.
-          The purpose is to reset the condition so that it is not triggered again at the end of the next integration step.
-        =#
-        $(expToJuliaExp(cond, simCode)) = false
-      end
+      $(whenStmts...)
+      auto_dt_reset!(integrator)
+      add_tstop!(integrator, integrator.t + 1E-12) #=TODO: Some small number for now=#
+      #= TODO:
+      This will not work if the condition consists of several boolean operators.
+      The purpose is to reset the condition so that it is not triggered again at the end of the next integration step.
+      =#
+      $(expToJuliaExp(cond, simCode)) = false
     end
       $(Symbol("cb$(callbacks)")) = DiscreteCallback($(Symbol("condition$(callbacks)")),
                                                      $(Symbol("affect$(callbacks)!"));

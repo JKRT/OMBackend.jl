@@ -12,6 +12,9 @@ import OMBackend.CodeGeneration
 import OMFrontend
 import DAE
 
+import ModelingToolkit
+import ModelingToolkit.IfElse
+
 using DataStructures
 using ModelingToolkit
 using DifferentialEquations
@@ -57,7 +60,7 @@ mutable struct StructuralChange{SYS} <: AbstractStructuralChange
 end
 
 """
-  Wrapper callback for structural change that triggers a recompilation.  
+  Wrapper callback for structural change that triggers a recompilation.
 """
 mutable struct StructuralChangeRecompilation{MOD <: Tuple} <: AbstractStructuralChange
   "The name of the next mode"
@@ -69,10 +72,34 @@ mutable struct StructuralChangeRecompilation{MOD <: Tuple} <: AbstractStructural
   "The modification to be applied during recompilation"
   modification::MOD
   """
-  The symbol table for the old model.
-  This is used to map indices of variables when the structure of the model changes
+    The symbol table for the old model.
+    This is used to map indices of variables when the structure of the model changes
   """
   stringToSimVarHT
+end
+
+"""
+ Wrapper callback for a dynamic connection reconfiguration
+"""
+mutable struct StructuralChangeDynamicConnection <: AbstractStructuralChange
+  "The name of the next mode"
+  name::String
+  "Indicates if the structure has changed"
+  structureChanged::Bool
+  "The meta model. A flat representation of the model itself."
+  #= Would it be better to modify the SCode instead? Less code to change?=#
+  flatModel::OMFrontend.Main.FLAT_MODEL
+  "The index of the specific dynamic connection equation."
+  index::Int
+  """
+    The symbol table for the old model.
+    This is used to map indices of variables when the structure of the model changes
+  """
+  stringToSimVarHT
+  """
+    If equations are to be added or removed.
+  """
+  activeEquations::Bool
 end
 
 mutable struct OM_ProblemStructural{T0 <: String, T1, T2, T3}
@@ -153,12 +180,12 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
         #= Now we have the start values for the next part of the system=#
         integrator = init(cb.system,
                           alg;
-#                         t0 = i.t,
-#                          u0 = newU0,
+                          #                         t0 = i.t,
+                          #                          u0 = newU0,
                           dt = 0.01,
                           dtmax = 0.01,
-#                          tstart = tspan[1],
-#                          tstop = tspan[2],
+                          #                          tstart = tspan[1],
+                          #                          tstop = tspan[2],
                           kwargs...)
         #=
           Reset with the new values of u0
@@ -166,7 +193,7 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
         =#
         activeModeName = cb.name
         reinit!(integrator, newU0; t0 = i.t, reset_dt = true)
-        cb.structureChanged = false        
+        cb.structureChanged = false
         #= goto to save preformance =#
         @goto START_OF_INTEGRATION
       end
@@ -188,54 +215,82 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
   local structuralCallbacks = omProblem.structuralCallbacks
   local callbackConditions = omProblem.callbackConditions
   local activeModeName = omProblem.activeModeName
-  local integrator = init(problem, alg, dtmax = 0.1, kwargs...)
+  local integrator = init(problem, alg, kwargs...)
   local oldSols = []
   local solutions = []
   #= Run the integrator=#
   @label START_OF_INTEGRATION
-  for i in integrator
+  while true
+    local i = integrator
+    local triggered = false
+    for j in 1:length(structuralCallbacks)
+      local cb = structuralCallbacks[j]
+      triggered = triggered || cb.structureChanged
+    end
+    if i.t + i.dt >= tspan[2]
+      solve!(i)
+      break
+    end
+    if ! triggered
+      Base.invokelatest(step!, i, true)
+    end
+    @info "Integration step:" i.t
+    @info "dt was:" i.dt
     #= Check structural callbacks in order =#
     retCode = check_error(integrator)
     for j in 1:length(structuralCallbacks)
       local cb = structuralCallbacks[j]
       if cb.structureChanged && i.t < tspan[2]
+        @debug "Callback triggered at:" integrator.t
         #= Recompile the system =#
         local oldHT = cb.stringToSimVarHT
-        (newProblem, newSymbolTable, initialValues) = recompilation(cb.name, cb, integrator.u, tspan, callbackConditions)
+        @time (newProblem, newSymbolTable, initialValues, sc, structuralCallbacks) = recompilation(cb.name, cb, integrator.u, tspan, callbackConditions)
         #= End recompilation =#
-        #= Assuming the indices are the same (Which is not neccesary true) =#
+        #= Assuming the indices are the same (Which is not always true) =#
         local symsOfOldProblem = getSyms(problem)
         local symsOfNewProlem = getSyms(newProblem)
         local newU0 = RuntimeUtil.createNewU0(symsOfOldProblem,
                                               symsOfNewProlem,
-                                              oldHT,
                                               newSymbolTable,
                                               initialValues,
-                                              integrator)
+                                              integrator,
+                                              sc)
+        @debug "We have a new u0" newU0
         #= Save the old solution together with the name and the mode that was active =#
         push!(solutions, integrator.sol)
         push!(oldSols, (integrator.sol, getSyms(problem), activeModeName))
+        @debug "Solution saved. Making a new integrator"
         #= Now we have the start values for the next part of the system=#
         integrator = init(newProblem,
                           alg;
-                          dtmax = 0.1,
                           kwargs...)
+        @debug "New integrator constructed"
         #=
-        Reset with the new values of u0
-        and set the active moed to the mode we are currently using.
+          Reset with the new values of u0
+          and set the active mode to the mode we are currently using.
         =#
+        @debug "Reinit!"
         activeModeName = cb.name
-        reinit!(integrator, newU0; t0 = i.t, reset_dt = true)
+        auto_dt_reset!(integrator)
+        reinit!(integrator,
+                newU0;
+                t0 = i.t,
+                reset_dt = true)
+        @debug "Reinit done"
         #= Point the problem to the new problem =#
         problem = newProblem
         #= Note that the structural event might be triggered again here (We kill it later) =#
-        step!(integrator, true)
+        @debug "Stepping..."
+        Base.invokelatest(step!, integrator, true)
+        @debug "After step"
         #=
          We reset the structural change pointer again here just to make sure
          that we do not trigger the callback again.
         =#
         cb.structureChanged = false
         #= goto to save preformance =#
+        @debug "Reset!"
+        global INTEGRATOR = integrator
         @goto START_OF_INTEGRATION
       end
     end
@@ -247,16 +302,26 @@ end
 """
   Recompile the metamodel with some component changed.
   Returns a tuple of a new problem together with a new symbol table.
+inputs:
+  Name of the active model
+  The structural callback causing the recompilation
+  The current u values of the integrator
+  The provided timespan
+  The callback conditions (This to make sure that the new model have the same callbacks)
 """
-function recompilation(activeModeName, structuralCallback, integrator_u, tspan, callbackConditions)::Tuple
+function recompilation(activeModeName,
+                       structuralCallback::StructuralChangeRecompilation,
+                       integrator_u,
+                       tspan,
+                       callbackConditions)::Tuple
   #=  Recompilation =#
-  #= Have the SCode =#        
+  #= Have the SCode =#
   #= - 1) Fetch the parameter from the structural callback =#
   local metaModel = structuralCallback.metaModel
   local modification = structuralCallback.modification
   local inProgram = MetaModelica.list(metaModel)
   local elementToChange = first(modification)
-  #= Get the symbol table, using this we  evaluate the new value based on the value of some parameter.=#
+  #= Get the symbol table, using this we evaluate the new value based on the value of some parameter. =#
   local newValueExpr = Meta.parse(last(modification))
   newValueExpr = quote
     stringToSimVarHT = $(structuralCallback.stringToSimVarHT)
@@ -272,39 +337,87 @@ function recompilation(activeModeName, structuralCallback, integrator_u, tspan, 
   #= 3.1 Run the backend=#
   (resultingModel, simulationCode) = runBackend(flatModelica, classToInstantiate)
   #= 4.0 Revaulate the model=#
-    local modelName = replace(activeModeName, "." => "__") * "Model"
-    @eval $(resultingModel)
-    modelCall = quote
-      $(Symbol(modelName))($(tspan))
-    end
-    (problem, initialValues, reducedSystem, tspan, pars, vars) = @eval $(modelCall)
-    #= Reconstruct the composite problem to keep the callbacks =#
-    compositeProblem = ModelingToolkit.ODEProblem(
-      reducedSystem,
-      initialValues,
-      tspan,
-      pars,
-      #= 
-      TODO currently only handles a single structural callback.
-      =#
-      callback = callbackConditions
+  local modelName = replace(activeModeName, "." => "__") * "Model"
+  @eval $(resultingModel)
+  modelCall = quote
+    $(Symbol(modelName))($(tspan))
+  end
+  (problem, callbacks, initialValues, reducedSystem, tspan, pars, vars) = @eval $(modelCall)
+  #= Reconstruct the composite problem to keep the callbacks =#
+  compositeProblem = ModelingToolkit.ODEProblem(
+    reducedSystem,
+    initialValues,
+    tspan,
+    pars,
+    #=
+    TODO currently only handles a single structural callback.
+    =#
+      callback = callbackConditions #Should be changed look at method below
     )
   #= 4.1 Update the structural callback with the new situation =#
-    @match SOME(newMetaModel) = simulationCode.metaModel
-    structuralCallback.metaModel = newMetaModel
-    structuralCallback.stringToSimVarHT = simulationCode.stringToSimVarHT
+  @match SOME(newMetaModel) = simulationCode.metaModel
+  structuralCallback.metaModel = newMetaModel
+  structuralCallback.stringToSimVarHT = simulationCode.stringToSimVarHT
   #= 4.x) Assign this system to newSystem. =#
-  return (compositeProblem, simulationCode.stringToSimVarHT, initialValues)
+  return (compositeProblem, simulationCode.stringToSimVarHT, initialValues, false)
 end
 
+"""
+  Structural callback for dynamic connection handling.
+  Returns (problem, symbol table, initial values).
+TODO:
+We need to know if we are to add or if we are to remove.
+"""
+function recompilation(activeModeName,
+                       structuralCallback::StructuralChangeDynamicConnection,
+                       integrator_u,
+                       tspan,
+                       callbackConditions)
+  local flatModel = OMBackend.CodeGeneration.FLAT_MODEL
+  local unresolvedConnectEquations = flatModel.unresolvedConnectEquations
+  #= Get the relevant equation =#
+  local indexOfEquation = structuralCallback.index
+  local equationIf = MetaModelica.listGet(flatModel.DOCC_equations, indexOfEquation)
+  @assert length(equationIf.branches) == 1
+  if ! structuralCallback.activeEquations
+    equationsToAdd = first(equationIf.branches).body
+    newFlatModel = RuntimeUtil.createNewFlatModel(flatModel, unresolvedConnectEquations, equationsToAdd)
+  else
+    newFlatModel = RuntimeUtil.createNewFlatModel(flatModel, indexOfEquation, unresolvedConnectEquations)
+  end
+  (resultingModel, simulationCode) = runBackend(newFlatModel, activeModeName)
+  local model = replace(activeModeName, "." => "__")
+  local modelName = string(model, "Model")
+  local result = OMBackend.modelToString(model; MTK = true, keepComments = true, keepBeginBlocks = false)
+  local newParsedModel = Meta.parse(result)
+  @eval $(newParsedModel)
+  local modelCall = quote
+    $(Symbol(modelName))($(tspan))
+  end
+  local result = @eval $(modelCall)
+  @debug "We have a new problem..."
+  global PROBLEM = result.problem
+  #= Update meta model somehow=#
+  return (result.problem,
+          simulationCode.stringToSimVarHT,
+          result.problem.u0,
+          true,
+          result.structuralCallbacks)
+end
+
+"""
+ Runs the backend.
+  Translates the flat model to Flat Modelica.
+  Generates the simulation code.
+  Creates the new model.
+Returns, a tuple of the new model and the simulation code of this model.
+"""
 function runBackend(flatModelica, classToInstantiate)
   local bdae = OMBackend.lower(flatModelica)
   local simulationCode = OMBackend.generateSimulationCode(bdae; mode = OMBackend.MTK_MODE)
   local newModel = OMBackend.CodeGeneration.ODE_MODE_MTK_MODEL_GENERATION(simulationCode, classToInstantiate)
   return (newModel, simulationCode)
 end
-
-
 
 """
   Solving procedure without structural callbacks.
