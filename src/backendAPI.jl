@@ -93,7 +93,7 @@ function translate(frontendDAE::Union{DAE.DAE_LIST, OMFrontend.Main.FlatModel}; 
     @debug "Generate simulation code"
     simCode = generateSimulationCode(bDAE; mode = MTK_MODE)
     @debug "Simulation code generated"
-    println(SimulationCode.dumpSimCode(simCode))
+    #println(SimulationCode.dumpSimCode(simCode))
     return generateMTKTargetCode(simCode)
   else
     @error "No mode specificed: valid modes are:"
@@ -171,7 +171,7 @@ function lower(frontendDAE::OMFrontend.Main.FlatModel)
   @debug(BDAEUtil.stringHeading1(bDAE, "states marked"));
   bDAE = Causalize.residualizeEveryEquation(bDAE)
   #= =#
-  @info(BDAEUtil.stringHeading1(bDAE, "residuals"));
+  @debug(BDAEUtil.stringHeading1(bDAE, "residuals"));
   return bDAE
 end
 
@@ -238,25 +238,13 @@ end
 """
   Writes a model to file by default the file is formatted and comments are kept.
 """
-function writeModelToFile(modelName::String, filePath::String; keepComments = true, formatFile = true, mode = MTK_MODE)
+function writeModelToFile(modelName::String, filePath::String; keepComments = true, formatFile = true)
   model = getCompiledModel(modelName)
-  fileName = "$modelName.jl"
   try
-    if keepComments == false
-      strippedModel = CodeGeneration.stripComments(model)
-    end
-    local strippedModel = CodeGeneration.stripBeginBlocks(model)
-    local modelStr::String = "$strippedModel"
-    formattedModel = if formatFile
-      JuliaFormatter.format_text(modelStr,
-                                 remove_extra_newlines = true,
-                                 always_use_return = true)
-    else
-      modelStr
-    end
-    writeStringToFile(filePath, formattedModel)
+    mAsStr = modelToString(modelName; MTK = true, keepComments = keepComments, keepBeginBlocks = keepBeginBlocks)
+    writeStringToFile(filePath, mAsStr)
   catch e
-    @info "Failed writing $model to file: $fileName"
+    @info "Failed writing $model to file: $filePath"
     @error e
   end
 end
@@ -309,6 +297,7 @@ function modelToString(modelName::String; MTK = true, keepComments = true, keepB
   end
 end
 
+
 """
     Prints available compiled models to stdout
 """
@@ -346,6 +335,8 @@ function simulateModel(modelName::String;
       @eval $(:(import OMBackend))
       #= Below is needed to pass the custom solver=#
       strippedModel = CodeGeneration.stripBeginBlocks(modelCode)
+      str = OMBackend.modelToString(modelName; MTK = true, keepComments = false, keepBeginBlocks = false)
+      OMBackend.writeStringToFile(string("unmodfied", modelName * ".jl"), str)
       @eval $strippedModel
       local modelRunnable = Meta.parse("OMBackend.$(modelName)Simulate($(tspan); solver = $solver)")
       #= Run the model with the supplied tspan. =#

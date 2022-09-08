@@ -83,18 +83,15 @@ function createStructuralCallback(simCode,
     On false that same system shall change slightly.
   =#
   @match SOME(flatModel) = simCode.flatModel
-  flatModel = createNewFlatModel(flatModel)
-  flatModelStr = OMFrontend.toString(flatModel)
-  println("***************************************************")
-  println(flatModelStr)
+  unresolvedFlatModel = createNewFlatModel(flatModel)
   #= Note in this way we can't print the flat model since we have some circular references... =#
-  global FLAT_MODEL = flatModel #= To be referenced as OM.OMBackend.CodeGeneration.FLAT_MODEL =#
+  global FLAT_MODEL = unresolvedFlatModel #= To be referenced as OM.OMBackend.CodeGeneration.FLAT_MODEL =#
+  global OLD_FLAT_MODEL = flatModel
   quote
     import OMBackend.CodeGeneration
     function $(Symbol(callbackName))()
       #= Represent structural change. =#
       local stringToSimVarHT = Dict() #$(simCode.stringToSimVarHT)
-#      local metaModel = $(metaModel)
       local structuralChange = OMBackend.Runtime.StructuralChangeDynamicConnection($(flatModel.name),
                                                                                    false,
                                                                                    OMBackend.CodeGeneration.FLAT_MODEL,
@@ -373,7 +370,7 @@ end
 function createNewFlatModel(flatModel)
   local newFlatModel = OMFrontend.Main.FLAT_MODEL(flatModel.name,
                                                   flatModel.variables,
-                                                  flatModel.unresolvedConnectEquations,
+                                                  flatModel.unresolvedConnectEquations, #Why is this in two places?
                                                   flatModel.initialEquations,
                                                   flatModel.algorithms,
                                                   flatModel.initialAlgorithms,
@@ -383,11 +380,6 @@ function createNewFlatModel(flatModel)
                                                   flatModel.unresolvedConnectEquations,
                                                   flatModel.active_DOCC_Equations,
                                                   flatModel.comment)
-  println("Unresolved System:")
-  for e in newFlatModel.equations
-    println(OMFrontend.Main.toString(e))
-  end
-  println("********************************************************************")  
   return newFlatModel
 end
 

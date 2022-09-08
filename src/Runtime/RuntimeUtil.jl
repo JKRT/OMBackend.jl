@@ -1,8 +1,10 @@
 module RuntimeUtil
+
 import Absyn
 import SCode
 import OMFrontend
 import OMFrontend.Main.SCodeUtil
+import OMBackend
 
 using MetaModelica
 
@@ -159,13 +161,13 @@ function createNewFlatModel(flatModel,
                                nil,
                                Bool[], #= TODO: This equation might need to be changed. =#
                                flatModel.comment)
-  # println("Equations to Add:")
-  # println("********************************************************************")
-  # @debug length(newEquations)
-  # for e in newEquations
-  #   println(OMFrontend.Main.toString(e))
-  # end
-  # println("********************************************************************")
+  println("Adding equations")
+  println("********************************************************************")
+  @debug length(newEquations)
+  for e in newEquations
+    println(OMFrontend.Main.toString(e))
+  end
+  println("********************************************************************")
 
   # println("Existing equations:")
   # println("********************************************************************")
@@ -205,7 +207,7 @@ end
   This means that this flat model is a new flat model with the unbreakable branches removed.
 """
 function createNewFlatModel(flatModel,
-                            idx,
+                            idx::Int,
                             unresolvedEquations)
   local aDoccs = flatModel.active_DOCC_Equations
   aDoccs[idx] = false
@@ -222,18 +224,19 @@ function createNewFlatModel(flatModel,
                                flatModel.unresolvedConnectEquations,
                                aDoccs,
                                flatModel.comment)
+  println("Create new model")
   # println("********************************************************************")  
   # println("Existing equations:")
   # println("********************************************************************")
-  # @debug "Length of existing system:" length(flatModel.equations)
-  # for e in flatModel.equations
+  # @info "Length of OLD FLAT MODEL:" length(OMBackend.CodeGeneration.OLD_FLAT_MODEL.equations)
+  # for e in OMBackend.CodeGeneration.OLD_FLAT_MODEL.equations
   #   println(OMFrontend.Main.toString(e))
   # end
   
   # println("********************************************************************")
   # println("New System:")
   # println("********************************************************************")
-  # @debug "Length of new system:" length(newFlatModel.unresolvedConnectEquations)
+  # @info "Length of new system:" length(newFlatModel.unresolvedConnectEquations)
   # for e in newFlatModel.unresolvedConnectEquations
   #   println(OMFrontend.Main.toString(e))
   # end
@@ -247,7 +250,7 @@ function createNewFlatModel(flatModel,
   newFlatModel = OMFrontend.Main.evaluate(newFlatModel)
   newFlatModel = OMFrontend.Main.simplifyFlatModel(newFlatModel)
   # println("Final System")
-  # @debug "Length of final system:" length(newFlatModel.equations)
+  # @info "Length of final system:" length(newFlatModel.equations)
   # println("********************************************************************")
   # for e in newFlatModel.equations
   #   println(OMFrontend.Main.toString(e))
