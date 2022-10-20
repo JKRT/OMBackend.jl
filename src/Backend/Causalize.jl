@@ -92,55 +92,32 @@ function detectStatesEqSystem(syst::BDAE.EQSYSTEM)::BDAE.EQSYSTEM
 end
 
 """
-Author johti17:
-  Renames expanded array variables
-"""
-function replaceArrayVariables(syst::BDAE.EQSYSTEM, expandedVariables::Array)
-  syst = begin
-    local vars::BDAE.Variables
-    local eqs::Array
-    local arrayCrefs = Dict{String, Bool}([(i.varName.ident, false) for i in expandedVariables])
-    @match syst begin
-      BDAE.EQSYSTEM(name, vars, eqs, simpleEqs, initialEqs) => begin
-        for i in 1:length(eqs)
-          local eq = eqs[i]
-          (eq2, arrayCrefs) = BDAEUtil.traverseEquationExpressions(eq, detectArrayExpression, arrayCrefs)
-          if ! (eq === eq2)
-            @assign syst.orderedEqs[i] = eq2
-          end
-          @debug "arrayCrefs:" arrayCrefs
-        end
-        #= Append the new variables to the list of variables. Why is this commented out?=#
-#        local newVariables = collect(keys(arrayCrefs))
-#        local newEquations = collect(values(arrayCrefs))
-#        @assign syst.orderedEqs = vcat(syst.orderedEqs, newEquations)
-#        @assign syst.orderedVars.varArr = vcat(syst.orderedVars.varArr, newVariables)
-        syst
-      end
-    end
-  end
-  return syst
-end
-
-"""
 johti17:
-  Detects if equations.
+  Detects if-equations.
   Returns new temporary variables and an array of equations
 """
 function detectIfEquationsEqSystem(syst::BDAE.EQSYSTEM)::BDAE.EQSYSTEM
   syst = begin
     local vars::BDAE.Variables
     local eqs::Array
+    #= Tick is used to keep track of generated if-equations =#
+    local tick::Ref{Int} = 0
     local tmpVarToElement = Dict{BDAE.VAR, BDAE.IF_EQUATION}()
+    local tmpVarToElementAndTick = (tmpVarToElement, tick)
     @match syst begin
       BDAE.EQSYSTEM(__) => begin
         for i in 1:length(syst.orderedEqs)
           local eq = syst.orderedEqs[i]
-          (eq2, dictAndEQ) = BDAEUtil.traverseEquationExpressions(eq,replaceIfExpressionWithTmpVar, tmpVarToElement)
+          (eq2, _) = BDAEUtil.traverseEquationExpressions(eq, replaceIfExpressionWithTmpVar,
+                                                                  tmpVarToElementAndTick)
           if ! (eq === eq2)
+            @info "Assigning:"
+            @info string(eq2)
             @assign syst.orderedEqs[i] = eq2
           end
+          tick.x += 1
         end
+
         #= Append the new variables to the list of variables =#
         local newVariables = collect(keys(tmpVarToElement))
         local newEquations = collect(values(tmpVarToElement))
@@ -153,43 +130,42 @@ function detectIfEquationsEqSystem(syst::BDAE.EQSYSTEM)::BDAE.EQSYSTEM
   return syst
 end
 
-let
 """
   Detects if expression.
   We replace the if expression with our temporary variable.
   These variables are assigned in newly created if equations that we add to the tmpVarToElement::Dict.
-   We create the mapping:
+  We create the mapping:
   tmpVar -> equation it is assigned in
 """
-local tick = 0
-global function replaceIfExpressionWithTmpVar(exp::DAE.Exp, tmpVarToElement::Dict)
-    (newExp, cont, tmpVarToElement) = begin
-      #= All these temporary variables are REAL numbers for now =#
-      local varType = DAE.T_REAL_DEFAULT
-      local varName = "ifEq_tmp$tick"
-      local var::DAE.ComponentRef = DAE.CREF_IDENT(varName, varType, nil)
-      local emptySource = DAE.emptyElementSource
-      local attr = BDAE.EQ_ATTR_DEFAULT_UNKNOWN
-      @match exp begin
-        DAE.IFEXP(cond, expThen, expElse) => begin
-          local varAsCREF::DAE.CREF = DAE.CREF(var, varType)
-          local backendVar = BDAE.VAR(DAE.CREF_IDENT(varName, DAE.T_UNKNOWN_DEFAULT, nil),
-                                      BDAE.VARIABLE(), varType)
-          tmpVarToElement[backendVar] = BDAE.IF_EQUATION(list(cond),
-                                                         list(list(BDAE.EQUATION(varAsCREF, expThen, emptySource, attr))),
-                                                         list(BDAE.EQUATION(varAsCREF, expElse, emptySource, attr)),
-                                                         emptySource,
-                                                         BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
-          (varAsCREF, true, tmpVarToElement)
-        end
-        _ => begin
-          (exp, true, tmpVarToElement)
-        end
+function replaceIfExpressionWithTmpVar(exp::DAE.Exp, tmpVarToElementAndTick::Tuple{Dict, Ref{Int}})
+  (newExp, cont, tmpVarToElementAndTick) = begin
+    local tmpVarToElement::Dict = first(tmpVarToElementAndTick)
+    local tick::Ref{Int} = last(tmpVarToElementAndTick)
+    #= NOTE: All these temporary variables are asumed to be REAL numbers for now =#
+    local varType = DAE.T_REAL_DEFAULT
+    local varName = string("ifEq_tmp", tick.x)
+    local var::DAE.ComponentRef = DAE.CREF_IDENT(varName, varType, nil)
+    local emptySource = DAE.emptyElementSource
+    local attr = BDAE.EQ_ATTR_DEFAULT_UNKNOWN
+    @match exp begin
+      DAE.IFEXP(cond, expThen, expElse) => begin
+        local varAsCREF::DAE.CREF = DAE.CREF(var, varType)
+        local backendVar = BDAE.VAR(DAE.CREF_IDENT(varName, DAE.T_UNKNOWN_DEFAULT, nil),
+                                    BDAE.VARIABLE(), varType)
+        tmpVarToElement[backendVar] = BDAE.IF_EQUATION(list(cond),
+                                                       list(list(BDAE.EQUATION(varAsCREF, expThen, emptySource, attr))),
+                                                       list(BDAE.EQUATION(varAsCREF, expElse, emptySource, attr)),
+                                                       emptySource,
+                                                       BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
+        (varAsCREF, true, tmpVarToElementAndTick)
+      end
+      _ => begin
+        (exp, true, tmpVarToElementAndTick)
       end
     end
-    #= Note we replace the if expression with our temporary variable =#
-    return (newExp, cont, tmpVarToElement)
   end
+  #= Note we replace the if expression with our temporary variable =#
+  return (newExp, cont, tmpVarToElementAndTick)
 end
 
 """
@@ -204,7 +180,7 @@ function detectStateExpression(exp::DAE.Exp, stateCrefs::Dict{DAE.ComponentRef, 
     local state::DAE.ComponentRef
     @match exp begin
       DAE.CALL(Absyn.IDENT("der"), DAE.CREF(state) <| _ ) => begin
-        #= Add state with boolean value that does not matter, 
+        #= Add state with boolean value that does not matter,
         it is later only BDAE.BACKEND_DAE(eqs = eqs) checked if it exists at all  =#
         outCrefs[state] = true
         (outCrefs, true)
@@ -220,7 +196,7 @@ end
 
 """
   Detects if an expression is of type array.
-  If it is the case return that expression, 
+  If it is the case return that expression,
   else if it is not the case return the original exp.
 """
 function detectArrayExpression(exp::DAE.Exp, arrayCrefs::Dict{String, Bool})
@@ -241,16 +217,16 @@ function detectArrayExpression(exp::DAE.Exp, arrayCrefs::Dict{String, Bool})
           @debug "Did not replace the expression"
           exp
         end
-        (newExp, outCrefs, true)      
+        (newExp, outCrefs, true)
       end
       DAE.CALL(Absyn.IDENT("sum"),
                DAE.CREF(matchedComponentRef, ty) <| _ ) where typeof(matchedComponentRef.identType) == DAE.T_ARRAY => begin
                  @debug "We are in sum"
                  newExp = if haskey(arrayCrefs, matchedComponentRef.ident)
-                   local subscriptStr = BDAEUtil.getSubscriptAsUnicodeString(matchedComponentRef.subscriptLst)          
+                   local subscriptStr = BDAEUtil.getSubscriptAsUnicodeString(matchedComponentRef.subscriptLst)
                    local newName = matchedComponentRef.ident + subscriptStr
-                   local newCref = DAE.CREF_IDENT(newName, ty, nil)          
-                   @debug "Replaced the call "     
+                   local newCref = DAE.CREF_IDENT(newName, ty, nil)
+                   @debug "Replaced the call "
                    dimLen = listLength(ty.dims)
                    @assert(dimLen == 1)
                    len = listHead(ty.dims).integer
@@ -270,15 +246,15 @@ function detectArrayExpression(exp::DAE.Exp, arrayCrefs::Dict{String, Bool})
                    @debug "Did not replace the call expression"
                    exp
                  end
-                 (newExp, outCrefs, true)  
+                 (newExp, outCrefs, true)
                end
       DAE.CALL(Absyn.IDENT("product"),
                DAE.CREF(matchedComponentRef, ty) <| _ ) where typeof(matchedComponentRef.identType) == DAE.T_ARRAY => begin
                  @debug "We are in sum"
                  newExp = if haskey(arrayCrefs, matchedComponentRef.ident)
-                   local subscriptStr = BDAEUtil.getSubscriptAsUnicodeString(matchedComponentRef.subscriptLst)          
+                   local subscriptStr = BDAEUtil.getSubscriptAsUnicodeString(matchedComponentRef.subscriptLst)
                    local newName = matchedComponentRef.ident + subscriptStr
-                   local newCref = DAE.CREF_IDENT(newName, ty, nil)          
+                   local newCref = DAE.CREF_IDENT(newName, ty, nil)
                    @debug "Replaced the call "
                    dimLen = listLength(ty.dims)
                    @assert(dimLen == 1)
@@ -299,37 +275,37 @@ function detectArrayExpression(exp::DAE.Exp, arrayCrefs::Dict{String, Bool})
                    @debug "Did not replace the call expression"
                    exp
                  end
-                 (newExp, outCrefs, true)  
+                 (newExp, outCrefs, true)
                end
       DAE.CALL(Absyn.IDENT("exp"),
                DAE.CREF(matchedComponentRef, ty) <| _ ) where typeof(matchedComponentRef.identType) == DAE.T_ARRAY => begin
                  fail()
                  newExp = if haskey(arrayCrefs, matchedComponentRef.ident)
-                   local subscriptStr = BDAEUtil.getSubscriptAsUnicodeString(matchedComponentRef.subscriptLst)          
+                   local subscriptStr = BDAEUtil.getSubscriptAsUnicodeString(matchedComponentRef.subscriptLst)
                    local newName = matchedComponentRef.ident + subscriptStr
-                   local newCref = DAE.CREF_IDENT(newName, ty, nil)          
+                   local newCref = DAE.CREF_IDENT(newName, ty, nil)
                    @debug "Replaced the call expression"
                    DAE.CALL(exp.path, list(DAE.CREF(newCref, ty)), exp.attr)
                  else
                    @debug "Did not replace the call expression"
                    exp
                  end
-                 (newExp, outCrefs, true)  
+                 (newExp, outCrefs, true)
                end
       #= Any other call that contains an array should be replaced. =#
       DAE.CALL(Absyn.IDENT(__),
                DAE.CREF(matchedComponentRef, ty) <| _ ) where typeof(matchedComponentRef.identType) == DAE.T_ARRAY => begin
                  newExp = if haskey(arrayCrefs, matchedComponentRef.ident)
-                   local subscriptStr = BDAEUtil.getSubscriptAsUnicodeString(matchedComponentRef.subscriptLst)          
+                   local subscriptStr = BDAEUtil.getSubscriptAsUnicodeString(matchedComponentRef.subscriptLst)
                    local newName = matchedComponentRef.ident + subscriptStr
-                   local newCref = DAE.CREF_IDENT(newName, ty, nil)          
+                   local newCref = DAE.CREF_IDENT(newName, ty, nil)
                    @debug "Replaced the call expression"
                    DAE.CALL(exp.path, list(DAE.CREF(newCref, ty)), exp.attr)
                  else
                    @debug "Did not replace the call expression"
                    exp
                  end
-                 (newExp, outCrefs, true)  
+                 (newExp, outCrefs, true)
                end
       _ => begin
         (exp, outCrefs, true)
@@ -359,7 +335,7 @@ function updateStates(vars::Vector, stateCrefs::Dict{DAE.ComponentRef, Bool})
           varArr[i]
         end
       end
-    end      
+    end
     vars = varArr
   end
   return vars
@@ -414,8 +390,8 @@ end
 
 """
 johti17:
-  Expand variables in arrays. 
- if x = [x₁, x₂, x₃, x₄] is an array of 4 elements it is replaced by 
+  Expand variables in arrays.
+ if x = [x₁, x₂, x₃, x₄] is an array of 4 elements it is replaced by
   x₁, x₂, x₃, x₄.
  The new name for each component is <variable-name>_<index>
 """
@@ -460,7 +436,7 @@ function expandArrayVariables(bDAE::BDAE.BACKEND_DAE)::Tuple{BDAE.BACKEND_DAE, A
         #= Expanding v=#
         @debug "Expanding:" v
         @debug "Expanded into: $(newVarNames)"
-      end      
+      end
     end
   end
   #= Expanded variables =#

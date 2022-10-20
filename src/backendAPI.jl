@@ -1,4 +1,3 @@
-
 #=
 * This file is part of OpenModelica.
 *
@@ -79,7 +78,7 @@ function plotGraph(shouldPlot::Bool)
   global PLOT_EQUATION_GRAPH = shouldPlot
 end
 
-""" 
+"""
   MTK models
 """
 const COMPILED_MODELS_MTK = Dict()
@@ -93,12 +92,11 @@ function translate(frontendDAE::Union{DAE.DAE_LIST, OMFrontend.Main.FlatModel}; 
     @debug "Generate simulation code"
     simCode = generateSimulationCode(bDAE; mode = MTK_MODE)
     @debug "Simulation code generated"
-    #println(SimulationCode.dumpSimCode(simCode))
+    println(SimulationCode.dumpSimCode(simCode))
     return generateMTKTargetCode(simCode)
   else
     @error "No mode specificed: valid modes are:"
-    println("DAE_MODE")
-    println("ModelingToolkit_MODE")
+    println("MTK_MODE")
   end
 end
 
@@ -159,19 +157,16 @@ function lower(frontendDAE::OMFrontend.Main.FlatModel)
   @debug(BDAEUtil.stringHeading1(bDAE, "translated"));
   #= Expand arrays =#
   (bDAE, expandedVars) = Causalize.expandArrayVariables(bDAE)
-  @debug(BDAEUtil.stringHeading1(bDAE, "Array variables expanded"));
-  #= Expand Array variables in equation system=#
-  bDAE = Causalize.detectAndReplaceArrayVariables(bDAE, expandedVars)
-  @debug(BDAEUtil.stringHeading1(bDAE, "Equation system variables expanded"));
+  @info(BDAEUtil.stringHeading1(bDAE, "Array variables expanded"));
   #= Transform if expressions to if equations =#
-  @debug(BDAEUtil.stringHeading1(bDAE, "if equations transformed"));
+  @info(BDAEUtil.stringHeading1(bDAE, "If equations transformed"));
   bDAE = Causalize.detectIfExpressions(bDAE)
   #= Mark state variables =#
   bDAE = Causalize.detectStates(bDAE)
-  @debug(BDAEUtil.stringHeading1(bDAE, "states marked"));
+  @info(BDAEUtil.stringHeading1(bDAE, "States marked"));
   bDAE = Causalize.residualizeEveryEquation(bDAE)
-  #= =#
-  @debug(BDAEUtil.stringHeading1(bDAE, "residuals"));
+  #= Convert equations to residual form =#
+  @debug(BDAEUtil.stringHeading1(bDAE, "Residuals"));
   return bDAE
 end
 
@@ -238,7 +233,7 @@ end
 """
   Writes a model to file by default the file is formatted and comments are kept.
 """
-function writeModelToFile(modelName::String, filePath::String; keepComments = true, formatFile = true)
+function writeModelToFile(modelName::String, filePath::String; keepComments = true, keepBeginBlocks = keepBeginBlocks)
   model = getCompiledModel(modelName)
   try
     mAsStr = modelToString(modelName; MTK = true, keepComments = keepComments, keepBeginBlocks = keepBeginBlocks)
@@ -259,13 +254,13 @@ function writeStringToFile(fileName::String, contents::String)
 end
 
 """
-  Prints a model. 
+  Prints a model.
   If the specified model exists. Print it to stdout.
 """
 function printModel(modelName::String; MTK = true, keepComments = true, keepBeginBlocks = true)
   try
     println(modelToString(modelName::String; MTK = MTK, keepComments = keepComments, keepBeginBlocks = keepBeginBlocks))
-  catch e 
+  catch e
     @error "Model: $(modelName) is not compiled. Available models are: $(availableModels())"
     throw("Error printing model")
   end
@@ -285,13 +280,13 @@ function modelToString(modelName::String; MTK = true, keepComments = true, keepB
     end
     if keepBeginBlocks == false
       strippedModel = CodeGeneration.stripBeginBlocks(model)
-    end    
+    end
     local modelStr::String = "$strippedModel"
     formattedResults = JuliaFormatter.format_text(modelStr;
                                                   remove_extra_newlines = true,
                                                   always_use_return = false)
     return formattedResults
-  catch e 
+  catch e
     @error "Model: $(modelName) is not compiled. Available models are: $(availableModels())"
     throw("Error printing model")
   end
@@ -305,7 +300,7 @@ function availableModels()::String
   str = "Compiled models (MTK-MODE):\n"
     for m in keys(COMPILED_MODELS_MTK)
       str *= "  $m\n"
-    end  
+    end
   return str
 end
 
@@ -321,7 +316,7 @@ function simulateModel(modelName::String;
                        solver = :(Rodas5()))
   #= Strings containing . need to be in a format suitable for Julia =#
   modelName = replace(modelName, "." => "__")
-  local modelCode::Expr  
+  local modelCode::Expr
   if MODE == MTK_MODE
     #= This does a redundant string conversion for now due to modeling toolkit being as is...=#
     try
@@ -346,7 +341,7 @@ function simulateModel(modelName::String;
       In the following path OMBackend.<modelName>Simulate
       =#
     catch err
-      @info "Interactive evaluation failed with execption: $(typeof(err)) with mode: $(MODE)"
+      @info "Interactive evaluation failed with exception: $(typeof(err)) with mode: $(MODE)"
 #      println(modelCode)
       throw(err)
     end
@@ -375,7 +370,7 @@ function resimulateModel(modelName::String;
     return res
   catch #= The model is not compiled yet. Proceeding.. =#
     availModels = availableModels()
-    @error "The model $(modelName) is not compiled.\n Available models are: $(availModels)"        
+    @error "The model $(modelName) is not compiled.\n Available models are: $(availModels)"
   end
 end
 

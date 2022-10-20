@@ -158,7 +158,7 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
   #= The issue here is that the symbols might differ due to a change in the cref scheme =#
   local indicesOfCommonVariablesForStartingMode = getIndicesOfCommonVariables(symsOfInitialMode, commonVariableSet; destinationPrefix = activeModeName)
   #= Create integrator =#
-  integrator = init(problem, alg, dtmax = 0.01, kwargs...)
+  integrator = init(problem, alg, kwargs...)
   #@info "Value of tspan[2]" tspan[2]
   add_tstop!(integrator, tspan[2])
   local oldSols = []
@@ -182,8 +182,7 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
                           alg;
                           #                         t0 = i.t,
                           #                          u0 = newU0,
-                          dt = 0.01,
-                          dtmax = 0.01,
+                          dt = 0.0000000001,
                           #                          tstart = tspan[1],
                           #                          tstop = tspan[2],
                           kwargs...)
@@ -205,6 +204,7 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
   return oldSols
 end
 
+global SHOULD_DO_REINITIALIZATION = false
 
 """
   Custom solver function for Modelica code with structuralCallbacks to monitor the solving process
@@ -215,28 +215,19 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
   local structuralCallbacks = omProblem.structuralCallbacks
   local callbackConditions = omProblem.callbackConditions
   local activeModeName = omProblem.activeModeName
-  local integrator = init(problem, alg, dtmax = 0.001, kwargs...)
+  local integrator = init(problem, alg, kwargs...)
   local oldSols = []
   local solutions = []
   #= Run the integrator=#
   @label START_OF_INTEGRATION
   while true
     local i = integrator
-    local triggered = false
-    for j in 1:length(structuralCallbacks)
-      local cb = structuralCallbacks[j]
-      triggered = triggered || cb.structureChanged
-    end
     if i.t + i.dt >= tspan[2]
-      @info "Goodbye Gunilla"
+      @info "Ending simulation"
       Base.invokelatest(solve!, i)
       break
-    end
-    if ! triggered
-      @info "taking a step"
-      Base.invokelatest(step!, i, true)
-    end
-    @info "Integration step:" i.t
+    end    
+    @info "Integration step was" i.t
     @info "dt was:" i.dt
     #= Check structural callbacks in order =#
     retCode = check_error(integrator)
@@ -246,44 +237,96 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
         @info "Callback triggered at:" integrator.t
         #= Recompile the system =#
         local oldHT = cb.stringToSimVarHT
-        @time (newProblem, newSymbolTable, initialValues, sc) = recompilation(cb.name, cb, integrator.u, tspan, callbackConditions)
-        #= End recompilation =#
-        #= Assuming the indices are the same (Which is not always true) =#
+        local newU0
+        if ! SHOULD_DO_REINITIALIZATION
+          @time (newProblem, newSymbolTable, initialValues, sc) = recompilation(cb.name, cb, integrator.u, tspan, callbackConditions)
+          #= Assuming the indices are the same (Which is not always true) =#
         local symsOfOldProblem = getSyms(problem)
         local symsOfNewProlem = getSyms(newProblem)
-        local newU0 = RuntimeUtil.createNewU0(symsOfOldProblem,
+          newU0 = RuntimeUtil.createNewU0(symsOfOldProblem,
                                               symsOfNewProlem,
                                               newSymbolTable,
                                               initialValues,
                                               integrator,
                                               sc)
-        @info "We have a new u0" newU0
         #= Save the old solution together with the name and the mode that was active =#
         push!(solutions, integrator.sol)
         push!(oldSols, (integrator.sol, getSyms(problem), activeModeName))
-        @info "Solution saved. Making a new integrator"
         #= Now we have the start values for the next part of the system=#
         integrator = init(newProblem,
                           alg;
-                          dtmax = 0.001,
                           kwargs...)
-        @info "New integrator constructed"
+          reinit!(integrator,
+                newU0;
+                  t0 = i.t - i.dt,
+                  reset_dt = true)
+        else
+          @time (rootIndices, variablesToSetIdx) = reinit(cb.name, cb, integrator.u, tspan, problem)
+          local newU0 = Float64[v for v in integrator.u]
+          #= Start by setting the root variables =#
+          rootIdx1 = first(cb.stringToSimVarHT["G1_omega"])
+          @info "Root idx 1" rootIdx1
+          rootIdx2 = first(cb.stringToSimVarHT["G2_omega"])
+          @info "Root idx 2" rootIdx2
+          integrator.u[20] = integrator.u[2]
+          integrator.u[23] = integrator.u[4]
+          #= End  =#
+          integrator.u[21] = integrator.u[4]
+          integrator.u[22] = integrator.u[4]
+          #=First omega=#
+          integrator.u[19] = integrator.u[4]
+          integrator.u[40] = integrator.u[4]
+          integrator.u[39] = integrator.u[4]
+          integrator.u[38] = integrator.u[4]
+          integrator.u[77] = integrator.u[4]
+          integrator.u[18] = integrator.u[4]
+          push!(solutions, integrator.sol)
+          push!(oldSols, (integrator.sol, getSyms(problem), activeModeName))
+          oldEquations = equations(OMBackend.LATEST_REDUCED_SYSTEM)
+          newEquations = Symbolics.Equation[]
+          local stateVars = states(OMBackend.LATEST_REDUCED_SYSTEM)
+          for eq in oldEquations
+            push!(newEquations, eq)
+          end
+          @info "New equations at 58" newEquations[58]
+          newEquations[58] = ~(0, stateVars[4] - stateVars[23])
+          @info "New equations at 58" newEquations[58]
+          @time newSystem = ODESystem(newEquations,
+                                independent_variable(OMBackend.LATEST_REDUCED_SYSTEM),
+                                stateVars,
+                                parameters(OMBackend.LATEST_REDUCED_SYSTEM);
+                                name = Symbol(cb.name))
+          @time newProblem = ModelingToolkit.ODEProblem(
+            newSystem,
+            newU0,
+            tspan,
+            problem.p,
+            #=
+            TODO currently only handles a single structural callback.
+            =#
+            callback = callbackConditions #Should be changed look at method below
+          )
+          
+          @time integrator = init(newProblem,
+                                  alg;
+                                  kwargs...)
+          @time reinit!(integrator,
+                        newU0;
+                        t0 = i.t,
+                        reset_dt = true)
+          
+        end
+        #= End recompilation =#
         #=
           Reset with the new values of u0
           and set the active mode to the mode we are currently using.
         =#
-        @info "Reinit! at: $(i.t). Δt:$(i.dt). Difference between them is: $(i.t - i.dt)"
-        activeModeName = cb.name
-        reinit!(integrator,
-                newU0;
-                t0 = i.t,
-                reset_dt = true)
-        @info "Reinit done"
         #= Point the problem to the new problem =#
         problem = newProblem
         #= Note that the structural event might be triggered again here (We kill it later) =#
         @info "Stepping... at $(integrator.t)"
         Base.invokelatest(step!, integrator, true)
+        #step!(integrator, true)
         @info "After step"
         #=
          We reset the structural change pointer again here just to make sure
@@ -292,10 +335,12 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
         cb.structureChanged = false
         #= goto to save preformance =#
         @debug "Reset!"
-        global INTEGRATOR = integrator
         @goto START_OF_INTEGRATION
       end
     end
+    @info "taking a step"
+    Base.invokelatest(step!, i, true)
+    #step!(integrator, true)
   end
   push!(solutions, integrator.sol)
   return solutions
@@ -394,8 +439,8 @@ function recompilation(activeModeName,
   local modelName = string(model, "Model")
   #local result = OMBackend.modelToString(model; MTK = true, keepComments = false, keepBeginBlocks = false)
   println("Hello Gunilla!\n");
-  resultingModel = CodeGeneration.stripComments(resultingModel)
-  resultingModel = CodeGeneration.stripBeginBlocks(resultingModel)
+  resultingModel = OMBackend.CodeGeneration.stripComments(resultingModel)
+  resultingModel = OMBackend.CodeGeneration.stripBeginBlocks(resultingModel)
   result = "$resultingModel"
   @eval $(resultingModel)
   OMBackend.writeStringToFile(string("modfied", modelName * ".jl"), result)
@@ -406,12 +451,48 @@ function recompilation(activeModeName,
   end
   (problem, callbacks, initialValues, reducedSystem, tspan, pars, vars) = @eval $(modelCall)
   @debug "We have a new problem..."
-  global PROBLEM = first(result)
+  #global PROBLEM = problem
+  #global REDUCED_SYSTEM = reducedSystem
   #= Update meta model somehow=#
   return (problem,
           simulationCode.stringToSimVarHT,
           problem.u0,
           true)
+end
+
+"""
+  Reinit instead of recompilation for dynamically overconstrained connectors
+"""
+function reinit(activeModeName,
+                structuralCallback::StructuralChangeDynamicConnection,
+                integrator_u,
+                tspan,
+                callbackConditions)
+  @info "recompilation"
+  local flatModel = OMBackend.CodeGeneration.FLAT_MODEL
+  local variablestoReset = RuntimeUtil.resolveDOOCConnections(flatModel, flatModel.name)
+  @info variablestoReset
+  local rootVariables = keys(variablestoReset)
+  @info "Root variables" rootVariables
+  local ht = structuralCallback.stringToSimVarHT
+  rootIndices = Int[]
+  variablesToSet = []
+  variablesToSetIdx = Vector{Int}[]
+  for v in rootVariables
+    indexOfRoot = first(ht[v])
+    @info "Index of $(v) was:" indexOfRoot
+    push!(rootIndices, indexOfRoot)
+    push!(variablesToSet, values(variablestoReset[v]))
+  end
+  for variables in variablesToSet
+    tmp = Int[]
+    for v in variables
+      idx = first(ht[v])
+      push!(tmp, idx)
+    end
+    push!(variablesToSetIdx, tmp)
+  end
+  return (rootIndices, variablesToSetIdx)
 end
 
 """

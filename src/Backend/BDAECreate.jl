@@ -86,12 +86,21 @@ end
 function lower(flatModelica::OMFrontend.Main.FlatModel)
   #= Creates a list of flat equation systems =#
   local eqSystems = createEqSystems(flatModelica)
-  local shared = BDAE.SHARED([],
-                             [],
-                             flatModelica.scodeProgram,
-                             SOME(flatModelica),
-                             createStructuralIfEquations(flatModelica.DOCC_equations))
-  #= The resulting backend DAE. =#
+  local shared
+  if ! listEmpty(flatModelica.DOCC_equations)
+    shared = BDAE.SHARED([],
+                         [],
+                         flatModelica.scodeProgram,
+                         SOME(flatModelica),
+                         createStructuralIfEquations(flatModelica.DOCC_equations))
+  else
+    shared = BDAE.SHARED([],
+                         [],
+                         flatModelica.scodeProgram,
+                         NONE(),
+                         [])
+  end
+    #= The resulting backend DAE. =#
   return createBackendDAE(flatModelica.name, eqSystems, shared)
 end
 
@@ -134,7 +143,7 @@ function createEqSystem(flatModel::OMFrontend.Main.FlatModel)
   local equations = [equationToBackendEquation(eq)
                      for eq in OMFrontend.Main.convertEquations(flatModel.equations)]
   local variables = [variableToBackendVariable(var)
-                     for var in OMFrontend.Main.convertVariables(flatModel.variables, list())] 
+                     for var in OMFrontend.Main.convertVariables(flatModel.variables, list())]
   local algorithms = [alg for alg in flatModel.algorithms]
   local iAlgorithms = [iAlg for iAlg in flatModel.initialAlgorithms]
   local initialEquations = [equationToBackendEquation(ieq)
@@ -164,7 +173,7 @@ function convertVariableIntoBDAEVariable(var::OMFrontend.Main.Variable)
 end
 
 
-                    
+
 """
   Splits a given DAE.DAEList and converts it into a set of BDAE equations and BDAE variables.
   In addition provides the initial equations for the system.
@@ -216,7 +225,7 @@ function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple{List, List,
         DAE.COMP(__) => begin
           variableLst,equationLst,initialEquationLst = splitEquationsAndVars(elem.dAElist)
         end
-        DAE.NORETCALL(DAE.CALL(Absyn.IDENT("branch"), args)) => begin          
+        DAE.NORETCALL(DAE.CALL(Absyn.IDENT("branch"), args)) => begin
           @info "Matched the branch"
           @match arg1 <| arg2 <| nil = args
           equationLst = BDAE.BRANCH(arg1, arg2) <| equationLst
@@ -260,11 +269,11 @@ function equationToBackendEquation(elem::DAE.Element)
     DAE.NORETCALL(DAE.CALL(path, expLst)) => begin
       #=
       Currently there are two options here.
-      Either we have an initialStructuralState 
+      Either we have an initialStructuralState
       or we have some transisiton between structural some states.
       =#
       res = @match path begin
-        Absyn.IDENT("initialStructuralState") => begin          
+        Absyn.IDENT("initialStructuralState") => begin
           BDAE.INITIAL_STRUCTURAL_STATE(string(listHead(expLst)))
         end
         Absyn.IDENT("structuralTransition") => begin
@@ -281,9 +290,9 @@ function equationToBackendEquation(elem::DAE.Element)
       res
     end
     DAE.ASSERT(__) => begin
-      #=TODO: Currently skipping assert.. Just return the list of equations.. =# 
+      #=TODO: Currently skipping assert.. Just return the list of equations.. =#
       BDAE.DUMMY_EQUATION()
-    end      
+    end
     _ => begin
       @error "Skipped processing" elem
       throw("Unsupported equation: $elem")
@@ -412,7 +421,7 @@ function lowerIfEquation(eq::IF_EQ) where {IF_EQ}
                          BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
   return res
 end
-  
+
 """
   Create binding equations.
   See: https://specification.modelica.org/master/equations.html
@@ -447,7 +456,7 @@ function createBindingEquations(variables::Vector)
                    local weq = BDAE.WHEN_EQUATION(1, stmts, v.source, nothing)
                    push!(bindingEqs, weq)
                  end
-               end            
+               end
       _ => begin
         continue
       end

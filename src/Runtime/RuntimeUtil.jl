@@ -1,10 +1,14 @@
 module RuntimeUtil
 
 import Absyn
-import SCode
-import OMFrontend
-import OMFrontend.Main.SCodeUtil
+import ListUtil
 import OMBackend
+import OMFrontend
+import OMFrontend.Main
+import OMFrontend.Main.SCodeUtil
+import OMFrontend.Main.Util
+import SCode
+import OMBackend.SimulationCode
 
 using MetaModelica
 
@@ -225,6 +229,7 @@ function createNewFlatModel(flatModel,
                                aDoccs,
                                flatModel.comment)
   println("Create new model")
+  local variablestoReset = resolveDOOCConnections(flatModel, flatModel.name)
   # println("********************************************************************")  
   # println("Existing equations:")
   # println("********************************************************************")
@@ -259,4 +264,48 @@ function createNewFlatModel(flatModel,
   return newFlatModel
 end
 
-end #= RuntimeUtil =#
+"""
+  Resolves the system at the time of the structural change. 
+"""
+function resolveDOOCConnections(flatModel, name)
+  #= Get the relevant OCC graph =#
+  local (searchGraph, rootVariables) = SimulationCode.getOCCGraph(flatModel)
+  local pathsForRoots = Dict{String, Vector{String}}()
+  for rv in rootVariables
+    p = findPath(searchGraph, rv)
+    pathsForRoots[OMFrontend.Main.toString(rv)] = p
+  end
+  for key in keys(pathsForRoots)
+    println("Assignments for $(key):")
+    vars = pathsForRoots[key]
+    for v in vars
+      println("$(v) := $(key)")
+    end
+  end
+  return pathsForRoots
+end
+
+
+"""
+DFS:
+  Finds the path for a root variable passed as inV
+"""
+function findPath(g::Dict{String, Vector{String}}, inV)
+  local v = OMFrontend.Main.toString(inV)
+  local S = String[]
+  local discovered = String[] #= Should ideally be int instead=#
+  push!(S, v)
+  while  !isempty(S)
+    local v = pop!(S)
+    if ! (v in discovered)
+      push!(discovered, v)
+      neighbours = g[v]
+      for n in neighbours
+        push!(S, n)
+      end
+    end
+  end
+  return discovered[2:end]
+end
+
+end

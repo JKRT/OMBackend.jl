@@ -29,14 +29,11 @@ let CALLBACKS = 0
   end
 end
 
-
 """
   Creates runnable code for the different callbacks.
   By default a saving function is generated.
   This function can be disabled by setting the named argument
   generateSaveFunction to false.
-TODO:
-Deprecated generation of if-equations for MTK.
 """
 function createCallbackCode(modelName::N, simCode::S; generateSaveFunction = true) where {N, S}
   local WHEN_EQUATIONS = createEquations(simCode.whenEquations, simCode)
@@ -337,7 +334,6 @@ function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arr
           end
           @info "t + dt = " t
           if (Bool($(expToJuliaExp(wEq.condition, simCode))))
-            @info "Hello condition"
             $(whenStmts...)
           end
         end
@@ -356,7 +352,7 @@ function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arr
         Bool($(expToJuliaExp(cond, simCode)))
       end
     $(Symbol("affect$(callbacks)!")) = (integrator) -> begin
-      @info "Calling affect for discrete at $(integrator.t)"
+      @info "Calling affect for discrete at $(integrator.t). Condition was:"
       @info "Δt was:" integrator.dt
       @info "Value of x is:" integrator.u
       local t = integrator.t

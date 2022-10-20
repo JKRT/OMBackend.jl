@@ -18,14 +18,25 @@ struct  STATE_DERIVATIVE <: SimVarType
 end
 
 """
-Algebraic variable
+Algebraic variable.
+Has a sort idx for backend algorithms,
+this is different from the final idx used in code generation.
+The purpose of the sort index is for initial structural analysis before code generation.
 """
-struct ALG_VARIABLE <: SimVarType end
+struct ALG_VARIABLE <: SimVarType
+  sortIdx::Int
+end
 
 """
 Input variable
 """
 struct  INPUT <: SimVarType end
+
+"
+  A special state variable, used for dynamic overconstrained connectors.
+  In pratice this variable is treated as state.
+"
+struct OCC_VARIABLE <: SimVarType end
 
 """
 Parameter variable

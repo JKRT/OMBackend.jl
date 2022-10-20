@@ -235,7 +235,7 @@ function Base.string(@nospecialize(eq::BDAE.Equation))
             strTmp *= string(teq)
           end
           counter += 1
-        end        
+        end
         strTmp += "else\n"
         for feq in ifEq.eqnsfalse
           strTmp += string(feq)
@@ -291,8 +291,8 @@ function Base.string(whenOp::BDAE.WhenOperator)::String
   end
 end
 
-""" 
-  `Base.string(cr::DAE.ComponentRef; seprator=".")` 
+"""
+  `Base.string(cr::DAE.ComponentRef; seprator=".")`
    Converts a `DAE.ComponentRef` to a Julia string.
    TODO: Discuss separators. A different one should maybe be used..
 """
@@ -446,7 +446,7 @@ function Base.string(exp::DAE.Exp)::String
       end
 
       DAE.IFEXP(expCond = e1, expThen = e2, expElse = e3) => begin
-        (string(e1) + " " + string(e2) + " " + string(e3))
+        ("IF_EXPRESSION: " + string(e1) + " " + string(e2) + " " + string(e3))
       end
 
       DAE.CALL(path = Absyn.IDENT(tmpStr), expLst = expl)  => begin
@@ -583,7 +583,7 @@ function Base.string(ss::Cons{DAE.Subscript})::String
 end
 
 function Base.string(idx::DAE.INDEX)::String
-  local str = string(idx.exp)    
+  local str = string(idx.exp)
   return str
 end
 

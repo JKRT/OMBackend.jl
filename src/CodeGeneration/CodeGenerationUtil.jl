@@ -593,6 +593,10 @@ function expToJuliaExpMTK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuf
               $(LineNumberNode(@__LINE__, "$varName, discrete"))
               $(Symbol(indexAndVar[2].name))
             end
+            SimulationCode.OCC_VARIABLE(__) => quote
+              $(LineNumberNode(@__LINE__, "$varName, occ variable"))
+              $(Symbol(indexAndVar[2].name))
+            end
             _ => begin
               @error "Unsupported varKind: $(varKind)"
               fail()
@@ -653,13 +657,13 @@ end
 
 """
   If the system needs to conduct index reduction make sure to inform MTK.
-TODO: We always do index reduction now...
+(We avoid structurally simplify for now since that might interfer with some other algorithms)
 """
 function performStructuralSimplify(simplify)::Expr
   if (simplify)
-    :(reducedSystem = ModelingToolkit.structural_simplify(ModelingToolkit.dae_index_lowering(firstOrderSystem)))
+    :(reducedSystem = ModelingToolkit.structural_simplify(firstOrderSystem; simplify = false, allow_parameter=true))#ModelingToolkit.dae_index_lowering(firstOrderSystem))
   else
-    :(reducedSystem = ModelingToolkit.structural_simplify(firstOrderSystem; simplify = false, allow_parameter=true))
+    :(reducedSystem = firstOrderSystem)#ModelingToolkit.structural_simplify(firstOrderSystem; simplify = false, allow_parameter=true))
   end
 end
 

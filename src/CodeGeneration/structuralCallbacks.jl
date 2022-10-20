@@ -91,7 +91,7 @@ function createStructuralCallback(simCode,
     import OMBackend.CodeGeneration
     function $(Symbol(callbackName))()
       #= Represent structural change. =#
-      local stringToSimVarHT = Dict() #$(simCode.stringToSimVarHT)
+      local stringToSimVarHT = $(simCode.stringToSimVarHT)
       local structuralChange = OMBackend.Runtime.StructuralChangeDynamicConnection($(flatModel.name),
                                                                                    false,
                                                                                    OMBackend.CodeGeneration.FLAT_MODEL,
@@ -402,6 +402,7 @@ function createAffectCondPairForDOCC(cond,
         $(expToJuliaExp(cond, simCode)) = false
         auto_dt_reset!(integrator)
         add_tstop!(integrator, integrator.t + 1E-12 #= Some small number =#)
+        set_!(integrator, t)
       end
       function condition(x, t, integrator)
         return Bool($(expToJuliaExp(cond, simCode)))

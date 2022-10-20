@@ -95,6 +95,7 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
     function $(Symbol(MODEL_NAME * "Model"))(tspan = (0.0, 1.0))
       #=  Assign the initial model  =#
       (subModel, callbacks, initialValues, reducedSystem, _, pars, vars1) = $(Symbol(activeModelName  * "Model"))(tspan)
+      global LATEST_REDUCED_SYSTEM = reducedSystem
       #= Assign the structural callbacks =#
       $(structuralAssignments)
       $(commonVariables)
@@ -167,14 +168,22 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
   local stateVariables::Vector = String[]
   local algebraicVariables::Vector = String[]
   local discreteVariables::Vector = String[]
+  local occVariables::Vector = String[]
+  local occDummyVariables::Vector = String[]
   local performIndexReduction = false
   for varName in keys(stringToSimVarHT)
     (idx, var) = stringToSimVarHT[varName]
     local varType = var.varKind
-    local varType = var.varKind
     @match varType  begin
-      SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
+      SimulationCode.INPUT(__) => begin
+        @error "INPUT not supported in CodeGen"
+        throw()
+      end
       SimulationCode.STATE(__) => push!(stateVariables, varName)
+      SimulationCode.OCC_VARIABLE(__) => begin
+        push!(occVariables, varName)
+        #push!(occDummyVariables, "dummy" * varName)
+      end
       SimulationCode.PARAMETER(__) => push!(parameters, varName)
       SimulationCode.DISCRETE(__) => push!(discreteVariables, varName)
       SimulationCode.ALG_VARIABLE(__) => begin
@@ -183,7 +192,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
         =#
         if idx in simCode.matchOrder
           push!(algebraicVariables, varName)
-        elseif involvedInEvent(idx, simCode) #= We have a variable that is not contained in continious system =#
+        elseif involvedInEvent(idx, simCode) #= We have a variable that is not contained in continuous system =#
           #= Treat discrete variables separate =#
           push!(discreteVariables, varName)
         elseif simCode.isSingular
@@ -193,22 +202,33 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
           This means that the variable is probably algebraic however, we need to perform index reduction.
           =#
           push!(algebraicVariables, varName)
+        else # The system is singular but it was not detected by the backend...
+          @assign simCode.isSingular = true
+          push!(algebraicVariables, varName)
         end
       end
       #=TODO:johti17 Do I need to modify this?=#
       SimulationCode.STATE_DERIVATIVE(__) => push!(stateDerivatives, varName)
     end
   end
-  performIndexReduction = simCode.isSingular
+  @info "Length of Algebraic variables:" length(algebraicVariables)
+  @info "Length of States:" length(stateVariables)
+  @info "Length of Discrete variables" length(discreteVariables)
+  @info "Length of OCC variables" length(occVariables)
+  local performIndexReduction = simCode.isSingular
+  @info "System needs index reduction?" performIndexReduction
   #= Create equations for variables not in a loop + parameters and stuff=#
   local EQUATIONS = createResidualEquationsMTK(stateVariables,
                                                algebraicVariables,
                                                simCode.residualEquations,
                                                simCode::SimulationCode.SIM_CODE)
   local parVariablesSym = [Symbol(p) for p in parameters]
-  local START_CONDTIONS_EQUATIONS = createStartConditionsEquationsMTK(stateVariables, algebraicVariables, simCode)
+  #=If missing from variable map error is thrown check the start condition. =#
+  local START_CONDTIONS_EQUATIONS = createStartConditionsEquationsMTK(vcat(stateVariables, occVariables),
+                                                                      algebraicVariables,
+                                                                      simCode)
   local DISCRETE_START_VALUES = vcat(generateInitialEquations(simCode.initialEquations, simCode; parameterAssignment = true),
-                                   getStartConditionsMTK(discreteVariables, simCode))
+                                     getStartConditionsMTK(discreteVariables, simCode))
 
   local PARAMETER_EQUATIONS = createParameterEquationsMTK(parameters, simCode)
   local PARAMETER_ASSIGNMENTS = createParameterAssignmentsMTK(parameters, simCode)
@@ -223,8 +243,13 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
   local stateVariablesSym = [:($(Symbol(v))(t)) for v in stateVariables]
   local algebraicVariablesSym = [:($(Symbol(v))(t)) for v in algebraicVariables]
   local discreteVariablesSym = [:($(Symbol(v))(t)) for v in discreteVariables]
+  local occVariablesSym = [:($(Symbol(v))(t)) for v in occVariables]
+
   #=Preprocess the component of the if equations =#
   local DISCRETE_DUMMY_EQUATIONS = [:(der($(Symbol(dv))) ~ 0) for dv in discreteVariables]
+  #= Code for OCC dummy quations =#
+  #local OCC_DUMMY_EQUATIONS = [:(der($(Symbol("dummy" * occv))) ~ 0) for occv in occVariables]
+  #= Create assignments for the dummies. =#
   local IF_EQUATION_EVENTS = [component[1] for component in IF_EQUATION_COMPONENTS]
   local IF_EQUATION_EVENT_DECLARATION = if isempty(IF_EQUATION_EVENTS)
     :(events = [])
@@ -232,24 +257,35 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
     :(events = $(IF_EQUATION_EVENTS...))
   end
   local CONDITIONAL_EQUATIONS = collect(Iterators.flatten([component[2] for component in IF_EQUATION_COMPONENTS]))
-  @info "CONDITIONAL_EQUATIONS" CONDITIONAL_EQUATIONS
   local ifConditionNameAndIV = collect(Iterators.flatten([component[5] for component in IF_EQUATION_COMPONENTS]))
   local ifConditionalVariables = collect(Iterators.flatten([component[4] for component in IF_EQUATION_COMPONENTS]))
   local ZERO_DYNAMICS_COND_EQUATIONS = collect(Iterators.flatten([component[3] for component in IF_EQUATION_COMPONENTS]))
-  #= Expand the start conditions with initial equations for the zero dynamic equations for the conditional equations =#  
+  #= Expand the start conditions with initial equations for the zero dynamic equations for the conditional equations =#
   local ifConditionalStartEquations = [:($(Symbol(first(v))) => $(last(v))) for v in ifConditionNameAndIV]
-  START_CONDTIONS_EQUATIONS = vcat(ifConditionalStartEquations, DISCRETE_START_VALUES, START_CONDTIONS_EQUATIONS)
+  START_CONDTIONS_EQUATIONS = vcat(ifConditionalStartEquations,
+                                   DISCRETE_START_VALUES,
+                                   START_CONDTIONS_EQUATIONS)
   #=
     Merge the ifConditional components into the rest of the system and merge the state conditionals with the sates
   =#
-  stateVariablesSym = vcat(ifConditionalVariables, discreteVariablesSym, stateVariablesSym)
-  EQUATIONS = vcat(EQUATIONS, DISCRETE_DUMMY_EQUATIONS, ZERO_DYNAMICS_COND_EQUATIONS, CONDITIONAL_EQUATIONS)
+  stateVariablesSym = vcat(ifConditionalVariables,
+                           discreteVariablesSym,
+                           stateVariablesSym,
+                           occVariablesSym)
+  EQUATIONS = vcat(EQUATIONS,
+                   DISCRETE_DUMMY_EQUATIONS,
+                   ZERO_DYNAMICS_COND_EQUATIONS,
+                   CONDITIONAL_EQUATIONS)
   EQUATIONS = rewriteEquations(EQUATIONS,
                                t,
                                vcat(stateVariablesSym, algebraicVariablesSym),
                                parVariablesSym)
   #= Reset the callback counter=#
   RESET_CALLBACKS()
+  @info "Length EQUATIONS:" length(EQUATIONS)
+  @info "Length state variables" length(stateVariablesSym)
+  @info "Length algebraic variables" length(algebraicVariablesSym)
+  @info "Length discrete variables" length(discreteVariables)
   #=
     Formulate the problem as a DAE Problem.
     For this variant we keep it on its own line
@@ -264,7 +300,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
       D = ModelingToolkit.Differential(t)
       parameters = ModelingToolkit.@parameters begin
         ($(parVariablesSym...))
-      end   
+      end
       #=
         Only variables that are present in the equation system later should be a part of the variables in the MTK system.
         This means that certain algebraic variables should not be listed among the variables (These are the discrete variables).
@@ -311,7 +347,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
       aux[3] = reducedSystem
       #=
        This array is used to help indexing state/discrete variables.
-       It maps the index given by OMBackend to the actual index in the states. 
+       It maps the index given by OMBackend to the actual index in the states.
        A[i] = <true_index>
       =#
       callbacks = $(Symbol("$(MODEL_NAME)CallbackSet"))(aux)
@@ -487,7 +523,7 @@ end
 This function creates symbolic if equations for use in MTK.
 The function returns a tuple, where the first part of the tuple represent the conditions and the affect of the if-equation on the form:
   continuous_events = [
-    <Condtion> => <affect> 
+    <Condtion> => <affect>
     <Condtion> => <affect>
     ....
   ]
@@ -522,7 +558,7 @@ One for each conditional variable created.
 """
 function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCode.IF_EQUATION, identifier, simCode)
   local result::Tuple{Expr, Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Tuple}}
-  
+
   generateAffects(n, nConditions, condRes) = begin
     #=
       The cond res is what we are going to evaluate it to.
@@ -530,7 +566,7 @@ function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCo
     local exprs = Expr[]
     local e
     for i in 1:nConditions
-      e = if i == n 
+      e = if i == n
         :($(Symbol(("ifCond$(i)"))) ~ $(condRes))
       else
         :($(Symbol(("ifCond$(i)"))) ~ $(!condRes))
@@ -539,7 +575,7 @@ function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCo
     end
     return exprs
   end
-  
+
   local i::Int = 0
   local nBranches::Int = length(ifEq.branches)
   local conditions = Expr[]
@@ -575,7 +611,7 @@ function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCo
                                                                            identifier,
                                                                            simCode))))
   end
-    
+
   #= Generate zero dynamic equations for the conditions =#
   conditionEquations = Expr[]
   conditionVariables = Expr[]

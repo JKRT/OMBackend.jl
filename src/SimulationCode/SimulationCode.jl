@@ -44,11 +44,14 @@ using ..FrontendUtil
 using ..Backend
 
 import DAE
+import Graphs
+import MetaGraphs
+import OMFrontend
+
 import ..OMBackend
 import ..Backend.BDAE
 import ..BackendUtil.GraphAlgorithms
-import Graphs
-import MetaGraphs
+
 
 include("simCodeData.jl")
 include("simCodeUtil.jl")

@@ -33,7 +33,7 @@ function bDAEVarKindToSimCodeVarKind(backendVar::BDAE.VAR)::SimulationCode.SimVa
   varKind = @match (backendVar.varKind, backendVar.varType) begin
     (BDAE.STATE(__), _) => SimulationCode.STATE()
     (BDAE.PARAM(__) || BDAE.CONST(__), _) => SimulationCode.PARAMETER(backendVar.bindExp)
-    (BDAE.VARIABLE(__), DAE.T_REAL(__)) => SimulationCode.ALG_VARIABLE()
+    (BDAE.VARIABLE(__), DAE.T_REAL(__)) => SimulationCode.ALG_VARIABLE(0)
     #= And no of the other cases above. =#
     (BDAE.DISCRETE(__), _) => SimulationCode.DISCRETE()
     (_, DAE.T_INTEGER(__) || DAE.T_BOOL(__)) => SimulationCode.DISCRETE()
@@ -43,7 +43,7 @@ end
 
 """
 `BDAE_identifierToVarString(backendVar::BDAE.VAR)`
-Converts a `BDAE.VAR` to a simcode string, for use in variable names. 
+Converts a `BDAE.VAR` to a simcode string, for use in variable names.
 The . separator is replaced with 3 `_`
 """
 function BDAE_identifierToVarString(backendVar::BDAE.VAR)
@@ -67,11 +67,11 @@ end
 function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode)::SimulationCode.SIM_CODE
   #=  Fech the main equation system. =#
   @match [equationSystem, auxEquationSystems...] = equationSystems
-  #= Fetch the different components of the model.=#  
+  #= Fetch the different components of the model.=#
   local allOrderedVars::Vector{BDAE.VAR} = [v  for v in equationSystem.orderedVars]
   local allSharedVars::Vector{BDAE.VAR} = getSharedVariablesLocalsAndGlobals(shared)
   local allBackendVars = vcat(allOrderedVars, allSharedVars)
-  local simVars::Vector{SimulationCode.SIMVAR} = allocateAndCollectSimulationVariables(allBackendVars)
+  local simVars::Vector{SimulationCode.SIMVAR} = createAndCollectSimulationCodeVariables(allBackendVars, shared.flatModel)
   # Assign indices and put all variable into an hash table
   local stringToSimVarHT = createIndices(simVars)
   local equations = [eq for eq in equationSystem.orderedEqs]
@@ -90,9 +90,9 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
   local numberOfVariablesInMapping = length(eqVariableMapping.keys)
   (isSingular, matchOrder, digraph, stronglyConnectedComponents) =
     matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT; mode = mode)
-  #= 
-    The set of if equations needs to be handled in a separate way. 
-    Each branch might contain a separate section of variables etc that needs to be sorted and processed. 
+  #=
+    The set of if equations needs to be handled in a separate way.
+    Each branch might contain a separate section of variables etc that needs to be sorted and processed.
     !!It is assumed that the frontend have checked each branch for balance at this point!!
   =#
   simCodeIfEquations::Vector{IF_EQUATION} = constructSimCodeIFEquations(ifEqs,
@@ -180,7 +180,7 @@ function createSimCodeStructuralTransitions(structuralTransitions::Vector{ST}) w
 end
 
 """
-  Given a set of BDAE IF_EQUATIONS. 
+  Given a set of BDAE IF_EQUATIONS.
   Constructs the set of simulation-code if-equations.
   Each if equation can be seen as a small basic block graph.
 Currently we merge the other residual equation with the equations of one branch.
@@ -238,10 +238,10 @@ function constructSimCodeIFEquations(ifEquations::Vector{BDAE.IF_EQUATION},
       lastConditionIdx = conditionIdx
     end
     #=
-     The procedure above added the code for the elseif branches. 
+     The procedure above added the code for the elseif branches.
       It is also possible that we have an else branch.
       The else branch is located in the false equations.
-      The condition for the else branch to be inactive is active 
+      The condition for the else branch to be inactive is active
       if all preceeding branches failed to evaluate to true.
     =#
     #= Check if we have an else if not we are done.=#
@@ -268,7 +268,7 @@ function constructSimCodeIFEquations(ifEquations::Vector{BDAE.IF_EQUATION},
                     digraph,
                     stronglyConnectedComponents,
                     stringToSimVarHT)
-    push!(branches, branch)    
+    push!(branches, branch)
     ifEq = IF_EQUATION(branches)
     push!(simCodeIfEquations, ifEq)
   end
@@ -279,7 +279,7 @@ end
 Author:johti17
   This function does matching, it also checks for strongly connected components.
 If the system is singular we try index reduction before proceeding.
-""" 
+"""
 function matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT; mode = OMBackend.MTK_MODE)::Tuple
   (isSingular::Bool, matchOrder::Vector) = GraphAlgorithms.matching(eqVariableMapping, numberOfVariablesInMapping)
   local digraph::MetaGraphs.MetaDiGraph
@@ -289,7 +289,7 @@ function matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVar
     local labels = makeLabels(digraph, matchOrder, stringToSimVarHT)
     GraphAlgorithms.plotEquationGraphPNG("./digraphOutput.png", digraph, labels)
   end
-  
+
   #=
     Index reduction might resolve the issues with this system.
   =#
@@ -343,8 +343,22 @@ function getSharedVariablesLocalsAndGlobals(shared::BDAE.SHARED)
   end
 end
 
-function allocateAndCollectSimulationVariables(bDAEVariables::Vector{BDAE.VAR})
-  collectVariables(bDAEVariables)
+"""
+  This function converts the set of backend variables (bDAEVariables)
+  to a set of simulation code variables.
+If the system contains the special occ construct we mark the variables involved in the OCC relation as state variables.
+The reason being is that we do not want to optimize away these variables later.
+"""
+function createAndCollectSimulationCodeVariables(bDAEVariables::Vector{BDAE.VAR}, flatModel)
+  @match flatModel begin
+    NONE() => begin
+      collectVariables(bDAEVariables)
+    end
+    SOME(fm) => begin
+      local occVariables = collect(keys(first(getOCCGraph(fm))))
+      collectVariables(bDAEVariables; occVariables = occVariables)
+    end
+  end
 end
 
 """
@@ -352,12 +366,18 @@ end
   Save the name and it's kind of each variable.
   Index will be set to NONE.
 """
-function collectVariables(allBackendVars::Vector{BDAE.VAR})
-  local numberOfVars::Integer = length(allBackendVars)
-  local simVars::Array = Array{SimulationCode.SimVar}(undef, numberOfVars)
+function collectVariables(allBackendVars::Vector{BDAE.VAR}; occVariables = String[])
+  local numberOfVars::Int = length(allBackendVars)
+  local simVars::Vector = Array{SimulationCode.SimVar}(undef, numberOfVars)
   for (i, backendVar) in enumerate(allBackendVars)
+    #= In the backend we use string instead of component references. =#
     local simVarName::String = BDAE_identifierToVarString(backendVar)
     local simVarKind::SimulationCode.SimVarType = bDAEVarKindToSimCodeVarKind(backendVar)
+    simVarKind = if ! (isOverconstrainedConnectorVariable(simVarName, occVariables))
+      simVarKind
+    else
+      SimulationCode.OCC_VARIABLE()
+    end
     simVars[i] = SimulationCode.SIMVAR(simVarName, NONE(), simVarKind, backendVar.values)
   end
   return simVars

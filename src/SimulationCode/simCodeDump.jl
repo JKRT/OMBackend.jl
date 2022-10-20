@@ -52,6 +52,7 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String = "Simula
   local algVariables = []
   local discreteVariables = []
   local stateDerivatives = []
+  local occVariables = []
   for varName in keys(simCode.stringToSimVarHT)
     (idx, var) = simCode.stringToSimVarHT[varName]
     local varType = var.varKind
@@ -63,6 +64,7 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String = "Simula
       SimulationCode.PARAMETER(__) => push!(parameters, varName)
       SimulationCode.ALG_VARIABLE(__) => push!(algVariables, varName)
       SimulationCode.DISCRETE(__) => push!(discreteVariables, varName)
+      SimulationCode.OCC_VARIABLE(__) => push!(occVariables, varName)
     end
   end
   local algAndState = vcat(algVariables, stateVariables)
@@ -83,6 +85,11 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String = "Simula
   print(buffer, BDAEUtil.LINE + "\n")
   println(buffer, "Algebraic Variables:")
   for a in algVariables
+    println(buffer, a * "| Index:" * string(first(simCode.stringToSimVarHT[a])))
+  end
+  print(buffer, BDAEUtil.LINE + "\n")
+  println(buffer, "OCC Variables:")
+  for a in occVariables
     println(buffer, a * "| Index:" * string(first(simCode.stringToSimVarHT[a])))
   end
   print(buffer, BDAEUtil.LINE + "\n")
@@ -144,9 +151,10 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String = "Simula
   println(buffer, BDAEUtil.LINE)
   println(buffer, "Simulation Code Statistics:")
   println(buffer, BDAEUtil.LINE)
-  println(buffer, "Total Number of Variables:" * string(length(algAndState) + length(discreteVariables)))
-  println(buffer, "\tNumber of Algebraic Variables:" * string(length(algVariables)))
+  println(buffer, "Total Number of Variables:" * string(length(algAndState) + length(discreteVariables) + length(occVariables)))
   println(buffer, "\tNumber of State Variables:" * string(length(stateVariables)))
+  println(buffer, "\tNumber of Algebraic Variables:" * string(length(algVariables)))
+  println(buffer, "\tNumber of OCC Variables:" * string(length(occVariables)))
   println(buffer, "\tNumber of Discrete Variables:" * string(length(discreteVariables)))
 
   println(buffer, "Total Number of Equations:" * string(length(simCode.residualEquations) + nIfEqs + nWhenEquations))
