@@ -20,7 +20,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE  S
   So we know about t an der in the global scope.
   This is needed for the rules below to match correctly.
 =#
-@variables t
+ModelingToolkit.@variables t
 const D = Differential(t)
 
 """
@@ -141,7 +141,7 @@ function rewriteEquations(edeqs, iv, eVars, ePars)
   local der = ModelingToolkit.Differential(t)
   #= Remove the t's =#
   eVars = [Symbol(replace(string(i), "(t)" => "")) for i in eVars]
-  preEval = quote 
+  preEval = quote
     vars = ModelingToolkit.@variables begin
       $(eVars...)
     end
@@ -204,4 +204,44 @@ rewriteEq(eq) = begin
   local eqStr = string(eq)
   res = Meta.parse(replace(eqStr, "Differential(t)" => "D"))
   res
+end
+
+
+"""
+$(SIGNATURES)
+
+Structurally simplify algebraic equations in a system and compute the
+topological sort of the observed equations. When `simplify=true`, the `simplify`
+function will be applied during the tearing process. It also takes kwargs
+`allow_symbolic=false` and `allow_parameter=true` which limits the coefficient
+types during tearing.
+
+The optional argument `io` may take a tuple `(inputs, outputs)`.
+This will convert all `inputs` to parameters and allow them to be unconnected, i.e.,
+simplification will allow models where `n_states = n_equations - n_inputs`.
+"""
+# function structural_simplify(sys::ModelingToolkit.AbstractSystem, io = nothing; simplify = false, kwargs...)
+#   @info "Calling custom structural_simplify"
+#   sys = expand_connections(sys)
+#   state = TearingState(sys)
+#   has_io = io !== nothing
+#   has_io && markio!(state, io...)
+#   state, input_idxs = ModelingToolkit.inputs_to_parameters!(state, io)
+#   sys, ag = ModelingToolkit.alias_elimination!(state; kwargs...)
+#   check_consistency(state, ag)
+#   sys = dummy_derivative(sys, state, ag; simplify)
+#   fullstates = [map(eq -> eq.lhs, observed(sys)); states(sys)]
+#   @set! sys.observed = ModelingToolkit.topsort_equations(observed(sys), fullstates)
+#   ModelingToolkit.invalidate_cache!(sys)
+#   return has_io ? (sys, input_idxs) : sys
+# end
+
+
+
+function structural_simplify(sys::ModelingToolkit.AbstractSystem, io = nothing; simplify = false, kwargs...)
+  @info "Calling custom structural_simplify"
+  #sys = ModelingToolkit.ode_order_lowering(sys)
+  sys = ModelingToolkit.dae_order_lowering(sys)
+  #sys = ModelingToolkit.tearing(sys; simplify = simplify)
+  return sys
 end

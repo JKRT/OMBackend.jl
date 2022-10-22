@@ -38,6 +38,7 @@ import ..Util
 using MetaModelica
 using Setfield
 using DocStringExtensions
+using ModelingToolkit
 
 using ..FrontendUtil
 using ..Backend
@@ -51,6 +52,8 @@ import MetaGraphs
 import OMParser
 import OMFrontend
 
+
+include("mtkExternals.jl")
 include("./CodeGenerationUtil.jl")
 include("./structuralCallbacks.jl")
 include("./MTK_CodeGeneration.jl")

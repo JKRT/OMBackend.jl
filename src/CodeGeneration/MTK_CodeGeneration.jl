@@ -35,7 +35,6 @@
   TODO: Make duplicate code better...
   TODO: Cleanup in general
 =#
-using ModelingToolkit
 import OMBackend
 
 """
@@ -55,7 +54,7 @@ end
 function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
     #=If our model name is separated by . replace it with __ =#
   local MODEL_NAME = replace(simCode.name, "." => "__")
-  if (isempty(simCode.structuralTransitions) && length(simCode.subModels) < 1 && (simCode.flatModel !== nothing))
+  if (isempty(simCode.structuralTransitions) && length(simCode.subModels) < 1 && (simCode.flatModel === nothing))
     @info "Standard generation"
     #= Generate using the standard name =#
     return ODE_MODE_MTK_PROGRAM_GENERATION(simCode, simCode.name)
@@ -103,7 +102,7 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
       callbackConditions = $(if isempty(structuralCallbacks)
                                :(CallbackSet())
                              else
-                               :(CallbackSet(callbackSet..., callbacks))
+                               :(CallbackSet(callbacks, callbackSet...))
                              end)
       #= Create the composite model =#
       compositeProblem = ModelingToolkit.ODEProblem(
@@ -126,7 +125,7 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
                  end)
       return result
     end
-    function $(Symbol("$(MODEL_NAME)Simulate"))(tspan = (0.0, 1.0); solver=Rodas5())
+    function $(Symbol("$(MODEL_NAME)Simulate"))(tspan = (0.0, 1.0); solver=Rosenbrock23())
       $(Symbol("$(MODEL_NAME)Model_problem")) = $(Symbol("$(MODEL_NAME)Model"))(tspan)
       OMBackend.Runtime.solve($(Symbol("$(MODEL_NAME)Model_problem")), tspan, solver)
     end
@@ -145,7 +144,7 @@ function ODE_MODE_MTK_PROGRAM_GENERATION(simCode::SimulationCode.SIM_CODE, model
     using DifferentialEquations
     import ModelingToolkit.IfElse
     $(model)
-    function $(Symbol("$(MODEL_NAME)Simulate"))(tspan = (0.0, 1.0); solver=Rodas5())
+    function $(Symbol("$(MODEL_NAME)Simulate"))(tspan = (0.0, 1.0); solver=Rosenbrock23())
       ($(Symbol("$(MODEL_NAME)Model_problem")), callbacks, ivs, $(Symbol("$(MODEL_NAME)Model_ReducedSystem")), tspan, pars, vars) = $(Symbol("$(MODEL_NAME)Model"))(tspan)
       solve($(Symbol("$(MODEL_NAME)Model_problem")), solver)
     end
@@ -171,6 +170,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
   local occVariables::Vector = String[]
   local occDummyVariables::Vector = String[]
   local performIndexReduction = false
+  global LATEST_MATCH_ORDER = simCode.matchOrder
   for varName in keys(stringToSimVarHT)
     (idx, var) = stringToSimVarHT[varName]
     local varType = var.varKind
@@ -237,7 +237,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
     For MTK we disable the saving function for now.
   =#
   local CALL_BACK_EQUATIONS = createCallbackCode(modelName, simCode; generateSaveFunction = false)
-  local IF_EQUATION_COMPONENTS::Vector{Tuple{Expr, Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Tuple}}} =
+  local IF_EQUATION_COMPONENTS::Vector{Tuple{Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Tuple}}} =
     createIfEquations(stateVariables, algebraicVariables, simCode)
   #= Symbolic names =#
   local stateVariablesSym = [:($(Symbol(v))(t)) for v in stateVariables]
@@ -251,10 +251,12 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
   #local OCC_DUMMY_EQUATIONS = [:(der($(Symbol("dummy" * occv))) ~ 0) for occv in occVariables]
   #= Create assignments for the dummies. =#
   local IF_EQUATION_EVENTS = [component[1] for component in IF_EQUATION_COMPONENTS]
+  @info IF_EQUATION_EVENTS
+  IF_EQUATION_EVENTS = collect(Iterators.flatten(IF_EQUATION_EVENTS))
   local IF_EQUATION_EVENT_DECLARATION = if isempty(IF_EQUATION_EVENTS)
     :(events = [])
   else
-    :(events = $(IF_EQUATION_EVENTS...))
+    :(events = [$(IF_EQUATION_EVENTS...)])
   end
   local CONDITIONAL_EQUATIONS = collect(Iterators.flatten([component[2] for component in IF_EQUATION_COMPONENTS]))
   local ifConditionNameAndIV = collect(Iterators.flatten([component[5] for component in IF_EQUATION_COMPONENTS]))
@@ -377,8 +379,6 @@ function createResidualEquationsMTK(stateVariables::Vector, algebraicVariables::
   end
     return eqs
 end
-
-include("mtkExternals.jl")
 
 """
   Generates the initial value for the equations
@@ -510,7 +510,7 @@ end
   Creates the components of the If-Equations
 """
 function createIfEquations(stateVariables, algebraicVariables, simCode)
-  local ifEquations = Tuple{Expr, Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Tuple}}[]
+  local ifEquations = Tuple{Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Tuple}}[]
   local identifier::Int = 0
   for ifEq in simCode.ifEquations
     identifier += 1
@@ -557,19 +557,19 @@ The forth part of the tuple contains a vector of symbolic variables.
 One for each conditional variable created.
 """
 function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCode.IF_EQUATION, identifier, simCode)
-  local result::Tuple{Expr, Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Tuple}}
+  local result::Tuple{Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Tuple}}
 
   generateAffects(n, nConditions, condRes) = begin
     #=
-      The cond res is what we are going to evaluate it to.
+    The cond res is what we are going to evaluate it to.
     =#
     local exprs = Expr[]
     local e
     for i in 1:nConditions
       e = if i == n
-        :($(Symbol(("ifCond$(i)"))) ~ $(condRes))
+        :($(Symbol(("ifCond$(identifier)"))) ~ $(condRes))
       else
-        :($(Symbol(("ifCond$(i)"))) ~ $(!condRes))
+        :($(Symbol(("ifCond$(identifier)"))) ~ $(!condRes))
       end
       push!(exprs, e)
     end
@@ -621,7 +621,7 @@ function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCo
     push!(conditionVariables, :($(Symbol(string("ifCond", identifier)))(t)))
     push!(conditionVariableNames, (string("ifCond", identifier), !(ivConditions[i])))
   end
-  conditionExpr = :([$(conditions...)])
+  conditionExpr = conditions
   result = (conditionExpr, ifExpressions, conditionEquations, conditionVariables, conditionVariableNames)
   return result
 end

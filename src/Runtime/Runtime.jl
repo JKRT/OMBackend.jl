@@ -150,6 +150,7 @@ We should also statically detect if VSS simulation is needed since it is more re
   (Using the integrator interface) from DifferentialEquations.jl
 """
 function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
+  @info "Calling omProblem::OM_ProblemStructural"
   local problem = omProblem.problem
   local structuralCallbacks = omProblem.structuralCallbacks
   local commonVariableSet = omProblem.commonVariables
@@ -204,7 +205,7 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
   return oldSols
 end
 
-global SHOULD_DO_REINITIALIZATION = false
+global SHOULD_DO_REINITIALIZATION = true
 
 """
   Custom solver function for Modelica code with structuralCallbacks to monitor the solving process
@@ -215,7 +216,7 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
   local structuralCallbacks = omProblem.structuralCallbacks
   local callbackConditions = omProblem.callbackConditions
   local activeModeName = omProblem.activeModeName
-  local integrator = init(problem, alg, kwargs...)
+  local integrator = init(problem, alg, dtmax = 0.001, kwargs...)
   local oldSols = []
   local solutions = []
   #= Run the integrator=#
@@ -226,11 +227,12 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
       @info "Ending simulation"
       Base.invokelatest(solve!, i)
       break
-    end    
+    end
     @info "Integration step was" i.t
     @info "dt was:" i.dt
     #= Check structural callbacks in order =#
     retCode = check_error(integrator)
+    @info "Checking structural callbacks"
     for j in 1:length(structuralCallbacks)
       local cb = structuralCallbacks[j]
       if cb.structureChanged && i.t < tspan[2]
@@ -257,64 +259,165 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
                           alg;
                           kwargs...)
           reinit!(integrator,
-                newU0;
+                  newU0;
                   t0 = i.t - i.dt,
                   reset_dt = true)
-        else
-          @time (rootIndices, variablesToSetIdx) = reinit(cb.name, cb, integrator.u, tspan, problem)
-          local newU0 = Float64[v for v in integrator.u]
-          #= Start by setting the root variables =#
-          rootIdx1 = first(cb.stringToSimVarHT["G1_omega"])
-          @info "Root idx 1" rootIdx1
-          rootIdx2 = first(cb.stringToSimVarHT["G2_omega"])
-          @info "Root idx 2" rootIdx2
-          integrator.u[20] = integrator.u[2]
-          integrator.u[23] = integrator.u[4]
-          #= End  =#
-          integrator.u[21] = integrator.u[4]
-          integrator.u[22] = integrator.u[4]
-          #=First omega=#
-          integrator.u[19] = integrator.u[4]
-          integrator.u[40] = integrator.u[4]
-          integrator.u[39] = integrator.u[4]
-          integrator.u[38] = integrator.u[4]
-          integrator.u[77] = integrator.u[4]
-          integrator.u[18] = integrator.u[4]
+        else #= Francesco proposed solution. =#
+          #=
+            Rerun OCC algorithms.
+            Find the root variables of the OCC graph + the variables they assign and the root sources.
+            That is the reference variables for the roots.
+          =#
+          @time (rootIndices, variablesToSetIdx, rootSources, variablestoReset) = returnRootIndices(cb.name,
+                                                                                  cb,
+                                                                                  integrator.u,
+                                                                                  tspan,
+                                                                                  problem)
+          @assert length(rootIndices) == length(keys(rootSources)) "Root sources and indices must have the same length."
+          @info "Root indices" rootIndices
+          @info "variablesToSetIdx" variablesToSetIdx
+          local newU0::Vector{Float64} = Float64[v for v in integrator.u]
+          local stateVars = states(OMBackend.LATEST_REDUCED_SYSTEM)
+          local stateVarsAsStr = [replace(string(s), "(t)" => "") for s in stateVars]
+          local OM_NameToMTKIdx = Dict()
+          local rootKeys = [k for k in keys(rootSources)]
+          local rootValues = [v for v in values(rootSources)]
+          local variablesToSet = collect(Iterators.flatten([v for v in values(variablestoReset)]))
+          @info "variablesToSet" variablesToSet
+          local rootKeysToMTKIdx = indexin(rootKeys, stateVarsAsStr)
+          local rootValsToMTKIdx = indexin(rootValues, stateVarsAsStr)
+          local variablesToResetMTKIdx = indexin(variablesToSet, stateVarsAsStr)
+          local rootToEquationMap::Dict{String, Symbolics.Equation} = Dict()
+          @info rootKeysToMTKIdx
+          @info rootValsToMTKIdx
+          @info variablesToResetMTKIdx
+          for (i, rk) in enumerate(rootKeys)
+            OM_NameToMTKIdx[rk] = rootKeysToMTKIdx[i]
+          end
+          for (i, rv) in enumerate(rootValues)
+            OM_NameToMTKIdx[rv] = rootValsToMTKIdx[i]
+          end
+          for (i, vr) in enumerate(variablesToSet)
+            OM_NameToMTKIdx[vr] = variablesToResetMTKIdx[i]
+          end
+          @info OM_NameToMTKIdx
+          #=
+           Start by setting the root variables we got from returnRootIndices.
+           Each of these variables have a reference variable.
+          =#
+          for k in rootKeys
+            rootStart = OM_NameToMTKIdx[k]
+            rootSource = OM_NameToMTKIdx[rootSources[k]]
+            @info "integrator.u[$(rootStart)] = integrator.u[$(rootSource)]"
+            integrator.u[rootStart] = integrator.u[rootSource]
+            rootToEquationMap[k] = ~(0, stateVars[rootStart] - stateVars[rootSource])
+          end
+          #=
+            Get the variables of the system
+          =#
+          local equationDeps = ModelingToolkit.equation_dependencies(OMBackend.LATEST_REDUCED_SYSTEM)
+          #= TODO: Not good should strive to fix the internal representations. =#
+          local allEquationsAsStr = map((x)-> begin
+                                          if !isempty(x)
+                                              [replace(string(y), "(t)" => "") for y in x]
+                                          end
+                                        end, equationDeps)
+          local rootKeys = [string(k) for k in keys(rootSources)]
+          @info "rootKeys" rootKeys
+          local equationToAddMap = Dict()
+          #=
+            Find the equations to replace
+          =#
+          global ALLEQUATIONSASSTR = allEquationsAsStr
+          local oldEquations = equations(OMBackend.LATEST_REDUCED_SYSTEM)
+          local assignedRoots = String[]
+          for (i, eqVariables) in enumerate(allEquationsAsStr)
+            if eqVariables !== nothing && length(eqVariables) == 2
+              firstV = first(eqVariables)
+              secondV = last(eqVariables)
+              check1 = firstV in rootKeys && secondV in rootValues
+              check2 = firstV in rootValues && secondV in rootKeys
+              check3 = length(ModelingToolkit.difference_vars(oldEquations[i])) == 2
+              if (check1 || check2) && check3
+                @info "Root already assigned. Root was at $(i)-->" eqVariables
+                push!(assignedRoots, last(eqVariables))
+              end
+            end
+          end
+          @info "assignedRoots" assignedRoots
+          for (i, eqVariables) in enumerate(allEquationsAsStr)
+            if eqVariables !== nothing && length(eqVariables) == 2
+              local cand = first(eqVariables)
+              if cand in rootKeys && ! (cand in assignedRoots)
+                @info "Eq" cand
+                equationToAddMap[cand] = i
+              end
+            end
+          end
+          #= The equation indices are the locations in which we are to insert our new equations=#
+          @info "equationToAddMap" equationToAddMap
+          #= One assignment need to be changed. =#
+          for k in rootKeys
+            @info "Value of rootStart" k
+            varsToSet = variablestoReset[k]
+            val = OM_NameToMTKIdx[k]
+            @info "varsToSet" varsToSet
+            for v in varsToSet
+              vIdx = OM_NameToMTKIdx[v]
+              @info "integrator[$(vIdx)] = integrator[$(val)]"
+              integrator.u[vIdx] = integrator.u[val]
+            end
+          end
           push!(solutions, integrator.sol)
           push!(oldSols, (integrator.sol, getSyms(problem), activeModeName))
-          oldEquations = equations(OMBackend.LATEST_REDUCED_SYSTEM)
           newEquations = Symbolics.Equation[]
-          local stateVars = states(OMBackend.LATEST_REDUCED_SYSTEM)
+          ModelingToolkit.equation_dependencies(OMBackend.LATEST_REDUCED_SYSTEM)
+          @info "equationToAddMap" equationToAddMap
+          @info "rootToEquationMap" rootToEquationMap
           for eq in oldEquations
+            println(eq)
             push!(newEquations, eq)
           end
-          @info "New equations at 58" newEquations[58]
-          newEquations[58] = ~(0, stateVars[4] - stateVars[23])
-          @info "New equations at 58" newEquations[58]
+          for eq in keys(rootToEquationMap)
+            if eq in assignedRoots
+              @info "Eq that was in root was" eq
+              continue
+            end
+            local replacementIdx = equationToAddMap[eq] #Hack
+            local newEquation = rootToEquationMap[eq]
+            @info "Setting newEquation[$(replacementIdx)] = $(eq)"
+            newEquations[replacementIdx] = newEquation
+            @info  "New equations at $(replacementIdx)" newEquation
+          end
+          #newEquations[4] = rootToEquationMap["G2"]
+          println("New equations:")
+          for eq in newEquations
+            println(eq)
+          end
           @time newSystem = ODESystem(newEquations,
                                 independent_variable(OMBackend.LATEST_REDUCED_SYSTEM),
-                                stateVars,
+                                states(OMBackend.LATEST_REDUCED_SYSTEM),
                                 parameters(OMBackend.LATEST_REDUCED_SYSTEM);
-                                name = Symbol(cb.name))
+                                      name = Symbol(cb.name))
+          newSystem = OMBackend.CodeGeneration.structural_simplify(newSystem)
+          global NEW_SYSTEM = newSystem
           @time newProblem = ModelingToolkit.ODEProblem(
             newSystem,
-            newU0,
+            integrator.u,
             tspan,
             problem.p,
             #=
-            TODO currently only handles a single structural callback.
+              TODO currently only handles a single structural callback.
             =#
             callback = callbackConditions #Should be changed look at method below
           )
-          
           @time integrator = init(newProblem,
                                   alg;
                                   kwargs...)
           @time reinit!(integrator,
-                        newU0;
-                        t0 = i.t,
+                        integrator.u;
+                        t0 = i.t - i.dt,
                         reset_dt = true)
-          
         end
         #= End recompilation =#
         #=
@@ -419,6 +522,7 @@ function recompilation(activeModeName,
                        tspan,
                        callbackConditions)
   @info "recompilation"
+  #= Fetch the model that we were generating from memory. =#
   local flatModel = OMBackend.CodeGeneration.FLAT_MODEL
   local unresolvedConnectEquations = flatModel.unresolvedConnectEquations
   #= Get the relevant equation =#
@@ -438,7 +542,7 @@ function recompilation(activeModeName,
   local model = replace(activeModeName, "." => "__")
   local modelName = string(model, "Model")
   #local result = OMBackend.modelToString(model; MTK = true, keepComments = false, keepBeginBlocks = false)
-  println("Hello Gunilla!\n");
+  println("Hello Gunilla we have a new model!\n");
   resultingModel = OMBackend.CodeGeneration.stripComments(resultingModel)
   resultingModel = OMBackend.CodeGeneration.stripBeginBlocks(resultingModel)
   result = "$resultingModel"
@@ -461,17 +565,18 @@ function recompilation(activeModeName,
 end
 
 """
-  Reinit instead of recompilation for dynamically overconstrained connectors
+  This function returns the root indices of the OCC graph.
 """
-function reinit(activeModeName,
+function returnRootIndices(activeModeName,
                 structuralCallback::StructuralChangeDynamicConnection,
                 integrator_u,
                 tspan,
                 callbackConditions)
-  @info "recompilation"
+  @info "Calling returnRootIndices"
   local flatModel = OMBackend.CodeGeneration.FLAT_MODEL
-  local variablestoReset = RuntimeUtil.resolveDOOCConnections(flatModel, flatModel.name)
-  @info variablestoReset
+  (variablestoReset, rootSources) = RuntimeUtil.resolveDOOCConnections(flatModel, flatModel.name)
+  @info "variablestoReset" variablestoReset
+  @info rootSources
   local rootVariables = keys(variablestoReset)
   @info "Root variables" rootVariables
   local ht = structuralCallback.stringToSimVarHT
@@ -492,7 +597,7 @@ function reinit(activeModeName,
     end
     push!(variablesToSetIdx, tmp)
   end
-  return (rootIndices, variablesToSetIdx)
+  return (rootIndices, variablesToSetIdx, rootSources, variablestoReset)
 end
 
 """

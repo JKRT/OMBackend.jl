@@ -80,8 +80,8 @@ johti17
     For instance y < 10 -> y - 10
 TODO:
     Assumes a Real-Expression.
-    Also assume that relation expressions are written as <= That is we go from positive 
-    to negative.. 
+    Also assume that relation expressions are written as <= That is we go from positive
+    to negative..
     Fix this.
 """
 function transformToZeroCrossingCondition(conditonalExpression::DAE.Exp)
@@ -190,7 +190,7 @@ end
 
 
 """
- Convert DAE.Exp into a Julia string. 
+ Convert DAE.Exp into a Julia string.
 """
 function expToJL(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE; varPrefix="x")::String
   hashTable = simCode.stringToSimVarHT
@@ -347,14 +347,14 @@ function DAECallExpressionToJuliaCallExpression(pathStr::String, expLst::List, s
       varName = SimulationCode.string(listHead(expLst))
       (index, _) = ht[varName]
       indexForVar = ht[varName][1]
-      quote 
+      quote
         (integrator.u[$(indexForVar)])
       end
     end
     _  =>  begin
       funcName = Symbol(pathStr)
       argPart = tuple(map((x) -> expToJuliaExp(x, simCode, varPrefix=varPrefix), expLst)...)
-      quote 
+      quote
         $(funcName)($(argPart...))
       end
     end
@@ -398,7 +398,7 @@ function DAECallExpressionToMTKCallExpression(pathStr::String, expLst::List,
     _  =>  begin
       funcName = Symbol(pathStr)
       argPart = tuple(map((x) -> expToJuliaExpMTK(x, simCode), expLst)...)
-      quote 
+      quote
         $(funcName)($(argPart...))
       end
     end
@@ -493,7 +493,7 @@ function getVariablesInDAE_Exp(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, v
       @match varKind begin
         SimulationCode.STATE(__) || SimulationCode.PARAMETER(__) || SimulationCode.ALG_VARIABLE(__) => begin
           push!(variables, Symbol(varName))
-        end           
+        end
         _ => begin
           @error "Unsupported varKind: $(varKind)"
           throw()
@@ -505,7 +505,7 @@ function getVariablesInDAE_Exp(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, v
     end
     DAE.BINARY(exp1 = e1, operator = op, exp2 = e2) || DAE.LBINARY(exp1 = e1, operator = op, exp2 = e2) || DAE.RELATION(exp1 = e1, operator = op, exp2 = e2) => begin
       getVariablesInDAE_Exp(e1, simCode, variables)
-      getVariablesInDAE_Exp(e2, simCode, variables)        
+      getVariablesInDAE_Exp(e2, simCode, variables)
     end
     DAE.LUNARY(operator = op, exp = e1)  => begin
       getVariablesInDAE_Exp(e1, simCode, variables)
@@ -661,7 +661,11 @@ end
 """
 function performStructuralSimplify(simplify)::Expr
   if (simplify)
-    :(reducedSystem = ModelingToolkit.structural_simplify(firstOrderSystem; simplify = false, allow_parameter=true))#ModelingToolkit.dae_index_lowering(firstOrderSystem))
+    #:(reducedSystem = ModelingToolkit.dae_index_lowering(firstOrderSystem))
+    #TODO: Report issue when variables are removed from events
+    #ModelingToolkit.dae_index_lowering(firstOrderSystem)
+    #:(reducedSystem = ModelingToolkit.structural_simplify(firstOrderSystem; simplify = true, allow_parameter=true))
+    :(reducedSystem = OMBackend.CodeGeneration.structural_simplify(firstOrderSystem; simplify = false, allow_parameter=true))
   else
     :(reducedSystem = firstOrderSystem)#ModelingToolkit.structural_simplify(firstOrderSystem; simplify = false, allow_parameter=true))
   end
@@ -684,6 +688,7 @@ end
 
 """
   Given the variable idx and simCode statically decide if this variable is involved in some event.
+(TODO: Unused)
 """
 function involvedInEvent(idx, simCode)
   return false
@@ -774,7 +779,7 @@ function evalInitialCondition(mtkCond)
     local ivCond = (v == 0)
     if ivCond == false
       return ivCond
-    end      
+    end
     if length(v.val.arguments) > 1
       return true
     end

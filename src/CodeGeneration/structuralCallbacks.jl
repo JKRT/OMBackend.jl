@@ -122,7 +122,7 @@ function createStructuralCallback(simCode, simCodeStructuralTransition::Simulati
   local zeroCrossingCond = transformToZeroCrossingCondition(whenCondition)
   local stmtLst = structuralTransition.whenEquation.whenStmtLst
   local stringToSimVarHT = simCode.stringToSimVarHT
-  (whenOperators, recompilationDirective) = createStructuralWhenStatements(stmtLst, simCode)  
+  (whenOperators, recompilationDirective) = createStructuralWhenStatements(stmtLst, simCode)
   local affect::Expr = quote
     function affect!(integrator)
       #= Expand the when operators =#
@@ -223,7 +223,7 @@ function createStructuralAssignments(simCode, structuralTransitions::Vector{ST})
       end
       SimulationCode.DYNAMIC_OVERCONSTRAINED_CONNECTOR_EQUATION(__) => begin
         push!(structuralAssignments, createStructuralAssignment(simCode, structuralTransisiton, idx))
-      end        
+      end
     end
     idx += 1
   end
@@ -401,7 +401,7 @@ function createAffectCondPairForDOCC(cond,
         structuralChange.structureChanged = true
         $(expToJuliaExp(cond, simCode)) = false
         auto_dt_reset!(integrator)
-        add_tstop!(integrator, integrator.t + 1E-12 #= Some small number =#)
+        add_tstop!(integrator, integrator.t #= Some small number =#)
         set_!(integrator, t)
       end
       function condition(x, t, integrator)
@@ -418,7 +418,7 @@ function createAffectCondPairForDOCC(cond,
         structuralChange.structureChanged = true
         $(expToJuliaExp(cond, simCode)) = true
         auto_dt_reset!(integrator)
-        add_tstop!(integrator, integrator.t + 1E-12 #= Some small number =#)
+        add_tstop!(integrator, integrator.t #= Some small number =#)
       end
       function condition(x, t, integrator)
         return Bool($(expToJuliaExp(cond, simCode))) == false

@@ -230,14 +230,14 @@ function createNewFlatModel(flatModel,
                                flatModel.comment)
   println("Create new model")
   local variablestoReset = resolveDOOCConnections(flatModel, flatModel.name)
-  # println("********************************************************************")  
+  # println("********************************************************************")
   # println("Existing equations:")
   # println("********************************************************************")
   # @info "Length of OLD FLAT MODEL:" length(OMBackend.CodeGeneration.OLD_FLAT_MODEL.equations)
   # for e in OMBackend.CodeGeneration.OLD_FLAT_MODEL.equations
   #   println(OMFrontend.Main.toString(e))
   # end
-  
+
   # println("********************************************************************")
   # println("New System:")
   # println("********************************************************************")
@@ -265,11 +265,11 @@ function createNewFlatModel(flatModel,
 end
 
 """
-  Resolves the system at the time of the structural change. 
+  Resolves the system at the time of the structural change.
 """
 function resolveDOOCConnections(flatModel, name)
   #= Get the relevant OCC graph =#
-  local (searchGraph, rootVariables) = SimulationCode.getOCCGraph(flatModel)
+  local (searchGraph, rootVariables, rootEquations) = SimulationCode.getOCCGraph(flatModel)
   local pathsForRoots = Dict{String, Vector{String}}()
   for rv in rootVariables
     p = findPath(searchGraph, rv)
@@ -282,20 +282,25 @@ function resolveDOOCConnections(flatModel, name)
       println("$(v) := $(key)")
     end
   end
-  return pathsForRoots
+  local rootSources = Dict{String, String}()
+  #= These are the equations for which the chain starts =#
+  for (lhs, rhs) in rootEquations
+    rootSources[OMFrontend.Main.toString(lhs)] = OMFrontend.Main.toString(rhs)
+  end
+  return (pathsForRoots, rootSources)
 end
 
-
 """
-DFS:
+author:johti17
+Iterative DFS:
   Finds the path for a root variable passed as inV
 """
 function findPath(g::Dict{String, Vector{String}}, inV)
   local v = OMFrontend.Main.toString(inV)
   local S = String[]
-  local discovered = String[] #= Should ideally be int instead=#
+  local discovered = String[] #= Should ideally be int instead... =#
   push!(S, v)
-  while  !isempty(S)
+  while  ! isempty(S)
     local v = pop!(S)
     if ! (v in discovered)
       push!(discovered, v)

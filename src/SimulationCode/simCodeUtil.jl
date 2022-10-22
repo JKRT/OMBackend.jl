@@ -343,10 +343,15 @@ function getEquationSolvedIn(variable::V, context::C) where {V, HT, C}
   return context.residualEquations[equationIdx]
 end
 
+"""
+  Creates a OCC graph.
+  Returns the graph and the root variables.
+(This function also adds info to the model)
+"""
 function getOCCGraph(flatModel)
   unresolvedFlatModel = OMFrontend.Main.FLAT_MODEL(flatModel.name,
                                                    flatModel.variables,
-                                                   flatModel.unresolvedConnectEquations, #Why is this in two places?
+                                                   flatModel.unresolvedConnectEquations,
                                                    flatModel.initialEquations,
                                                    flatModel.algorithms,
                                                    flatModel.initialAlgorithms,
@@ -363,10 +368,20 @@ function getOCCGraph(flatModel)
   local csets_array::Vector{List{OMFrontend.Main.Connector}}
   local ctable::OMFrontend.Main.CardinalityTable.Table
   local broken::OMFrontend.Main.BrokenEdges = ImmutableList.nil
+  local rootEquations::List{OMFrontend.Main.Equation} = MetaModelica.nil
+  local rootReferenceVariables::Vector{Tuple} = Tuple{OMFrontend.Main.NFComponentRef,
+                                                      OMFrontend.Main.NFComponentRef}[]
   (unresolvedFlatModel, conns) = OMFrontend.Main.collect(unresolvedFlatModel)
   (unresolvedFlatModel, conns) = OMFrontend.Main.elaborate(unresolvedFlatModel, conns)
   if OMFrontend.Main.System.getHasOverconstrainedConnectors()
-    (unresolvedFlatModel, broken, graph) = OMFrontend.Main.handleOverconstrainedConnections(unresolvedFlatModel, conns, name)
+    (_, broken, graph) = OMFrontend.Main.handleOverconstrainedConnections(unresolvedFlatModel, conns, name)
+    (roots, _, broken) = OMFrontend.Main.findResultGraph(graph, name)
+    rootEquations = OMFrontend.Main.findRootEquations(roots, graph,
+                                                      unresolvedFlatModel.equations)
+    for re in rootEquations
+      push!(rootReferenceVariables,
+            (re.lhs, re.rhs))
+    end
   end
   OMFrontend.Main.printNFOCConnectionGraph(graph)
   println("Broken equations")
@@ -388,15 +403,16 @@ function getOCCGraph(flatModel)
   end
   #= Get the roots involved in the structural change =#
   rootVariables::List{OMFrontend.Main.ComponentRef} = MetaModelica.list(first(r) for r in potentialRoots)
-  #= Do deep first search for each root variable =#
+  #= Create a graph that we can search. =#
   local connectionEdges = convertFlatEdgeToEdges(graph.connections)
+  @info typeof(connectionEdges)
   local allEdges = listAppend(connectionEdges, graph.branches)
   local searchGraph = createSearchGraph(allEdges)
-  return (searchGraph, rootVariables)
+  return (searchGraph, rootVariables, rootReferenceVariables)
 end
 
 """
- Convert the component references to the backend representation and create a adjecency list representation.
+ Convert the component references to the backend representation and create an adjecency list representation.
 """
 function createSearchGraph(allEdges)
   local edgeSet = Dict()
@@ -421,6 +437,9 @@ function createSearchGraph(allEdges)
   return searchGraph
 end
 
+"""
+  Given a list of flat edges convert them to edges.
+"""
 function convertFlatEdgeToEdges(connections)
   newEdges = Tuple[]
   for connection in connections
