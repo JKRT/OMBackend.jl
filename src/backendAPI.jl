@@ -157,13 +157,13 @@ function lower(frontendDAE::OMFrontend.Main.FlatModel)
   @debug(BDAEUtil.stringHeading1(bDAE, "translated"));
   #= Expand arrays =#
   (bDAE, expandedVars) = Causalize.expandArrayVariables(bDAE)
-  @info(BDAEUtil.stringHeading1(bDAE, "Array variables expanded"));
+  @debug(BDAEUtil.stringHeading1(bDAE, "Array variables expanded"));
   #= Transform if expressions to if equations =#
-  @info(BDAEUtil.stringHeading1(bDAE, "If equations transformed"));
+  @debug(BDAEUtil.stringHeading1(bDAE, "If equations transformed"));
   bDAE = Causalize.detectIfExpressions(bDAE)
   #= Mark state variables =#
   bDAE = Causalize.detectStates(bDAE)
-  @info(BDAEUtil.stringHeading1(bDAE, "States marked"));
+  @debug(BDAEUtil.stringHeading1(bDAE, "States marked"));
   bDAE = Causalize.residualizeEveryEquation(bDAE)
   #= Convert equations to residual form =#
   @debug(BDAEUtil.stringHeading1(bDAE, "Residuals"));
