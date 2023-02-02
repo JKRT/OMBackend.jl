@@ -128,12 +128,12 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String = "Simula
   println(buffer, BDAEUtil.LINE)
   if !isempty(simCode.structuralTransitions)
     println(buffer, "Structural-Equations")
-    println(buffer, BDAEUtil.LINE)  
+    println(buffer, BDAEUtil.LINE)
     for st in simCode.structuralTransitions
       print(buffer, string(st))
     end
   end
-  
+
   println(buffer, BDAEUtil.LINE)
   nIfEqs = 0
   for ifEq in simCode.ifEquations
@@ -162,6 +162,8 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String = "Simula
   println(buffer, "\tNumber of Equations in If-Equations:" * string(nIfEqs))
   println(buffer, "\tNumber of Equations in When-Equations:" * string(nWhenEquations))
   println(buffer, BDAEUtil.LINE)
+  local varsInEvent = 0
+  println(buffer, "Variables involved in events:")
   return String(take!(buffer))
 end
 

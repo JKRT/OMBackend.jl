@@ -54,7 +54,7 @@ end
 function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
     #=If our model name is separated by . replace it with __ =#
   local MODEL_NAME = replace(simCode.name, "." => "__")
-  if (isempty(simCode.structuralTransitions) && length(simCode.subModels) < 1 && (simCode.flatModel === nothing))
+  if isempty(simCode.structuralTransitions) && length(simCode.subModels) < 1 && isnothing(simCode.flatModel)
     @info "Standard generation"
     #= Generate using the standard name =#
     return ODE_MODE_MTK_PROGRAM_GENERATION(simCode, simCode.name)
@@ -237,14 +237,13 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
     For MTK we disable the saving function for now.
   =#
   local CALL_BACK_EQUATIONS = createCallbackCode(modelName, simCode; generateSaveFunction = false)
-  local IF_EQUATION_COMPONENTS::Vector{Tuple{Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Tuple}}} =
+  local IF_EQUATION_COMPONENTS::Vector{Tuple{Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Symbol}, Vector{Tuple}}} =
     createIfEquations(stateVariables, algebraicVariables, simCode)
   #= Symbolic names =#
-  local stateVariablesSym = [:($(Symbol(v))(t)) for v in stateVariables]
-  local algebraicVariablesSym = [:($(Symbol(v))(t)) for v in algebraicVariables]
-  local discreteVariablesSym = [:($(Symbol(v))(t)) for v in discreteVariables]
-  local occVariablesSym = [:($(Symbol(v))(t)) for v in occVariables]
-
+  local stateVariablesSym = [:($(Symbol(v))) for v in stateVariables]
+  local algebraicVariablesSym = [:($(Symbol(v))) for v in algebraicVariables]
+  local discreteVariablesSym = [:($(Symbol(v))) for v in discreteVariables]
+  local occVariablesSym = [:($(Symbol(v))) for v in occVariables]
   #=Preprocess the component of the if equations =#
   local DISCRETE_DUMMY_EQUATIONS = [:(der($(Symbol(dv))) ~ 0) for dv in discreteVariables]
   #= Code for OCC dummy quations =#
@@ -264,6 +263,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
   local ZERO_DYNAMICS_COND_EQUATIONS = collect(Iterators.flatten([component[3] for component in IF_EQUATION_COMPONENTS]))
   #= Expand the start conditions with initial equations for the zero dynamic equations for the conditional equations =#
   local ifConditionalStartEquations = [:($(Symbol(first(v))) => $(last(v))) for v in ifConditionNameAndIV]
+  local irreductableSyms = [Symbol(vn) for vn in simCode.irreductableVariables]
   START_CONDTIONS_EQUATIONS = vcat(ifConditionalStartEquations,
                                    DISCRETE_START_VALUES,
                                    START_CONDTIONS_EQUATIONS)
@@ -271,9 +271,9 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
     Merge the ifConditional components into the rest of the system and merge the state conditionals with the sates
   =#
   stateVariablesSym = vcat(ifConditionalVariables,
-                           discreteVariablesSym,
-                           stateVariablesSym,
-                           occVariablesSym)
+                            discreteVariablesSym,
+                            stateVariablesSym,
+                            occVariablesSym)
   EQUATIONS = vcat(EQUATIONS,
                    DISCRETE_DUMMY_EQUATIONS,
                    ZERO_DYNAMICS_COND_EQUATIONS,
@@ -308,13 +308,25 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
         This means that certain algebraic variables should not be listed among the variables (These are the discrete variables).
       =#
       $(decomposeVariables(stateVariablesSym, algebraicVariablesSym))
-      componentVars = []
+      allVariables = []
+      #= Generate variables =#
       for constructor in variableConstructors
-        res = eval(ModelingToolkit.Symbolics._parse_vars("CustomCall", Real, constructor()))
+        t = Symbolics.variable(:t, T = Real)
+        vars = map(n -> (n, Symbolics.variable(n, T = Symbolics.FnType{Tuple{Real}, Real})(t)), constructor())
         #= t is no longer needed here =#
-        push!(componentVars, res[2:end])
+        push!(allVariables, vars)
       end
-      vars =  collect(Iterators.flatten(componentVars))
+      vars = collect(Iterators.flatten(allVariables))
+      #= Evaluate the variables s.t the symbols are available =#
+      for (sym, var) in vars
+        eval(:($sym = $var))
+      end
+      # #= Mark irreductable variables irreductable. =# Uncomment for reinitialization
+      for sym in $(irreductableSyms)
+       eval(:($sym = SymbolicUtils.setmetadata($sym, ModelingToolkit.VariableIrreducible, true)))
+      end
+      #= Transform the variable vector into a vector of Nums =#
+      vars = map(x ->(last(x)), vars)
       #= Initial values for the continious system. =#
       pars = Dict($(PARAMETER_EQUATIONS...))
       startEquationComponents = []
@@ -326,10 +338,12 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
       #= End construction of initial values =#
       equationComponents = []
       $(decomposeEquations(EQUATIONS, PARAMETER_ASSIGNMENTS))
+      #= Generate the Equations =#
       for constructor in equationConstructors
         push!(equationComponents, constructor())
       end
       eqs = collect(Iterators.flatten(equationComponents))
+      global LATEST_VARIABLES = vars
       $(IF_EQUATION_EVENT_DECLARATION)
       nonLinearSystem = $(odeSystemWithEvents(!(isempty(ifConditionalStartEquations)), modelName))
       firstOrderSystem = nonLinearSystem
@@ -510,7 +524,7 @@ end
   Creates the components of the If-Equations
 """
 function createIfEquations(stateVariables, algebraicVariables, simCode)
-  local ifEquations = Tuple{Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Tuple}}[]
+  local ifEquations = Tuple{Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Symbol}, Vector{Tuple}}[]
   local identifier::Int = 0
   for ifEq in simCode.ifEquations
     identifier += 1
@@ -557,7 +571,7 @@ The forth part of the tuple contains a vector of symbolic variables.
 One for each conditional variable created.
 """
 function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCode.IF_EQUATION, identifier, simCode)
-  local result::Tuple{Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Tuple}}
+  local result::Tuple{Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Symbol}, Vector{Tuple}}
 
   generateAffects(n, nConditions, condRes) = begin
     #=
@@ -590,7 +604,7 @@ function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCo
         local ivCond = evalInitialCondition(mtkCond)
         local branchesWithConds::Int = nBranches - 1
         local affects::Vector{Expr} = generateAffects(i, branchesWithConds, ivCond)
-        local cond = :([$(mtkCond)] => [$(affects...)])
+        local cond = :(($(mtkCond)) => [$(affects...)])
         push!(conditions, cond)
         push!(ivConditions, ivCond)
       end
@@ -614,14 +628,14 @@ function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCo
 
   #= Generate zero dynamic equations for the conditions =#
   conditionEquations = Expr[]
-  conditionVariables = Expr[]
+  conditionVariables = Symbol[]
   conditionVariableNames = Tuple{String, Bool}[]
   for i in 1:length(conditions)
     push!(conditionEquations, :(der($(Symbol(string("ifCond", identifier)))) ~ 0))
-    push!(conditionVariables, :($(Symbol(string("ifCond", identifier)))(t)))
+    push!(conditionVariables, :($(Symbol(string("ifCond", identifier)))))
     push!(conditionVariableNames, (string("ifCond", identifier), !(ivConditions[i])))
   end
-  conditionExpr = conditions
+  local conditionExpr = conditions
   result = (conditionExpr, ifExpressions, conditionEquations, conditionVariables, conditionVariableNames)
   return result
 end
@@ -739,31 +753,31 @@ end
 
 """
  This function decomposes the continuous variables.
- This means that if the set of variables are greater than 50 a new inner function is generated as to not
- impact the JIT of the system to much.
+ This means that if the set of variables are greater than 50 a new inner function is generated.
+ This is done  to not negativly impact the JIT of the system to much.
 """
-function decomposeVariables(stateVariables, algebraicVariables)
+function decomposeVariables(stateVariables::Vector{Symbol}, algebraicVariables::Vector{Symbol})
   local nStateVars = length(stateVariables)
   local nAlgVars = length(algebraicVariables)
   if  1 < nStateVars < 50 &&  1 < nAlgVars < 50
     expr = quote
       function generateStateVariables()
-        $(Tuple([:t, stateVariables...]))
+        $(Tuple([stateVariables...]))
       end
       function generateAlgebraicVariables()
-        $(Tuple([:t, algebraicVariables...]))
+        $(Tuple([algebraicVariables...]))
       end
       variableConstructors = Function[generateStateVariables, generateAlgebraicVariables]
     end
   elseif (1 < nStateVars < 50) && nAlgVars == 0
     expr = quote
       function generateStateVariables()
-        $(Tuple([:t, stateVariables...]))
+        $(Tuple([stateVariables...]))
       end
       variableConstructors = Function[generateStateVariables]
     end
   else
-    #= Split the array in chunks of 50  for the state and algebraic variables=#
+    #= Split the array in chunks of 50 for the state and algebraic variables=#
     local stateVectors = collect(Iterators.partition(stateVariables, 50))
     local algVectors = collect(Iterators.partition(algebraicVariables, 50))
     #= For each vector in stateVectors create a constructor for the variables =#
@@ -776,7 +790,7 @@ function decomposeVariables(stateVariables, algebraicVariables)
     for stateVector in stateVectors
       stateConstructorExpr = quote
         function $(Symbol("generateStateVariables" * string(i)))()
-          $(Tuple([:t, stateVector...]))
+          $(Tuple([stateVector...]))
         end
         push!(variableConstructors, $(Symbol("generateStateVariables" * string(i))))
       end
@@ -788,7 +802,7 @@ function decomposeVariables(stateVariables, algebraicVariables)
     for algVector in algVectors
       algConstructorExpr = quote
         function $(Symbol("generateAlgebraicVariables" * string(i)))()
-          $(Tuple([:t, algVector...]))
+          $(Tuple([algVector...]))
         end
         push!(variableConstructors, $(Symbol("generateAlgebraicVariables" * string(i))))
       end

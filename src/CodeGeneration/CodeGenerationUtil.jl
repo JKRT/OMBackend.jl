@@ -108,11 +108,11 @@ end
 function transformToMTKConditionEquation(cond::DAE.Exp, simCode)
   res = @match cond begin
     DAE.RELATION(e1, DAE.LESS(__), e2) => begin
-      :($(expToJuliaExpMTK(e1, simCode)) - $(expToJuliaExpMTK(e2, simCode)) ~ 0)
+      :($(expToJuliaExpMTK(e1, simCode)) < $(expToJuliaExpMTK(e2, simCode)))
     end
     #= TODO: Is this correct? =#
     DAE.RELATION(e1, DAE.GREATER(__), e2) => begin
-      :(- $(expToJuliaExpMTK(e1, simCode)) - $(expToJuliaExpMTK(e2, simCode)) ~ 0)
+      :($(expToJuliaExpMTK(e1, simCode)) > $(expToJuliaExpMTK(e2, simCode)))
     end
     _ => begin
       throw("Operator: " * "'" * string(cond.operator) * "' in: " * string(cond) * " is not supported")
@@ -673,12 +673,15 @@ end
 
 """
   Generates different constructors for the ODESystem depending on given parameters.
+TODO:
+Having them as discrete events are currently a workaround...
+They should be added as continuous events.
 """
 function odeSystemWithEvents(hasEvents, modelName)
   if hasEvents
     :(ODESystem(eqs, t, vars, parameters;
               name=:($(Symbol($modelName))),
-              continuous_events = events))
+              discrete_events = events))
   else
     :(ODESystem(eqs, t, vars, parameters;
               name=:($(Symbol($modelName)))))
@@ -804,7 +807,10 @@ function generateIfExpressions(branches, target, resEqIdx::Int, identifier::Int,
   end
 end
 
-#= TODO. We currently assume residuals that we have made causal and that the original equations are written in a certain form.=#
+#= TODO.
+  We currently assume residuals that we have made causal
+  and that the original equations are written in a certain form.
+=#
 function deCausalize(eq, simCode)
   @match eq.exp begin
     DAE.BINARY(DAE.RCONST(0.0), _, exp2) => begin
@@ -839,4 +845,11 @@ function deCausalize2(eq, simCode)
       throw("Unsupported equation:" * string(eq))
     end
   end
+end
+
+"""
+ Returns true if a variable occurs in an event and should not be optimized away.
+"""
+function irreductable(sym::Symbol, simCode)
+  true
 end

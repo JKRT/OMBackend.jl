@@ -302,7 +302,8 @@ function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arr
           @info "integrator.dt" integrator.dt
           @info "t + dt = " t
           if integrator.dt == 0.0
-            fail()
+            println("integrator.dt was zero. Aborting.")
+#            fail()
           end
           if (Bool($(expToJuliaExp(wEq.condition, simCode))))
             @info "Taking the first branch"
@@ -330,7 +331,8 @@ function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arr
           local t = integrator.t + integrator.dt
           local x = integrator.u
           if integrator.dt == 0.0
-            fail()
+            println("integrator.dt was zero. Aborting.")
+#            fail()
           end
           @info "t + dt = " t
           if (Bool($(expToJuliaExp(wEq.condition, simCode))))

@@ -72,6 +72,7 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
   local allSharedVars::Vector{BDAE.VAR} = getSharedVariablesLocalsAndGlobals(shared)
   local allBackendVars = vcat(allOrderedVars, allSharedVars)
   local simVars::Vector{SimulationCode.SIMVAR} = createAndCollectSimulationCodeVariables(allBackendVars, shared.flatModel)
+  local occVars = map((v)-> v.name, filter((v) -> isOCCVar(v), simVars))
   # Assign indices and put all variable into an hash table
   local stringToSimVarHT = createIndices(simVars)
   local equations = [eq for eq in equationSystem.orderedEqs]
@@ -80,6 +81,8 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
    whenEqs::Vector{BDAE.WHEN_EQUATION},
    ifEqs::Vector{BDAE.IF_EQUATION},
    structuralTransitions::Vector{BDAE.Equation}) = allocateAndCollectSimulationEquations(equations)
+  #= Enumerate all irreductable variables =#
+  local irreductableVars::Vector{String} = vcat(occVars, getIrreductableVars(ifEqs, whenEqs, allBackendVars))
   #=  Convert the structural transistions to the simcode representation. =#
   if ! isempty(shared.DOCC_equations)
     append!(structuralTransitions, shared.DOCC_equations)
@@ -122,7 +125,8 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
                           sharedVariables,
                           initialState,
                           shared.metaModel,
-                          shared.flatModel
+                          shared.flatModel,
+                          irreductableVars
                           )
 end
 

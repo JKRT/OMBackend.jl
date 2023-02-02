@@ -461,3 +461,24 @@ function isOverconstrainedConnectorVariable(simVarName::String, occVariables::Ve
   local isOCCVar = simVarName in occVariables
   return isOCCVar
 end
+
+"""
+  Get variables that should be marked as irreductable.
+"""
+function getIrreductableVars(ifEquations::Vector{BDAE.IF_EQUATION},
+                             whenEqs::Vector{BDAE.WHEN_EQUATION},
+                             algebraicAndStateVariables::VECTOR_VAR) where {VECTOR_VAR}
+  local irreductables = Vector{Any}[]
+  for eq in ifEquations
+    variablesForEq = Backend.BDAEUtil.getAllVariables(eq, algebraicAndStateVariables)
+    push!(irreductables, variablesForEq)
+  end
+  #TODO: Fix when equations
+  # for eq in whenEqs
+  #   variablesForEq = Backend.BDAEUtil.getAllVariables(eq, algebraicAndStateVariables)
+  #   push!(variablesForEq, irreductables)
+  # end
+  local irreductablesAsStr = map(x -> string(x), collect(Iterators.flatten(irreductables)))
+  irreductablesAsStr = filter(x -> x != "time", irreductablesAsStr)
+  return irreductablesAsStr
+end

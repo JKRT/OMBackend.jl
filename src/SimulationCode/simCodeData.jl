@@ -1,4 +1,3 @@
-
 """
 Kind of a simulation variable
 """
@@ -80,9 +79,9 @@ abstract type SimCode end
 abstract type Construct end
 
 """
-  Represents a branch in simulation code. 
+  Represents a branch in simulation code.
   Contains a single condition, a set of inner equations and a set of possible targets.
-  Since each branch potentially contains a set of equations information exist so that the code in each branch can be 
+  Since each branch potentially contains a set of equations information exist so that the code in each branch can be
   matched (Similar to the larger system )
 """
 struct BRANCH{T1 <: DAE.Exp,
@@ -93,7 +92,7 @@ struct BRANCH{T1 <: DAE.Exp,
               T6 <: Graphs.AbstractGraph,
               T7 <: Vector{Vector{Int}},
               T8 <: AbstractDict{String, Tuple{Integer, SimVar}}} <: Construct
-  
+
   condition::T1
   residualEquations::T2
   identifier::T3 #= A value of -1 indicates that this branch is an else branch =#
@@ -106,7 +105,7 @@ struct BRANCH{T1 <: DAE.Exp,
 end
 
 """
-  A representation of a simcode IF Equation. 
+  A representation of a simcode IF Equation.
   Similar to the main simcode module it contains information to make construct a causal representation easier.
 """
 struct IF_EQUATION{Branches <: Vector{BRANCH}} <: Construct
@@ -144,7 +143,7 @@ struct SIM_CODE{T0<:String,
                 #= When equations are discret events (In the sense they occur once, the condition is checked per time step. ) =#
                 T4<:Vector{BDAE.WHEN_EQUATION},
                 #=
-                  If equations are represented via a vector of possible branches in which the code can operate. 
+                  If equations are represented via a vector of possible branches in which the code can operate.
                 Similar to basic blocks
                 =#
                 T5<:Vector{IF_EQUATION},
@@ -183,7 +182,7 @@ struct SIM_CODE{T0<:String,
   " The reverse topological sort of the equation-graph "
   stronglyConnectedComponents::T9
   "Contains all structural transistions"
-  structuralTransitions::T10  
+  structuralTransitions::T10
   "Structural submodels"
   subModels::T11
   " Variables that different submodels have in common"
@@ -194,4 +193,6 @@ struct SIM_CODE{T0<:String,
   metaModel::Option
   "An alternate flat model. Used by structural if equations to add or remove connector statements affecting the virtual connection graph."
   flatModel::Option
+  "Irreductable variables. That is the names of variables that are involved in events such as discrete variables"
+  irreductableVariables::T12
 end

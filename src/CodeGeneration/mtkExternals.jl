@@ -81,8 +81,6 @@ function makeODESystem(deqs, iv, vars, pars, idxReduction; name, continuous_even
   D = Differential(iv)
   r1 = SymbolicUtils.@rule ~~a * D(~~b) * ~~c => 0
   r2 = SymbolicUtils.@rule D(~~b) => 0
-  #@info "BEFORE REWRITING"
-  #println(debugRewrite(deqs, iv, vars, pars; separator = "\n"))
   remove_diffs = SymbolicUtils.Postwalk(SymbolicUtils.Chain([r1,r2]))
   usedStates = Set()
   local rewrittenDeqs = Symbolics.Equation[]
@@ -241,7 +239,8 @@ simplification will allow models where `n_states = n_equations - n_inputs`.
 function structural_simplify(sys::ModelingToolkit.AbstractSystem, io = nothing; simplify = false, kwargs...)
   @info "Calling custom structural_simplify"
   #sys = ModelingToolkit.ode_order_lowering(sys)
-  sys = ModelingToolkit.dae_order_lowering(sys)
+  #sys = ModelingToolkit.dae_index_lowering(sys)
   #sys = ModelingToolkit.tearing(sys; simplify = simplify)
+  sys = ModelingToolkit.structural_simplify(sys, simplify = simplify)
   return sys
 end

@@ -230,13 +230,13 @@ function createNewFlatModel(flatModel,
                                flatModel.comment)
   println("Create new model")
   local variablestoReset = resolveDOOCConnections(flatModel, flatModel.name)
-  # println("********************************************************************")
-  # println("Existing equations:")
-  # println("********************************************************************")
-  # @info "Length of OLD FLAT MODEL:" length(OMBackend.CodeGeneration.OLD_FLAT_MODEL.equations)
-  # for e in OMBackend.CodeGeneration.OLD_FLAT_MODEL.equations
-  #   println(OMFrontend.Main.toString(e))
-  # end
+  println("********************************************************************")
+  println("Existing equations:")
+  println("********************************************************************")
+  @info "Length of OLD FLAT MODEL:" length(OMBackend.CodeGeneration.OLD_FLAT_MODEL.equations)
+  for e in OMBackend.CodeGeneration.OLD_FLAT_MODEL.equations
+    println(OMFrontend.Main.toString(e))
+  end
 
   # println("********************************************************************")
   # println("New System:")
@@ -254,13 +254,13 @@ function createNewFlatModel(flatModel,
   newFlatModel = OMFrontend.Main.resolveConnections(newFlatModel, newFlatModel.name)
   newFlatModel = OMFrontend.Main.evaluate(newFlatModel)
   newFlatModel = OMFrontend.Main.simplifyFlatModel(newFlatModel)
-  # println("Final System")
-  # @info "Length of final system:" length(newFlatModel.equations)
-  # println("********************************************************************")
-  # for e in newFlatModel.equations
-  #   println(OMFrontend.Main.toString(e))
-  # end
-  # println("********************************************************************")
+  println("Final System")
+  @info "Length of final system:" length(newFlatModel.equations)
+  println("********************************************************************")
+  for e in newFlatModel.equations
+    println(OMFrontend.Main.toString(e))
+  end
+  println("********************************************************************")
   return newFlatModel
 end
 

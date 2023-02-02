@@ -375,13 +375,37 @@ function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Vector{BDAE.VAR})::Ve
   return variablesInEq
 end
 
+
+"""
+  Fetches all variables in if equations.
+FIXME:
+Ideally this function should also return a vector of component references
+"""
+function getAllVariables(eq::BDAE.IF_EQUATION, vars::Vector{BDAE.VAR})
+  local condVars = map(c -> listArray(Util.getAllCrefs(c)), eq.conditions)
+  condVars = map(x -> string(x), collect(Iterators.flatten(condVars)))
+  @info "condVars" condVars
+  local ifEqEqsTrue = collect(Iterators.flatten(listArray(eq.eqnstrue)))
+  local ifEqEqsFalse = listArray(eq.eqnsfalse)
+  local trueVars = map(eq -> getAllVariables(eq, vars), ifEqEqsTrue)
+  local falseVars = map(eq -> getAllVariables(eq, vars), ifEqEqsFalse)
+  trueVars = collect(Iterators.flatten(trueVars))
+  falseVars = collect(Iterators.flatten(falseVars))
+#  @info "trueVars" trueVars
+#  @info "falseVars" falseVars
+  local res = vcat(condVars, trueVars, falseVars)
+  #=FIXME: Not pretty =#
+  res = map(x ->string(x), res)
+  return res
+end
+
 """
   Author:johti17
   input: Backend Equation, eq
   input: All existing variables
   output All variable in that specific equation except the state variables
 """
-function getAllVariablesExceptStates(eq::BDAE.RESIDUAL_EQUATION, vars::Vector{BDAE.VAR})::Array{DAE.ComponentRef}
+function getAllVariablesExceptStates(eq::BDAE.IF_EQUATION, vars::Vector{BDAE.VAR})::Vector{DAE.ComponentRef}
   local componentReferences::List = Util.getAllCrefs(eq.exp)
   local componentReferencesArr::Array = [componentReferences...]
   local varNames = [v.varName for v in vars]

@@ -140,8 +140,8 @@ In the solver loop we iterate through these callbacks.
 
 If a structural change was detected we act on it and change to the system pointed to by the callback.
 Depending on the encompassing system we either just in time recompile the new system or we switch to the new.
-Saving our current time step and reinitialize our new changed system.
-
+Saving our current time step and reinitialize our new changed system
+.
 We should also statically detect if VSS simulation is needed since it is more resource heavy than regular simulation
 =#
 
@@ -170,7 +170,7 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
     retCode = check_error(integrator)
     for cb in structuralCallbacks
       if cb.structureChanged
-        #= Find the correct variables and map them between the two models  =#
+        #= Find the correct variables and map them between the two models =#
         local newSystem = cb.system
         indicesOfCommonVariables = getIndicesOfCommonVariables(getSyms(newSystem),
                                                                commonVariableSet;
@@ -205,7 +205,7 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
   return oldSols
 end
 
-global SHOULD_DO_REINITIALIZATION = true
+global SHOULD_DO_REINITIALIZATION = false
 
 """
   Custom solver function for Modelica code with structuralCallbacks to monitor the solving process
@@ -243,25 +243,46 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
         if ! SHOULD_DO_REINITIALIZATION
           @time (newProblem, newSymbolTable, initialValues, sc) = recompilation(cb.name, cb, integrator.u, tspan, callbackConditions)
           #= Assuming the indices are the same (Which is not always true) =#
-        local symsOfOldProblem = getSyms(problem)
-        local symsOfNewProlem = getSyms(newProblem)
+          local symsOfOldProblem = getSyms(problem)
+          local symsOfNewProlem = getSyms(newProblem)
           newU0 = RuntimeUtil.createNewU0(symsOfOldProblem,
-                                              symsOfNewProlem,
-                                              newSymbolTable,
-                                              initialValues,
-                                              integrator,
-                                              sc)
-        #= Save the old solution together with the name and the mode that was active =#
-        push!(solutions, integrator.sol)
-        push!(oldSols, (integrator.sol, getSyms(problem), activeModeName))
-        #= Now we have the start values for the next part of the system=#
-        integrator = init(newProblem,
-                          alg;
-                          kwargs...)
+                                          symsOfNewProlem,
+                                          newSymbolTable,
+                                          initialValues,
+                                          integrator,
+                                          sc)
+          @info "New u0 generated"
+          # # TMP for System 10 With optimization
+          global activeU0 = newU0
+          newU0[11] = false
+          newU0[12] = false
+          newU0[13] = false
+          newU0[14] = false
+
+          # newU0[16] = 0.0
+          # newU0[17] = 0.0
+          # newU0[18] = 0.0
+          # newU0[19] = 0.0
+          # newU0[20] = 0.0
+          # newU0[21] = 0.0
+          # newU0[22] = 0.0
+          # newU0[23] = 0.0
+          # newU0[24] = 0.0
+          # newU0[25] = 0.0
+          # newU0[26] = 0.0
+
+          #= Save the old solution together with the name and the mode that was active =#
+          push!(solutions, integrator.sol)
+          push!(oldSols, (integrator.sol, getSyms(problem), activeModeName))
+          #= Now we have the start values for the next part of the system=#
+          integrator = init(newProblem,
+                            alg, #Changed to run Rodas5 from alg.
+                            kwargs...)
+          @info("Test test test")
           reinit!(integrator,
                   newU0;
-                  t0 = i.t - i.dt,
-                  reset_dt = true)
+                  t0 = i.t,
+                  reset_dt = false)
         else #= Francesco proposed solution. =#
           #=
             Rerun OCC algorithms.
@@ -273,9 +294,10 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
                                                                                   integrator.u,
                                                                                   tspan,
                                                                                   problem)
-          @assert length(rootIndices) == length(keys(rootSources)) "Root sources and indices must have the same length."
+          @assert length(rootIndices) == length(keys(rootSources)) "Root sources and indices must have the same length. Length was $(length(rootIndices)) == $(length(keys(rootSources)))"
           @info "Root indices" rootIndices
           @info "variablesToSetIdx" variablesToSetIdx
+          @info "rootsources" rootSources
           local newU0::Vector{Float64} = Float64[v for v in integrator.u]
           local stateVars = states(OMBackend.LATEST_REDUCED_SYSTEM)
           local stateVarsAsStr = [replace(string(s), "(t)" => "") for s in stateVars]
@@ -285,12 +307,12 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
           local variablesToSet = collect(Iterators.flatten([v for v in values(variablestoReset)]))
           @info "variablesToSet" variablesToSet
           local rootKeysToMTKIdx = indexin(rootKeys, stateVarsAsStr)
+          @info "rootKeysToMTKIdx" rootKeysToMTKIdx
           local rootValsToMTKIdx = indexin(rootValues, stateVarsAsStr)
+          @info "rootValsToMTKIdx" rootValsToMTKIdx
           local variablesToResetMTKIdx = indexin(variablesToSet, stateVarsAsStr)
           local rootToEquationMap::Dict{String, Symbolics.Equation} = Dict()
-          @info rootKeysToMTKIdx
-          @info rootValsToMTKIdx
-          @info variablesToResetMTKIdx
+          @info "variablesToResetMTKIdx" variablesToResetMTKIdx
           for (i, rk) in enumerate(rootKeys)
             OM_NameToMTKIdx[rk] = rootKeysToMTKIdx[i]
           end
@@ -300,7 +322,7 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
           for (i, vr) in enumerate(variablesToSet)
             OM_NameToMTKIdx[vr] = variablesToResetMTKIdx[i]
           end
-          @info OM_NameToMTKIdx
+          @info "OM_NameToMTKIdx" OM_NameToMTKIdx
           #=
            Start by setting the root variables we got from returnRootIndices.
            Each of these variables have a reference variable.
@@ -503,7 +525,8 @@ function recompilation(activeModeName,
       TODO currently only handles a single structural callback.
     =#
       callback = callbackConditions #Should be changed look at method below
-    )
+  )
+  #=Changed System=#
   #= 4.1 Update the structural callback with the new situation =#
   @match SOME(newMetaModel) = simulationCode.metaModel
   structuralCallback.metaModel = newMetaModel
@@ -542,7 +565,7 @@ function recompilation(activeModeName,
   local model = replace(activeModeName, "." => "__")
   local modelName = string(model, "Model")
   #local result = OMBackend.modelToString(model; MTK = true, keepComments = false, keepBeginBlocks = false)
-  println("Hello Gunilla we have a new model!\n");
+  println("We have a new model!\n");
   resultingModel = OMBackend.CodeGeneration.stripComments(resultingModel)
   resultingModel = OMBackend.CodeGeneration.stripBeginBlocks(resultingModel)
   result = "$resultingModel"
@@ -554,9 +577,9 @@ function recompilation(activeModeName,
     $(Symbol(modelName))($(tspan))
   end
   (problem, callbacks, initialValues, reducedSystem, tspan, pars, vars) = @eval $(modelCall)
-  @debug "We have a new problem..."
-  #global PROBLEM = problem
-  #global REDUCED_SYSTEM = reducedSystem
+  @info "We have constructed a new problem..."
+  global PROBLEM = problem
+  global REDUCED_SYSTEM = reducedSystem
   #= Update meta model somehow=#
   return (problem,
           simulationCode.stringToSimVarHT,

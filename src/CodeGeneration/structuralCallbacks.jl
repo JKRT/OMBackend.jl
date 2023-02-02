@@ -402,7 +402,7 @@ function createAffectCondPairForDOCC(cond,
         $(expToJuliaExp(cond, simCode)) = false
         auto_dt_reset!(integrator)
         add_tstop!(integrator, integrator.t #= Some small number =#)
-        set_!(integrator, t)
+        #set_!(integrator, t)
       end
       function condition(x, t, integrator)
         return Bool($(expToJuliaExp(cond, simCode)))
@@ -417,8 +417,8 @@ function createAffectCondPairForDOCC(cond,
         local x = integrator.u
         structuralChange.structureChanged = true
         $(expToJuliaExp(cond, simCode)) = true
-        auto_dt_reset!(integrator)
-        add_tstop!(integrator, integrator.t #= Some small number =#)
+        #= Stop integration =#
+        terminate!(integrator)
       end
       function condition(x, t, integrator)
         return Bool($(expToJuliaExp(cond, simCode))) == false
