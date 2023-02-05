@@ -250,7 +250,6 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
   #local OCC_DUMMY_EQUATIONS = [:(der($(Symbol("dummy" * occv))) ~ 0) for occv in occVariables]
   #= Create assignments for the dummies. =#
   local IF_EQUATION_EVENTS = [component[1] for component in IF_EQUATION_COMPONENTS]
-  @info IF_EQUATION_EVENTS
   IF_EQUATION_EVENTS = collect(Iterators.flatten(IF_EQUATION_EVENTS))
   local IF_EQUATION_EVENT_DECLARATION = if isempty(IF_EQUATION_EVENTS)
     :(events = [])
@@ -573,20 +572,21 @@ One for each conditional variable created.
 function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCode.IF_EQUATION, identifier, simCode)
   local result::Tuple{Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Symbol}, Vector{Tuple}}
 
-  generateAffects(n, nConditions, condRes) = begin
-    #=
-    The cond res is what we are going to evaluate it to.
-    =#
+  generateAffect(n, nConditions, condRes) = begin
+    #= The cond res is what we are going to evaluate it to. =#
     local exprs = Expr[]
     local e
-    for i in 1:nConditions
-      e = if i == n
-        :($(Symbol(("ifCond$(identifier)"))) ~ $(condRes))
-      else
-        :($(Symbol(("ifCond$(identifier)"))) ~ $(!condRes))
-      end
+      e = :($(Symbol(("ifCond$(identifier)"))) ~ $(condRes))
       push!(exprs, e)
-    end
+    return exprs
+  end
+
+  generateInverseAffect(n, nConditions, condRes) = begin
+    #= The cond res is what we are going to evaluate it to. =#
+    local exprs = Expr[]
+    local e
+      e = :($(Symbol(("ifCond$(identifier)"))) ~ $(!condRes))
+      push!(exprs, e)
     return exprs
   end
 
@@ -602,14 +602,19 @@ function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCo
       SimulationCode.BRANCH(condition, residuals, _, targets, _, _, _, _, _) => begin
         local mtkCond = transformToMTKConditionEquation(branch.condition, simCode)
         local ivCond = evalInitialCondition(mtkCond)
-        local branchesWithConds::Int = nBranches - 1
-        local affects::Vector{Expr} = generateAffects(i, branchesWithConds, ivCond)
+        local branchesWithConds::Int = nBranches - 1 #TODO DOCC - 1
+        local affects::Vector{Expr} = generateAffect(i, branchesWithConds, ivCond)
+        local inverseAffects::Vector{Expr} = generateInverseAffect(i, branchesWithConds, ivCond)
         local cond = :(($(mtkCond)) => [$(affects...)])
+        local inverseCond = :((!$(mtkCond)) => [$(inverseAffects...)])
+        print(inverseCond)
         push!(conditions, cond)
+        push!(conditions, inverseCond)
         push!(ivConditions, ivCond)
       end
     end
   end
+#  @info "All conditions" conditions
   #= Create the equations themselves =#
   local target = 1
   local resEqs = ifEq.branches[target].residualEquations
@@ -630,7 +635,7 @@ function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCo
   conditionEquations = Expr[]
   conditionVariables = Symbol[]
   conditionVariableNames = Tuple{String, Bool}[]
-  for i in 1:length(conditions)
+  for i in 1:length(ivConditions)
     push!(conditionEquations, :(der($(Symbol(string("ifCond", identifier)))) ~ 0))
     push!(conditionVariables, :($(Symbol(string("ifCond", identifier)))))
     push!(conditionVariableNames, (string("ifCond", identifier), !(ivConditions[i])))

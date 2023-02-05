@@ -2,13 +2,14 @@ module RuntimeUtil
 
 import Absyn
 import ListUtil
+import ModelingToolkit
 import OMBackend
+import OMBackend.SimulationCode
 import OMFrontend
 import OMFrontend.Main
 import OMFrontend.Main.SCodeUtil
 import OMFrontend.Main.Util
 import SCode
-import OMBackend.SimulationCode
 
 using MetaModelica
 
@@ -25,7 +26,7 @@ end
 """
   Given a name sets that element to a new value.
   It then returns the modified SCodeProgram.
-Currently it is assumed to be at the top level of the class.
+Currently254 it is assumed to be at the top level of the class.
 TODO: Fix for sublevels as well
 """
 function setElementInSCodeProgram!(inIdent::String, newValue::T, inClass::SCode.Element) where {T}
@@ -313,4 +314,172 @@ function findPath(g::Dict{String, Vector{String}}, inV)
   return discovered[2:end]
 end
 
+"""
+Temporary function.
+Evaluates a discrete events
+Assuming one variable and one event that is changed.
+TODO: Generalize later
+"""
+function evalDiscreteEvents(discreteEvents, u, t)
+  local events = Tuple{Int, Bool, Bool}[]
+  for de in discreteEvents
+    push!(events, evalDiscreteEvent(de, u, t))
+  end
+  events = filter((x) -> last(x), events)
+  return events
 end
+
+"""
+TODO:
+Refactor this function
+"""
+function evalDiscreteEvent(discreteEvent, u, time)
+  @assert(length(discreteEvent.affects ) == 1, "Only length one of discrete affects supported")
+  @info "New iteration\n\n\n\n"
+  local affect = first(discreteEvent.affects)
+  local condition = discreteEvent.condition
+  local args = condition.arguments
+  local operator = condition.f
+  local stateVars = ModelingToolkit.states(OMBackend.Runtime.REDUCED_SYSTEM)
+  local lhs = first(args)
+  local rhs = last(args)
+  local lhsIdx::Int = 0
+  local rhsIdx::Int = 0
+  local isChanged = false
+  local varDeps = Int[]
+  #Assuming a ! for this case
+  local shouldApplyNegation = false
+  if length(args) == 1
+    lhs = first(first(args).arguments)
+    rhs = last(first(args).arguments)
+    shouldApplyNegation = true
+    operator = first(args).f
+  end
+  if typeof(lhs) != Float64 && string(lhs) != string(OMBackend.Runtime.REDUCED_SYSTEM.iv)
+    @info "args" args
+    @info "lhs" lhs
+    @info "lhs" typeof(lhs)
+    @info "rhs" rhs
+    lhsIdx = findfirst((x)->x==1, indexin(stateVars, [lhs]))
+  end
+  if typeof(rhs) != Float64 && string(rhs) != string(OMBackend.Runtime.REDUCED_SYSTEM.iv)
+    rhsIdx = findfirst((x)->x==1, indexin(stateVars, [rhs]))
+  end
+  rhsValue = if rhsIdx != 0
+    varDeps = getVariableEqDepedenceViaIdx(rhsIdx)
+    @info "varDeps rhs" varDeps
+    rootIdx = getRootEquation(varDeps)
+    getConstantValueOfEq(rootIdx)
+  elseif string(rhs) == string(OMBackend.Runtime.REDUCED_SYSTEM.iv)
+    time
+  else
+    rhs
+  end
+  lhsValue = if lhsIdx != 0
+    varDeps = getVariableEqDepedenceViaIdx(lhsIdx)
+    @info "varDeps lhs" varDeps
+    @info "root eq" getRootEquation(varDeps)
+    rootIdx = getRootEquation(varDeps)
+    getConstantValueOfEq(rootIdx)
+  elseif string(lhs) == string(OMBackend.Runtime.REDUCED_SYSTEM.iv)
+    time
+  else
+    lhs
+  end
+  local affectIdx = findfirst((x)->x==1, indexin(stateVars, [affect.lhs]))
+  local affectNewValue = affect.rhs
+  @info "lhs value was" lhsValue
+  @info "rhs value was" rhsValue
+  if shouldApplyNegation
+    if operator(lhsValue, rhsValue) == false
+      @info operator(lhsValue, rhsValue)
+      #= Also assuming here that the lhs is a variable and the rhs is a value =#
+      @info "Branch 1 Value was changed" discreteEvent.condition.f
+      isChanged = true
+    end
+  else
+    if operator(lhsValue, rhsValue)
+      isChanged = true
+    end
+  end
+  return (affectIdx, affect.rhs, isChanged)
+end
+
+"""
+ Given a variable index, returns the equations that the variable at this index is dependent on.
+  That is, equations in which this variable is referenced.
+"""
+function getVariableEqDepedenceViaIdx(idx::Int)
+  #= Get all equation dependencies for the current system =#
+  local equationDependencies = ModelingToolkit.equation_dependencies(OMBackend.Runtime.REDUCED_SYSTEM)
+  local vars = ModelingToolkit.states(OMBackend.Runtime.REDUCED_SYSTEM)
+  local totalDependencies = Int[]
+  #= Go through each equation =#
+  for (equationIndex, equationDep) in enumerate(equationDependencies)
+    #= Skip equations without dependencies =#
+    if isempty(equationDep)
+      continue
+    end
+    #=
+      If the equation dependency is not empty
+      Check if it depends on our variable
+    =#
+    if first(indexin([vars[idx]], equationDep)) !== nothing
+      #=
+      In this case we know that this equation is a depedency of the supplied variable.
+      Add this equation as a possible depdency to totalDependencies
+      =#
+      push!(totalDependencies, equationIndex)
+    end
+  end
+  #= We now have All indices of the variables our equation depends on =#
+  return totalDependencies
+end
+
+"""
+  Get the top level equation if such equation exist for a given set of equations
+  Note that if the supplied equation is not solved at the top level, this function returns 0
+"""
+function getRootEquation(equationIndices; usedEqIndices = Set())::Int
+  @info "New call" equationIndices
+  local G = ModelingToolkit.asgraph(OMBackend.Runtime.REDUCED_SYSTEM)
+  local variableIdxToEquationIdx = G.badjlist
+  local equationIdxToVariableIdx = G.fadjlist
+  local idx = 0
+  #= Shallow search. See if we can find the right equation directly =#
+  for idx in equationIndices
+    #= This equation does only depend on one variable. We are done =#
+    if length(equationIdxToVariableIdx[idx]) == 1
+      #= Then it is solved in this particular equation =#
+      return idx
+    end
+    push!(usedEqIndices, idx)
+  end
+  for eqIdx in equationIndices
+    for vIdx in equationIdxToVariableIdx[eqIdx]
+      newEqIndices = filter((x) -> !(x in usedEqIndices), variableIdxToEquationIdx[vIdx])
+      if isempty(newEqIndices)
+        continue
+      end
+      idx = getRootEquation(newEqIndices; usedEqIndices = usedEqIndices)
+    end
+  end
+  return idx
+end
+
+"""
+Gets the constant value of an equation if such exist.
+Throws an error otherwise
+"""
+function getConstantValueOfEq(eqIdx::Int)::Float64
+  local equations = ModelingToolkit.equations(OMBackend.Runtime.REDUCED_SYSTEM)
+  local equation = equations[eqIdx]
+  @assert typeof(equation.lhs) != Number || typeof(equation.rhs) != Number "One side (lhs/rhs )needs to be a constant float"
+  if equation.lhs isa Number
+    return equation.lhs
+  end
+  return equation.rhs
+end
+
+
+end #= module =#

@@ -205,7 +205,7 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
   return oldSols
 end
 
-global SHOULD_DO_REINITIALIZATION = false
+global SHOULD_DO_REINITIALIZATION = true
 
 """
   Custom solver function for Modelica code with structuralCallbacks to monitor the solving process
@@ -216,7 +216,8 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
   local structuralCallbacks = omProblem.structuralCallbacks
   local callbackConditions = omProblem.callbackConditions
   local activeModeName = omProblem.activeModeName
-  local integrator = init(problem, alg, dtmax = 0.001, kwargs...)
+  #local integrator = init(problem, alg, dtmax = 0.001, kwargs...)
+  local integrator = init(problem, alg,  kwargs...)
   local oldSols = []
   local solutions = []
   #= Run the integrator=#
@@ -251,38 +252,35 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
                                           initialValues,
                                           integrator,
                                           sc)
+          println("U0 before variables are set:")
+          local discrete_events = REDUCED_SYSTEM.discrete_events
+          @info "discrete_events:" discrete_events
+          #= If there are discrete events these should be evaluated before proceeding =#
+          events = if length(discrete_events) > 0
+            RuntimeUtil.evalDiscreteEvents(discrete_events, newU0, i.t)
+          else
+            []
+          end
+          for e in events
+            newU0[e[1]] = e[2]
+          end
+          println("Generate new u0:")
+          println(newU0)
           @info "New u0 generated"
           # # TMP for System 10 With optimization
           global activeU0 = newU0
-          newU0[11] = false
-          newU0[12] = false
-          newU0[13] = false
-          newU0[14] = false
-
-          # newU0[16] = 0.0
-          # newU0[17] = 0.0
-          # newU0[18] = 0.0
-          # newU0[19] = 0.0
-          # newU0[20] = 0.0
-          # newU0[21] = 0.0
-          # newU0[22] = 0.0
-          # newU0[23] = 0.0
-          # newU0[24] = 0.0
-          # newU0[25] = 0.0
-          # newU0[26] = 0.0
 
           #= Save the old solution together with the name and the mode that was active =#
           push!(solutions, integrator.sol)
           push!(oldSols, (integrator.sol, getSyms(problem), activeModeName))
           #= Now we have the start values for the next part of the system=#
           integrator = init(newProblem,
-                            alg, #Changed to run Rodas5 from alg.
+                            alg,
                             kwargs...)
-          @info("Test test test")
           reinit!(integrator,
                   newU0;
                   t0 = i.t,
-                  reset_dt = false)
+                  reset_dt = true)
         else #= Francesco proposed solution. =#
           #=
             Rerun OCC algorithms.
@@ -300,6 +298,7 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
           @info "rootsources" rootSources
           local newU0::Vector{Float64} = Float64[v for v in integrator.u]
           local stateVars = states(OMBackend.LATEST_REDUCED_SYSTEM)
+          #= This is bad, do not use strings thise way. =#
           local stateVarsAsStr = [replace(string(s), "(t)" => "") for s in stateVars]
           local OM_NameToMTKIdx = Dict()
           local rootKeys = [k for k in keys(rootSources)]
@@ -393,7 +392,6 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
           push!(solutions, integrator.sol)
           push!(oldSols, (integrator.sol, getSyms(problem), activeModeName))
           newEquations = Symbolics.Equation[]
-          ModelingToolkit.equation_dependencies(OMBackend.LATEST_REDUCED_SYSTEM)
           @info "equationToAddMap" equationToAddMap
           @info "rootToEquationMap" rootToEquationMap
           for eq in oldEquations
