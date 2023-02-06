@@ -401,8 +401,13 @@ function getOCCGraph(flatModel)
   for r in potentialRoots
     println(OMFrontend.Main.toString(first(r)))
   end
+  println("Print: final roots")
+  for r in roots
+    println(OMFrontend.Main.toString(r))
+  end
   #= Get the roots involved in the structural change =#
-  rootVariables::List{OMFrontend.Main.ComponentRef} = MetaModelica.list(first(r) for r in potentialRoots)
+  rootVariables::List{OMFrontend.Main.ComponentRef} = MetaModelica.list(r for r in roots)
+  #  @info "roots" roots
   #= Create a graph that we can search. =#
   local connectionEdges = convertFlatEdgeToEdges(graph.connections)
   @info typeof(connectionEdges)

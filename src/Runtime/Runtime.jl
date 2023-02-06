@@ -288,14 +288,14 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
             That is the reference variables for the roots.
           =#
           @time (rootIndices, variablesToSetIdx, rootSources, variablestoReset) = returnRootIndices(cb.name,
-                                                                                  cb,
-                                                                                  integrator.u,
-                                                                                  tspan,
-                                                                                  problem)
+                                                                                                    cb,
+                                                                                                    integrator.u,
+                                                                                                    tspan,
+                                                                                                    problem)
+          @info "rootsources" rootSources
           @assert length(rootIndices) == length(keys(rootSources)) "Root sources and indices must have the same length. Length was $(length(rootIndices)) == $(length(keys(rootSources)))"
           @info "Root indices" rootIndices
           @info "variablesToSetIdx" variablesToSetIdx
-          @info "rootsources" rootSources
           local newU0::Vector{Float64} = Float64[v for v in integrator.u]
           local stateVars = states(OMBackend.LATEST_REDUCED_SYSTEM)
           #= This is bad, do not use strings thise way. =#
@@ -415,11 +415,13 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
             println(eq)
           end
           @time newSystem = ODESystem(newEquations,
-                                independent_variable(OMBackend.LATEST_REDUCED_SYSTEM),
-                                states(OMBackend.LATEST_REDUCED_SYSTEM),
-                                parameters(OMBackend.LATEST_REDUCED_SYSTEM);
+                                      independent_variable(OMBackend.LATEST_REDUCED_SYSTEM),
+                                      states(OMBackend.LATEST_REDUCED_SYSTEM),
+                                      parameters(OMBackend.LATEST_REDUCED_SYSTEM);
                                       name = Symbol(cb.name))
-          newSystem = OMBackend.CodeGeneration.structural_simplify(newSystem)
+          @info "New system created with" length(newEquations)
+          @info "States" length(states(OMBackend.LATEST_REDUCED_SYSTEM))
+          #newSystem = OMBackend.CodeGeneration.structural_simplify(newSystem)
           global NEW_SYSTEM = newSystem
           @time newProblem = ModelingToolkit.ODEProblem(
             newSystem,
@@ -436,7 +438,7 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
                                   kwargs...)
           @time reinit!(integrator,
                         integrator.u;
-                        t0 = i.t - i.dt,
+                        t0 = i.t,# - i.dt,
                         reset_dt = true)
         end
         #= End recompilation =#
