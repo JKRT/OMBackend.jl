@@ -320,10 +320,10 @@ Evaluates a discrete events
 Assuming one variable and one event that is changed.
 TODO: Generalize later
 """
-function evalDiscreteEvents(discreteEvents, u, t)
+function evalDiscreteEvents(discreteEvents, u, t, system)
   local events = Tuple{Int, Bool, Bool}[]
   for de in discreteEvents
-    push!(events, evalDiscreteEvent(de, u, t))
+    push!(events, evalDiscreteEvent(de, u, t, system))
   end
   events = filter((x) -> last(x), events)
   return events
@@ -333,14 +333,14 @@ end
 TODO:
 Refactor this function
 """
-function evalDiscreteEvent(discreteEvent, u, time)
+function evalDiscreteEvent(discreteEvent, u, time, system)
   @assert(length(discreteEvent.affects ) == 1, "Only length one of discrete affects supported")
   @info "New iteration\n\n\n\n"
   local affect = first(discreteEvent.affects)
   local condition = discreteEvent.condition
   local args = condition.arguments
   local operator = condition.f
-  local stateVars = ModelingToolkit.states(OMBackend.Runtime.REDUCED_SYSTEM)
+  local stateVars = ModelingToolkit.states(system)
   local lhs = first(args)
   local rhs = last(args)
   local lhsIdx::Int = 0
@@ -355,33 +355,33 @@ function evalDiscreteEvent(discreteEvent, u, time)
     shouldApplyNegation = true
     operator = first(args).f
   end
-  if typeof(lhs) != Float64 && string(lhs) != string(OMBackend.Runtime.REDUCED_SYSTEM.iv)
+  if typeof(lhs) != Float64 && string(lhs) != string(system.iv)
     @info "args" args
     @info "lhs" lhs
     @info "lhs" typeof(lhs)
     @info "rhs" rhs
     lhsIdx = findfirst((x)->x==1, indexin(stateVars, [lhs]))
   end
-  if typeof(rhs) != Float64 && string(rhs) != string(OMBackend.Runtime.REDUCED_SYSTEM.iv)
+  if typeof(rhs) != Float64 && string(rhs) != string(system.iv)
     rhsIdx = findfirst((x)->x==1, indexin(stateVars, [rhs]))
   end
   rhsValue = if rhsIdx != 0
-    varDeps = getVariableEqDepedenceViaIdx(rhsIdx)
+    varDeps = getVariableEqDepedenceViaIdx(rhsIdx, system)
     @info "varDeps rhs" varDeps
     rootIdx = getRootEquation(varDeps)
-    getConstantValueOfEq(rootIdx)
-  elseif string(rhs) == string(OMBackend.Runtime.REDUCED_SYSTEM.iv)
+    getConstantValueOfEq(rootIdx, system)
+  elseif string(rhs) == string(system.iv)
     time
   else
     rhs
   end
   lhsValue = if lhsIdx != 0
-    varDeps = getVariableEqDepedenceViaIdx(lhsIdx)
+    varDeps = getVariableEqDepedenceViaIdx(lhsIdx, system)
     @info "varDeps lhs" varDeps
     @info "root eq" getRootEquation(varDeps)
     rootIdx = getRootEquation(varDeps)
-    getConstantValueOfEq(rootIdx)
-  elseif string(lhs) == string(OMBackend.Runtime.REDUCED_SYSTEM.iv)
+    getConstantValueOfEq(rootIdx, system)
+  elseif string(lhs) == string(system.iv)
     time
   else
     lhs
@@ -409,7 +409,7 @@ end
  Given a variable index, returns the equations that the variable at this index is dependent on.
   That is, equations in which this variable is referenced.
 """
-function getVariableEqDepedenceViaIdx(idx::Int)
+function getVariableEqDepedenceViaIdx(idx::Int, system)
   #= Get all equation dependencies for the current system =#
   local equationDependencies = ModelingToolkit.equation_dependencies(OMBackend.Runtime.REDUCED_SYSTEM)
   local vars = ModelingToolkit.states(OMBackend.Runtime.REDUCED_SYSTEM)
@@ -471,9 +471,11 @@ end
 Gets the constant value of an equation if such exist.
 Throws an error otherwise
 """
-function getConstantValueOfEq(eqIdx::Int)::Float64
-  local equations = ModelingToolkit.equations(OMBackend.Runtime.REDUCED_SYSTEM)
+function getConstantValueOfEq(eqIdx::Int, system)::Float64
+  local equations = ModelingToolkit.equations(system)
   local equation = equations[eqIdx]
+  @info "eq" equation
+  @info "lhs" typeof(equation.lhs)
   @assert typeof(equation.lhs) != Number || typeof(equation.rhs) != Number "One side (lhs/rhs )needs to be a constant float"
   if equation.lhs isa Number
     return equation.lhs

@@ -83,7 +83,14 @@ end
 """
 const COMPILED_MODELS_MTK = Dict()
 
-function translate(frontendDAE::Union{DAE.DAE_LIST, OMFrontend.Main.FlatModel}; BackendMode = MTK_MODE)::Tuple{String, Expr}
+"""
+ This function lowers the given Hybrid DAE to target code.
+ It does so by first lowering the code to the backend representation and then to
+ the simulation code representation.
+ Finally, target code is generated depending on the backend mode (defaults to MTK mode).
+"""
+function translate(frontendDAE::Union{DAE.DAE_LIST, OMFrontend.Main.FlatModel};
+                   functionCache = nothing, BackendMode = MTK_MODE)::Tuple{String, Expr}
   local bDAE = lower(frontendDAE)
   local simCode
   if BackendMode == DAE_MODE
@@ -152,9 +159,9 @@ end
 """
   Transforms given FlatModelica to backend DAE-IR (BDAE-IR).
 """
-function lower(frontendDAE::OMFrontend.Main.FlatModel)
-  local bDAE = BDAECreate.lower(frontendDAE)
-  @debug(BDAEUtil.stringHeading1(bDAE, "translated"));
+function lower(fm::OMFrontend.Main.FlatModel)
+  local bDAE = BDAECreate.lower(fm)
+  @info(BDAEUtil.stringHeading1(bDAE, "translated"));
   #= Expand arrays =#
   (bDAE, expandedVars) = Causalize.expandArrayVariables(bDAE)
   @debug(BDAEUtil.stringHeading1(bDAE, "Array variables expanded"));

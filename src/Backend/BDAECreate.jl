@@ -289,9 +289,9 @@ function equationToBackendEquation(elem::DAE.Element)
       end
       res
     end
-    DAE.ASSERT(__) => begin
-      #=TODO: Currently skipping assert.. Just return the list of equations.. =#
-      BDAE.DUMMY_EQUATION()
+    DAE.ASSERT(c, msg, level, source) => begin
+      #=TODO: Currently skipping asserts =#
+      BDAE.ASSERT(c, msg, level, source)
     end
     _ => begin
       @error "Skipped processing" elem

@@ -50,7 +50,6 @@ function stringHeading3(i::Any, heading::String)::String
   str = heading3(heading) + string(i)
 end
 
-
 function heading1(heading::String)::String
   str = HEAD_LINE + "\n" + heading + "\n" + HEAD_LINE + "\n\n"
 end
@@ -74,7 +73,7 @@ end
 function Base.string(eq::BDAE.EQSYSTEM)::String
   str::String = ""
   str = str + heading3("Variables") + BDAEUtil.mapEqSystemVariablesNoUpdate(eq, stringTraverse, "") + "\n"
-  str = str * "# Variables = " * string(length(eq.orderedVars), "\n")
+  str = str * "# Variables, Parameters and Constants = " * string(length(eq.orderedVars), "\n")
   str = str + heading3("Equations") + BDAEUtil.mapEqSystemEquationsNoUpdate(eq, stringTraverse, "") + "\n"
   str = str * "# Equations = " * string(length(eq.orderedEqs), "\n")
 end
@@ -100,55 +99,30 @@ function Base.string(varKind::BDAE.VarKind)::String
   str = begin
     @match varKind begin
       BDAE.VARIABLE() =>  "VARIABLE"
-
       BDAE.STATE() =>  "STATE"
-
       BDAE.STATE_DER() =>  "STATE_DER"
-
       BDAE.DUMMY_DER() =>  "DUMMY_DER"
-
       BDAE.DUMMY_STATE() =>  "DUMMY_STATE"
-
       BDAE.CLOCKED_STATE() =>  "CLOCKED_STATE"
-
       BDAE.DISCRETE() =>  "DISCRETE"
-
       BDAE.PARAM() =>  "PARAM"
-
       BDAE.CONST() =>  "CONST"
-
       BDAE.EXTOBJ() =>  "EXTOBJ"
-
       BDAE.JAC_VAR() =>  "JAC_VAR"
-
       BDAE.JAC_DIFF_VAR() =>  "JAC_DIFF_VAR"
-
       BDAE.SEED_VAR() =>  "SEED_VAR"
-
       BDAE.OPT_CONSTR() =>  "OPT_CONSTR"
-
       BDAE.OPT_FCONSTR() =>  "OPT_FCONSTR"
-
       BDAE.OPT_INPUT_WITH_DER() =>  "OPT_INPUT_WITH_DER"
-
       BDAE.OPT_INPUT_DER() =>  "OPT_INPUT_DER"
-
       BDAE.OPT_TGRID() =>  "OPT_TGRID"
-
       BDAE.OPT_LOOP_INPUT() =>  "OPT_LOOP_INPUT"
-
       BDAE.ALG_STATE() =>  "ALG_STATE"
-
       BDAE.ALG_STATE_OLD() =>  "ALG_STATE_OLD"
-
       BDAE.DAE_RESIDUAL_VAR() =>  "DAE_RESIDUAL_VAR"
-
       BDAE.DAE_AUX_VAR() =>  "DAE_AUX_VAR"
-
       BDAE.LOOP_ITERATION() =>  "LOOP_ITERATION"
-
       BDAE.LOOP_SOLVED() =>  "LOOP_SOLVED"
-
     end
   end
 end
@@ -215,6 +189,10 @@ function Base.string(@nospecialize(eq::BDAE.Equation))
         "STRUCTURAL_TRANSISTION " * eq.fromState * " -> " * eq.toState * "| if:" * string(eq.transistionCondition)
       end
 
+      BDAE.DUMMY_EQUATION() => begin
+        "DUMMY_EQUATION"
+      end
+
       BDAE.IF_EQUATION(__) => begin
         local strTmp::String
         local conditions::List{DAE.Exp}
@@ -243,8 +221,10 @@ function Base.string(@nospecialize(eq::BDAE.Equation))
         strTmp += "end"
       end
     end
+
   end
-  return str + "\n"
+  println(str)
+  return str * "\n"
 end
 
 function Base.string(whenEq::BDAE.WhenEquation)::String

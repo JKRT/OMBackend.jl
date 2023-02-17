@@ -269,7 +269,6 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
           @info "New u0 generated"
           # # TMP for System 10 With optimization
           global activeU0 = newU0
-
           #= Save the old solution together with the name and the mode that was active =#
           push!(solutions, integrator.sol)
           push!(oldSols, (integrator.sol, getSyms(problem), activeModeName))
@@ -298,7 +297,7 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
           @info "variablesToSetIdx" variablesToSetIdx
           local newU0::Vector{Float64} = Float64[v for v in integrator.u]
           local stateVars = states(OMBackend.LATEST_REDUCED_SYSTEM)
-          #= This is bad, do not use strings thise way. =#
+          #= This is bad, do not use strings this way. =#
           local stateVarsAsStr = [replace(string(s), "(t)" => "") for s in stateVars]
           local OM_NameToMTKIdx = Dict()
           local rootKeys = [k for k in keys(rootSources)]
@@ -316,7 +315,12 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
             OM_NameToMTKIdx[rk] = rootKeysToMTKIdx[i]
           end
           for (i, rv) in enumerate(rootValues)
-            OM_NameToMTKIdx[rv] = rootValsToMTKIdx[i]
+            #= This case is true if there is a constant value at the end=#
+            if rootValsToMTKIdx[i] != nothing
+              OM_NameToMTKIdx[rv] = rootValsToMTKIdx[i]
+            else
+              OM_NameToMTKIdx[rv] = Meta.parse(rv)
+            end
           end
           for (i, vr) in enumerate(variablesToSet)
             OM_NameToMTKIdx[vr] = variablesToResetMTKIdx[i]
@@ -329,9 +333,18 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
           for k in rootKeys
             rootStart = OM_NameToMTKIdx[k]
             rootSource = OM_NameToMTKIdx[rootSources[k]]
-            @info "integrator.u[$(rootStart)] = integrator.u[$(rootSource)]"
-            integrator.u[rootStart] = integrator.u[rootSource]
-            rootToEquationMap[k] = ~(0, stateVars[rootStart] - stateVars[rootSource])
+            @info "rootStart" rootStart
+            @info "rootsource" rootSource
+            @info "k" k
+            if ! (rootSource isa Float64)
+              @info "integrator.u[$(rootStart)] = integrator.u[$(rootSource)]"
+              integrator.u[rootStart] = integrator.u[rootSource]
+              rootToEquationMap[k] = ~(0, stateVars[rootStart] - stateVars[rootSource])
+            else
+              @info "integrator.u[$(rootStart)] = $(rootSource)"
+              integrator.u[rootStart] = rootSource
+              rootToEquationMap[k] = ~(0, stateVars[rootStart] - rootSource)
+            end
           end
           #=
             Get the variables of the system
@@ -418,14 +431,28 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
                                       independent_variable(OMBackend.LATEST_REDUCED_SYSTEM),
                                       states(OMBackend.LATEST_REDUCED_SYSTEM),
                                       parameters(OMBackend.LATEST_REDUCED_SYSTEM);
-                                      name = Symbol(cb.name))
+                                      name = Symbol(cb.name),
+                                      discrete_events = ModelingToolkit.discrete_events(OMBackend.LATEST_REDUCED_SYSTEM),
+                                      )
           @info "New system created with" length(newEquations)
           @info "States" length(states(OMBackend.LATEST_REDUCED_SYSTEM))
-          #newSystem = OMBackend.CodeGeneration.structural_simplify(newSystem)
+          newSystem = OMBackend.CodeGeneration.structural_simplify(newSystem)
           global NEW_SYSTEM = newSystem
+          local discrete_events = newSystem.discrete_events
+          @info discrete_events
+          newU0 = integrator.u
+          events = if length(discrete_events) > 0
+            RuntimeUtil.evalDiscreteEvents(discrete_events, newU0, i.t, newSystem)
+          else
+            []
+          end
+          for e in events
+            newU0[e[1]] = e[2]
+          end
+          @info newU0
           @time newProblem = ModelingToolkit.ODEProblem(
             newSystem,
-            integrator.u,
+            newU0,
             tspan,
             problem.p,
             #=
@@ -437,7 +464,7 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
                                   alg;
                                   kwargs...)
           @time reinit!(integrator,
-                        integrator.u;
+                        newU0;
                         t0 = i.t,# - i.dt,
                         reset_dt = true)
         end
