@@ -245,11 +245,19 @@ simplification will allow models where `n_states = n_equations - n_inputs`.
 #   return sys
 # end
 
+"""
+TODO:
+Document why some parts here are outcommented
+"""
 function structural_simplify(sys::ModelingToolkit.AbstractSystem, io = nothing; simplify = false, kwargs...)
-  # @info "Calling custom structural_simplify"
+  @info "Calling custom structural_simplify"
   # sys = ModelingToolkit.ode_order_lowering(sys)
-  sys = ModelingToolkit.dae_index_lowering(sys)
+  #sys = ModelingToolkit.dae_index_lowering(sys)
   #sys = ModelingToolkit.tearing(sys; simplify = simplify)
-  #sys = ModelingToolkit.structural_simplify(sys, simplify = simplify)
-   return sys
+  if simplify
+    sys = ModelingToolkit.structural_simplify(sys, simplify = simplify)
+  else
+    sys = ModelingToolkit.structural_simplify(sys, simplify = simplify)
+  end
+  return sys
  end

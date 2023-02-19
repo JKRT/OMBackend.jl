@@ -496,6 +496,13 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
   @Record DUMMY_EQUATION begin
   end
 
+  @Record ASSERT_EQUATION begin
+    condition::DAE.Exp
+    message::DAE.Exp
+    level::DAE.Exp
+    source::DAE.ElementSource
+  end
+
   @Record INITIAL_STRUCTURAL_STATE begin
     initialState::String
   end
@@ -566,7 +573,7 @@ end
   @Record RECOMPILATION begin
     componentToChange::DAE.CREF
     newValue::DAE.Exp
-  end  
+  end
 end
 
 #= class of external objects =#

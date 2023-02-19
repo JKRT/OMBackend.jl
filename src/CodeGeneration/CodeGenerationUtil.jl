@@ -665,9 +665,10 @@ function performStructuralSimplify(simplify)::Expr
     #TODO: Report issue when variables are removed from events
     #ModelingToolkit.dae_index_lowering(firstOrderSystem)
     #:(reducedSystem = ModelingToolkit.structural_simplify(firstOrderSystem; simplify = true, allow_parameter=true))
-    :(reducedSystem = OMBackend.CodeGeneration.structural_simplify(firstOrderSystem; simplify = false, allow_parameter=true))
+    :(reducedSystem = OMBackend.CodeGeneration.structural_simplify(firstOrderSystem; simplify = true, allow_parameter=true))
   else
-    :(reducedSystem = firstOrderSystem)#ModelingToolkit.structural_simplify(firstOrderSystem; simplify = false, allow_parameter=true))
+#    :(reducedSystem = OMBackend.CodeGeneration.structural_simplify(firstOrderSystem; simplify = true, allow_parameter=true))
+    :(reducedSystem = OMBackend.CodeGeneration.structural_simplify(firstOrderSystem; simplify = true, allow_parameter=true))
   end
 end
 
@@ -792,17 +793,24 @@ function evalInitialCondition(mtkCond)
   end
 end
 
-function generateIfExpressions(branches, target, resEqIdx::Int, identifier::Int, simCode)
-  if branches[target].targets == -1
-    return :($(first(deCausalize(branches[target].residualEquations[resEqIdx], simCode))))
-  end
-  #= Otherwise generate code for the other part =#
+"""
+  Generates an if-expression equation and add it to the continous part of the system.
+Assume single equations for now.
+An assertion error should have been thrown before reaching this function
+"""
+function generateIfExpressions(branches, target::Int, resEqIdx::Int, identifier::Int, simCode)
   local branch = branches[target]
+  if branch.targets == -1
+    return :($(first(deCausalize(branch.residualEquations[resEqIdx], simCode))))
+  end
+  @info "test" string(branch.residualEquations[resEqIdx])
+  #= Otherwise generate code for the other part =#
   local cond = :( $(Symbol("ifCond$(identifier)")) == true )
-  #= Assume single equations for now =#
+  local rhs = first(deCausalize(branch.residualEquations[resEqIdx], simCode))
+  @info "rhs" string(rhs)
   quote
     ModelingToolkit.IfElse.ifelse($(cond),
-                                  $(first(deCausalize(branch.residualEquations[resEqIdx], simCode))),
+                                  $(rhs),
                                   $(generateIfExpressions(branches, branches[target].targets, resEqIdx, identifier, simCode)))
   end
 end
@@ -817,7 +825,7 @@ function deCausalize(eq, simCode)
       (:($(expToJuliaExpMTK(exp2, simCode))), :($(expToJuliaExpMTK(eq.exp.exp1, simCode))))
     end
     DAE.BINARY(exp1, _, DAE.RCONST(0.0)) => begin
-      (:($(expToJuliaExpMTK(exp1, simCode))), :($(expToJuliaExpMTK(eq.exp.exp2, simCode))))
+      (:($(expToJuliaExpMTK(eq.exp.exp2, simCode))), :($(expToJuliaExpMTK(exp1, simCode))))
     end
     DAE.BINARY(exp1, _, exp2) => begin
       (:($(expToJuliaExpMTK(exp2, simCode))), :($(expToJuliaExpMTK(exp1, simCode))))

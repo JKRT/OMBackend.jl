@@ -246,8 +246,6 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
   local occVariablesSym = [:($(Symbol(v))) for v in occVariables]
   #=Preprocess the component of the if equations =#
   local DISCRETE_DUMMY_EQUATIONS = [:(der($(Symbol(dv))) ~ 0) for dv in discreteVariables]
-  #= Code for OCC dummy quations =#
-  #local OCC_DUMMY_EQUATIONS = [:(der($(Symbol("dummy" * occv))) ~ 0) for occv in occVariables]
   #= Create assignments for the dummies. =#
   local IF_EQUATION_EVENTS = [component[1] for component in IF_EQUATION_COMPONENTS]
   IF_EQUATION_EVENTS = collect(Iterators.flatten(IF_EQUATION_EVENTS))
@@ -257,6 +255,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
     :(events = [$(IF_EQUATION_EVENTS...)])
   end
   local CONDITIONAL_EQUATIONS = collect(Iterators.flatten([component[2] for component in IF_EQUATION_COMPONENTS]))
+  @info "The conditional equations" CONDITIONAL_EQUATIONS
   local ifConditionNameAndIV = collect(Iterators.flatten([component[5] for component in IF_EQUATION_COMPONENTS]))
   local ifConditionalVariables = collect(Iterators.flatten([component[4] for component in IF_EQUATION_COMPONENTS]))
   local ZERO_DYNAMICS_COND_EQUATIONS = collect(Iterators.flatten([component[3] for component in IF_EQUATION_COMPONENTS]))
@@ -320,7 +319,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
       for (sym, var) in vars
         eval(:($sym = $var))
       end
-      # #= Mark irreductable variables irreductable. =# Uncomment for reinitialization
+      #= Mark irreductable variables irreductable. Uncomment for reinitialization =#
       for sym in $(irreductableSyms)
        eval(:($sym = SymbolicUtils.setmetadata($sym, ModelingToolkit.VariableIrreducible, true)))
       end
@@ -471,36 +470,30 @@ function getStartConditionsMTK(vars::Vector, simCode::SimulationCode.SimCode)::V
     varName = simVar.name
     local simVarType = simVar.varKind
     local optAttributes::Option{DAE.VariableAttributes} = simVar.attributes
-    #= If no attribute. Let it default to zero =#
-    if simVar.attributes == nothing
-      push!(startExprs, :($(Symbol(varName)) => 0.0))
-      continue
-    end
     () = @match optAttributes begin
       SOME(attributes) => begin
         () = @match (attributes.start, attributes.fixed) begin
           (SOME(DAE.CREF(start)), SOME(__)) || (SOME(DAE.CREF(start)), _)  => begin
-#            push!(startExprs, :($(Symbol("$varName")) => $(exp))) what is this?
             #=
               We have a variable of sorts.
               We look evaluate the value in the pars list.
             =#
             push!(startExprs,
                   quote
-                  $(Symbol("$varName")) => pars[$(Symbol(string(start)))]
+                    $(Symbol("$varName")) => pars[$(Symbol(string(start)))]
                   end)
-            ()
+            continue
           end
           (SOME(start), SOME(fixed)) || (SOME(start), _)  => begin
             push!(startExprs,
                   quote
-                  $(Symbol("$varName")) => $(expToJuliaExpMTK(start, simCode))
+                    $(Symbol("$varName")) => $(expToJuliaExpMTK(start, simCode))
                   end)
-            ()
+            continue
           end
           (NONE(), SOME(fixed)) => begin
             push!(startExprs, :($(varName) => 0.0))
-            ()
+            continue
           end
           (_, _) => ()
         end
@@ -509,12 +502,17 @@ function getStartConditionsMTK(vars::Vector, simCode::SimulationCode.SimCode)::V
             warnings *= "\n Assumed starting value of 0.0 for variable: " * varName * "\n"
             push!(startExprs, :($(Symbol(varName)) => 0.0))
           end
+          continue
         end
+      end
+      NONE() => begin #= If no attribute. Let it default to zero. This branch should only be taken for compiler generated variables. =#
+        push!(startExprs, :($(Symbol(varName)) => 0.0))
+        continue
       end
     end
   end
   if !isempty(warnings)
-    @debug warnings
+    @warn warnings
   end
   return startExprs
 end
@@ -544,7 +542,7 @@ Each condition generates one variable with zero dynamics the variable being true
   Example:
   if <condtion> then
     <equations>
-  elseif then
+  elseif <condition> then
     <equations>
   else
     <equations>
@@ -618,7 +616,7 @@ function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCo
   #= Create the equations themselves =#
   local target = 1
   local resEqs = ifEq.branches[target].residualEquations
-  @assert(length(resEqs) == 1, "More than one equation in an if equation is not supported")
+  @assert(length(resEqs) == 1, "More than one equation in an if equation is not currently supported by OM.j")
   local ifExpressions = Expr[]
   #= The number of residuals is the same for both branches. =#
   for resEqIdx in 1:length(ifEq.branches[target].residualEquations)

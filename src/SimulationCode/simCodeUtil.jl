@@ -2,7 +2,7 @@
   This file contains various utility functions related to simulation code.
 =#
 """
-  Returns true if simvar is either a algebraic or a state variable
+  Returns true if simvar is either a algebraic or a state variable.
 """
 function isStateOrAlgebraic(simvar::SimVar)::Bool
   return isAlgebraic(simvar) || isState(simvar)
@@ -19,7 +19,7 @@ function isDiscrete(simVar::SimVar)::Bool
 end
 
 """
-  Returns true if simvar is an algebraic variable
+  Returns true if simvar is an algebraic variable.
 """
 function isAlgebraic(simvar::SimVar)::Bool
   res = @match simvar.varKind begin
@@ -28,6 +28,19 @@ function isAlgebraic(simvar::SimVar)::Bool
   end
 end
 
+"""
+  Returns true if the variable is a parameter.
+"""
+function isParameter(simvar::SimVar)::Bool
+  res = @match simvar.varKind begin
+    PARAMETER(__) => true
+    _ => false
+  end
+end
+
+"""
+Returns true if the variable is involved in a OCC chain.
+"""
 function isOCCVar(simVar::SimVar)::Bool
   res = @match simVar.varKind begin
     OCC_VARIABLE(__) => true
@@ -462,28 +475,36 @@ end
  This function returns true if a backend variable is in the set of of overconstrained connector variables (occVariables).
 """
 function isOverconstrainedConnectorVariable(simVarName::String, occVariables::Vector{String})
-  #= Inefficient, can be done better... =#
+  #= Inefficient crap, can be done better... =#
   local isOCCVar = simVarName in occVariables
   return isOCCVar
 end
 
 """
-  Get variables that should be marked as irreductable.
+  Get all variables that should be marked as irreductable.
+  Parameters are never added to this list.
 """
 function getIrreductableVars(ifEquations::Vector{BDAE.IF_EQUATION},
                              whenEqs::Vector{BDAE.WHEN_EQUATION},
-                             algebraicAndStateVariables::VECTOR_VAR) where {VECTOR_VAR}
+                             algebraicAndStateVariables::Vector{BDAE.VAR},
+                             ht::OrderedDict{String, Tuple{Integer, SimulationCode.SimVar}})
   local irreductables = Vector{Any}[]
   for eq in ifEquations
     variablesForEq = Backend.BDAEUtil.getAllVariables(eq, algebraicAndStateVariables)
     push!(irreductables, variablesForEq)
   end
+  #=
+    Parameters should not be marked as irreductable
+    Remove them from the list
+  =#
+  irreductables = collect(Iterators.flatten(irreductables))
+  irreductables = filter(irv -> !(irv != "time" && isParameter(last(ht[irv]))), irreductables)
   #TODO: Fix when equations
   # for eq in whenEqs
   #   variablesForEq = Backend.BDAEUtil.getAllVariables(eq, algebraicAndStateVariables)
   #   push!(variablesForEq, irreductables)
   # end
-  local irreductablesAsStr = map(x -> string(x), collect(Iterators.flatten(irreductables)))
+  local irreductablesAsStr = map(x -> string(x), irreductables)
   irreductablesAsStr = filter(x -> x != "time", irreductablesAsStr)
   return irreductablesAsStr
 end

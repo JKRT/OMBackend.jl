@@ -82,7 +82,7 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
    ifEqs::Vector{BDAE.IF_EQUATION},
    structuralTransitions::Vector{BDAE.Equation}) = allocateAndCollectSimulationEquations(equations)
   #= Enumerate all irreductable variables =#
-  local irreductableVars::Vector{String} = vcat(occVars, getIrreductableVars(ifEqs, whenEqs, allBackendVars))
+  local irreductableVars::Vector{String} = vcat(occVars, getIrreductableVars(ifEqs, whenEqs, allBackendVars, stringToSimVarHT))
   #=  Convert the structural transistions to the simcode representation. =#
   if ! isempty(shared.DOCC_equations)
     append!(structuralTransitions, shared.DOCC_equations)

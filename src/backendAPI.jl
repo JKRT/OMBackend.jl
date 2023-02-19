@@ -159,8 +159,9 @@ end
 """
   Transforms given FlatModelica to backend DAE-IR (BDAE-IR).
 """
-function lower(fm::OMFrontend.Main.FlatModel)
-  local bDAE = BDAECreate.lower(fm)
+function lower(fm::OMFrontend.Main.FLAT_MODEL)
+  local preprocessedFM = FrontendUtil.handleBuiltin(fm)
+  local bDAE = BDAECreate.lower(preprocessedFM)
   @info(BDAEUtil.stringHeading1(bDAE, "translated"));
   #= Expand arrays =#
   (bDAE, expandedVars) = Causalize.expandArrayVariables(bDAE)

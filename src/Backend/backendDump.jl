@@ -193,6 +193,10 @@ function Base.string(@nospecialize(eq::BDAE.Equation))
         "DUMMY_EQUATION"
       end
 
+      BDAE.ASSERT_EQUATION(condition, message, _, _) => begin
+        "ASSERT_EQUATION(condition = $(string(condition)), message = \"$(string(message))\")"
+      end
+
       BDAE.IF_EQUATION(__) => begin
         local strTmp::String
         local conditions::List{DAE.Exp}
