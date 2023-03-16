@@ -27,11 +27,13 @@ const D = Differential(t)
   Temporary rewrite function. Not very pretty...
   Original code by Chris R. Expanded to fix terms of type X * D(Y).
   The solution to solve it is not pretty and is probably flaky.
+
+#istree returns true if x is a term. If true, operation, arguments must also be defined for x appropriately.
 """
 function move_diffs(eq::Equation; rewrite)
   # Do not modify `D(x) ~ ...`, already correct
   res =
-    if !(eq.lhs isa Term && operation(eq.lhs) isa Differential) && !(eq.lhs isa Term && operation(eq.lhs) isa Difference)
+    if !(istree(eq.lhs) && operation(eq.lhs) isa Differential) && !(istree(eq.lhs) && operation(eq.lhs) isa Difference)
       _eq = eq.rhs-eq.lhs
       rhs = rewrite(_eq)
       if rhs === nothing
@@ -48,17 +50,17 @@ function move_diffs(eq::Equation; rewrite)
         local newRhs
         local newLhs
         for arg in arguments(lhs)
-#          @info "Arg was:" arg typeof(arg)
-          if (arg isa Number || arg isa Sym) || (arg isa Term && !(operation(arg) isa Differential))
-#            @info "Rewrite case:" lhs
+          local isTermAndNotDifferential = istree(arg) && !(operation(arg) isa Differential)
+          local argIsANumberOrSymbolButNotTerm = (arg isa Number || (arg isa SymbolicUtils.BasicSymbolic{Real} && !istree(arg)))
+          if argIsANumberOrSymbolButNotTerm || isTermAndNotDifferential
             newRhs = substitute(rhs, rhs => rhs / arg)
             rhs = newRhs
             newLhs = substitute(lhs, lhs => lhs / arg)
             lhs = newLhs
+            #@info "New equation in the for loop is $(lhs) = $(rhs)"
           end
         end
         tmp = ~(newLhs, -newRhs)
-#        @info "After Rewrite" tmp
         tmp
       else
         -lhs ~ rhs
@@ -68,69 +70,6 @@ function move_diffs(eq::Equation; rewrite)
     end
   return res
 end
-
-"""
-  If index reduction is needed we currently do a hack.
-  That is we do an eval of the system, this is computationally expensive, however, it seems to work for now.
-  Related to issue https://github.com/SciML/ModelingToolkit.jl/issues/1493
-"""
-function makeODESystem(deqs, iv, vars, pars, idxReduction; name, continuous_events = [])
-  # Equation is not in the canonical form
-  # Use a rule to find all g(u)*D(u) terms
-  # and move those to the lhs
-  D = Differential(iv)
-  r1 = SymbolicUtils.@rule ~~a * D(~~b) * ~~c => 0
-  r2 = SymbolicUtils.@rule D(~~b) => 0
-  remove_diffs = SymbolicUtils.Postwalk(SymbolicUtils.Chain([r1,r2]))
-  usedStates = Set()
-  local rewrittenDeqs = Symbolics.Equation[]
-  local req
-  for eq in deqs
-#    if !(operation(eq.lhs) isa Differential)
-      req = move_diffs(eq, rewrite = remove_diffs)
-#    end
-    #    @info "Left hand side of the equation" req.lhs
-    if req.lhs isa Real
-      push!(rewrittenDeqs, req)
-    elseif !(req.lhs in usedStates)
-      #      @info "Not a duplicate" req.lhs
-      #      @info "Used equations are" usedStates
-      push!(rewrittenDeqs, req)
-      push!(usedStates, req.lhs)
-    else
-      #      @info "Duplicate:" req.lhs
-      push!(rewrittenDeqs, eq)
-    end
-  end
-  #= Special computationally heavy routine for systems that need index reduction.. =#
-  #@info "AFTER REWRITING"
-  #println(debugRewrite(rewrittenDeqs, iv, vars, pars; separator = ",\n"))
-
-  if idxReduction
-    @info "We need index reduction"
-    fail()
-    #@info "We are doing index reduction"
-    #= Convert the system to a string=#
-    res = debugRewrite(rewrittenDeqs, iv, vars, pars)
-    #    println(res)
-    #= Parse and evaluate it =#
-    expr = Meta.parse(res)
-    eval(expr)
-    #= Generate a new system with metadata...=#
-    res = ModelingToolkit.ODESystem(eqs2, iv, vars2, pars; name = name)
-    res2 = ModelingToolkit.dae_index_lowering(res)
-    #structural_simplify(res2; simplify = true, allow_symbolic = true, allow_parameter = true)
-    return res2
-  end
-  #println(debugRewrite(deqs, iv, vars, pars))
-  res = if ! isempty(continuous_events)
-    ModelingToolkit.ODESystem(rewrittenDeqs, iv, vars, pars; name = name, continuous_events = continuous_events)
-  else
-    ModelingToolkit.ODESystem(rewrittenDeqs, iv, vars, pars; name = name)
-  end
-  return res
-end
-
 
 """
   Rewrite equations that do not conform to the requirements of MTK
@@ -152,6 +91,7 @@ function rewriteEquations(edeqs, iv, eVars, ePars)
   eval(:(der = ModelingToolkit.Differential(t)))
   eval(:(import ModelingToolkit.IfElse))
   local deqs = [eval(i) for i in edeqs]
+  #println(debugRewrite(deqs, iv, vars, parameters; separator="\n"))
   #= Rewrite equations =#
   D = Differential(iv)
   local r1 = SymbolicUtils.@rule ~~a * D(~~b) * ~~c => 0
@@ -161,22 +101,29 @@ function rewriteEquations(edeqs, iv, eVars, ePars)
   local rewrittenDeqs = Symbolics.Equation[]
   local req
   for eq in deqs
-#    if !(operation(eq.lhs) isa Differential)
+    #= Only do the rewrite for the differentials. The others have already been rewritten.=#
+    eqStr = string(eq)
+    #if (contains(eqStr, "Differential")) # TODO expensive comp. Needs to be optimized.
       req = move_diffs(eq, rewrite = remove_diffs)
-#    end
-    #    @info "Left hand side of the equation" req.lhs
-    if req.lhs isa Real
-      push!(rewrittenDeqs, req)
-    elseif !(req.lhs in usedStates)
-      #      @info "Not a duplicate" req.lhs
-      #      @info "Used equations are" usedStates
-      push!(rewrittenDeqs, req)
-      push!(usedStates, req.lhs)
-    else
-      #      @info "Duplicate:" req.lhs
-      push!(rewrittenDeqs, eq)
-    end
+      #req = move_diffs(eq, rewrite = remove_diffs)
+      #@info "Left hand side of the equation" req.lhs
+      if req.lhs isa Real
+        push!(rewrittenDeqs, req)
+      elseif !(req.lhs in usedStates)
+        #@info "Not a duplicate" req.lhs
+        #@info "Used equations are" usedStates
+        push!(rewrittenDeqs, req)
+        push!(usedStates, req.lhs)
+      else
+        #@info "Duplicate:" req.lhs
+        push!(rewrittenDeqs, eq)
+      end
+    #else
+     # push!(rewrittenDeqs, eq)
+    #end
   end
+  #println(debugRewrite(rewrittenDeqs, iv, vars, parameters; separator="\n"))
+  #fail()
   return rewrittenDeqs
 end
 
@@ -254,10 +201,10 @@ function structural_simplify(sys::ModelingToolkit.AbstractSystem, io = nothing; 
   # sys = ModelingToolkit.ode_order_lowering(sys)
   #sys = ModelingToolkit.dae_index_lowering(sys)
   #sys = ModelingToolkit.tearing(sys; simplify = simplify)
-  if simplify
-    sys = ModelingToolkit.structural_simplify(sys, simplify = simplify)
-  else
-    sys = ModelingToolkit.structural_simplify(sys, simplify = simplify)
-  end
+  # if simplify
+  #   sys = ModelingToolkit.structural_simplify(sys, simplify = simplify)
+  # else
+  #   sys = ModelingToolkit.structural_simplify(sys, simplify = simplify)
+  # end TEMP REMEMBER TO UNCOMMENT ABOVE
   return sys
  end
