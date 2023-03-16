@@ -1,5 +1,5 @@
 #=
-  This file contains the code generation for the DifferntialEquations.jl backend.
+  This file contains the code generation for the DifferentialEquations.jl backend.
 
 TODO:
   Add support for if equations
