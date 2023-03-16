@@ -667,8 +667,9 @@ function performStructuralSimplify(simplify)::Expr
     #:(reducedSystem = ModelingToolkit.structural_simplify(firstOrderSystem; simplify = true, allow_parameter=true))
     :(reducedSystem = OMBackend.CodeGeneration.structural_simplify(firstOrderSystem; simplify = true, allow_parameter=true))
   else
-#    :(reducedSystem = OMBackend.CodeGeneration.structural_simplify(firstOrderSystem; simplify = true, allow_parameter=true))
     :(reducedSystem = OMBackend.CodeGeneration.structural_simplify(firstOrderSystem; simplify = true, allow_parameter=true))
+    #:(reducedSystem = OMBackend.CodeGeneration.structural_simplify(firstOrderSystem; simplify = true, allow_parameter=true))
+    #:(reducedSystem = firstOrderSystem)
   end
 end
 
@@ -759,7 +760,6 @@ function evalDAE_Expression(expr, simCode)::Expr
         @error "Not supported states and algebraics in initial equations is not supported"
         fail()
       end
-      println("End one level")
     end
     (exp, true, ht)
   end
@@ -803,11 +803,9 @@ function generateIfExpressions(branches, target::Int, resEqIdx::Int, identifier:
   if branch.targets == -1
     return :($(first(deCausalize(branch.residualEquations[resEqIdx], simCode))))
   end
-  @info "test" string(branch.residualEquations[resEqIdx])
   #= Otherwise generate code for the other part =#
   local cond = :( $(Symbol("ifCond$(identifier)")) == true )
   local rhs = first(deCausalize(branch.residualEquations[resEqIdx], simCode))
-  @info "rhs" string(rhs)
   quote
     ModelingToolkit.IfElse.ifelse($(cond),
                                   $(rhs),
@@ -853,11 +851,4 @@ function deCausalize2(eq, simCode)
       throw("Unsupported equation:" * string(eq))
     end
   end
-end
-
-"""
- Returns true if a variable occurs in an event and should not be optimized away.
-"""
-function irreductable(sym::Symbol, simCode)
-  true
 end
