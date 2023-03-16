@@ -33,7 +33,7 @@
   Author: John Tinnerholm
   TODO: Remember the state derivative scheme. What did I mean with that?
   TODO: Make duplicate code better...
-  TODO: Cleanup in general
+  TODO: Cleanup in general.. keep this simple. Remove hacks as they add new features to MTK.
 =#
 import OMBackend
 
@@ -145,7 +145,7 @@ function ODE_MODE_MTK_PROGRAM_GENERATION(simCode::SimulationCode.SIM_CODE, model
     import ModelingToolkit.IfElse
     $(model)
     function $(Symbol("$(MODEL_NAME)Simulate"))(tspan = (0.0, 1.0); solver=Rosenbrock23())
-      ($(Symbol("$(MODEL_NAME)Model_problem")), callbacks, ivs, $(Symbol("$(MODEL_NAME)Model_ReducedSystem")), tspan, pars, vars) = $(Symbol("$(MODEL_NAME)Model"))(tspan)
+      ($(Symbol("$(MODEL_NAME)Model_problem")), callbacks, ivs, $(Symbol("$(MODEL_NAME)Model_ReducedSystem")), tspan, pars, vars, irreductable) = $(Symbol("$(MODEL_NAME)Model"))(tspan)
       solve($(Symbol("$(MODEL_NAME)Model_problem")), solver)
     end
   end
@@ -170,7 +170,6 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
   local occVariables::Vector = String[]
   local occDummyVariables::Vector = String[]
   local performIndexReduction = false
-  global LATEST_MATCH_ORDER = simCode.matchOrder
   for varName in keys(stringToSimVarHT)
     (idx, var) = stringToSimVarHT[varName]
     local varType = var.varKind
@@ -182,9 +181,10 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
       SimulationCode.STATE(__) => push!(stateVariables, varName)
       SimulationCode.OCC_VARIABLE(__) => begin
         push!(occVariables, varName)
-        #push!(occDummyVariables, "dummy" * varName)
       end
-      SimulationCode.PARAMETER(__) => push!(parameters, varName)
+      SimulationCode.PARAMETER(__) => begin
+        push!(parameters, varName)
+      end
       SimulationCode.DISCRETE(__) => push!(discreteVariables, varName)
       SimulationCode.ALG_VARIABLE(__) => begin
         #=TODO: Seems to be unable to find variables in some cases...
@@ -255,7 +255,6 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
     :(events = [$(IF_EQUATION_EVENTS...)])
   end
   local CONDITIONAL_EQUATIONS = collect(Iterators.flatten([component[2] for component in IF_EQUATION_COMPONENTS]))
-  @info "The conditional equations" CONDITIONAL_EQUATIONS
   local ifConditionNameAndIV = collect(Iterators.flatten([component[5] for component in IF_EQUATION_COMPONENTS]))
   local ifConditionalVariables = collect(Iterators.flatten([component[4] for component in IF_EQUATION_COMPONENTS]))
   local ZERO_DYNAMICS_COND_EQUATIONS = collect(Iterators.flatten([component[3] for component in IF_EQUATION_COMPONENTS]))
@@ -320,7 +319,8 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
         eval(:($sym = $var))
       end
       #= Mark irreductable variables irreductable. Uncomment for reinitialization =#
-      for sym in $(irreductableSyms)
+      local irreductableSyms = $(irreductableSyms)
+      for sym in irreductableSyms
        eval(:($sym = SymbolicUtils.setmetadata($sym, ModelingToolkit.VariableIrreducible, true)))
       end
       #= Transform the variable vector into a vector of Nums =#
@@ -370,7 +370,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
                                            tspan,
                                            pars,
                                            callback=callbacks)
-      return (problem, callbacks, initialValues, reducedSystem, tspan, pars, vars)
+      return (problem, callbacks, initialValues, reducedSystem, tspan, pars, vars, irreductableSyms)
     end
   end
   return model
@@ -685,6 +685,7 @@ function createParameterAssignmentsMTK(parameters::Vector, simCode::SimulationCo
       _ => ErrorException("Unknown SimulationCode.SimVarType for parameter.")
     end
     #= Solution for https://github.com/SciML/ModelingToolkit.jl/issues/991 =#
+    #TODO: Is this workaround still relevant? John 2023-02-22
     push!(parameterEquations,
           quote
             $(LineNumberNode(@__LINE__, "$param eq"))
