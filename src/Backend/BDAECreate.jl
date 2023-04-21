@@ -256,11 +256,11 @@ function equationToBackendEquation(elem::DAE.Element)
       lowerIfEquation(elem)
     end
     DAE.INITIALEQUATION(__) => begin
-      initialEquationLst = BDAE.EQUATION(elem.exp1,
-                                         elem.exp2,
-                                         elem.source,
-                                         #=TODO: Below might need to be changed =#
-                                         BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
+      BDAE.EQUATION(elem.exp1,
+                    elem.exp2,
+                    elem.source,
+                    #=TODO: Below might need to be changed =#
+                    BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
     end
     DAE.COMP(__) => begin
       throw("Components not directly allowed in equation sections")

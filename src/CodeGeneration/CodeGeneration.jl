@@ -41,7 +41,7 @@ using DocStringExtensions
 using ModelingToolkit
 
 using ..FrontendUtil
-using ..Backend
+using ..Backend #Should maybe not be using here... since it can make certain overloads a bit tricky to follow.
 using ..SimulationCode
 
 import ..Backend.BDAE
@@ -52,10 +52,10 @@ import MetaGraphs
 import OMParser
 import OMFrontend
 
-
 include("mtkExternals.jl")
 include("./CodeGenerationUtil.jl")
 include("./structuralCallbacks.jl")
+include("./algorithmic.jl")
 include("./MTK_CodeGeneration.jl")
 
 #= Pure DifferentialEquations.jl code generation =#

@@ -44,15 +44,17 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String = "Simula
   print(buffer, BDAEUtil.DOUBLE_LINE + "\n")
   print(buffer, "SIM_CODE: " + heading + "\n")
   print(buffer, BDAEUtil.DOUBLE_LINE + "\n\n")
-
-  print(buffer, "Simulation Code Variables:" + "\n")
-  print(buffer, BDAEUtil.LINE + "\n")
   local stateVariables = []
   local parameters = []
   local algVariables = []
   local discreteVariables = []
   local stateDerivatives = []
   local occVariables = []
+  for f in simCode.functions
+    println(buffer, string(f))
+  end
+  print(buffer, "Simulation Code Variables:" + "\n")
+  print(buffer, BDAEUtil.LINE + "\n")
   for varName in keys(simCode.stringToSimVarHT)
     (idx, var) = simCode.stringToSimVarHT[varName]
     local varType = var.varKind
@@ -161,6 +163,7 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String = "Simula
   println(buffer, "\tNumber of Residual Equations:" * string(length(simCode.residualEquations)))
   println(buffer, "\tNumber of Equations in If-Equations:" * string(nIfEqs))
   println(buffer, "\tNumber of Equations in When-Equations:" * string(nWhenEquations))
+  println(buffer, "Total Number of Functions:" * string(length(simCode.functions)))
   println(buffer, BDAEUtil.LINE)
   local varsInEvent = 0
   println(buffer, "Variables involved in events:")
@@ -214,4 +217,37 @@ end
 
 function string(st::IMPLICIT_STRUCTURAL_TRANSISTION)
   string(st.structuralWhenEquation)
+end
+
+function string(f::EXTERNAL_MODELICA_FUNCTION)
+  local buffer = IOBuffer()
+  println(buffer, "function EXTERNAL " * f.name)
+  for arg in f.inputs
+    println(buffer, " " * string(arg))
+  end
+  for arg in f.outputs
+    println(buffer, " " * string(arg))
+  end
+  println(buffer, "calling externally defined function: " * f.libInfo)
+  println(buffer, "end " * f.name)
+  return String(take!(buffer))
+end
+
+function string(f::MODELICA_FUNCTION)
+  local buffer = IOBuffer()
+  println(buffer, "function " * f.name)
+  for arg in f.inputs
+    println(buffer, "input " * string(arg))
+  end
+  for arg in f.outputs
+    println(buffer, "output " * string(arg))
+  end
+  for l in f.locals
+    println(buffer, " local:" * string(l))
+  end
+  for s in f.statements
+    println(buffer, " " * string(s))
+  end
+  println(buffer, "end " * f.name)
+  return String(take!(buffer))
 end

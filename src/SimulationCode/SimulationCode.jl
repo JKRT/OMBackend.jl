@@ -1,7 +1,7 @@
 #= /*
 * This file is part of OpenModelica.
 *
-* Copyright (c) 1998-2020, Open Source Modelica Consortium (OSMC),
+* Copyright (c) 1998-CurrentYear, Open Source Modelica Consortium (OSMC),
 * c/o Linköpings universitet, Department of Computer and Information Science,
 * SE-58183 Linköping, Sweden.
 *
@@ -43,6 +43,7 @@ using ImmutableList
 using ..FrontendUtil
 using ..Backend
 
+import Absyn
 import DAE
 import Graphs
 import MetaGraphs
@@ -57,5 +58,6 @@ include("simCodeData.jl")
 include("simCodeUtil.jl")
 include("simCodeDump.jl")
 include("simulationCodeTransformation.jl")
+include("simCodeFunctions.jl")
 
 end # module SimulationCode

@@ -36,6 +36,7 @@
   TODO: Cleanup in general.. keep this simple. Remove hacks as they add new features to MTK.
 =#
 import OMBackend
+import ..AlgorithmicCodeGeneration
 
 """
   Generates simulation code targetting modeling toolkit.
@@ -54,10 +55,11 @@ end
 function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
     #=If our model name is separated by . replace it with __ =#
   local MODEL_NAME = replace(simCode.name, "." => "__")
+  (functions, functionNames) = AlgorithmicCodeGeneration.generateFunctions(simCode.functions)
   if isempty(simCode.structuralTransitions) && length(simCode.subModels) < 1 && isnothing(simCode.flatModel)
     @info "Standard generation"
     #= Generate using the standard name =#
-    return ODE_MODE_MTK_PROGRAM_GENERATION(simCode, simCode.name)
+    return ODE_MODE_MTK_PROGRAM_GENERATION(simCode, simCode.name, functions)
   end
   #= Handle structural submodels =#
   local activeModelSimCode = getActiveModel(simCode)
@@ -136,13 +138,22 @@ end
 """
   Generates a MTK program with a model
 """
-function ODE_MODE_MTK_PROGRAM_GENERATION(simCode::SimulationCode.SIM_CODE, modelName)
+function ODE_MODE_MTK_PROGRAM_GENERATION(simCode::SimulationCode.SIM_CODE, modelName, functions)
   local MODEL_NAME = replace(modelName, "." => "__")
-  local model = ODE_MODE_MTK_MODEL_GENERATION(simCode, modelName)
+  #=
+  Evaluate all functions s.t the symbols are available
+  This needs to be done for the symbolics
+  =#
+  for f in functions
+    println("Evaluating function...")
+    eval(f)
+  end
+  local model = ODE_MODE_MTK_MODEL_GENERATION(simCode, functions, modelName)
   program = quote
     using ModelingToolkit
     using DifferentialEquations
     import ModelingToolkit.IfElse
+    $(functions...)
     $(model)
     function $(Symbol("$(MODEL_NAME)Simulate"))(tspan = (0.0, 1.0); solver=Rosenbrock23())
       ($(Symbol("$(MODEL_NAME)Model_problem")), callbacks, ivs, $(Symbol("$(MODEL_NAME)Model_ReducedSystem")), tspan, pars, vars, irreductable) = $(Symbol("$(MODEL_NAME)Model"))(tspan)
@@ -156,7 +167,7 @@ end
 """
   Generates a MTK model
 """
-function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelName)
+function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, functions, modelName)
   @debug "Runnning: ODE_MODE_MTK_MODEL"
   RESET_CALLBACKS()
   local stringToSimVarHT = simCode.stringToSimVarHT
@@ -278,7 +289,8 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
   EQUATIONS = rewriteEquations(EQUATIONS,
                                t,
                                vcat(stateVariablesSym, algebraicVariablesSym),
-                               parVariablesSym)
+                               parVariablesSym,
+                               simCode)
   #= Reset the callback counter=#
   RESET_CALLBACKS()
   @info "Length EQUATIONS:" length(EQUATIONS)
@@ -731,31 +743,6 @@ function createParameterArray(parameters::Vector{T1}, parameterAssignments::Vect
 end
 
 """
-  Generates code for DAE cast expressions for MTK code.
-"""
-function generateCastExpressionMTK(ty, exp, simCode, varPrefix)
-  return @match ty, exp begin
-    (DAE.T_REAL(__), DAE.ICONST(__)) => begin
-      quote
-        float($(expToJuliaExpMTK(exp, simCode, varPrefix=varPrefix)))
-      end
-    end
-    (DAE.T_REAL(__), DAE.CREF(cref)) where typeof(cref.identType) === DAE.T_INTEGER => begin
-      quote
-        float($(expToJuliaExpMTK(exp, simCode, varPrefix=varPrefix)))
-      end
-    end
-    #= Conversion to a float other alternatives, =#
-    (DAE.T_REAL(__), _) => begin
-      quote
-        float($(expToJuliaExpMTK(exp, simCode, varPrefix=varPrefix)))
-      end
-    end
-    _ => throw("Cast $ty: for exp: $exp not yet supported in codegen!")
-  end
-end
-
-"""
  This function decomposes the continuous variables.
  This means that if the set of variables are greater than 50 a new inner function is generated.
  This is done  to not negativly impact the JIT of the system to much.
@@ -880,4 +867,29 @@ function decomposeStartEquations(equations)
     $(exprs...)
   end
   return expr
+end
+
+"""
+  Generates quoted Symbolics.@register_symbolic calls s.t externaly defined functions can be defined.
+"""
+function generateRegisterCallsForCallExprs(simCode)
+  local rFs = Expr[]
+  for f in simCode.functions
+    local sb = Symbol(f.name)
+    local args = AlgorithmicCodeGeneration.generateIOL(f.inputs)
+    local nArgs = length(args)
+    local cExpr = if nArgs == 1
+      Expr(:call, sb, first(args))
+    elseif nArgs == 0
+      Expr(:call, sb)
+    else
+      Expr(:call, sb, tuple(args...)...)
+    end
+    #= Delay evaluation of the register expression until we know the call. =#
+    sbRegister = quote
+      Symbolics.@register_symbolic($(cExpr))
+    end
+    push!(rFs, sbRegister)
+  end
+  return rFs
 end

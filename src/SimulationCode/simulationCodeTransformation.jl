@@ -45,12 +45,25 @@ end
 `BDAE_identifierToVarString(backendVar::BDAE.VAR)`
 Converts a `BDAE.VAR` to a simcode string, for use in variable names.
 The . separator is replaced with 3 `_`
+Used to name variables used by the hts in the simulation code.
 """
 function BDAE_identifierToVarString(backendVar::BDAE.VAR)
   local varName::DAE.ComponentRef = backendVar.varName
   @match varName begin
+    #= An array component attached to a complex component. =#
+    DAE.CREF_QUAL(ident, DAE.T_COMPLEX(__), subscriptLst, DAE.CREF_IDENT(innerIdent, DAE.T_ARRAY(__), iSubscriptLst)) => begin
+      #      fail()
+      #ident * "_" * innerIdent
+      string(varName)
+    end
+    DAE.CREF_QUAL(_, DAE.T_ARRAY(ty, dim), _, _) => begin
+      ident * string(cr)
+    end
     DAE.CREF_IDENT(__) => string(varName)
-    DAE.CREF_QUAL(__) => string(varName)
+    DAE.CREF_QUAL(__) => begin
+      string(varName)
+    end
+    #= A variable of type array =#
     _ => @error("Type $(typeof(varName)) not handled.")
   end
 end
@@ -81,15 +94,16 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
    whenEqs::Vector{BDAE.WHEN_EQUATION},
    ifEqs::Vector{BDAE.IF_EQUATION},
    structuralTransitions::Vector{BDAE.Equation}) = allocateAndCollectSimulationEquations(equations)
-  #= Enumerate all irreductable variables =#
+  #= Gather all irreductable variables =#
   local irreductableVars::Vector{String} = vcat(occVars, getIrreductableVars(ifEqs, whenEqs, allBackendVars, stringToSimVarHT))
+  (resEqs, irreductableVars) = handleZimmerThetaConstant(resEqs, irreductableVars, stringToSimVarHT)
   #=  Convert the structural transistions to the simcode representation. =#
   if ! isempty(shared.DOCC_equations)
     append!(structuralTransitions, shared.DOCC_equations)
   end
   local simCodeStructuralTransitions = createSimCodeStructuralTransitions(structuralTransitions)
   #= Sorting/Matching for the set of residual equations (This is used for the start condtions) =#
-  local eqVariableMapping = createEquationVariableBidirectionGraph(resEqs, ifEqs, allBackendVars, stringToSimVarHT)
+  local eqVariableMapping = createEquationVariableBidirectionGraph(resEqs, ifEqs, whenEqs, allBackendVars, stringToSimVarHT)
   local numberOfVariablesInMapping = length(eqVariableMapping.keys)
   (isSingular, matchOrder, digraph, stronglyConnectedComponents) =
     matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT; mode = mode)
@@ -100,6 +114,7 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
   =#
   simCodeIfEquations::Vector{IF_EQUATION} = constructSimCodeIFEquations(ifEqs,
                                                                         resEqs,
+                                                                        whenEqs,
                                                                         allBackendVars,
                                                                         stringToSimVarHT)
   local structuralSubModels = []
@@ -126,7 +141,8 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
                           initialState,
                           shared.metaModel,
                           shared.flatModel,
-                          irreductableVars
+                          irreductableVars,
+                          ModelicaFunction[]
                           )
 end
 
@@ -191,9 +207,11 @@ Currently we merge the other residual equation with the equations of one branch.
 TODO:
 Possible rework the identifier scheme.
 Unique identifier, static variable?
+This should ideally be done earlier s.t we do not need to recreate the graph....
 """
 function constructSimCodeIFEquations(ifEquations::Vector{BDAE.IF_EQUATION},
                                      resEqs::Vector{BDAE.RESIDUAL_EQUATION},
+                                     whenEqs::Vector{BDAE.WHEN_EQUATION},
                                      allBackendVars::Vector,
                                      stringToSimVarHT)::Vector{IF_EQUATION}
   local simCodeIfEquations::Vector{IF_EQUATION} = IF_EQUATION[]
@@ -223,7 +241,7 @@ function constructSimCodeIFEquations(ifEquations::Vector{BDAE.IF_EQUATION},
       local equations = vcat(resEqs, branchEquations)
       target = conditionIdx + 1
       identifier = conditionIdx
-      local eqVariableMapping = createEquationVariableBidirectionGraph(equations, otherIfEqs, allBackendVars, stringToSimVarHT)
+      local eqVariableMapping = createEquationVariableBidirectionGraph(equations, otherIfEqs, whenEqs, allBackendVars, stringToSimVarHT)
       #= Match and get the strongly connected components =#
       local numberOfVariablesInMapping = length(eqVariableMapping.keys)
       (isSingular, matchOrder, digraph, stronglyConnectedComponents) =
@@ -259,7 +277,7 @@ function constructSimCodeIFEquations(ifEquations::Vector{BDAE.IF_EQUATION},
     lastConditionIdx += 1
     target = lastConditionIdx + 1
     identifier = ELSE_BRANCH #= Indicate else =#
-    local eqVariableMapping = createEquationVariableBidirectionGraph(equations, otherIfEqs, allBackendVars, stringToSimVarHT)
+    local eqVariableMapping = createEquationVariableBidirectionGraph(equations, otherIfEqs, whenEqs, allBackendVars, stringToSimVarHT)
     local numberOfVariablesInMapping = length(eqVariableMapping.keys)
     (isSingular, matchOrder, digraph, stronglyConnectedComponents) =
       matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT)
@@ -288,12 +306,6 @@ function matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVar
   (isSingular::Bool, matchOrder::Vector) = GraphAlgorithms.matching(eqVariableMapping, numberOfVariablesInMapping)
   local digraph::MetaGraphs.MetaDiGraph
   local sccs::Array
-  if OMBackend.PLOT_EQUATION_GRAPH
-    @info "Dumping the equation graph"
-    local labels = makeLabels(digraph, matchOrder, stringToSimVarHT)
-    GraphAlgorithms.plotEquationGraphPNG("./digraphOutput.png", digraph, labels)
-  end
-
   #=
     Index reduction might resolve the issues with this system.
   =#
@@ -303,6 +315,7 @@ function matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVar
     #= TODO: Try index reduction =#
     digraph = GraphAlgorithms.merge(matchOrder, eqVariableMapping)
     sccs = GraphAlgorithms.stronglyConnectedComponents(digraph)
+    plotEquationGraph(digraph, matchOrder, stringToSimVarHT)
     return (isSingular, matchOrder, digraph, sccs)
   end
 
@@ -312,7 +325,19 @@ function matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVar
   end
   digraph = GraphAlgorithms.merge(matchOrder, eqVariableMapping)
   sccs = GraphAlgorithms.stronglyConnectedComponents(digraph)
+  plotEquationGraph(digraph, matchOrder, stringToSimVarHT)
   return (isSingular, matchOrder, digraph, sccs)
+end
+
+"""
+  Function to print a representation of the equations post sorting
+"""
+function plotEquationGraph(g, matchOrder, stringToSimVarHT)
+  if OMBackend.PLOT_EQUATION_GRAPH
+    @info "Dumping the equation graph"
+    local labels = makeLabels(g, matchOrder, stringToSimVarHT)
+    GraphAlgorithms.plotEquationGraphPNG("./digraphOutput.png", g, labels)
+  end
 end
 
 """

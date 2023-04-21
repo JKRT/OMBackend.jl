@@ -227,7 +227,6 @@ function Base.string(@nospecialize(eq::BDAE.Equation))
     end
 
   end
-  println(str)
   return str * "\n"
 end
 
@@ -280,25 +279,41 @@ end
    Converts a `DAE.ComponentRef` to a Julia string.
    TODO: Discuss separators. A different one should maybe be used..
 """
-function Base.string(cr::DAE.ComponentRef; separator="_")
+function Base.string(cr::DAE.ComponentRef; separator="_", printType = false)
   str = begin
     local ident::String
     local cref::DAE.ComponentRef
+    local identType::DAE.Type
     @match cr begin
-      DAE.CREF_QUAL(ident = ident, componentRef = cref) => begin
+      DAE.CREF_QUAL(ident = ident, identType = identType ,componentRef = cref) => begin
         ident * separator * string(cref)
       end
-      DAE.CREF_IDENT(ident = ident) => begin
-        if !listEmpty(cr.subscriptLst) ident * string(cr.subscriptLst) else ident end
+      DAE.CREF_IDENT(ident, identType, subscriptLst) => begin
+        if !listEmpty(subscriptLst)
+          local str = ident
+          for s in subscriptLst
+            str = str * "[" * string(s) * "]"
+          end
+          str = str
+        else
+          ident
+        end
       end
       DAE.CREF_ITER(ident = ident) => begin
         ident
       end
     end
   end
+  #= Optionally adding the type =#
+  str = if printType
+    str * "|" * string(identType)
+  else
+    str
+  end
+  return str
 end
 
-function Base.string(op::DAE.Operator)::String
+function Base.string(@nospecialize(op::DAE.Operator))::String
   str = begin
     @match op begin
       DAE.ADD() => "+"
@@ -371,7 +386,7 @@ function Base.string(op::DAE.Operator)::String
   end
 end
 
-function Base.string(exp::DAE.Exp)::String
+function Base.string(@nospecialize(exp::DAE.Exp))::String
   str = begin
     local int::ModelicaInteger
     local real::ModelicaReal
@@ -394,7 +409,7 @@ function Base.string(exp::DAE.Exp)::String
       end
 
       DAE.SCONST(tmpStr)  => begin
-        (tmpStr)
+        tmpStr
       end
 
       DAE.BCONST(bool)  => begin
@@ -430,11 +445,15 @@ function Base.string(exp::DAE.Exp)::String
       end
 
       DAE.IFEXP(expCond = e1, expThen = e2, expElse = e3) => begin
-        ("IF_EXPRESSION: " + string(e1) + " " + string(e2) + " " + string(e3))
+        ("IF_EXPRESSION: " + "($(string(e1)))" + " " + string(e2) + " ELSE " + string(e3))
       end
 
       DAE.CALL(path = Absyn.IDENT(tmpStr), expLst = expl)  => begin
         tmpStr = tmpStr + "(" + lstString(expl, ", ") + ")"
+      end
+
+      DAE.CALL(Absyn.QUALIFIED(__), _)  => begin
+        tmpStr = string(exp.path; separator = "_") + "(" + lstString(exp.expLst, ", ") + ")"
       end
 
       DAE.RECORD(path = Absyn.IDENT(tmpStr), exps = expl)  => begin
@@ -458,7 +477,7 @@ function Base.string(exp::DAE.Exp)::String
       end
 
       DAE.RANGE(start = e1, step = NONE(), stop = e2)  => begin
-         string(e1) + ":" + v(e2)
+         string(e1) + ":" + string(e2)
       end
 
       DAE.RANGE(start = e1, step = SOME(e2), stop = e3)  => begin
@@ -514,7 +533,7 @@ function Base.string(exp::DAE.Exp)::String
      end
 
     _ => begin
-      str = ""
+      str = string(repr(exp))
     end
 
     end
@@ -522,22 +541,29 @@ function Base.string(exp::DAE.Exp)::String
 end
 
 function Base.string(ty::DAE.Type)::String
-  str = begin
-    @match ty begin
-      DAE.T_INTEGER() => begin "(int) " end
-
-      DAE.T_REAL() => begin "(real) " end
-
-      DAE.T_STRING() => begin "(string) " end
-
-      DAE.T_BOOL() => begin "(bool) " end
-
-      _ => begin "(undef. cast) " end
-    end
+  @match ty begin
+    DAE.T_INTEGER() => "(int) "
+    DAE.T_REAL() => "(real) "
+    DAE.T_STRING() => "(string) "
+    DAE.T_BOOL() => "(bool) "
+    DAE.T_ARRAY(__) => "(array of $(string(ty.ty))) "
+    DAE.T_ENUMERATION(__) => "(enumeration) "
+    DAE.T_COMPLEX(__) => "(complex type) "
+    _ => "$(ty)"
   end
-  return str
 end
 
+function Base.string(path::Absyn.QUALIFIED; separator = "_")
+  return path.name + separator + string(path.path, separator = "_")
+end
+
+function Base.string(path::Absyn.IDENT; separator = "_")
+  return path.name
+end
+
+function Base.string(path::Absyn.FULLYQUALIFIED; separator = "_")
+  return separator + string(path.path; seperator = separator)
+end
 
 function lstString(expLst::List{T}, seperator::String)::String where{T}
   str = begin
@@ -575,4 +601,78 @@ function Base.string(structuralIfEquation::BDAE.STRUCTURAL_IF_EQUATION)
   local str = "DYNAMIC_"
   local ifEqStr = replace(OMFrontend.Main.toString(structuralIfEquation.ifEquation), "\\n" => "\n")
   str *= ifEqStr * "\n"
+end
+
+function Base.string(stmt::DAE.STMT_ASSIGN)
+  return string(stmt.exp1) * ":=" * string(stmt.exp) * "|" * string(stmt.type_)
+end
+
+function Base.string(stmt::DAE.STMT_TUPLE_ASSIGN)
+  return string(stmt.expExpLst) * ":=" * string(stmt.exp) * "|" * string(stmt.type_)
+end
+
+function Base.string(stmt::DAE.STMT_ASSIGN_ARR)
+  return string(stmt.lhs) * ":=" * string(stmt.exp) * "|" * string(stmt.type_)
+end
+
+function Base.string(stmt::DAE.STMT_WHILE)
+  local buffer = IOBuffer()
+  print(buffer, "WHILE ")
+  println(buffer, string(stmt.exp))
+  for s in stmt.statementLst
+    println(buffer, string(s))
+  end
+  println(buffer, "END WHILE")
+end
+
+function Base.string(stmt::DAE.STMT_FOR)
+  local buffer = IOBuffer()
+  print(buffer, "FOR ")
+  print(buffer, string(stmt.iter))
+  println(buffer, "|" * string(range))
+  for s in stmt.statementLst
+    println(buffer, " " * string(s))
+  end
+  println(buffer, "END FOR")
+end
+
+function Base.string(stmt::DAE.STMT_IF)
+  local buffer = IOBuffer()
+  print(buffer, "IF ")
+  println(buffer, string(stmt.exp))
+  for s in stmt.statementLst
+    println(buffer, " " *string(s))
+  end
+  print(buffer, string(stmt.else_))
+  return String(take!(buffer))
+end
+
+function Base.string(stmt::DAE.NOELSE)
+  ""
+end
+
+function Base.string(stmt::DAE.ELSE)
+  local buffer = IOBuffer()
+  println(buffer, " ELSE")
+  for s in stmt.statementLst
+    println(buffer, " " *string(s))
+  end
+  println(buffer, " END IF")
+  return String(take!(buffer))
+end
+
+function Base.string(stmt::DAE.ELSEIF)
+  local buffer = IOBuffer()
+  print(buffer, "ELSE IF")
+  print(buffer, string(stmt.exp))
+  for s in stmt.statementLst
+    println(buffer, " " * string(s))
+  end
+  println(buffer, "END IF")
+  print(bufer, string(stmt.else_))
+  return String(take!(buffer))
+end
+
+function Base.string(v::DAE.VAR)
+  string(v.componentRef)
 end

@@ -37,7 +37,6 @@ using ModelingToolkit
 using SymbolicUtils
 using DifferentialEquations
 
-
 import .Backend.BDAE
 import .Backend.BDAECreate
 import .Backend.BDAEUtil
@@ -88,9 +87,11 @@ const COMPILED_MODELS_MTK = Dict()
  It does so by first lowering the code to the backend representation and then to
  the simulation code representation.
  Finally, target code is generated depending on the backend mode (defaults to MTK mode).
+The function list contains the sequential parts of a modelica model, that is the different functions that the model might use.
+This is not part of the lowering process but it is to be generated before we generate MTK target code
 """
 function translate(frontendDAE::Union{DAE.DAE_LIST, OMFrontend.Main.FlatModel};
-                   functionCache = nothing, BackendMode = MTK_MODE)::Tuple{String, Expr}
+                   functionList = nothing, BackendMode = MTK_MODE)::Tuple{String, Expr}
   local bDAE = lower(frontendDAE)
   local simCode
   if BackendMode == DAE_MODE
@@ -98,8 +99,10 @@ function translate(frontendDAE::Union{DAE.DAE_LIST, OMFrontend.Main.FlatModel};
   elseif BackendMode == MTK_MODE
     @debug "Generate simulation code"
     simCode = generateSimulationCode(bDAE; mode = MTK_MODE)
-    @debug "Simulation code generated"
-    println(SimulationCode.dumpSimCode(simCode))
+    simCodeFunctions = generateSimCodeFunctions(functionList)
+    @assign simCode.functions = simCodeFunctions
+    @debug "Simulation code generated" SimulationCode.dumpSimCode(simCode)
+    write("simulationCodeStatistics.log", SimulationCode.dumpSimCode(simCode))
     return generateMTKTargetCode(simCode)
   else
     @error "No mode specificed: valid modes are:"
@@ -162,9 +165,11 @@ end
 function lower(fm::OMFrontend.Main.FLAT_MODEL)
   local preprocessedFM = FrontendUtil.handleBuiltin(fm)
   local bDAE = BDAECreate.lower(preprocessedFM)
-  @info(BDAEUtil.stringHeading1(bDAE, "translated"));
+  @debug(BDAEUtil.stringHeading1(bDAE, "translated"));
+  write("initialBDAE.log", BDAEUtil.stringHeading1(bDAE, "residuals"))
   #= Expand arrays =#
-  (bDAE, expandedVars) = Causalize.expandArrayVariables(bDAE)
+  # Removed this pass since this can now
+  #(bDAE, expandedVars) = Causalize.expandArrayVariables(bDAE)
   @debug(BDAEUtil.stringHeading1(bDAE, "Array variables expanded"));
   #= Transform if expressions to if equations =#
   @debug(BDAEUtil.stringHeading1(bDAE, "If equations transformed"));
@@ -175,6 +180,10 @@ function lower(fm::OMFrontend.Main.FLAT_MODEL)
   bDAE = Causalize.residualizeEveryEquation(bDAE)
   #= Convert equations to residual form =#
   @debug(BDAEUtil.stringHeading1(bDAE, "Residuals"));
+  write("residualTransformationAllParamsAndConstants.log", BDAEUtil.stringHeading1(bDAE, "residuals"))
+  #= Remove unused parameters and or constants. Important optimization for some systems. =#
+  bDAE = Causalize.detectUnusedParametersAndConstants(bDAE)
+  write("residualTransformation.log", BDAEUtil.stringHeading1(bDAE, "residuals"))
   return bDAE
 end
 
@@ -182,11 +191,18 @@ end
   Transforms  BDAE-IR to simulation code for DAE-mode
 """
 function generateSimulationCode(bDAE::BDAE.BACKEND_DAE; mode)::SimulationCode.SimCode
-  simCode = SimulationCode.transformToSimCode(bDAE; mode = mode)
+  local simCode = SimulationCode.transformToSimCode(bDAE; mode = mode)
   @debug BDAEUtil.stringHeading1(simCode, "SIM_CODE: transformed simcode")
   return simCode
 end
 
+"""
+  Translates functions to simlulation code.
+"""
+function generateSimCodeFunctions(functions::List{OMFrontend.Main.M_FUNCTION})
+  local simCodeFunctions = SimulationCode.generateSimCodeFunctions(functions)
+  return simCodeFunctions
+end
 
 """
   Generates code interfacing DifferentialEquations.jl
@@ -241,7 +257,7 @@ end
 """
   Writes a model to file by default the file is formatted and comments are kept.
 """
-function writeModelToFile(modelName::String, filePath::String; keepComments = true, keepBeginBlocks = keepBeginBlocks)
+function writeModelToFile(modelName::String, filePath::String; keepComments = true, keepBeginBlocks = true)
   model = getCompiledModel(modelName)
   try
     mAsStr = modelToString(modelName; MTK = true, keepComments = keepComments, keepBeginBlocks = keepBeginBlocks)
@@ -338,8 +354,6 @@ function simulateModel(modelName::String;
       @eval $(:(import OMBackend))
       #= Below is needed to pass the custom solver=#
       strippedModel = CodeGeneration.stripBeginBlocks(modelCode)
-      str = OMBackend.modelToString(modelName; MTK = true, keepComments = false, keepBeginBlocks = false)
-      OMBackend.writeStringToFile(string("unmodfied", modelName * ".jl"), str)
       @eval $strippedModel
       local modelRunnable = Meta.parse("OMBackend.$(modelName)Simulate($(tspan); solver = $solver)")
       #= Run the model with the supplied tspan. =#
@@ -395,11 +409,11 @@ function plot(sol::Runtime.OMSolution)
   Plots.plot(t, rescols; labels=labels)
 end
 
-"
+"""
 `function plot(sol)`
   An alternative plot function in OMBackend.
   All labels of the variables and the name is given by default
-"
+"""
 function plot(sol)
   Plots.plot(sol)
 end
@@ -416,12 +430,4 @@ function plot(sol::Runtime.OMSolutions; legend = false, limX = 0.0, limY = 1.0)
     prevP = p
   end
   return prevP
-end
-
-"""
-`turnOnLogging(mod = "OMBackend"::String)`\n
-Turns on logging. An optional parameter `mod` can be used to specify which model should be logged for more granuality.
-"""
-function turnOnLogging(mod = "OMBackend"::String)
-  ENV["JULIA_DEBUG"] = mod
 end

@@ -1,3 +1,8 @@
+#=
+TODO:
+Remove DAE structure from this file s.t simcode can stand alone.
+=#
+
 """
 Kind of a simulation variable
 """
@@ -77,6 +82,10 @@ abstract type SimCode end
   Abstract type for control flow constructs for simulation code
 """
 abstract type Construct end
+
+
+include("simCodeAlgorithmic.jl")
+
 
 """
   Represents a branch in simulation code.
@@ -195,4 +204,6 @@ struct SIM_CODE{T0<:String,
   flatModel::Option
   "Irreductable variables. That is the names of variables that are involved in events such as discrete variables"
   irreductableVariables::T12
+  "Modelica functions"
+  functions::Vector{ModelicaFunction}
 end

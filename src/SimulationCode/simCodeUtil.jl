@@ -88,9 +88,16 @@ end
 
 """
   Prints what equation involves which variable.
+The ht maps a string to the simcode variable structure in simcode data.
 """
-function dumpVariableEqMapping(mapping::OrderedDict)::String
-  local dump = "\n"
+function dumpVariableEqMapping(mapping::OrderedDict, ht)::String
+  local dump = IOBuffer()
+  println(dump, "_VARIABLES_")
+  for v in keys(ht)
+    println(dump, v * ":" * string(first(ht[v])))
+  end
+  println(dump, "EQUATION MAPPING:")
+  println(dump, "\n")
   local equations = keys(mapping)
   for e in equations
     variablesAtEq = "{"
@@ -98,9 +105,10 @@ function dumpVariableEqMapping(mapping::OrderedDict)::String
       variablesAtEq *= "$(v),"
     end
     variablesAtEq *= "}"
-    dump *= "Equation $e: involves: $(variablesAtEq)\n"
+    println(dump, variablesAtEq)
+    println(dump, "Equation $e: involves: $(variablesAtEq): Eq $(BDAEUtil.string(e))\n")
   end
-  return dump
+  return String(take!(dump))
 end
 
 """
@@ -241,10 +249,11 @@ end
   This function creates a bidrectional graph between these equations and the supplied variables.
   (Note: If we need to do index reduction there might be empty equations here).
 """
-function createEquationVariableBidirectionGraph(equations::RES_T,
-                                                ifEquations::IF_T,
-                                                allBackendVars::VECTOR_VAR,
-                                                stringToSimVarHT)::OrderedDict where{RES_T, IF_T, VECTOR_VAR}
+function createEquationVariableBidirectionGraph(equations::Vector{BDAE.RESIDUAL_EQUATION},
+                                                ifEquations::IF_EQS,
+                                                whenEqs::WHEN_EQS,
+                                                allBackendVars::VARS,
+                                                stringToSimVarHT)::OrderedDict where{IF_EQS, WHEN_EQS, VARS}
   local eqCounter::Int = 0
   local variableEqMapping = OrderedDict()
   local unknownVariables = filter((x) -> BDAEUtil.isVariable(x.varKind), allBackendVars)
@@ -253,11 +262,10 @@ function createEquationVariableBidirectionGraph(equations::RES_T,
   local stateVariables = filter((x) -> BDAEUtil.isState(x.varKind), allBackendVars)
   local algebraicAndStateVariables = vcat(unknownVariables, stateVariables)
   local nDiscretes = length(discreteVariables)
-  @info "#stateVariables" length(stateVariables)
-  @info "#discretes" nDiscretes
-  @info "#algebraic" length(unknownVariables)
-  @info "#equations" length(equations)
-
+  @debug "#stateVariables" length(stateVariables)
+  @debug "#discretes" nDiscretes
+  @debug "#algebraic" length(unknownVariables)
+  @debug "#equations" length(equations)
   for eq in equations
     eqCounter += 1
     variablesForEq = Backend.BDAEUtil.getAllVariables(eq, algebraicAndStateVariables)
@@ -281,7 +289,7 @@ function createEquationVariableBidirectionGraph(equations::RES_T,
    in an if equation it should be included in the mapping.
   =#
   for ifEq in ifEquations
-    #= Select one branch =#
+    #= Select one branch. The Modelica specification requires these branches to be balanced. =#
     ifEqBranch = listArray(listGet(ifEq.eqnstrue, 1))
     for eq in ifEqBranch
       eqCounter += 1
@@ -289,6 +297,52 @@ function createEquationVariableBidirectionGraph(equations::RES_T,
       variableEqMapping["e$(eqCounter)"] = sort(getIndiciesOfVariables(variablesForEq, stringToSimVarHT))
     end
   end
+  #=
+  TODO: johti17 04-13 2023:
+  An additional special case occurs if an initial when equation is used.
+  That is an equation on the form
+  when initial()
+    <equations>
+  end when;
+  Currently the presence of this construct breaks the compiler.
+  I should investigat how to go about it.
+  For now lets merge in the equations in an initial when equation as ordinary equations. =#
+  for weq in whenEqs
+    @match weq begin
+      BDAE.WHEN_EQUATION(_, BDAE.WHEN_STMTS(DAE.CALL(Absyn.IDENT("initial"), _, _), whenStmtLst, ewp), source, attr) => begin
+        #= Go through all initial statements and add them as equations. =#
+        for wstmt in weq.whenEquation.whenStmtLst
+          eqCounter += 1
+          variablesForEq = BDAEUtil.getAllVariables(wstmt, algebraicAndStateVariables)
+          variableEqMapping["e$(eqCounter)"] = sort(getIndiciesOfVariables(variablesForEq, stringToSimVarHT))
+        end
+      end
+      _ #=Other when equations =# => begin
+        #= Assignments might be added to the total #equations =#
+        for wstmt in weq.whenEquation.whenStmtLst
+          @match wstmt begin
+            BDAE.ASSIGN(DAE.CREF(ref, DAE.T_REAL(__)), _, _) => begin
+              #= Add to the total number of equation if the lhs is a real variable =#
+              local refAsStr = BDAEUtil.string(ref)
+              local simVar = getSimVarByName(refAsStr, stringToSimVarHT)
+              if isAlgebraic(simVar)
+                eqCounter += 1
+                variablesForEq = BDAEUtil.getAllVariables(wstmt, algebraicAndStateVariables)
+                variableEqMapping["e$(eqCounter)"] = sort(getIndiciesOfVariables(variablesForEq, stringToSimVarHT))
+              end
+            end
+            _ => continue
+          end
+        end
+      end
+    end
+  end
+  write("eqMapping.log", dumpVariableEqMapping(variableEqMapping, stringToSimVarHT))
+  @debug "#stateVariables" length(stateVariables)
+  @debug "#discretes" nDiscretes
+  @debug "#algebraic" length(unknownVariables)
+  @debug "#equations" length(equations)
+  @debug "#state + algebraic = " length(unknownVariables) + length(stateVariables)
   return variableEqMapping
 end
 
@@ -297,7 +351,7 @@ end
 """
 function createEquationVariableBidirectionGraph(equations::RES_T,
                                                 allBackendVars::VECTOR_VAR,
-                                                stringToSimVarHT)::OrderedDict where{RES_T, IF_T, VECTOR_VAR}
+                                                stringToSimVarHT)::OrderedDict where{RES_T, VECTOR_VAR}
   local eqCounter::Int = 0
   local variableEqMapping = OrderedDict()
   local unknownVariables = filter((x) -> BDAEUtil.isVariable(x.varKind), allBackendVars)
@@ -348,7 +402,7 @@ end
   We search for this equation among the residuals in the context.
   The context should be either the top level simcode or a specific branch of some if equation.
 """
-function getEquationSolvedIn(variable::V, context::C) where {V, HT, C}
+function getEquationSolvedIn(variable::V, context::C) where {V, C}
   local ht = context.stringToSimVarHT
   local variableIdx = ht[variable][1]
   local equationIdx = context.matchOrder[variableIdx]
@@ -470,9 +524,11 @@ function convertFlatEdgeToEdges(connections)
   return arrayList(newEdges)
 end
 
-
 """
  This function returns true if a backend variable is in the set of of overconstrained connector variables (occVariables).
+
+TODO: the name of the theta variable is hardcoded for now
+Note that this function must be called before sorting.
 """
 function isOverconstrainedConnectorVariable(simVarName::String, occVariables::Vector{String})
   #= Inefficient crap, can be done better... =#
@@ -499,12 +555,50 @@ function getIrreductableVars(ifEquations::Vector{BDAE.IF_EQUATION},
   =#
   irreductables = collect(Iterators.flatten(irreductables))
   irreductables = filter(irv -> !(irv != "time" && isParameter(last(ht[irv]))), irreductables)
-  #TODO: Fix when equations
-  # for eq in whenEqs
-  #   variablesForEq = Backend.BDAEUtil.getAllVariables(eq, algebraicAndStateVariables)
-  #   push!(variablesForEq, irreductables)
-  # end
+  #TODO: Fix the dection, s.t variables critical to when equations are not removed
+  #for eq in whenEqs
+   # variablesForEq = Backend.BDAEUtil.getAllVariables(eq, algebraicAndStateVariables)
+    # push!(variablesForEq, irreductables)
+  #end
   local irreductablesAsStr = map(x -> string(x), irreductables)
+  #=
+  If THETA exists, treat it as a irreductable variable
+  Currently, theta is a variable with "_THETA" in the variable name.
+  This is subject to change
+  =#
+  thetaVariables = findall([endswith(x, "THETA") for x in keys(ht)])
+  @assert length(thetaVariables) < 2
+  if !(isempty(thetaVariables))
+    #= Hardcoded for now can be fixed with annotation in the frontend =#
+    push!(irreductablesAsStr, collect(keys(ht))[first(thetaVariables)])
+  end
   irreductablesAsStr = filter(x -> x != "time", irreductablesAsStr)
   return irreductablesAsStr
+end
+
+"""
+TODO: the name of the theta variable is hardcoded for now
+Note that this function must be called before sorting.
+"""
+function handleZimmerThetaConstant(resEqs, irreductableVars::Vector{String}, ht)
+  thetaVariables = findall([endswith(x, "THETA") for x in keys(ht)])
+  if !(isempty(thetaVariables))
+    #= Hardcoded for now can be fixed with annotation in the frontend =#
+    thetaConstant = collect(keys(ht))[first(thetaVariables)]
+    push!(irreductableVars, thetaConstant)
+    tmpResEq = DAE.BINARY(
+      DAE.CREF(DAE.CREF_IDENT(thetaConstant, DAE.T_REAL_DEFAULT, MetaModelica.list()), DAE.T_REAL_DEFAULT),
+      DAE.SUB(DAE.T_REAL_DEFAULT),
+      DAE.RCONST(1.0))
+    push!(resEqs,
+          BDAE.RESIDUAL_EQUATION(tmpResEq, nothing, nothing))
+    (zimmerThetaIdx, simVar) = ht[thetaConstant]
+    @assign simVar.varKind = ALG_VARIABLE(0)
+    ht[thetaConstant] = (zimmerThetaIdx, simVar)
+  end
+  return(resEqs, irreductableVars)
+end
+
+function getSimVarByName(name::String, ht::AbstractDict{String, Tuple{Integer, SimVar}})
+  return last(ht[name])
 end

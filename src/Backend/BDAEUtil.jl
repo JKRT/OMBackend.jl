@@ -375,6 +375,21 @@ function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Vector{BDAE.VAR})::Ve
   return variablesInEq
 end
 
+"""
+  input: Backend when assignment (BDAE.ASSIGN)
+  input: All existing variables
+  output All variable in that specific equation
+"""
+function getAllVariables(assignment::BDAE.ASSIGN, vars::Vector{BDAE.VAR})::Vector{DAE.ComponentRef}
+  local assignmentAsEq = BDAE.RESIDUAL_EQUATION(DAE.BINARY(assignment.left,
+                                                           DAE.SUB(assignment.left.ty),
+                                                           assignment.right),
+                                                assignment.source, BDAE.NO_ATTRIBUTES())
+  local variablesInEq = getAllVariables(assignmentAsEq, vars)
+#  @info "Variables in eq: $(string(variablesInEq)) for eq: $(string(eq))"
+  return variablesInEq
+end
+
 
 """
   Fetches all variables in if equations.

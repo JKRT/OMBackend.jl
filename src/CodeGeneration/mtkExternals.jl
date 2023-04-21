@@ -34,7 +34,13 @@ function move_diffs(eq::Equation; rewrite)
   # Do not modify `D(x) ~ ...`, already correct
   res =
     if !(istree(eq.lhs) && operation(eq.lhs) isa Differential) && !(istree(eq.lhs) && operation(eq.lhs) isa Difference)
-      _eq = eq.rhs-eq.lhs
+      local _eq
+      try
+        _eq = eq.rhs-eq.lhs
+      catch e
+        @error "Error blah"
+        println(eq)
+      end
       rhs = rewrite(_eq)
       if rhs === nothing
         eq
@@ -74,10 +80,11 @@ end
 """
   Rewrite equations that do not conform to the requirements of MTK
 """
-function rewriteEquations(edeqs, iv, eVars, ePars)
+function rewriteEquations(edeqs, iv, eVars, ePars, simCode)
   local der = ModelingToolkit.Differential(t)
   #= Remove the t's =#
   eVars = [Symbol(replace(string(i), "(t)" => "")) for i in eVars]
+  eVars = vcat(eVars, [Symbol("combi_Population_Lookup_bn_y")])
   preEval = quote
     vars = ModelingToolkit.@variables begin
       $(eVars...)
@@ -86,11 +93,22 @@ function rewriteEquations(edeqs, iv, eVars, ePars)
       $(ePars...)
     end
   end
+  #Hardcoded
   #= Make the derivative symbol known =#
   eval(preEval)
   eval(:(der = ModelingToolkit.Differential(t)))
   eval(:(import ModelingToolkit.IfElse))
-  local deqs = [eval(i) for i in edeqs]
+  #=
+    Register all functions s.t they can be used by the symbolic transformations.
+  =#
+    #= Delay evaluation of the register expression until we have constructed the =#
+  local ftrs = generateRegisterCallsForCallExprs(simCode)
+  for f in ftrs
+    eval(f)
+    println("Register:" * string(f))
+  end
+  #==#
+  local deqs = evalEDeqs(edeqs) #[eval(i) for i in edeqs]
   #println(debugRewrite(deqs, iv, vars, parameters; separator="\n"))
   #= Rewrite equations =#
   D = Differential(iv)
@@ -104,8 +122,8 @@ function rewriteEquations(edeqs, iv, eVars, ePars)
     #= Only do the rewrite for the differentials. The others have already been rewritten.=#
     eqStr = string(eq)
     #if (contains(eqStr, "Differential")) # TODO expensive comp. Needs to be optimized.
-      req = move_diffs(eq, rewrite = remove_diffs)
-      #req = move_diffs(eq, rewrite = remove_diffs)
+    req = move_diffs(eq, rewrite = remove_diffs)
+    #req = move_diffs(eq, rewrite = remove_diffs)
       #@info "Left hand side of the equation" req.lhs
       if req.lhs isa Real
         push!(rewrittenDeqs, req)
@@ -125,6 +143,42 @@ function rewriteEquations(edeqs, iv, eVars, ePars)
   #println(debugRewrite(rewrittenDeqs, iv, vars, parameters; separator="\n"))
   #fail()
   return rewrittenDeqs
+end
+
+function evalEDeqs(edeqs)
+  local deqs = []
+  for e in edeqs
+    try
+      push!(deqs, eval(e))
+    catch ex
+      #Hack
+      println(e)
+      unSimplifiedString = string(e)
+      unSimplifiedString = replace(unSimplifiedString, "&&" => "&")
+      unSimplifiedString = replace(unSimplifiedString, "begin" => "(")
+      unSimplifiedString = replace(unSimplifiedString, "end" => ")")
+      strippedE = stripBeginBlocks(stripComments(e))
+      println(strippedE)
+      #eval(strippedE)
+      println(strippedE)
+      estr = string(strippedE)
+      println(estr)
+      estr = replace(estr, "&&" => "&")
+      estrExp = Meta.parse(unSimplifiedString) #estr)
+      println("Trying test")
+      test = Equation(estrExp.args[2], estrExp.args[3])
+      println(test)
+      splittedString = split(estr, "~")
+      eq = Equation(0, last(splittedString))
+      println("EQUATION:")
+      println(eq)
+      println("estrExp:")
+      println(estrExp)
+      push!(deqs, eval(estrExp))
+    end
+  end
+  println("!DONE!")
+  return deqs
 end
 
 function debugRewrite(deqs, t, vars, parameters; separator = ",")
@@ -150,7 +204,6 @@ rewriteEq(eq) = begin
   res = Meta.parse(replace(eqStr, "Differential(t)" => "D"))
   res
 end
-
 
 """
 $(SIGNATURES)

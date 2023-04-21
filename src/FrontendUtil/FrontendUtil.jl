@@ -35,27 +35,17 @@ function removeSmoothOperator(fm::OMFrontend.Main.FLAT_MODEL)
 end
 
 """
-  Removes the smooth operator from a equation, returns the argument to smooth
+  Removes the smooth operator from an equation, returns the argument to smooth.
 """
 function removeSmooth(eq::OMFrontend.Main.Equation)
-  println("Calling remove smooth with " * OMFrontend.Main.toString(eq) * " and type " * string(typeof(eq)))
-  if eq isa OMFrontend.Main.EQUATION_EQUALITY
-    println(typeof(eq.rhs))
-  end
-  @match eq begin
-    OMFrontend.Main.EQUATION_EQUALITY(lhs = e1, rhs = OMFrontend.Main.CALL_EXPRESSION(OMFrontend.Main.TYPED_CALL(__))) => begin
-      @match OMFrontend.Main.CALL_EXPRESSION(OMFrontend.Main.TYPED_CALL(fn, ty, var, arguments, attributes))  = eq.rhs
-      @match Absyn.IDENT(n) = OMFrontend.Main.name(fn)
+  #=TODO. Optimize me=#
+  @matchcontinue eq begin
+    OMFrontend.Main.EQUATION_EQUALITY(lhs = e1, rhs = OMFrontend.Main.CALL_EXPRESSION(OMFrontend.Main.TYPED_CALL(fn, ty, var, arguments, attributes))) where OMFrontend.Main.name(fn) == "smooth"  => begin
       @match x <| y <| nil = arguments
-      println(n)
-      if n == "smooth"
-        local newEq = eq
-        @assign newEq.rhs = y
-#        println("Changed eq:" * OMFrontend.Main.toString(newEq))
-        newEq
-      else
-        eq
-      end
+      local newEq = eq
+      @assign newEq.rhs = y
+      println("Changed eq:" * OMFrontend.Main.toString(newEq))
+      newEq
     end
     _ => eq
   end

@@ -315,13 +315,13 @@ function DAE_OP_toJuliaOperator(op::DAE.Operator)
       DAE.POW_SCALAR_ARRAY() => :^
       DAE.POW_ARR() => :^
       DAE.POW_ARR2() => :^
-      DAE.AND() => :&&
+      DAE.AND() => :(&&)
       DAE.OR() => :(||)
       DAE.NOT() => :(!)
-      DAE.LESS() => :<
-      DAE.LESSEQ() => :<=
-      DAE.GREATER() => :>
-      DAE.GREATEREQ() => :>=
+      DAE.LESS() => :(<)
+      DAE.LESSEQ() => :(<=)
+      DAE.GREATER() => :(>)
+      DAE.GREATEREQ() => :(>=)
       DAE.EQUAL() => :(=)
       DAE.NEQUAL() => :(!=)
       DAE.USERDEFINED() => throw("Unknown operator: Userdefined")
@@ -546,7 +546,10 @@ end
 """
   Converts a DAE expression into a MTK expression.
 """
-function expToJuliaExpMTK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuffix=""; varPrefix="x", derSymbol::Bool=false)::Expr
+function expToJuliaExpMTK(@nospecialize(exp::DAE.Exp),
+                          simCode::SimulationCode.SIM_CODE,
+                          varSuffix="";
+                          varPrefix="x", derSymbol::Bool=false)::Expr
   hashTable = simCode.stringToSimVarHT
   local expr::Expr = begin
     local int::Int64
@@ -564,47 +567,81 @@ function expToJuliaExpMTK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuf
       DAE.ICONST(int) => quote $int end
       DAE.RCONST(real) => quote $real end
       DAE.SCONST(tmpStr) => quote $tmpStr end
+      DAE.CREF(DAE.CREF_IDENT("time", DAE.T_REAL(Nil{Any}())), _) => begin
+        quote
+          t
+        end
+      end
+      #=
+      Qualified path to a variable of type array.
+      See array access below.
+      Note that the array is added as <name>[<size>] in the HT during the simcode phase.
+      Hence, the dimensionality must be added before lookup in the ht.
+      =#
+      DAE.CREF(cr, DAE.T_ARRAY(ty, dims)) => begin
+        lookUpStr = string(exp)
+        arrName = string(exp)
+        #= To make sure the variable is indexed =#
+        for d in dims
+          @match DAE.DIM_INTEGER(i) = d
+          lookUpStr *= string("[", i, "]")
+        end
+        println("Lookup string:" * lookUpStr)
+        println("Replaced with:" * arrName)
+        indexAndVar = hashTable[lookUpStr]
+        hashTable[arrName] = hashTable[lookUpStr]
+        println(exp)
+        expr = quote $(Symbol(arrName)) end
+        #fail()
+        expr
+      end
+      #=
+      This is an array acess. Note the difference to the case above,
+      that is a component of type array.
+      In the case above we do not lookup the subscript wheras here it is subscripted.
+      =#
+      DAE.CREF(DAE.CREF_IDENT(ident, identType, subscriptLst), _) where !isempty(subscriptLst) => begin
+        local varName = SimulationCode.string(ident)
+        local lookUpStr = ""
+        for s in subscriptLst
+          @match DAE.INDEX(DAE.ICONST(i)) = s
+          lookUpStr *= string("[", i, "]")
+        end
+        indexAndVar = hashTable[string(varName, lookUpStr)]
+        quote
+          $(LineNumberNode(@__LINE__, "$varName array"))
+          $(Symbol(indexAndVar[2].name))
+        end
+      end
       DAE.CREF(cr, _)  => begin
         varName = SimulationCode.string(cr)
-        builtin = if varName == "time"
-          true
-        else
-          false
-        end
-        if ! builtin
-          #= If we refer to time, we simply return t instead of a concrete variable =#
-          indexAndVar = hashTable[varName]
-          varKind::SimulationCode.SimVarType = indexAndVar[2].varKind
-          @match varKind begin
-            SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
-            SimulationCode.STATE(__) => quote
-              $(LineNumberNode(@__LINE__, "$varName state"))
-              $(Symbol(indexAndVar[2].name))
-            end
-            SimulationCode.PARAMETER(__) => quote
-              $(LineNumberNode(@__LINE__, "$varName parameter"))
-              $(Symbol(indexAndVar[2].name))
-            end
-            SimulationCode.ALG_VARIABLE(__) => quote
-              $(LineNumberNode(@__LINE__, "$varName, algebraic"))
-              $(Symbol(indexAndVar[2].name))
-            end
-            SimulationCode.DISCRETE(__) => quote
-              $(LineNumberNode(@__LINE__, "$varName, discrete"))
-              $(Symbol(indexAndVar[2].name))
-            end
-            SimulationCode.OCC_VARIABLE(__) => quote
-              $(LineNumberNode(@__LINE__, "$varName, occ variable"))
-              $(Symbol(indexAndVar[2].name))
-            end
-            _ => begin
-              @error "Unsupported varKind: $(varKind)"
-              fail()
-            end
+        indexAndVar = hashTable[varName]
+        varKind::SimulationCode.SimVarType = indexAndVar[2].varKind
+        @match varKind begin
+          SimulationCode.INPUT(__) => @error "INPUT not supported in CodeGen"
+          SimulationCode.STATE(__) => quote
+            $(LineNumberNode(@__LINE__, "$varName state"))
+            $(Symbol(indexAndVar[2].name))
           end
-        else #= Currently only time is a builtin variable. Time is represented as t in the generated code =#
-          quote
-            t
+          SimulationCode.PARAMETER(__) => quote
+            $(LineNumberNode(@__LINE__, "$varName parameter"))
+            $(Symbol(indexAndVar[2].name))
+          end
+          SimulationCode.ALG_VARIABLE(__) => quote
+            $(LineNumberNode(@__LINE__, "$varName, algebraic"))
+            $(Symbol(indexAndVar[2].name))
+          end
+          SimulationCode.DISCRETE(__) => quote
+            $(LineNumberNode(@__LINE__, "$varName, discrete"))
+            $(Symbol(indexAndVar[2].name))
+          end
+          SimulationCode.OCC_VARIABLE(__) => quote
+            $(LineNumberNode(@__LINE__, "$varName, occ variable"))
+            $(Symbol(indexAndVar[2].name))
+          end
+          _ => begin
+            @error "Unsupported varKind: $(varKind)"
+            fail()
           end
         end
       end
@@ -629,30 +666,103 @@ function expToJuliaExpMTK(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, varSuf
         local lhs = expToJuliaExpMTK(e1, simCode, varPrefix=varPrefix, derSymbol = derSymbol)
         local rhs = expToJuliaExpMTK(e2, simCode, varPrefix=varPrefix, derSymbol = derSymbol)
         local op = DAE_OP_toJuliaOperator(op)
-        :($op($(lhs), $(rhs)))
+        quote
+          ($op($(lhs), $(rhs)))
+        end
       end
       DAE.RELATION(exp1 = e1, operator = op, exp2 = e2) => begin
         local lhs = expToJuliaExpMTK(e1, simCode, varPrefix=varPrefix,derSymbol = derSymbol)
         local rhs = expToJuliaExpMTK(e2, simCode,varPrefix=varPrefix, derSymbol = derSymbol)
         local op = DAE_OP_toJuliaOperator(op)
-        :($op($(lhs), $(rhs)))
+        quote
+          ($op($(lhs), $(rhs)))
+        end
       end
-      DAE.IFEXP(expCond = e1, expThen = e2, expElse = e3) => begin
-        throw(ErrorException("If expressions not allowed in backend code"))
+      DAE.IFEXP(DAE.BCONST(false), e2, e3) => begin
+        local e = expToJuliaExpMTK(e3, simCode)
+        quote
+          $(LineNumberNode(@__LINE__, "evaluated if expr: $(string(exp))"))
+          $(e)
+        end
+      end
+      DAE.IFEXP(DAE.BCONST(true), e2, e3) => begin
+        local e = expToJuliaExpMTK(e2, simCode)
+        quote
+          $(LineNumberNode(@__LINE__, "evaluated if expr: $(string(exp))"))
+          $(e)
+        end
+      end
+      #=
+      In the other case, see if the condition can be evaluated into a constant.
+      If that is the case the expression can be resolved.
+      =#
+      DAE.IFEXP(expCond, expThen, expElse) => begin
+        try
+        #   expr = evalDAEConstant(expCond, simCode)
+        #   local expThenJL = expToJuliaExpMTK(expThen, simCode)
+           local expElseJL = expToJuliaExpMTK(expElse, simCode)
+        #   if expr == true
+        #     quote
+        #       expThenJL
+        #     end
+          #   else
+          quote
+            expElseJL
+          end
+         catch e
+          throw(ErrorException("If expressions with variable conditions not allowed in backend code.\n Expression was:\t $(string(exp))"))
+        end
       end
       DAE.CALL(path = Absyn.IDENT(tmpStr), expLst = explst)  => begin
         #Call as symbol is really ugly.. please fix me :(
         DAECallExpressionToMTKCallExpression(tmpStr, explst, simCode, hashTable; varPrefix=varPrefix, derAsSymbol=derSymbol)
+      end
+      DAE.CALL(path, expLst) => begin
+        local expr = Expr(:call, Symbol(string(path)))
+        local args = map(expLst) do arg
+          expToJuliaExpMTK(arg, simCode, varPrefix=varPrefix,derSymbol = derSymbol)
+        end
+        expr.args = vcat(expr.args, args)
+        expr
       end
       DAE.CAST(ty, exp)  => begin
         quote
           $(generateCastExpressionMTK(ty, exp, simCode, varPrefix))
         end
       end
-      _ =>  throw(ErrorException("$exp not yet supported"))
+      #= For enumeration we just take the value of the index. =#
+      DAE.ENUM_LITERAL(path, index) => begin
+        quote
+          $(LineNumberNode(@__LINE__, "$(string(path)) ENUM"))
+          $(index)
+        end
+      end
+      DAE.ARRAY(DAE.T_ARRAY(DAE.T_REAL(Nil(__)), dims), scalar, arr) => begin
+        handleArrayExp(exp, simCode)
+      end
+      DAE.ARRAY(DAE.T_ARRAY(DAE.T_INTEGER(Nil(__)), dims), scalar, arr) => begin
+        handleArrayExp(exp, simCode)
+      end
+    _ =>  throw(ErrorException("$exp not yet supported"))
     end
   end
   return expr
+end
+
+"""
+  Generate code for array expressions
+"""
+function handleArrayExp(exp::DAE.ARRAY, simCode)
+  local arrJL = [] #Type yet unknown
+  local steps = listHead(exp.ty.dims)
+  @assert(steps isa DAE.DIM_INTEGER, "Only integer dimensions are currently supported. Type was : $(typeof(steps))")
+  steps = steps.integer
+  for i in 1:steps
+    push!(arrJL, expToJuliaExpMTK(listGet(exp.array, i), simCode))
+  end
+  quote
+    $(arrJL...)
+  end
 end
 
 """
@@ -714,8 +824,12 @@ function evalDAEConstant(daeConstant::DAE.Exp, simCode)
     DAE.BINARY(__) => begin
       evalDAE_Expression(daeConstant, simCode)
     end
+    DAE.LBINARY(__) => begin
+      evalDAE_Expression(daeConstant, simCode)
+    end
     _ => begin
       local str = string(daeConstant)
+      println(daeConstant)
       throw("$(str) is not a constant")
     end
   end
@@ -750,6 +864,7 @@ end
  Evalutates the components in a DAE expression (Currently if the components are parameters)
 """
 function evalDAE_Expression(expr, simCode)::Expr
+  local shouldEval = true
   function replaceParameterVariable(exp, ht)
     if Util.isCref(exp)
       local simVar = last(simCode.stringToSimVarHT[string(exp)])
@@ -757,8 +872,12 @@ function evalDAE_Expression(expr, simCode)::Expr
         @match SimulationCode.SIMVAR(name, _, SimulationCode.PARAMETER(SOME(bindExp)), _) = simVar
         return (bindExp, true, ht)
       else
-        @error "Not supported states and algebraics in initial equations is not supported"
-        fail()
+        @warn "States and Algebraic variables in initial equations is not supported"
+        #@info "Expression was:" expr
+        #@info "Expression as string: \" $(string(expr)) \""
+        shouldEval = false
+        #fail()
+        #return (expToJuliaExpMTK(), )
       end
     end
     (exp, true, ht)
@@ -767,7 +886,7 @@ function evalDAE_Expression(expr, simCode)::Expr
   #= Replaces all known variables in the daeExp =#
   local daeExp = first(Util.traverseExpBottomUp(expr, replaceParameterVariable, 0))
   local jlExpr = expToJuliaExpMTK(daeExp, simCode)
-  local evaluatedJLExpr = eval(jlExpr)
+  local evaluatedJLExpr = if shouldEval eval(jlExpr) else jlExpr end
   return quote $(evaluatedJLExpr) end
 end
 
@@ -834,21 +953,27 @@ function deCausalize(eq, simCode)
   end
 end
 
-
-#= TODO. REMOVE =#
-function deCausalize2(eq, simCode)
-  @match eq.exp begin
-    DAE.BINARY(DAE.RCONST(0.0), _, exp2) => begin
-      expToJuliaExpMTK(exp2, simCode)
+"""
+  Generates code for DAE cast expressions for MTK code.
+"""
+function generateCastExpressionMTK(ty, exp, simCode, varPrefix)
+  return @match ty, exp begin
+    (DAE.T_REAL(__), DAE.ICONST(__)) => begin
+      quote
+        float($(expToJuliaExpMTK(exp, simCode, varPrefix=varPrefix)))
+      end
     end
-    DAE.BINARY(exp1, _, DAE.RCONST(0.0)) => begin
-      expToJuliaExpMTK(exp1, simCode)
+    (DAE.T_REAL(__), DAE.CREF(cref)) where typeof(cref.identType) === DAE.T_INTEGER => begin
+      quote
+        float($(expToJuliaExpMTK(exp, simCode, varPrefix=varPrefix)))
+      end
     end
-    DAE.BINARY(exp1, _, exp2) => begin
-      expToJuliaExpMTK(eq.exp, simCode)
+    #= Conversion to a float other alternatives, =#
+    (DAE.T_REAL(__), _) => begin
+      quote
+        float($(expToJuliaExpMTK(exp, simCode, varPrefix=varPrefix)))
+      end
     end
-    _ => begin
-      throw("Unsupported equation:" * string(eq))
-    end
+    _ => throw("Cast $ty: for exp: $exp not yet supported in codegen!")
   end
 end

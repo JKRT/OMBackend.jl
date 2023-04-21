@@ -1,4 +1,3 @@
-
 "
   This files contains the various graph algorithms.
 
@@ -33,21 +32,21 @@ function matching(dict::DataStructures.OrderedDict, n::Int)
   local assign = [0 for i in 1:n]
   local vMark = Bool[false for i in 1:n]
   local eMark = Bool[false for i in 1:n]
-  """ 
-    Calculates the path for equation i. 
-    returns true if a path is found. 
+  """
+    Calculates the path for equation i.
+    returns true if a path is found.
   """
   function pathFound(i)
     eMark[i] = true
     local success = false
-    local equationsI = dict.vals[i]    
-    for j in equationsI 
+    local equationsI = dict.vals[i]
+    for j in equationsI
       if assign[j] == 0
         assign[j] = i
         success = true
         return success
       end
-    end    
+    end
     #= Otherwise =#
     success = false
     for j in equationsI
@@ -84,19 +83,20 @@ Author: John Tinnerholm
   input graph equation -> {Equation -> variables belonging to it}
   output Graphs.SimpleDiGraph
 """
-function merge(matchOrder::Vector, graph::OrderedDict)::MetaGraphs.MetaDiGraph  "Remove function for arrays.."
+function merge(matchOrder::Vector, graph::OrderedDict)::MetaGraphs.MetaDiGraph
+  "Remove function for arrays.."
   function remove!(a, item)
     deleteat!(a, findall(x->x==item, a))
   end
-  #= 
+  #=
     Convert the given map into an array representation.
-    Similar format to the assign matrix but represent the dependencies 
+    Similar format to the assign matrix but represent the dependencies
     depends(i) = {Set of variables used in equation i}.
   =#
   local depends = graph.vals
   local g = MetaGraphs.MetaDiGraph()
-  #= 
-    Create vertices. Each equation in matchorder is one vertex in the graph. 
+  #=
+    Create vertices. Each equation in matchorder is one vertex in the graph.
   =#
   local nMatchOrder = length(matchOrder)
   for eq in 1:nMatchOrder
@@ -108,7 +108,7 @@ function merge(matchOrder::Vector, graph::OrderedDict)::MetaGraphs.MetaDiGraph  
     if length(varIdx) == 0
       #=Was zero for eq=#
       varIdx = findall(x->x==eq, matchOrder)
-      continue; 
+      continue;
     end
     local depVariables = remove!(depends[eq], first(varIdx))
     #= Solve for the remaining variables =#
@@ -139,13 +139,13 @@ function dumpGraphProperties(g::MetaGraphs.MetaDiGraph)
 end
 
 """
-  Topological sort 
+  Topological sort
 """
-function topological_sort(g::Graphs.AbstractGraph)::Array
+function topological_sort(g::Graphs.AbstractGraph)::Vector
   Graphs.topological_sort_by_dfs(g)
 end
 
-function stronglyConnectedComponents(g::Graphs.AbstractGraph)::Array
+function stronglyConnectedComponents(g::Graphs.AbstractGraph)::Vector
   Graphs.strongly_connected_components_kosaraju(g)
 end
 
@@ -171,7 +171,7 @@ end
   Author: John Tinnerholm
   Tarjans algorithm
 """
-function tarjan(g::OrderedDict)::Array
+function tarjan(g::OrderedDict)::Vector
   tarjan(g, length(g.keys))
 end
 
@@ -182,7 +182,7 @@ end
  input n::Int, the number of vertices
  output sccs: The set of strongly connected components
 """
-function tarjan(g::OrderedDict, n)::Array
+function tarjan(g::OrderedDict, n)::Vector
   function strongConnect(v::Int)
     vIndicies[v] = index
     vLowLinks[v] = index

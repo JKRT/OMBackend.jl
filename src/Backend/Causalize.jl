@@ -52,6 +52,31 @@ function detectStates(dae::BDAE.BACKEND_DAE)
   BDAEUtil.mapEqSystems(dae, detectStatesEqSystem)
 end
 
+"""
+This function detects and removes unused parameters a modeler might have introduced by mistake.
+This reduces the explosion of parameters common for instance when using large matrices.
+author:johti17
+"""
+function detectUnusedParametersAndConstants(bdae::BDAE.BACKEND_DAE)
+  #= Those that are to be kept have been temporary marked DUMMY_STATE =#
+  bdae = BDAEUtil.mapEqSystems(bdae, detectParamsEqSystem)
+  @assert length(bdae.eqs) == 1 "Eq systems larger than 1 not supported"
+  local sys = first(bdae.eqs)
+  #= Remove parameters of all types, but leave complex types alone. =#
+  newOrderedVars = filter((x) -> (x.varKind !== BDAE.PARAM() && !(x.varType isa DAE.T_COMPLEX) ), sys.orderedVars)
+  for (i, v) in enumerate(newOrderedVars)
+    if v.varKind === BDAE.DUMMY_STATE()
+      tv = newOrderedVars[i]
+      @assign tv.varKind = BDAE.PARAM()
+      newOrderedVars[i] = tv
+    end
+  end
+  #  println("New ordered vars")
+  #  println(map(string, newOrderedVars))
+  @assign first(bdae.eqs).orderedVars = newOrderedVars
+  return bdae
+end
+
 
 """
   Replaces all if expressions with a temporary variable.
@@ -92,6 +117,85 @@ function detectStatesEqSystem(syst::BDAE.EQSYSTEM)::BDAE.EQSYSTEM
 end
 
 """
+ Detect parameters used in the equations.
+Save those variables in a HT.
+"""
+function detectParamsEqSystem(syst::BDAE.EQSYSTEM)::BDAE.EQSYSTEM
+  local pars = filter((x) -> x.varKind === BDAE.PARAM(), syst.orderedVars)
+  local parStrs = Set(map((x) -> string(x.varName), pars))
+  local parStrs2 = map((x) -> string(x.varName) * "|" * string(x.varType), pars)
+  local buffer = IOBuffer()
+  println(buffer, parStrs2)
+  write("allpars.log", String(take!(buffer)))
+  function detectParamExpression(exp::DAE.Exp, paramCrefs::Dict{DAE.ComponentRef, Bool})
+    local cont::Bool
+    local outCrefs = paramCrefs
+    (outCrefs, cont) = begin
+      local param::DAE.ComponentRef
+      @match exp begin
+        #= Ignore complex components =#
+        DAE.CREF(c, DAE.T_COMPLEX(__)) => begin
+          println(c)
+          outCrefs[exp.componentRef] = true
+          fail()
+          (outCrefs, true)
+        end
+        DAE.CREF(__) => begin
+          local cand = string(exp.componentRef)
+          if (cand in parStrs)
+            #println("Located param in the variables:" * cand)
+            #println(exp)
+            outCrefs[exp.componentRef] = true
+          end
+          (outCrefs, true)
+        end
+        _ => begin
+          (outCrefs, true)
+        end
+      end
+    end
+    return (exp, cont, outCrefs)
+  end
+  function updateParams(vars::Vector, paramCrefs::Dict{DAE.ComponentRef, Bool})
+    local varArr::Vector{BDAE.VAR} = vars
+    for i in 1:arrayLength(varArr)
+      varArr[i] = begin
+        local cref::DAE.ComponentRef
+        local var::BDAE.Var
+        @match varArr[i] begin
+          var && BDAE.VAR(varName = cref) where (haskey(paramCrefs, cref)) => begin
+            @assign var.varKind = BDAE.DUMMY_STATE()#= In the meantime. Mark it for keeping=#
+            var
+          end
+          _ => begin
+            varArr[i]
+          end
+        end
+      end
+      vars = varArr
+    end
+    return vars
+  end
+
+  syst = begin
+    local vars::BDAE.Variables
+    local eqs::Array
+    local paramCrefs = Dict{DAE.ComponentRef, Bool}()
+    @match syst begin
+      BDAE.EQSYSTEM(name, vars, eqs, simpleEqs, initialEqs) => begin
+        for eq in eqs
+          (_, paramCrefs) = BDAEUtil.traverseEquationExpressions(eq, detectParamExpression, paramCrefs)
+        end
+        #= Do replacements for paramCrefs =#
+        @assign syst.orderedVars = updateParams(vars, paramCrefs)
+        syst
+      end
+    end
+  end
+  return syst
+end
+
+"""
 johti17:
   Detects if-equations.
   Returns new temporary variables and an array of equations
@@ -111,8 +215,6 @@ function detectIfEquationsEqSystem(syst::BDAE.EQSYSTEM)::BDAE.EQSYSTEM
           (eq2, _) = BDAEUtil.traverseEquationExpressions(eq, replaceIfExpressionWithTmpVar,
                                                                   tmpVarToElementAndTick)
           if ! (eq === eq2)
-            @info "Assigning:"
-            @info string(eq2)
             @assign syst.orderedEqs[i] = eq2
           end
           tick.x += 1
@@ -340,6 +442,7 @@ function updateStates(vars::Vector, stateCrefs::Dict{DAE.ComponentRef, Bool})
   end
   return vars
 end
+
 
 """
   Author: johti17
