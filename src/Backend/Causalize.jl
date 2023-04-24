@@ -63,7 +63,7 @@ function detectUnusedParametersAndConstants(bdae::BDAE.BACKEND_DAE)
   @assert length(bdae.eqs) == 1 "Eq systems larger than 1 not supported"
   local sys = first(bdae.eqs)
   #= Remove parameters of all types, but leave complex types alone. =#
-  newOrderedVars = filter((x) -> (x.varKind !== BDAE.PARAM() && !(x.varType isa DAE.T_COMPLEX) ), sys.orderedVars)
+  newOrderedVars = filter((x) -> (x.varKind !== BDAE.PARAM() || x.varType isa DAE.T_COMPLEX), sys.orderedVars)
   for (i, v) in enumerate(newOrderedVars)
     if v.varKind === BDAE.DUMMY_STATE()
       tv = newOrderedVars[i]

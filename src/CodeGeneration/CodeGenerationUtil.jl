@@ -700,16 +700,11 @@ function expToJuliaExpMTK(@nospecialize(exp::DAE.Exp),
         try
         #   expr = evalDAEConstant(expCond, simCode)
         #   local expThenJL = expToJuliaExpMTK(expThen, simCode)
-           local expElseJL = expToJuliaExpMTK(expElse, simCode)
-        #   if expr == true
-        #     quote
-        #       expThenJL
-        #     end
-          #   else
+          local expElseJL = expToJuliaExpMTK(expElse, simCode)
           quote
-            expElseJL
+            $(expElseJL)
           end
-         catch e
+        catch e
           throw(ErrorException("If expressions with variable conditions not allowed in backend code.\n Expression was:\t $(string(exp))"))
         end
       end
@@ -761,7 +756,7 @@ function handleArrayExp(exp::DAE.ARRAY, simCode)
     push!(arrJL, expToJuliaExpMTK(listGet(exp.array, i), simCode))
   end
   quote
-    $(arrJL...)
+    [$(arrJL...)]
   end
 end
 

@@ -16,6 +16,39 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE  SOFTWARE.
 =#
 
+
+#=
+* This file is part of OpenModelica.
+*
+* Copyright (c) 2021-CurrentYear, Open Source Modelica Consortium (OSMC),
+* c/o Linköpings universitet, Department of Computer and Information Science,
+* SE-58183 Linköping, Sweden.
+*
+* All rights reserved.
+*
+* THIS PROGRAM IS PROVIDED UNDER THE TERMS OF GPL VERSION 3 LICENSE OR
+* THIS OSMC PUBLIC LICENSE (OSMC-PL) VERSION 1.2.
+* ANY USE, REPRODUCTION OR DISTRIBUTION OF THIS PROGRAM CONSTITUTES
+* RECIPIENT'S ACCEPTANCE OF THE OSMC PUBLIC LICENSE OR THE GPL VERSION 3,
+* ACCORDING TO RECIPIENTS CHOICE.
+*
+* The OpenModelica software and the Open Source Modelica
+* Consortium (OSMC) Public License (OSMC-PL) are obtained
+* from OSMC, either from the above address,
+* from the URLs: http:www.ida.liu.se/projects/OpenModelica or
+* http:www.openmodelica.org, and in the OpenModelica distribution.
+* GNU version 3 is obtained from: http:www.gnu.org/copyleft/gpl.html.
+*
+* This program is distributed WITHOUT ANY WARRANTY; without
+* even the implied warranty of  MERCHANTABILITY or FITNESS
+* FOR A PARTICULAR PURPOSE, EXCEPT AS EXPRESSLY SET FORTH
+* IN THE BY RECIPIENT SELECTED SUBSIDIARY LICENSE CONDITIONS OF OSMC-PL.
+*
+* See the full OSMC Public License conditions for more details.
+*
+=#
+
+
 #=
   So we know about t an der in the global scope.
   This is needed for the rules below to match correctly.
@@ -35,15 +68,10 @@ function move_diffs(eq::Equation; rewrite)
   res =
     if !(istree(eq.lhs) && operation(eq.lhs) isa Differential) && !(istree(eq.lhs) && operation(eq.lhs) isa Difference)
       local _eq
-      try
-        _eq = eq.rhs-eq.lhs
-      catch e
-        @error "Error blah"
-        println(eq)
-      end
+      _eq = eq.rhs-eq.lhs
       rhs = rewrite(_eq)
       if rhs === nothing
-        eq
+        return eq
       end
       lhs = _eq - rhs
       if !(lhs isa Number) && (operation(lhs) isa Differential)
