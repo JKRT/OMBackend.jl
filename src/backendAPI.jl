@@ -265,6 +265,10 @@ function writeModelToFile(modelName::String, filePath::String; keepComments = tr
   model = getCompiledModel(modelName)
   try
     mAsStr = modelToString(modelName; MTK = true, keepComments = keepComments, keepBeginBlocks = keepBeginBlocks)
+    #= Replace top level begin/end =#
+    beginIdx = last(findfirst("begin", mAsStr)) + 1
+    endIdx = first(findlast("end",  mAsStr)) - 1
+    mAsStr = mAsStr[beginIdx:endIdx]
     writeStringToFile(filePath, mAsStr)
   catch e
     @info "Failed writing $model to file: $filePath"

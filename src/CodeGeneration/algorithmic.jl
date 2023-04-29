@@ -30,7 +30,7 @@ function generateFunctions(functions::Vector{SimulationCode.ModelicaFunction})::
     end
     @match func begin
       SimulationCode.MODELICA_FUNCTION(__) => begin
-        local locals = generateIOL(func.locals)
+        local locals = generateLocals(func.locals)
         local statements = generateStatements(func.statements)
         if inputsJL isa Tuple
           f = quote
@@ -66,6 +66,8 @@ function generateFunctions(functions::Vector{SimulationCode.ModelicaFunction})::
         if inputsJL isa Tuple
           println(func.libInfo)
           local extCall = Meta.parse(func.libInfo)
+          extCall = namespaceifyExternalFunction(extCall)
+          println(extCall)
           f = quote
             function $(Symbol(func.name))($(inputsJL...))
               #= Here a call to the external function should be placed =#
@@ -82,6 +84,7 @@ function generateFunctions(functions::Vector{SimulationCode.ModelicaFunction})::
         else
           println(func.libInfo)
           local extCall = Meta.parse(func.libInfo)
+          extCall = namespaceifyExternalFunction(extCall)
           println(extCall)
           f = quote
             function $(Symbol(func.name))($(inputsJL))
@@ -113,6 +116,15 @@ function generateIOL(inputs::Vector)
   for i in inputs
     local s = DAE_VAR_ToJulia(i)
     push!(jInputs, s)
+  end
+  return jInputs
+end
+
+function generateLocals(inputs::Vector)
+  local jInputs = Expr[]
+  for i in inputs
+    local s = DAE_VAR_ToJulia(i)
+    push!(jInputs, Expr(:local, s))
   end
   return jInputs
 end
@@ -301,8 +313,12 @@ function expToJuliaExpAlg(@nospecialize(exp::DAE.Exp))::Expr
           end
         end
       end
-      DAE.CALL(path = Absyn.IDENT(tmpStr), expLst = explst)  => begin
-        local expr = Expr(:call, Symbol(tmpStr))
+      DAE.CALL(path = Absyn.IDENT(tmpStr), expLst = explst, attr = attr)  => begin
+        local expr = Expr(:call, if !(attr.builtin) #Note extend this when needed
+                            Symbol(tmpStr)
+                          else
+                            Symbol(tmpStr)
+                          end)
         local args = map(explst) do arg
           expToJuliaExpAlg(arg)
         end
@@ -311,8 +327,12 @@ function expToJuliaExpAlg(@nospecialize(exp::DAE.Exp))::Expr
           $(expr)
         end
       end
-      DAE.CALL(path, expLst) => begin
-        local expr = Expr(:call, string(path))
+      DAE.CALL(path, expLst, attr) => begin
+        local expr = Expr(:call, if !(attr.builtin)
+                            Symbol(string(path))
+                          else
+                            Symbol(string(path))
+                          end)
         local args = map(expLst) do arg
           expToJuliaExpAlg(arg)
         end
@@ -337,6 +357,24 @@ end
 function DAE_VAR_ToJulia(v::DAE.VAR)
   local vName = string(v.componentRef)
   Symbol(vName)
+end
+
+"""
+  Adds OMRuntimeExternalC as a prefix to external calls
+"""
+function namespaceifyExternalFunction(expr::Expr)
+  res = if expr.head == :(=)
+    local callExpr = last(expr.args)
+    @match Expr(:call, [funcName, y...,z]) = callExpr
+    exp = Expr(:call, Expr(:(.), Symbol("OMRuntimeExternalC"), QuoteNode(funcName)), y...,z)
+    expr.args[2] = exp
+    expr
+  else #Otherwise a side effect call...
+    @assert expr.head === :call "Invalid call passed to namespaceifyExternalFunction"
+    @match Expr(:call, [funcName, y...,z]) = expr
+    Expr(:call, Expr(:(.), Symbol("OMRuntimeExternalC"), QuoteNode(funcName)))
+  end
+  return res
 end
 
 end #AlgorithmicCodeGeneration

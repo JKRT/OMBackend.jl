@@ -62,8 +62,8 @@ function generateSimCodeFunctions(functionList::List{FRONTEND_FUNCTION})::Vector
       s = OMFrontend.Main.IOStream_M.create(getInstanceName(), OMFrontend.Main.IOStream_M.LIST())
       s = OMFrontend.Main.toFlatStream(OMFrontend.Main.getSections(f.node), f.path, s)#"dummy"
       str = OMFrontend.Main.IOStream_M.string(s)
-      #=This should really not be done by string splitting magic... =#
-      libInfo = first(split(str, "annotation"))
+      #=This should really really not be done by string splitting magic... =#
+      local libInfo = first(split(str, "annotation"))
       libInfo = replace(libInfo, "external \"C\"" => "")
       libInfo = replace(libInfo, "'" => "")
       push!(functions, EXTERNAL_MODELICA_FUNCTION(n, inputs, outputs, libInfo))
