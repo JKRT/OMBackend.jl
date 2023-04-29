@@ -99,7 +99,11 @@ function translate(frontendDAE::Union{DAE.DAE_LIST, OMFrontend.Main.FlatModel};
   elseif BackendMode == MTK_MODE
     @debug "Generate simulation code"
     simCode = generateSimulationCode(bDAE; mode = MTK_MODE)
-    simCodeFunctions = generateSimCodeFunctions(functionList)
+    simCodeFunctions = if functionList !== nothing
+      generateSimCodeFunctions(functionList)
+    else
+      SimulationCode.ModelicaFunction[]
+    end
     @assign simCode.functions = simCodeFunctions
     @debug "Simulation code generated" SimulationCode.dumpSimCode(simCode)
     write("simulationCodeStatistics.log", SimulationCode.dumpSimCode(simCode))

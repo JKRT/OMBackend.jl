@@ -659,7 +659,7 @@ end
   Creates parameters on a MTK parameters compatible format.
 """
 function createParameterEquationsMTK(parameters::Vector, simCode::SimulationCode.SimCode)::Vector{Expr}
-  local parameterEquations::Vector = []
+  local parameterEquations::Vector = Expr[]
   local hT = simCode.stringToSimVarHT
   for param in parameters
     (index, simVar) = hT[param]
@@ -667,6 +667,9 @@ function createParameterEquationsMTK(parameters::Vector, simCode::SimulationCode
     bindExp = @match simVarType begin
       SimulationCode.PARAMETER(bindExp = SOME(exp)) => begin
         exp
+      end
+      SimulationCode.PARAMETER(__) => begin
+        DAE.RCONST(0.0)
       end
       _ => begin
         throw(ErrorException("Unknown SimulationCode.SimVarType for parameter: " * string(param)  * " of type: " * string(simVarType)))

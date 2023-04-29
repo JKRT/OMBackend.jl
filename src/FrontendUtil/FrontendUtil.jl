@@ -38,11 +38,12 @@ end
   Removes the smooth operator from an equation, returns the argument to smooth.
 """
 function removeSmooth(eq::OMFrontend.Main.Equation)
-  #=TODO. Optimize me=#
-  @matchcontinue eq begin
-    OMFrontend.Main.EQUATION_EQUALITY(lhs = e1, rhs = OMFrontend.Main.CALL_EXPRESSION(OMFrontend.Main.TYPED_CALL(fn, ty, var, arguments, attributes))) where OMFrontend.Main.name(fn) == "smooth"  => begin
+  @match eq begin
+    OMFrontend.Main.EQUATION_EQUALITY(lhs = e1, rhs = OMFrontend.Main.CALL_EXPRESSION(call)) where string(OMFrontend.Main.functionName(call)) == "smooth"  => begin
+      local arguments = OMFrontend.Main.arguments(call)
       @match x <| y <| nil = arguments
       local newEq = eq
+      println("Changed eq:" * OMFrontend.Main.toString(newEq))
       @assign newEq.rhs = y
       println("Changed eq:" * OMFrontend.Main.toString(newEq))
       newEq

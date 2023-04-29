@@ -135,9 +135,7 @@ function detectParamsEqSystem(syst::BDAE.EQSYSTEM)::BDAE.EQSYSTEM
       @match exp begin
         #= Ignore complex components =#
         DAE.CREF(c, DAE.T_COMPLEX(__)) => begin
-          println(c)
           outCrefs[exp.componentRef] = true
-          fail()
           (outCrefs, true)
         end
         DAE.CREF(__) => begin
@@ -147,6 +145,10 @@ function detectParamsEqSystem(syst::BDAE.EQSYSTEM)::BDAE.EQSYSTEM
             #println(exp)
             outCrefs[exp.componentRef] = true
           end
+          (outCrefs, true)
+        end
+        DAE.IFEXP(cond, expThen, expElse) => begin
+          #fail()
           (outCrefs, true)
         end
         _ => begin
@@ -294,7 +296,6 @@ function detectStateExpression(exp::DAE.Exp, stateCrefs::Dict{DAE.ComponentRef, 
   end
   return (exp, cont, outCrefs)
 end
-
 
 """
   Detects if an expression is of type array.

@@ -197,6 +197,9 @@ function traverseEquationExpressions(eq::BDAE.Equation,
          (eq, extArg)
        end
        BDAE.IF_EQUATION(__) => begin
+         for exp in eq.conditions
+           (resExp, extArg) = Util.traverseExpTopDown(exp, traversalOperation, extArg)
+         end
          for eqLst in eq.eqnstrue
            for equation in eqLst
              traverseEquationExpressions(equation, traversalOperation, extArg)
