@@ -113,8 +113,6 @@ const SymbolicJacobian = Tuple
 const SparsePatternCref = Tuple
 const SparsePatternCrefs = List
 const SparsePattern = Tuple
-
-
 const emptySparsePattern = (nil, nil, (nil, nil), 0)::SparsePattern
 const SparseColoring = List
 const LinearIntegerJacobianRow = List
@@ -128,7 +126,7 @@ const Constraints = List
 An independent system of equations (and their corresponding variables)
 Structural submodels gets converted into these.
 """
-struct EQSYSTEM
+mutable struct EQSYSTEM
   name::String
   orderedVars #= ordered Variables, only states and alg. vars =#::Vector
   orderedEqs #= ordered Equations =#::Vector
@@ -157,7 +155,7 @@ two lists, one for unknown variables states and algebraic and one for known vari
 constants and parameters.
 The equations are also split into two lists, one with simple equations, a=b, a-b=0, etc., that
 are removed from the set of equations to speed up calculations. """
-struct BACKEND_DAE
+mutable struct BACKEND_DAE
   name::String
   eqs::Vector{EQSYSTEM}
   shared::SHARED
@@ -222,7 +220,7 @@ struct CREFINDEX
   index::Integer
 end
 
-struct VAR
+mutable struct VAR
   varName #= variable name =#
   varKind #= kind of variable =#::VarKind
   varDirection #= input, output or bidirectional =#

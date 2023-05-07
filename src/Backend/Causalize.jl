@@ -127,6 +127,7 @@ function detectParamsEqSystem(syst::BDAE.EQSYSTEM)::BDAE.EQSYSTEM
   local buffer = IOBuffer()
   println(buffer, parStrs2)
   write("allpars.log", String(take!(buffer)))
+
   function detectParamExpression(exp::DAE.Exp, paramCrefs::Dict{DAE.ComponentRef, Bool})
     local cont::Bool
     local outCrefs = paramCrefs
@@ -158,6 +159,7 @@ function detectParamsEqSystem(syst::BDAE.EQSYSTEM)::BDAE.EQSYSTEM
     end
     return (exp, cont, outCrefs)
   end
+
   function updateParams(vars::Vector, paramCrefs::Dict{DAE.ComponentRef, Bool})
     local varArr::Vector{BDAE.VAR} = vars
     for i in 1:arrayLength(varArr)
@@ -187,6 +189,10 @@ function detectParamsEqSystem(syst::BDAE.EQSYSTEM)::BDAE.EQSYSTEM
       BDAE.EQSYSTEM(name, vars, eqs, simpleEqs, initialEqs) => begin
         for eq in eqs
           (_, paramCrefs) = BDAEUtil.traverseEquationExpressions(eq, detectParamExpression, paramCrefs)
+        end
+        #= Go through the initial equations =#
+        for ieq in initialEqs
+          (_, paramCrefs) = BDAEUtil.traverseEquationExpressions(ieq, detectParamExpression, paramCrefs)
         end
         #= Do replacements for paramCrefs =#
         @assign syst.orderedVars = updateParams(vars, paramCrefs)
