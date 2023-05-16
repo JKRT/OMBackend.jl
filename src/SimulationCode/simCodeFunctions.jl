@@ -40,8 +40,9 @@ const FRONTEND_FUNCTION = OMFrontend.Main.M_FUNCTION
 TODO:
 Handle concrete non variable arguments.
 """
-function generateSimCodeFunctions(functionList::List{FRONTEND_FUNCTION})::Vector{ModelicaFunction}
-  functions = ModelicaFunction[]
+function generateSimCodeFunctions(functionList::List{FRONTEND_FUNCTION})::Tuple{Vector{ModelicaFunction}, Bool}
+  local functions = ModelicaFunction[]
+  local externalFunctionsUsed = false
   for f in functionList
     local n = string(f.path)
     local inputs = map(f.inputs) do input
@@ -59,6 +60,7 @@ function generateSimCodeFunctions(functionList::List{FRONTEND_FUNCTION})::Vector
       local mf = MODELICA_FUNCTION(n, inputs, outputs, locals, listArray(stmts))
       push!(functions, mf)
     else #= The function is a wrapper for some internal builtin Modelica Function =#
+      externalFunctionsUsed = true
       s = OMFrontend.Main.IOStream_M.create(getInstanceName(), OMFrontend.Main.IOStream_M.LIST())
       s = OMFrontend.Main.toFlatStream(OMFrontend.Main.getSections(f.node), f.path, s)#"dummy"
       str = OMFrontend.Main.IOStream_M.string(s)
@@ -69,5 +71,5 @@ function generateSimCodeFunctions(functionList::List{FRONTEND_FUNCTION})::Vector
       push!(functions, EXTERNAL_MODELICA_FUNCTION(n, inputs, outputs, libInfo))
     end
   end
-  return functions
+  return (functions, externalFunctionsUsed)
 end

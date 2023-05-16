@@ -33,7 +33,7 @@
   Author: John Tinnerholm
   TODO: Remember the state derivative scheme. What did I mean with that?
   TODO: Make duplicate code better...
-  TODO: Cleanup in general.. keep this simple. Remove hacks as they add new features to MTK.
+  TODO: Cleanup in general.. keep this simple. Remove hacks as the SCiML team adds new features to MTK.
 =#
 import OMBackend
 import ..AlgorithmicCodeGeneration
@@ -55,6 +55,7 @@ end
 function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
     #=If our model name is separated by . replace it with __ =#
   local MODEL_NAME = replace(simCode.name, "." => "__")
+  #= Generate code for algorithmic Modelica =#
   (functions, functionNames) = AlgorithmicCodeGeneration.generateFunctions(simCode.functions)
   if isempty(simCode.structuralTransitions) && length(simCode.subModels) < 1 && isnothing(simCode.flatModel)
     @info "Standard generation"
@@ -141,19 +142,36 @@ end
 function ODE_MODE_MTK_PROGRAM_GENERATION(simCode::SimulationCode.SIM_CODE, modelName, functions)
   local MODEL_NAME = replace(modelName, "." => "__")
   #=
-  Evaluate all functions s.t the symbols are available
-  This needs to be done for the symbolics
+   Evaluate all functions s.t the symbols are available
+   This needs to be done for the SymbolicUtils.jl inorder for it to recognise certain symbols.
   =#
   for f in functions
-    println("Evaluating function...")
+    println("Evaluating function in global scope...")
     eval(f)
   end
+  local dataStructureVariables = String[]
+  for varName in (keys(simCode.stringToSimVarHT))
+    (idx, var) = simCode.stringToSimVarHT[varName]
+    @match var.varKind begin
+      SimulationCode.DATA_STRUCTURE(__) => begin
+        push!(dataStructureVariables, varName)
+      end
+      _ => continue
+    end
+  end
+  local DATA_STRUCTURE_ASSIGNMENTS = createDataStructureAssignments(dataStructureVariables, simCode)
   local model = ODE_MODE_MTK_MODEL_GENERATION(simCode, functions, modelName)
   program = quote
     using ModelingToolkit
     using DifferentialEquations
     import ModelingToolkit.IfElse
+    #= Add import to the external runtime if the generated code calls Modelica Functions =#
+    $(if simCode.externalRuntime
+        generateExternalRuntimeImport(simCode)
+      end)
     $(functions...)
+    $(DATA_STRUCTURE_ASSIGNMENTS...)
+    $(generateRegisterCallsForCallExprs(simCode)...)
     $(model)
     function $(Symbol("$(MODEL_NAME)Simulate"))(tspan = (0.0, 1.0); solver=Rosenbrock23())
       ($(Symbol("$(MODEL_NAME)Model_problem")), callbacks, ivs, $(Symbol("$(MODEL_NAME)Model_ReducedSystem")), tspan, pars, vars, irreductable) = $(Symbol("$(MODEL_NAME)Model"))(tspan)
@@ -180,6 +198,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, functio
   local discreteVariables::Vector = String[]
   local occVariables::Vector = String[]
   local occDummyVariables::Vector = String[]
+  local dataStructureVariables::Vector = String[]
   local performIndexReduction = false
   for varName in keys(stringToSimVarHT)
     (idx, var) = stringToSimVarHT[varName]
@@ -218,6 +237,13 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, functio
           push!(algebraicVariables, varName)
         end
       end
+      #=
+      Handled at the top level, these variables are global constants.
+      However, these are saved in the dataStructureVariables array in order to make the system available during the equation rewrite.
+      =#
+      SimulationCode.DATA_STRUCTURE(__) => begin
+        push!(dataStructureVariables, varName)
+      end
       #=TODO:johti17 Do I need to modify this?=#
       SimulationCode.STATE_DERIVATIVE(__) => push!(stateDerivatives, varName)
     end
@@ -233,14 +259,16 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, functio
                                                algebraicVariables,
                                                simCode.residualEquations,
                                                simCode::SimulationCode.SIM_CODE)
-  local parVariablesSym = [Symbol(p) for p in parameters]
-  #=If missing from variable map error is thrown check the start condition. =#
+  writeEqsToFile(EQUATIONS, "equationFirstStageCodeGen.log")
+  #=
+  If missing from variable map error is thrown check the start condition.
+  Readded discretes here....
+  =#
   local START_CONDTIONS_EQUATIONS = createStartConditionsEquationsMTK(vcat(stateVariables, occVariables),
                                                                       algebraicVariables,
                                                                       simCode)
   local DISCRETE_START_VALUES = vcat(generateInitialEquations(simCode.initialEquations, simCode; parameterAssignment = true),
                                      getStartConditionsMTK(discreteVariables, simCode))
-
   local PARAMETER_EQUATIONS = createParameterEquationsMTK(parameters, simCode)
   local PARAMETER_ASSIGNMENTS = createParameterAssignmentsMTK(parameters, simCode)
   local PARAMETER_RAW_ARRAY = createParameterArray(parameters, PARAMETER_ASSIGNMENTS, simCode)
@@ -251,10 +279,12 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, functio
   local IF_EQUATION_COMPONENTS::Vector{Tuple{Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Symbol}, Vector{Tuple}}} =
     createIfEquations(stateVariables, algebraicVariables, simCode)
   #= Symbolic names =#
-  local stateVariablesSym = [:($(Symbol(v))) for v in stateVariables]
   local algebraicVariablesSym = [:($(Symbol(v))) for v in algebraicVariables]
+  local dataStructureVariablesSym = [Symbol(v) for v in dataStructureVariables]
   local discreteVariablesSym = [:($(Symbol(v))) for v in discreteVariables]
+  local stateVariablesSym = [:($(Symbol(v))) for v in stateVariables]
   local occVariablesSym = [:($(Symbol(v))) for v in occVariables]
+  local parVariablesSym = [Symbol(p) for p in parameters]
   #=Preprocess the component of the if equations =#
   local DISCRETE_DUMMY_EQUATIONS = [:(der($(Symbol(dv))) ~ 0) for dv in discreteVariables]
   #= Create assignments for the dummies. =#
@@ -289,7 +319,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, functio
   EQUATIONS = rewriteEquations(EQUATIONS,
                                t,
                                vcat(stateVariablesSym, algebraicVariablesSym),
-                               parVariablesSym,
+                               vcat(parVariablesSym, dataStructureVariablesSym),
                                simCode)
   #= Reset the callback counter=#
   RESET_CALLBACKS()
@@ -347,13 +377,12 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, functio
       initialValues = collect(Iterators.flatten(startEquationComponents))
       #= End construction of initial values =#
       equationComponents = []
-      $(decomposeEquations(EQUATIONS, PARAMETER_ASSIGNMENTS))
+      $(stripBeginBlocks(decomposeEquations(EQUATIONS, PARAMETER_ASSIGNMENTS)))
       #= Generate the Equations =#
       for constructor in equationConstructors
         push!(equationComponents, constructor())
       end
       eqs = collect(Iterators.flatten(equationComponents))
-      global LATEST_VARIABLES = vars
       $(IF_EQUATION_EVENT_DECLARATION)
       nonLinearSystem = $(odeSystemWithEvents(!(isempty(ifConditionalStartEquations)), modelName))
       firstOrderSystem = nonLinearSystem
@@ -617,7 +646,7 @@ function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCo
         local inverseAffects::Vector{Expr} = generateInverseAffect(i, branchesWithConds, ivCond)
         local cond = :(($(mtkCond)) => [$(affects...)])
         local inverseCond = :((!$(mtkCond)) => [$(inverseAffects...)])
-        print(inverseCond)
+#        print(inverseCond)
         push!(conditions, cond)
         push!(conditions, inverseCond)
         push!(ivConditions, ivCond)
@@ -656,44 +685,55 @@ function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCo
 end
 
 """
-  Creates parameters on a MTK parameters compatible format.
+  `createParameterEquationsMTK(parameters::Vector, type, simCode::SimulationCode.SimCode)`
+    The Type specifies what kind of parameter equation a call to this function should yield.
 """
 function createParameterEquationsMTK(parameters::Vector, simCode::SimulationCode.SimCode)::Vector{Expr}
   local parameterEquations::Vector = Expr[]
-  local hT = simCode.stringToSimVarHT
+  local ht = simCode.stringToSimVarHT
   for param in parameters
-    (index, simVar) = hT[param]
+    (index, simVar) = ht[param]
     local simVarType::SimulationCode.SimVarType = simVar.varKind
     bindExp = @match simVarType begin
       SimulationCode.PARAMETER(bindExp = SOME(exp)) => begin
         exp
       end
       SimulationCode.PARAMETER(__) => begin
+        #= Unassigned parameters are assumed to be floats... =#
         DAE.RCONST(0.0)
       end
       _ => begin
         throw(ErrorException("Unknown SimulationCode.SimVarType for parameter: " * string(param)  * " of type: " * string(simVarType)))
       end
     end
-    #= Solution for https://github.com/SciML/ModelingToolkit.jl/issues/991 =#
-    push!(parameterEquations,
-          quote
-            $(LineNumberNode(@__LINE__, "$param eq"))
-            $(Symbol(simVar.name)) => float($((expToJuliaExpMTK(bindExp, simCode))))
-          end
-          )
-  end
+    #=
+      Check if conversions are needed
+    =#
+    expr = if isIntOrBool(bindExp)
+      quote
+        $(LineNumberNode(@__LINE__, "$param eq"))
+        $(Symbol(simVar.name)) => float($((expToJuliaExpMTK(bindExp, simCode))))
+      end
+    else
+        :($(Symbol(simVar.name)) => $(expToJuliaExpMTK(bindExp, simCode)))
+    end
+      # expr = quote
+      #   $(LineNumberNode(@__LINE__, "$param eq"))
+      #   $(Symbol(simVar.name)) => float($((expToJuliaExpMTK(bindExp, simCode))))
+      # end
+    push!(parameterEquations, expr)
+  end #=For=#
   return parameterEquations
 end
 
 """
-  Creates parameters assignments on a MTK parameters compatible format.
+  Creates parameters assignments *(:=) on a MTK parameters compatible format.
 """
 function createParameterAssignmentsMTK(parameters::Vector, simCode::SimulationCode.SimCode)::Vector{Expr}
   local parameterEquations::Vector = []
-  local hT = simCode.stringToSimVarHT
+  local ht = simCode.stringToSimVarHT
   for param in parameters
-    (index, simVar) = hT[param]
+    (index, simVar) = ht[param]
     local simVarType::SimulationCode.SimVarType = simVar.varKind
     bindExp = @match simVarType begin
       SimulationCode.PARAMETER(bindExp = SOME(exp)) => exp
@@ -701,14 +741,43 @@ function createParameterAssignmentsMTK(parameters::Vector, simCode::SimulationCo
     end
     #= Solution for https://github.com/SciML/ModelingToolkit.jl/issues/991 =#
     #TODO: Is this workaround still relevant? John 2023-02-22
-    push!(parameterEquations,
-          quote
-            $(LineNumberNode(@__LINE__, "$param eq"))
-            $(Symbol(simVar.name)) = float($((expToJuliaExpMTK(bindExp, simCode))))
-          end
-          )
+    expr =  if isIntOrBool(bindExp)
+      quote
+        $(LineNumberNode(@__LINE__, "$param eq"))
+        $(Symbol(simVar.name)) = float($((expToJuliaExpMTK(bindExp, simCode))))
+      end
+    else
+      quote
+        $(LineNumberNode(@__LINE__, "$param eq"))
+        $(Symbol(simVar.name)) = $(expToJuliaExpMTK(bindExp, simCode))
+      end
+    end
+    push!(parameterEquations, expr)
   end
   return parameterEquations
+end
+
+
+"""
+  Creates assignments for complex data structure that exist in the model.
+"""
+function createDataStructureAssignments(dataStructureVariables::Vector{String}, simCode::SimulationCode.SimCode)::Vector{Expr}
+  local dsAssignments::Vector = Expr[]
+  local ht = simCode.stringToSimVarHT
+  for ds in dataStructureVariables
+    (index, simVar) = ht[ds]
+    local simVarType::SimulationCode.SimVarType = simVar.varKind
+    bindExp = @match simVarType begin
+      SimulationCode.DATA_STRUCTURE(bindExp = SOME(exp)) => exp
+      _ => ErrorException("Data structure variable not assigned.")
+    end
+    expr = quote
+      $(LineNumberNode(@__LINE__, "$ds eq"))
+      $(Symbol(simVar.name)) = $(expToJuliaExpMTK(bindExp, simCode))
+    end
+    push!(dsAssignments, expr)
+  end
+  return dsAssignments
 end
 
 """
@@ -821,26 +890,33 @@ function decomposeEquations(equations, parameterAssignments)
   local nStateVars = length(equations)
   local equationVectors = collect(Iterators.partition(equations, 50))
   local exprs = Expr[]
+  local equationConstructorCalls = Expr[]
   local constructors = quote
+    #= Moved from line below. It is maybe not needed to repeat it for each block to repeat this to much.. =#
+    $(parameterAssignments...)
     equationConstructors = Function[]
   end
   push!(exprs, constructors)
   local i = 0
   for equationVector in equationVectors
     eqv = [rewriteEq(i) for i in equationVector]
-    equationConstructorExpr = quote
-      $(parameterAssignments...) #TODO: It does not seem to work to use parameters as constants, something goes wrong in the substitution.
-      function $(Symbol("generateEquations" * string(i)))()
+    local fName = string("generateEquations", i)
+    equationConstructor = quote
+      function $(Symbol(fName))()
+        println("#Equation generated:" * $(string(length(eqv))) * "in: " * $(fName))
         [$(eqv...)]
       end
-      push!(equationConstructors, $(Symbol("generateEquations" * string(i))))
     end
-    push!(exprs, equationConstructorExpr)
+    equationConstructorCall = :(push!(equationConstructors, $(Symbol(fName))))
+    push!(exprs, equationConstructor)
+    push!(equationConstructorCalls, equationConstructorCall)
     i += 1
   end
   expr = quote
     $(exprs...)
+    $(equationConstructorCalls...)
   end
+  #expr = stripBeginBlocks(expr)
   return expr
 end
 
@@ -875,11 +951,12 @@ end
 """
   Generates quoted Symbolics.@register_symbolic calls s.t externaly defined functions can be defined.
 """
-function generateRegisterCallsForCallExprs(simCode)
+function generateRegisterCallsForCallExprs(simCode;
+                                            funcArgGen::Function = AlgorithmicCodeGeneration.generateSignatureForRegistration)
   local rFs = Expr[]
   for f in simCode.functions
     local sb = Symbol(f.name)
-    local args = AlgorithmicCodeGeneration.generateIOL(f.inputs)
+    local args = funcArgGen(f.inputs)
     local nArgs = length(args)
     local cExpr = if nArgs == 1
       Expr(:call, sb, first(args))
@@ -889,10 +966,14 @@ function generateRegisterCallsForCallExprs(simCode)
       Expr(:call, sb, tuple(args...)...)
     end
     #= Delay evaluation of the register expression until we know the call. =#
-    sbRegister = quote
-      Symbolics.@register_symbolic($(cExpr))
-    end
+    sbRegister = :((Symbolics.@register_symbolic($(cExpr))))
     push!(rFs, sbRegister)
   end
   return rFs
+end
+
+"""
+"""
+function generateExternalRuntimeImport(simCode)::Expr
+  :(import OMRuntimeExternalC)
 end

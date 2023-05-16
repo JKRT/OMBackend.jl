@@ -84,7 +84,7 @@ TODO:
     to negative..
     Fix this.
 """
-function transformToZeroCrossingCondition(conditonalExpression::DAE.Exp)
+function transformToZeroCrossingCondition(@nospecialize(conditonalExpression::DAE.Exp))::DAE.Exp
   res = @match conditonalExpression begin
     DAE.BINARY(exp1 = e1, operator = op, exp2 = e2) => begin
       DAE.BINARY(lhs, DAE.SUB(DAE.T_REAL_DEFAULT), rhs)
@@ -291,7 +291,7 @@ function expToJL(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE; varPrefix="x"):
 end
 
 
-function DAE_OP_toJuliaOperator(op::DAE.Operator)
+function DAE_OP_toJuliaOperator(@nospecialize(op::DAE.Operator))
     return @match op begin
       DAE.ADD() => :+
       DAE.SUB() => :-
@@ -430,9 +430,9 @@ function arrayToSymbolicVariable(arrayRepr::Expr)::Expr
   end
 end
 
-"
- Removes all the redudant blocks from a generated expression
-"
+"""
+ Removes all redudant blocks from a generated expression
+"""
 function stripBeginBlocks(e)::Expr
   MacroTools.postwalk(e) do x
     return MacroTools.unblock(x)
@@ -464,7 +464,7 @@ end
   Utility function, traverses a DAE exp. Variables are saved in the supplied variables array
   (Note that variables here refers to parameters as well)
 """
-function getVariablesInDAE_Exp(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE, variables::Set)
+function getVariablesInDAE_Exp(@nospecialize(exp::DAE.Exp), simCode::SimulationCode.SIM_CODE, variables::Set)
   local  hashTable = simCode.stringToSimVarHT
   local int::Int64
   local real::Float64
@@ -639,6 +639,10 @@ function expToJuliaExpMTK(@nospecialize(exp::DAE.Exp),
             $(LineNumberNode(@__LINE__, "$varName, occ variable"))
             $(Symbol(indexAndVar[2].name))
           end
+          SimulationCode.DATA_STRUCTURE(__) => quote
+            $(LineNumberNode(@__LINE__, "$varName, datastructure variable"))
+            $(Symbol(indexAndVar[2].name))
+          end
           _ => begin
             @error "Unsupported varKind: $(varKind)"
             fail()
@@ -745,18 +749,28 @@ function expToJuliaExpMTK(@nospecialize(exp::DAE.Exp),
 end
 
 """
-  Generate code for array expressions
+  Generate code for array expressions.
+This assumes scalarization have been sucessful and that this function does not contain anycrefs
 """
 function handleArrayExp(exp::DAE.ARRAY, simCode)
   local arrJL = [] #Type yet unknown
   local steps = listHead(exp.ty.dims)
+  local dimSize = length(exp.ty.dims)
   @assert(steps isa DAE.DIM_INTEGER, "Only integer dimensions are currently supported. Type was : $(typeof(steps))")
   steps = steps.integer
   for i in 1:steps
-    push!(arrJL, expToJuliaExpMTK(listGet(exp.array, i), simCode))
+    push!(arrJL, eval(expToJuliaExpMTK(listGet(exp.array, i), simCode)))
   end
-  quote
-    [$(arrJL...)]
+  #= Assuming it does not contains crefs =#
+  if dimSize >= 2
+    arr = transpose(stack(eval(arrJL)))
+    quote
+      $(arr)
+    end
+  else
+    quote
+      $[arrJL...]
+    end
   end
 end
 
@@ -804,7 +818,6 @@ function involvedInEvent(idx, simCode)
   return false
 end
 
-
 """
   This functions evaluate a single DAE-constant:{Bool, Integer, Real, String}.
   If the argument  to this function is not a constant it throws an error.
@@ -824,7 +837,6 @@ function evalDAEConstant(daeConstant::DAE.Exp, simCode)
     end
     _ => begin
       local str = string(daeConstant)
-      println(daeConstant)
       throw("$(str) is not a constant")
     end
   end
@@ -951,7 +963,7 @@ end
 """
   Generates code for DAE cast expressions for MTK code.
 """
-function generateCastExpressionMTK(ty, exp, simCode, varPrefix)
+function generateCastExpressionMTK(@nospecialize(ty::DAE.Type), @nospecialize(exp::DAE.Exp), simCode, varPrefix)
   return @match ty, exp begin
     (DAE.T_REAL(__), DAE.ICONST(__)) => begin
       quote
@@ -971,4 +983,31 @@ function generateCastExpressionMTK(ty, exp, simCode, varPrefix)
     end
     _ => throw("Cast $ty: for exp: $exp not yet supported in codegen!")
   end
+end
+
+function isIntOrBool(@nospecialize(exp::DAE.Exp))
+  @match exp begin
+    DAE.BCONST(__) => true
+    DAE.ICONST(__) => true
+    DAE.CREF(componentRef, DAE.T_INTEGER(__) || DAE.T_BOOL(__)) => true
+    _ => false
+  end
+end
+
+
+function writeEqsToFile(elems::Vector{Expr}, filename)
+  buffer = IOBuffer()
+  for e in elems
+    e = stripComments(e)
+    e = stripBeginBlocks(e)
+    eqStr = replace(string(e), "~" => "=")
+    eqStr = replace(eqStr, "(t)" => "")
+    eqStr = replace(eqStr, "Differential" => "der")
+    println(buffer, eqStr)
+  end
+  println(buffer, "------------------------------------")
+  println(buffer, "Statistics:")
+  println(buffer, "Number of items:" * string(length(elems)))
+  println(buffer, "------------------------------------")
+  write(filename, String(take!(buffer)))
 end

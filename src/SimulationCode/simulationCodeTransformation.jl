@@ -29,14 +29,23 @@
 *
 =#
 
-function bDAEVarKindToSimCodeVarKind(backendVar::BDAE.VAR)::SimulationCode.SimVarType
+"""
+Converts the variable type in the backend DAE to the corresponding simulation code type.
+Constants and parameters are mapped to the simcode parameter type.
+Variables of type T_Complex are mapped to the DATA_Structure type.
+Complex numbers are assumed to have been elaborated upon earlier in the translation process.
+"""
+function BDAE_VarKindToSimCodeVarKind(backendVar::BDAE.VAR)::SimulationCode.SimVarType
   varKind = @match (backendVar.varKind, backendVar.varType) begin
+    #=  Standard cases, scalar real variables =#
     (BDAE.STATE(__), _) => SimulationCode.STATE()
-    (BDAE.PARAM(__) || BDAE.CONST(__), _) => SimulationCode.PARAMETER(backendVar.bindExp)
     (BDAE.VARIABLE(__), DAE.T_REAL(__)) => SimulationCode.ALG_VARIABLE(0)
-    #= And no of the other cases above. =#
+    #= Parameters are always parameters. =#
+    (BDAE.PARAM(__) || BDAE.CONST(__), __) => SimulationCode.PARAMETER(backendVar.bindExp)
+    #= If none of the cases above. =#
     (BDAE.DISCRETE(__), _) => SimulationCode.DISCRETE()
     (_, DAE.T_INTEGER(__) || DAE.T_BOOL(__)) => SimulationCode.DISCRETE()
+    (_, DAE.T_COMPLEX(__)) => SimulationCode.DATA_STRUCTURE(backendVar.bindExp)
     _ => @error("Kind $(typeof(backendVar.varKind)) of backend variable not handled.")
   end
 end
@@ -142,7 +151,8 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
                           shared.metaModel,
                           shared.flatModel,
                           irreductableVars,
-                          ModelicaFunction[]
+                          ModelicaFunction[],
+                          #= Specify if external runtime should be used =# false,
                           )
 end
 
@@ -401,7 +411,7 @@ function collectVariables(allBackendVars::Vector{BDAE.VAR}; occVariables = Strin
   for (i, backendVar) in enumerate(allBackendVars)
     #= In the backend we use string instead of component references. =#
     local simVarName::String = BDAE_identifierToVarString(backendVar)
-    local simVarKind::SimulationCode.SimVarType = bDAEVarKindToSimCodeVarKind(backendVar)
+    local simVarKind::SimulationCode.SimVarType = BDAE_VarKindToSimCodeVarKind(backendVar)
     simVarKind = if ! (isOverconstrainedConnectorVariable(simVarName, occVariables))
       simVarKind
     else

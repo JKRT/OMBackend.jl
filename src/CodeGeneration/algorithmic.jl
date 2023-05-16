@@ -1,19 +1,15 @@
 #=
-  Code generation for algorithmic Modelica.
+Code generation for algorithmic Modelica.
+author:johti17
 =#
-module AlgorithmicCodeGeneration
-
-import ..SimulationCode
-import ..Absyn
-import ..CodeGeneration
-import DAE
-using MetaModelica
 
 """
       Generates algorithmic Modelica Code.
       Returns the generated Julia code + the names of the functions that has been generated.
 TODO:
-Solve the issue with the function arguments in a more elegant way
+  - Solve function arguments in a more elegant way.
+  - Add support for for-loops.
+  - Solve the lowering of external functions without string splitting.
 """
 function generateFunctions(functions::Vector{SimulationCode.ModelicaFunction})::Tuple{Vector{Expr}, Vector{String}}
   local jFuncs = Expr[]
@@ -64,10 +60,8 @@ function generateFunctions(functions::Vector{SimulationCode.ModelicaFunction})::
       end
       SimulationCode.EXTERNAL_MODELICA_FUNCTION(__) => begin
         if inputsJL isa Tuple
-          println(func.libInfo)
           local extCall = Meta.parse(func.libInfo)
           extCall = namespaceifyExternalFunction(extCall)
-          println(extCall)
           f = quote
             function $(Symbol(func.name))($(inputsJL...))
               #= Here a call to the external function should be placed =#
@@ -82,10 +76,8 @@ function generateFunctions(functions::Vector{SimulationCode.ModelicaFunction})::
             end
           end
         else
-          println(func.libInfo)
           local extCall = Meta.parse(func.libInfo)
           extCall = namespaceifyExternalFunction(extCall)
-          println(extCall)
           f = quote
             function $(Symbol(func.name))($(inputsJL))
               #= Here a call to the external function should be placed =#
@@ -105,6 +97,7 @@ function generateFunctions(functions::Vector{SimulationCode.ModelicaFunction})::
     push!(jFuncs, f)
     push!(names, func.name)
   end
+  println("Dumping the generated functions")
   for f in jFuncs
     @info f
   end
@@ -115,7 +108,30 @@ function generateIOL(inputs::Vector)
   local jInputs = Symbol[]
   for i in inputs
     local s = DAE_VAR_ToJulia(i)
+    #= Complex type, prefixed with void* =#
     push!(jInputs, s)
+  end
+  return jInputs
+end
+
+"""
+`generateSignatureForRegistration(inputs::Vector{DAE.VAR})`
+This function generates the input signature for calls to Symbolics.register
+"""
+function generateSignatureForRegistration(inputs::Vector{DAE.VAR})
+  local jInputs = Expr[]
+  for i in inputs
+    @match i.ty begin
+      DAE.T_COMPLEX(__) => begin
+        local s = DAE_VAR_ToJulia(i)
+        #= Complex type, prefixed with void* =#
+        push!(jInputs, Expr(:(::), s, :(Ptr{Nothing})))
+      end
+      _ => begin
+        local s = DAE_VAR_ToJulia(i)
+        push!(jInputs, Expr(:(::), s, :(Any)))
+      end
+    end
   end
   return jInputs
 end
@@ -170,6 +186,10 @@ function generateStatement(stmt::DAE.STMT_WHILE, simCode)
   end
 end
 
+"""
+  Generates for statements.
+  Currently not implemented.
+"""
 function generateStatement(stmt::DAE.STMT_FOR)
   throw("TODO: For not implemented yet")
 end
@@ -367,14 +387,13 @@ function namespaceifyExternalFunction(expr::Expr)
     local callExpr = last(expr.args)
     @match Expr(:call, [funcName, y...,z]) = callExpr
     exp = Expr(:call, Expr(:(.), Symbol("OMRuntimeExternalC"), QuoteNode(funcName)), y...,z)
+    #= Add the prefixes call to the right hand side of the expression. =#
     expr.args[2] = exp
     expr
-  else #Otherwise a side effect call...
+  else #Otherwise a side effect call or a call that returns directly.
     @assert expr.head === :call "Invalid call passed to namespaceifyExternalFunction"
     @match Expr(:call, [funcName, y...,z]) = expr
     Expr(:call, Expr(:(.), Symbol("OMRuntimeExternalC"), QuoteNode(funcName)))
   end
   return res
 end
-
-end #AlgorithmicCodeGeneration

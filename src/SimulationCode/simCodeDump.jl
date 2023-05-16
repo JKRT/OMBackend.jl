@@ -29,11 +29,6 @@
 *
 =#
 
-
-#=
-  TODO: Change to use buffered print instead.
-=#
-
 using DataStructures
 """
   File: simCodeDump.jl
@@ -44,12 +39,13 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String = "Simula
   print(buffer, BDAEUtil.DOUBLE_LINE + "\n")
   print(buffer, "SIM_CODE: " + heading + "\n")
   print(buffer, BDAEUtil.DOUBLE_LINE + "\n\n")
-  local stateVariables = []
-  local parameters = []
-  local algVariables = []
-  local discreteVariables = []
-  local stateDerivatives = []
-  local occVariables = []
+  local stateVariables = String[]
+  local parameters = String[]
+  local algVariables = String[]
+  local discreteVariables = String[]
+  local stateDerivatives = String[]
+  local occVariables = String[]
+  local dsVariables = String[]
   for f in simCode.functions
     println(buffer, string(f))
   end
@@ -67,6 +63,7 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String = "Simula
       SimulationCode.ALG_VARIABLE(__) => push!(algVariables, varName)
       SimulationCode.DISCRETE(__) => push!(discreteVariables, varName)
       SimulationCode.OCC_VARIABLE(__) => push!(occVariables, varName)
+      SimulationCode.DATA_STRUCTURE(__) => push!(dsVariables, varName)
     end
   end
   local algAndState = vcat(algVariables, stateVariables)
@@ -100,6 +97,11 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String = "Simula
     println(buffer, d * "| Index:" * string(first(simCode.stringToSimVarHT[d])))
   end
   print(buffer, BDAEUtil.LINE + "\n")
+  println(buffer, "Datastructure Variables:")
+  for d in dsVariables
+    println(buffer, d * "| Index:" * string(first(simCode.stringToSimVarHT[d])))
+  end
+  print(buffer, BDAEUtil.LINE + "\n")
   print(buffer, "\n")
   print(buffer, "Initial Equations" + "\n")
   println(buffer, BDAEUtil.LINE)
@@ -121,7 +123,6 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String = "Simula
     print(buffer, string(ifEq))
   end
   println(buffer, BDAEUtil.LINE)
-
   println(buffer, "When-Equations")
   println(buffer, BDAEUtil.LINE)
   for wEq in simCode.whenEquations
@@ -135,7 +136,6 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String = "Simula
       print(buffer, string(st))
     end
   end
-
   println(buffer, BDAEUtil.LINE)
   nIfEqs = 0
   for ifEq in simCode.ifEquations

@@ -46,16 +46,17 @@ using ..SimulationCode
 
 import ..Backend.BDAE
 
-import DAE
 import Absyn
+import DAE
 import MetaGraphs
-import OMParser
 import OMFrontend
+import OMParser
+import Symbolics
 
 include("mtkExternals.jl")
 include("./CodeGenerationUtil.jl")
 include("./structuralCallbacks.jl")
-include("./algorithmic.jl")
+include("./AlgorithmicCodeGeneration.jl")
 include("./MTK_CodeGeneration.jl")
 
 #= Pure DifferentialEquations.jl code generation =#

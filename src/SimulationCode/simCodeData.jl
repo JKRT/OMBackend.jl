@@ -4,7 +4,7 @@ Remove DAE structure from this file s.t simcode can stand alone.
 =#
 
 """
-Kind of a simulation variable
+ Category of a simulation variable
 """
 abstract type SimVarType end
 
@@ -41,6 +41,15 @@ struct  INPUT <: SimVarType end
   In pratice this variable is treated as state.
 "
 struct OCC_VARIABLE <: SimVarType end
+
+"""
+  A Data structure type.
+  Currently this type represents complex datastrutures such as matrices
+  or pointers to data structures in memory.
+"""
+struct DATA_STRUCTURE <: SimVarType
+  bindExp::Option{DAE.Exp}
+end
 
 """
 Parameter variable
@@ -206,4 +215,6 @@ struct SIM_CODE{T0<:String,
   irreductableVariables::T12
   "Modelica functions"
   functions::Vector{ModelicaFunction}
+  "Specify if an external Modelica runtime is needed or not. Used for build in functions"
+  externalRuntime::Bool
 end

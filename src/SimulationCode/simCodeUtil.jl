@@ -183,6 +183,7 @@ It executes the following steps:
 4. Parameters will get own set of indices, starting at 1.
 5. Discrete shares the index with the states and starts at #states + 1
 6. OCC Variables also shares the indices with the states and starts at #discretes + 1
+7. Datastructure variables, are only allowed as parameters and or constants. They share the index with the parameters.
 """
 function createIndices(simulationVars::Vector{SimulationCode.SIMVAR})::OrderedDict{String, Tuple{Integer, SimulationCode.SimVar}}
   local ht::OrderedDict{String, Tuple{Integer, SimulationCode.SimVar}} = OrderedDict()
@@ -190,6 +191,7 @@ function createIndices(simulationVars::Vector{SimulationCode.SIMVAR})::OrderedDi
   local parameterCounter = 0
   local discretes = SimulationCode.SIMVAR[]
   local occVariables = SimulationCode.SIMVAR[]
+  local complexVariables = SimulationCode.SIMVAR[]
   local numberOfStates = 0
   for var in simulationVars
     @match var.varKind begin
@@ -210,6 +212,10 @@ function createIndices(simulationVars::Vector{SimulationCode.SIMVAR})::OrderedDi
       end
       SimulationCode.DISCRETE(__) => begin
         push!(discretes, var)
+      end
+      SimulationCode.DATA_STRUCTURE(__) => begin
+        parameterCounter += 1
+        push!(ht, var.name => (parameterCounter, var))
       end
       _ => continue
     end

@@ -99,12 +99,13 @@ function translate(frontendDAE::Union{DAE.DAE_LIST, OMFrontend.Main.FlatModel};
   elseif BackendMode == MTK_MODE
     @debug "Generate simulation code"
     simCode = generateSimulationCode(bDAE; mode = MTK_MODE)
-    simCodeFunctions = if functionList !== nothing
+    (simCodeFunctions, externalRuntimeNeeded) = if functionList !== nothing
       generateSimCodeFunctions(functionList)
     else
-      SimulationCode.ModelicaFunction[]
+      (SimulationCode.ModelicaFunction[], false)
     end
     @assign simCode.functions = simCodeFunctions
+    @assign simCode.externalRuntime = externalRuntimeNeeded
     @debug "Simulation code generated" SimulationCode.dumpSimCode(simCode)
     write("simulationCodeStatistics.log", SimulationCode.dumpSimCode(simCode))
     return generateMTKTargetCode(simCode)
@@ -185,8 +186,12 @@ function lower(fm::OMFrontend.Main.FLAT_MODEL)
   #= Convert equations to residual form =#
   @debug(BDAEUtil.stringHeading1(bDAE, "Residuals"));
   write("residualTransformationAllParamsAndConstants.log", BDAEUtil.stringHeading1(bDAE, "residuals"))
-  #= Remove unused parameters and or constants. Important optimization for some systems. =#
-  bDAE = Causalize.detectUnusedParametersAndConstants(bDAE)
+  #=
+  Remove unused parameters and or constants.
+  Important optimization for some systems.
+  TODO: also check bindings of all parameters before readding this call.
+  =#
+  #bDAE = Causalize.detectUnusedParametersAndConstants(bDAE)
   write("residualTransformation.log", BDAEUtil.stringHeading1(bDAE, "residuals"))
   return bDAE
 end
@@ -265,11 +270,16 @@ function writeModelToFile(modelName::String, filePath::String; keepComments = tr
   model = getCompiledModel(modelName)
   try
     mAsStr = modelToString(modelName; MTK = true, keepComments = keepComments, keepBeginBlocks = keepBeginBlocks)
-    #= Replace top level begin/end =#
-    beginIdx = last(findfirst("begin", mAsStr)) + 1
-    endIdx = first(findlast("end",  mAsStr)) - 1
-    mAsStr = mAsStr[beginIdx:endIdx]
-    writeStringToFile(filePath, mAsStr)
+    try
+      #= Replace top level begin/end =#
+      beginIdx = last(findfirst("begin", mAsStr)) + 1
+      endIdx = first(findlast("end",  mAsStr)) - 1
+      mAsStr = mAsStr[beginIdx:endIdx]
+      writeStringToFile(filePath, mAsStr)
+    catch e
+      @error "Removing initial begin/end pairs"
+      @info e
+    end
   catch e
     @info "Failed writing $model to file: $filePath"
     @error e
@@ -316,11 +326,14 @@ function modelToString(modelName::String; MTK = true, keepComments = true, keepB
     local modelStr::String = "$strippedModel"
     formattedResults = JuliaFormatter.format_text(modelStr;
                                                   remove_extra_newlines = true,
+                                                  indent = 2,
+                                                  margin = 200,
                                                   always_use_return = false)
     return formattedResults
   catch e
     @error "Model: $(modelName) is not compiled. Available models are: $(availableModels())"
-    throw("Error printing model")
+    #throw("Error printing model")
+    @info e
   end
 end
 

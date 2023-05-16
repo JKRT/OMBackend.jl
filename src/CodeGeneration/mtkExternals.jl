@@ -50,6 +50,11 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE  S
 
 
 #=
+This file contains "hacks.
+This is done in order to get the equations on a MTK compatible format before calling functions such as structurally simplify."
+=#
+
+#=
   So we know about t an der in the global scope.
   This is needed for the rules below to match correctly.
 =#
@@ -109,6 +114,8 @@ end
   Rewrite equations that do not conform to the requirements of MTK
 """
 function rewriteEquations(edeqs, iv, eVars, ePars, simCode)
+  println("Recived #edeqs")
+  println(length(edeqs))
   local der = ModelingToolkit.Differential(t)
   #= Remove the t's =#
   eVars = [Symbol(replace(string(i), "(t)" => "")) for i in eVars]
@@ -126,17 +133,21 @@ function rewriteEquations(edeqs, iv, eVars, ePars, simCode)
   eval(preEval)
   eval(:(der = ModelingToolkit.Differential(t)))
   eval(:(import ModelingToolkit.IfElse))
+  #= Make the external runtime available if it is used. =#
+  if simCode.externalRuntime
+    eval(generateExternalRuntimeImport(simCode))
+  end
   #=
     Register all functions s.t they can be used by the symbolic transformations.
   =#
     #= Delay evaluation of the register expression until we have constructed the =#
-  local ftrs = generateRegisterCallsForCallExprs(simCode)
+  local ftrs = generateRegisterCallsForCallExprs(simCode; funcArgGen = AlgorithmicCodeGeneration.generateIOL)
   for f in ftrs
     eval(f)
     println("Register:" * string(f))
   end
   #==#
-  local deqs = evalEDeqs(edeqs) #[eval(i) for i in edeqs]
+  local deqs = evalEDeqs(edeqs)
   #println(debugRewrite(deqs, iv, vars, parameters; separator="\n"))
   #= Rewrite equations =#
   D = Differential(iv)
@@ -149,60 +160,80 @@ function rewriteEquations(edeqs, iv, eVars, ePars, simCode)
   for eq in deqs
     #= Only do the rewrite for the differentials. The others have already been rewritten.=#
     eqStr = string(eq)
-    #if (contains(eqStr, "Differential")) # TODO expensive comp. Needs to be optimized.
+    if (contains(eqStr, "Differential")) # TODO expensive comp! Needs to be optimized.
     req = move_diffs(eq, rewrite = remove_diffs)
-    #req = move_diffs(eq, rewrite = remove_diffs)
-      #@info "Left hand side of the equation" req.lhs
+      @info "Left hand side of the equation" req.lhs
       if req.lhs isa Real
         push!(rewrittenDeqs, req)
       elseif !(req.lhs in usedStates)
-        #@info "Not a duplicate" req.lhs
-        #@info "Used equations are" usedStates
+        @info "Not a duplicate" req.lhs
+        @info "Used equations are" usedStates
         push!(rewrittenDeqs, req)
         push!(usedStates, req.lhs)
       else
-        #@info "Duplicate:" req.lhs
+        @info "Duplicate:" req.lhs
         push!(rewrittenDeqs, eq)
       end
-    #else
-     # push!(rewrittenDeqs, eq)
-    #end
+    else
+      push!(rewrittenDeqs, eq)
+    end
   end
   #println(debugRewrite(rewrittenDeqs, iv, vars, parameters; separator="\n"))
   #fail()
+  println("Rewritten number of deqs:")
+  println(length(rewrittenDeqs))
   return rewrittenDeqs
 end
 
+"""
+This function evaluates the supplied equations.
+In the case we are unable to evaluate them, we currently hack it by some string conversions.
+TODO:
+Fix me do this the proper way.
+This routine is way to slow currently...
+"""
 function evalEDeqs(edeqs)
   local deqs = []
   for e in edeqs
     try
-      push!(deqs, eval(e))
+      eq = eval(e)
+      if typeof(eq.lhs) == Int64 && eq.lhs == 0
+        push!(deqs, eq)
+      else
+        local unSimplifiedString = string(e)
+        unSimplifiedString = replace(unSimplifiedString, "&&" => "&")
+        unSimplifiedString = replace(unSimplifiedString, r"\bbegin\b" => "(")
+        unSimplifiedString = replace(unSimplifiedString, r"\bend\b" => ")")
+        println(unSimplifiedString)
+        #println(estr)
+        estrExp = Meta.parse(unSimplifiedString)
+        #println("EQUATION:")
+        #println(eq)
+        #println("estrExp:")
+        #println(estrExp)
+        estrExp2 = eval(estrExp)
+        estrExp2LHS = estrExp2.lhs
+        @assign estrExp2.lhs = 0
+        @assign estrExp2.rhs = estrExp2.rhs - estrExp2LHS
+        push!(deqs, estrExp2)
+      end
     catch ex
       #Hack
-      println(e)
-      unSimplifiedString = string(e)
+      local unSimplifiedString = string(e)
       unSimplifiedString = replace(unSimplifiedString, "&&" => "&")
-      unSimplifiedString = replace(unSimplifiedString, "begin" => "(")
-      unSimplifiedString = replace(unSimplifiedString, "end" => ")")
-      strippedE = stripBeginBlocks(stripComments(e))
-      println(strippedE)
-      #eval(strippedE)
-      println(strippedE)
-      estr = string(strippedE)
-      println(estr)
-      estr = replace(estr, "&&" => "&")
-      estrExp = Meta.parse(unSimplifiedString) #estr)
-      println("Trying test")
-      test = Equation(estrExp.args[2], estrExp.args[3])
-      println(test)
-      splittedString = split(estr, "~")
-      eq = Equation(0, last(splittedString))
-      println("EQUATION:")
-      println(eq)
-      println("estrExp:")
-      println(estrExp)
-      push!(deqs, eval(estrExp))
+      unSimplifiedString = replace(unSimplifiedString, r"\bbegin\b" => "(")
+      unSimplifiedString = replace(unSimplifiedString, r"\bend\b" => ")")
+      println(unSimplifiedString)
+      estrExp = Meta.parse(unSimplifiedString)
+      #println("EQUATION:")
+      #println(eq)
+      #println("estrExp:")
+      #println(estrExp)
+      estrExp2 = eval(estrExp)
+      estrExp2LHS = estrExp2.lhs
+      @assign estrExp2.lhs = 0
+      @assign estrExp2.rhs = estrExp2.rhs - estrExp2LHS
+      push!(deqs, estrExp2)
     end
   end
   println("!DONE!")
@@ -279,7 +310,7 @@ Document why some parts here are outcommented
 """
 function structural_simplify(sys::ModelingToolkit.AbstractSystem, io = nothing; simplify = false, kwargs...)
   @info "Calling custom structural_simplify"
-  # sys = ModelingToolkit.ode_order_lowering(sys)
+  #sys = ModelingToolkit.ode_order_lowering(sys)
   #sys = ModelingToolkit.dae_index_lowering(sys)
   #sys = ModelingToolkit.tearing(sys; simplify = simplify)
   # if simplify
@@ -287,5 +318,6 @@ function structural_simplify(sys::ModelingToolkit.AbstractSystem, io = nothing; 
   # else
   #   sys = ModelingToolkit.structural_simplify(sys, simplify = simplify)
   # end TEMP REMEMBER TO UNCOMMENT ABOVE
+  #sys = ModelingToolkit.structural_simplify(sys, simplify = false)
   return sys
  end
