@@ -582,7 +582,7 @@ function getIrreductableVars(ifEquations::Vector{BDAE.IF_EQUATION},
     Remove them from the list
   =#
 
-  local knownIrreductables::Vector{BDAE.VAR} = filter(BDAEUtil.isState, algebraicAndStateVariables)
+  local knownIrreductables::Vector{BDAE.VAR} = algebraicAndStateVariables #filter(BDAEUtil.isState, algebraicAndStateVariables)
   @info "Adding all states as irreductable variables" map(x->string(x.varName), knownIrreductables)
   push!(irreductables, map(x->string(x.varName), knownIrreductables))
   irreductables = collect(Iterators.flatten(irreductables))
