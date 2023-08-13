@@ -1,7 +1,7 @@
 #=
 * This file is part of OpenModelica.
 *
-* Copyright (c) 1998-2020, Open Source Modelica Consortium (OSMC),
+* Copyright (c) 1998-CurrentYear, Open Source Modelica Consortium (OSMC),
 * c/o Linköpings universitet, Department of Computer and Information Science,
 * SE-58183 Linköping, Sweden.
 *
@@ -121,6 +121,19 @@ function transformToMTKConditionEquation(cond::DAE.Exp, simCode)
   return res
 end
 
+function transformToMTKContinousConditionEquation(cond::DAE.Exp, simCode)
+  res = @match cond begin
+    DAE.RELATION(e1, DAE.LESS(__), e2) => begin
+      :($(expToJuliaExpMTK(e1, simCode)) - $(expToJuliaExpMTK(e2, simCode)) ~ 0)
+    end
+    _ => begin
+      throw("Operator: " * "'" * string(cond.operator) * "' in: " * string(cond) * " is not supported")
+    end
+  end
+  return res
+end
+
+
 """
   Flattens a vector of expressions.
 """
@@ -219,7 +232,7 @@ function expToJL(exp::DAE.Exp, simCode::SimulationCode.SIM_CODE; varPrefix="x"):
           false
         end
         if ! builtin
-          #= If we refeer to time, we simply return t instead of a concrete variable =#
+          #= If we refer to time, we simply return t instead of a concrete variable =#
           indexAndVar = hashTable[varName]
           varKind::SimulationCode.SimVarType = indexAndVar[2].varKind
           @match varKind begin
@@ -796,13 +809,15 @@ end
   Generates different constructors for the ODESystem depending on given parameters.
 TODO:
 Having them as discrete events are currently a workaround...
-They should be added as continuous events.
+They should be added as continuous events for continous variables.
+TODO:
+Clearer seperation of discrete and non discrete if equations
 """
 function odeSystemWithEvents(hasEvents, modelName)
   if hasEvents
     :(ODESystem(eqs, t, vars, parameters;
               name=:($(Symbol($modelName))),
-              discrete_events = events))
+              continuous_events = events))
   else
     :(ODESystem(eqs, t, vars, parameters;
               name=:($(Symbol($modelName)))))
@@ -900,7 +915,7 @@ end
 """
   Decide the iv of the condition.
   This currently assumes that the simulation starts at 0.0 (which might not be the case).
-This function needs to be improved so that it also evaluates static parameters.
+  This function needs to be improved so that it also evaluates static parameters.
 """
 function evalInitialCondition(mtkCond)
   try
@@ -921,21 +936,53 @@ end
 
 """
   Generates an if-expression equation and add it to the continous part of the system.
-Assume single equations for now.
-An assertion error should have been thrown before reaching this function
+Assume single equations in each if-branch for now.
+An assertion error should have been thrown earlier before reaching this function.
+
+The sub identifier is used to for the different branches of a single if-equation.
+Hence for the model:
+
+```modelica
+model IfEquationDer
+  parameter Real u = 4;
+  parameter Real uMax = 10;
+  parameter Real uMin = 2;
+  Real y;
+equation
+  if uMax < time then
+    der(y) = uMax;
+  elseif uMin < time then
+    der(y) = uMin;
+  else
+    der(y) = u;
+  end if;
+end IfEquationDer;
+```
+
+The if expression:
+```
+D(y) ~ ifelse(ifCond11 == true, uMin, ifelse(ifCond12 == true, uMax, u))
+```
+will be generated along with variables for all sub branches.
+
 """
-function generateIfExpressions(branches, target::Int, resEqIdx::Int, identifier::Int, simCode)
+function generateIfExpressions(branches, target::Int, resEqIdx::Int, identifier::Int, simCode; subIdentifier::Int = identifier)
   local branch = branches[target]
   if branch.targets == -1
     return :($(first(deCausalize(branch.residualEquations[resEqIdx], simCode))))
   end
   #= Otherwise generate code for the other part =#
-  local cond = :( $(Symbol("ifCond$(identifier)")) == true )
+  local cond = :( $(Symbol("ifCond$(identifier)$(subIdentifier)")) == true )
   local rhs = first(deCausalize(branch.residualEquations[resEqIdx], simCode))
   quote
-    ModelingToolkit.IfElse.ifelse($(cond),
-                                  $(rhs),
-                                  $(generateIfExpressions(branches, branches[target].targets, resEqIdx, identifier, simCode)))
+    ModelingToolkit.ifelse($(cond),
+                           $(rhs),
+                           $(generateIfExpressions(branches,
+                                                   branches[target].targets,
+                                                   resEqIdx,
+                                                   identifier,
+                                                   simCode;
+                                                   subIdentifier = identifier + 1)))
   end
 end
 
@@ -993,7 +1040,6 @@ function isIntOrBool(@nospecialize(exp::DAE.Exp))
     _ => false
   end
 end
-
 
 function writeEqsToFile(elems::Vector{Expr}, filename)
   buffer = IOBuffer()

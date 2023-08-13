@@ -57,6 +57,25 @@ function getLastIdentOfVar(var)::String
   getIdentOfComponentReference(var.varName)
 end
 
+
+"""
+ Fetches the inner identifier of a variable and converts it to a string.
+That is:
+getLastIdentOfVar(Foo.Bar.x) => "Bar_x"
+"""
+function getInnerIdentOfVar(var)::String
+  res = @match var.varName begin
+    DAE.CREF_IDENT(ident) => begin
+      ident
+    end
+    DAE.CREF_QUAL(ident = ident, componentRef = componentRef) => begin
+      componentRef
+    end
+  end
+  return string(res)
+end
+
+
 """
   Fetches the last ident of a component reference
 """
@@ -184,6 +203,7 @@ It executes the following steps:
 5. Discrete shares the index with the states and starts at #states + 1
 6. OCC Variables also shares the indices with the states and starts at #discretes + 1
 7. Datastructure variables, are only allowed as parameters and or constants. They share the index with the parameters.
+The index of discretes and occ is updated after the state index is calculated.
 """
 function createIndices(simulationVars::Vector{SimulationCode.SIMVAR})::OrderedDict{String, Tuple{Integer, SimulationCode.SimVar}}
   local ht::OrderedDict{String, Tuple{Integer, SimulationCode.SimVar}} = OrderedDict()
@@ -310,7 +330,7 @@ function createEquationVariableBidirectionGraph(equations::Vector{BDAE.RESIDUAL_
   when initial()
     <equations>
   end when;
-  Currently the presence of this construct breaks the compiler.
+  Currently this construct breaks the compiler.
   I should investigat how to go about it.
   For now lets merge in the equations in an initial when equation as ordinary equations. =#
   for weq in whenEqs
@@ -324,18 +344,18 @@ function createEquationVariableBidirectionGraph(equations::Vector{BDAE.RESIDUAL_
         end
       end
       _ #=Other when equations =# => begin
-        #= Assignments might be added to the total #equations =#
+        #= Assignments are added to the total #equations =#
         for wstmt in weq.whenEquation.whenStmtLst
           @match wstmt begin
             BDAE.ASSIGN(DAE.CREF(ref, DAE.T_REAL(__)), _, _) => begin
               #= Add to the total number of equation if the lhs is a real variable =#
               local refAsStr = BDAEUtil.string(ref)
               local simVar = getSimVarByName(refAsStr, stringToSimVarHT)
-              if isAlgebraic(simVar)
-                eqCounter += 1
-                variablesForEq = BDAEUtil.getAllVariables(wstmt, algebraicAndStateVariables)
-                variableEqMapping["e$(eqCounter)"] = sort(getIndiciesOfVariables(variablesForEq, stringToSimVarHT))
-              end
+              #if isAlgebraic(simVar)
+              eqCounter += 1
+              variablesForEq = BDAEUtil.getAllVariables(wstmt, algebraicAndStateVariables)
+              variableEqMapping["e$(eqCounter)"] = sort(getIndiciesOfVariables(variablesForEq, stringToSimVarHT))
+              #end
             end
             _ => continue
           end
@@ -544,13 +564,15 @@ end
 
 """
   Get all variables that should be marked as irreductable.
-  Parameters are never added to this list.
+OBS:
+Parameters are never added to this list.
+The known irreductables should be state variables and variables directly involved in changes that change the model structure.
 """
 function getIrreductableVars(ifEquations::Vector{BDAE.IF_EQUATION},
                              whenEqs::Vector{BDAE.WHEN_EQUATION},
                              algebraicAndStateVariables::Vector{BDAE.VAR},
                              ht::OrderedDict{String, Tuple{Integer, SimulationCode.SimVar}})
-  local irreductables = Vector{Any}[]
+  local irreductables::Vector{Any} = []
   for eq in ifEquations
     variablesForEq = Backend.BDAEUtil.getAllVariables(eq, algebraicAndStateVariables)
     push!(irreductables, variablesForEq)
@@ -559,13 +581,19 @@ function getIrreductableVars(ifEquations::Vector{BDAE.IF_EQUATION},
     Parameters should not be marked as irreductable
     Remove them from the list
   =#
+
+  local knownIrreductables::Vector{BDAE.VAR} = filter(BDAEUtil.isState, algebraicAndStateVariables)
+  @info "Adding all states as irreductable variables" map(x->string(x.varName), knownIrreductables)
+  push!(irreductables, map(x->string(x.varName), knownIrreductables))
   irreductables = collect(Iterators.flatten(irreductables))
   irreductables = filter(irv -> !(irv != "time" && isParameter(last(ht[irv]))), irreductables)
   #TODO: Fix the dection, s.t variables critical to when equations are not removed
   #for eq in whenEqs
-   # variablesForEq = Backend.BDAEUtil.getAllVariables(eq, algebraicAndStateVariables)
+    # variablesForEq = Backend.BDAEUtil.getAllVariables(eq, algebraicAndStateVariables)
     # push!(variablesForEq, irreductables)
   #end
+  #= Add known irreductables to the vector =#
+  #push!(irreductables, map(x->x.varName, string(knownIrreductables)))
   local irreductablesAsStr = map(x -> string(x), irreductables)
   #=
   If THETA exists, treat it as a irreductable variable

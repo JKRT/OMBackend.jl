@@ -27,20 +27,20 @@
 *
 * See the full OSMC Public License conditions for more details.
 *
-*/ =#
+=#
 
-module OMBackend
-import DAE
-const CURRENT_DIRECTORY = @__DIR__
-include("$CURRENT_DIRECTORY/globalConstants.jl")
-export PLOT_PACKAGE_GRAPH
-include("$CURRENT_DIRECTORY/FrontendUtil/FrontendUtil.jl")
-include("$CURRENT_DIRECTORY/BackendUtil/BackendUtil.jl")
-include("$CURRENT_DIRECTORY/Backend/Backend.jl")
-include("$CURRENT_DIRECTORY/SimulationCode/SimulationCode.jl")
-include("$CURRENT_DIRECTORY/Runtime/Runtime.jl")
-include("$CURRENT_DIRECTORY/CodeGeneration/CodeGeneration.jl")
-include("backendUtils.jl")
-#= Finally add the API=#
-include("backendAPI.jl")
-end #=OMBackend=#
+#= Author johti17 =#
+
+
+"""
+ This module implements the new low code generator.
+ Instead of transforming the code to MTK we transform the code into  a low-level format for more direct control over things such as nonlinear solvers and the like.
+ The various passes of MTK is used to achieve this form.
+
+TODO:
+Add the algorithms from the external file.
+"""
+module DifferentialEquationCodeGenerator
+
+
+end

@@ -67,11 +67,11 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   local activeModelName = simCode.activeModel
   local structuralModes = Expr[]
   for mode in simCode.subModels
-    push!(structuralModes, ODE_MODE_MTK_MODEL_GENERATION(mode, mode.name))
+    push!(structuralModes, ODE_MODE_MTK_MODEL_GENERATION(mode, mode.name, functions))
   end
   if isempty(simCode.subModels)
     local modelName = MODEL_NAME * "DEFAULT"
-    defaultModel = ODE_MODE_MTK_MODEL_GENERATION(simCode, modelName)
+    defaultModel = ODE_MODE_MTK_MODEL_GENERATION(simCode, modelName, functions)
     activeModelName = modelName
     push!(structuralModes, defaultModel)
   end
@@ -160,7 +160,7 @@ function ODE_MODE_MTK_PROGRAM_GENERATION(simCode::SimulationCode.SIM_CODE, model
     end
   end
   local DATA_STRUCTURE_ASSIGNMENTS = createDataStructureAssignments(dataStructureVariables, simCode)
-  local model = ODE_MODE_MTK_MODEL_GENERATION(simCode, functions, modelName)
+  local model = ODE_MODE_MTK_MODEL_GENERATION(simCode, modelName, functions)
   program = quote
     using ModelingToolkit
     using DifferentialEquations
@@ -185,8 +185,8 @@ end
 """
   Generates a MTK model
 """
-function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, functions, modelName)
-  @debug "Runnning: ODE_MODE_MTK_MODEL"
+function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelName, functions)
+  #@debug "Runnning: ODE_MODE_MTK_MODEL"
   RESET_CALLBACKS()
   local stringToSimVarHT = simCode.stringToSimVarHT
   local equations::Vector = BDAE.RESIDUAL_EQUATION[]
@@ -208,14 +208,18 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, functio
         @error "INPUT not supported in CodeGen"
         throw()
       end
-      SimulationCode.STATE(__) => push!(stateVariables, varName)
+      SimulationCode.STATE(__) => begin
+        push!(stateVariables, varName)
+      end
       SimulationCode.OCC_VARIABLE(__) => begin
         push!(occVariables, varName)
       end
       SimulationCode.PARAMETER(__) => begin
         push!(parameters, varName)
       end
-      SimulationCode.DISCRETE(__) => push!(discreteVariables, varName)
+      SimulationCode.DISCRETE(__) => begin
+        push!(discreteVariables, varName)
+      end
       SimulationCode.ALG_VARIABLE(__) => begin
         #=TODO: Seems to be unable to find variables in some cases...
         should there be an and here? Keep track of variables that are also involved in if/when structures
@@ -248,10 +252,10 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, functio
       SimulationCode.STATE_DERIVATIVE(__) => push!(stateDerivatives, varName)
     end
   end
-  @info "Length of Algebraic variables:" length(algebraicVariables)
-  @info "Length of States:" length(stateVariables)
-  @info "Length of Discrete variables" length(discreteVariables)
-  @info "Length of OCC variables" length(occVariables)
+  #@info "Length of Algebraic variables:" length(algebraicVariables)
+  #@info "Length of States:" length(stateVariables)
+  #@info "Length of Discrete variables" length(discreteVariables)
+  #@info "Length of OCC variables" length(occVariables)
   local performIndexReduction = simCode.isSingular
   @info "System needs index reduction?" performIndexReduction
   #= Create equations for variables not in a loop + parameters and stuff=#
@@ -309,9 +313,9 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, functio
     Merge the ifConditional components into the rest of the system and merge the state conditionals with the sates
   =#
   stateVariablesSym = vcat(ifConditionalVariables,
-                            discreteVariablesSym,
-                            stateVariablesSym,
-                            occVariablesSym)
+                           discreteVariablesSym,
+                           stateVariablesSym,
+                           occVariablesSym)
   EQUATIONS = vcat(EQUATIONS,
                    DISCRETE_DUMMY_EQUATIONS,
                    ZERO_DYNAMICS_COND_EQUATIONS,
@@ -323,10 +327,10 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, functio
                                simCode)
   #= Reset the callback counter=#
   RESET_CALLBACKS()
-  @info "Length EQUATIONS:" length(EQUATIONS)
-  @info "Length state variables" length(stateVariablesSym)
-  @info "Length algebraic variables" length(algebraicVariablesSym)
-  @info "Length discrete variables" length(discreteVariables)
+  # @info "Length EQUATIONS:" length(EQUATIONS)
+  # @info "Length state variables" length(stateVariablesSym)
+  # @info "Length discrete variables" length(discreteVariables)
+  # @info "Length algebraic variables" length(algebraicVariablesSym)
   #=
     Formulate the problem as a DAE Problem.
     For this variant we keep it on its own line
@@ -504,7 +508,7 @@ function getStartConditionsMTK(vars::Vector, simCode::SimulationCode.SimCode)::V
   local ht::Dict = simCode.stringToSimVarHT
   local warnings::String = ""
   if length(vars) == 0
-    return []
+    return Expr[]
   end
   for var in vars
     (index, simVar) = ht[var]
@@ -546,7 +550,11 @@ function getStartConditionsMTK(vars::Vector, simCode::SimulationCode.SimCode)::V
           continue
         end
       end
-      NONE() => begin #= If no attribute. Let it default to zero. This branch should only be taken for compiler generated variables. =#
+      NONE() => begin
+        #=
+        If no attribute. Let it default to zero.
+        This branch should only be taken for compiler generated variables.
+        =#
         push!(startExprs, :($(Symbol(varName)) => 0.0))
         continue
       end
@@ -559,13 +567,14 @@ function getStartConditionsMTK(vars::Vector, simCode::SimulationCode.SimCode)::V
 end
 
 """
-  Creates the components of the If-Equations
+  Creates the components of the If-Equations.
+Each if equation is marked by the identifier.
+So the first will have 1 and so on.
 """
 function createIfEquations(stateVariables, algebraicVariables, simCode)
   local ifEquations = Tuple{Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Symbol}, Vector{Tuple}}[]
-  local identifier::Int = 0
-  for ifEq in simCode.ifEquations
-    identifier += 1
+  local identifier::Int
+  for (identifier, ifEq) in enumerate(simCode.ifEquations)
     push!(ifEquations, createIfEquation(stateVariables, algebraicVariables, ifEq, identifier, simCode))
   end
   return ifEquations
@@ -608,27 +617,34 @@ See the following issue: https://github.com/SciML/ModelingToolkit.jl/issues/1523
 The forth part of the tuple contains a vector of symbolic variables.
 One for each conditional variable created.
 """
-function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCode.IF_EQUATION, identifier, simCode)
+function createIfEquation(stateVariables::Vector,
+                          algebraicVariables::Vector,
+                          ifEq::SimulationCode.IF_EQUATION,
+                          identifier::Int,
+                          simCode)
   local result::Tuple{Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Symbol}, Vector{Tuple}}
-
-  generateAffect(n, nConditions, condRes) = begin
-    #= The cond res is what we are going to evaluate it to. =#
+  #= The cond res is what we are going to evaluate it to. =#
+  generateAffect(subIdentifier, nConditions, condRes) = begin
     local exprs = Expr[]
     local e
-      e = :($(Symbol(("ifCond$(identifier)"))) ~ $(condRes))
+      e = :($(Symbol(("ifCond$(identifier)$(subIdentifier)"))) ~ $(condRes))
       push!(exprs, e)
     return exprs
   end
-
-  generateInverseAffect(n, nConditions, condRes) = begin
-    #= The cond res is what we are going to evaluate it to. =#
+  """
+  Generates the inverse affects. if one branch of the if equation is true.
+  Set the other dummy variables to false.
+  """
+  generateInverseAffect(subIdentifier, nConditions, condRes) = begin
     local exprs = Expr[]
-    local e
-      e = :($(Symbol(("ifCond$(identifier)"))) ~ $(!condRes))
-      push!(exprs, e)
+    for i in 1:nConditions
+      if i != subIdentifier
+        local e = :($(Symbol(("ifCond$(identifier)$(i)"))) ~ $(!condRes))
+        push!(exprs, e)
+      end
+    end
     return exprs
   end
-
   local i::Int = 0
   local nBranches::Int = length(ifEq.branches)
   local conditions = Expr[]
@@ -636,28 +652,29 @@ function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCo
   for branch in ifEq.branches
     i += 1
     @match branch begin
-      SimulationCode.BRANCH(condition, residuals, -1#=Else=#, targets, _, _, _, _, _) => begin
+      SimulationCode.BRANCH(condition, residuals, -1 #= Else =#, targets, _, _, _, _, _) => begin
       end
       SimulationCode.BRANCH(condition, residuals, _, targets, _, _, _, _, _) => begin
-        local mtkCond = transformToMTKConditionEquation(branch.condition, simCode)
+        local mtkCond = transformToMTKContinousConditionEquation(branch.condition, simCode)
+        #= Evaluate the initial value condition. =#
         local ivCond = evalInitialCondition(mtkCond)
+        @info "Initial value" ivCond
         local branchesWithConds::Int = nBranches - 1 #TODO DOCC - 1
         local affects::Vector{Expr} = generateAffect(i, branchesWithConds, ivCond)
         local inverseAffects::Vector{Expr} = generateInverseAffect(i, branchesWithConds, ivCond)
-        local cond = :(($(mtkCond)) => [$(affects...)])
-        local inverseCond = :((!$(mtkCond)) => [$(inverseAffects...)])
-#        print(inverseCond)
+        local cond = :(($(mtkCond)) => [$(affects...), $(inverseAffects...)])
+        #local inverseCond = :((!$(mtkCond)) => [$(inverseAffects...)])
         push!(conditions, cond)
-        push!(conditions, inverseCond)
+        #push!(conditions, inverseCond)
         push!(ivConditions, ivCond)
       end
     end
   end
-#  @info "All conditions" conditions
+  #@info "All conditions" conditions
   #= Create the equations themselves =#
   local target = 1
   local resEqs = ifEq.branches[target].residualEquations
-  @assert(length(resEqs) == 1, "More than one equation in an if equation is not currently supported by OM.j")
+  @assert(length(resEqs) == 1, "More than one equation in an if equation is not currently supported by OM.jl")
   local ifExpressions = Expr[]
   #= The number of residuals is the same for both branches. =#
   for resEqIdx in 1:length(ifEq.branches[target].residualEquations)
@@ -669,18 +686,17 @@ function createIfEquation(stateVariables, algebraicVariables, ifEq::SimulationCo
                                                                            identifier,
                                                                            simCode))))
   end
-
   #= Generate zero dynamic equations for the conditions =#
   conditionEquations = Expr[]
   conditionVariables = Symbol[]
   conditionVariableNames = Tuple{String, Bool}[]
   for i in 1:length(ivConditions)
-    push!(conditionEquations, :(der($(Symbol(string("ifCond", identifier)))) ~ 0))
-    push!(conditionVariables, :($(Symbol(string("ifCond", identifier)))))
-    push!(conditionVariableNames, (string("ifCond", identifier), !(ivConditions[i])))
+    push!(conditionEquations, :(der($(Symbol(string("ifCond", identifier, i)))) ~ 0))
+    push!(conditionVariables, :($(Symbol(string("ifCond", identifier, i)))))
+    push!(conditionVariableNames, (string("ifCond", identifier, i), !(ivConditions[i])))
   end
   local conditionExpr = conditions
-  result = (conditionExpr, ifExpressions, conditionEquations, conditionVariables, conditionVariableNames)
+  local result = (conditionExpr, ifExpressions, conditionEquations, conditionVariables, conditionVariableNames)
   return result
 end
 
@@ -698,9 +714,20 @@ function createParameterEquationsMTK(parameters::Vector, simCode::SimulationCode
       SimulationCode.PARAMETER(bindExp = SOME(exp)) => begin
         exp
       end
+      #= We have a parameter without a binding. Check if we have a start attribute...=#
       SimulationCode.PARAMETER(__) => begin
-        #= Unassigned parameters are assumed to be floats... =#
-        DAE.RCONST(0.0)
+        local optAttributes::Option{DAE.VariableAttributes} = simVar.attributes
+        @match optAttributes begin
+          SOME(attr) where attr.start != nothing => begin
+            @assert !(attr.start isa DAE.CREF) "Non-numeric start attributes are not currently supported"
+            @match SOME(startVal) = attr.start
+            startVal
+          end
+          NONE() => begin
+            #= Unassigned parameters are assumed to be floats... =#
+            DAE.RCONST(0.0)
+          end
+        end
       end
       _ => begin
         throw(ErrorException("Unknown SimulationCode.SimVarType for parameter: " * string(param)  * " of type: " * string(simVarType)))
@@ -729,15 +756,19 @@ end
 """
   Creates parameters assignments *(:=) on a MTK parameters compatible format.
 """
-function createParameterAssignmentsMTK(parameters::Vector, simCode::SimulationCode.SimCode)::Vector{Expr}
-  local parameterEquations::Vector = []
+function createParameterAssignmentsMTK(parameters::Vector,
+                                       simCode::SimulationCode.SimCode)::Vector{Expr}
+  local parameterEquations::Vector = Expr[]
   local ht = simCode.stringToSimVarHT
   for param in parameters
     (index, simVar) = ht[param]
-    local simVarType::SimulationCode.SimVarType = simVar.varKind
+    local simVarType = simVar.varKind
     bindExp = @match simVarType begin
       SimulationCode.PARAMETER(bindExp = SOME(exp)) => exp
-      _ => ErrorException("Unknown SimulationCode.SimVarType for parameter.")
+      SimulationCode.PARAMETER(__) =>  begin
+        continue
+      end
+      _ => continue
     end
     #= Solution for https://github.com/SciML/ModelingToolkit.jl/issues/991 =#
     #TODO: Is this workaround still relevant? John 2023-02-22
@@ -973,6 +1004,7 @@ function generateRegisterCallsForCallExprs(simCode;
 end
 
 """
+  Optionally generate an import statement to OMRuntimeExternalC
 """
 function generateExternalRuntimeImport(simCode)::Expr
   :(import OMRuntimeExternalC)

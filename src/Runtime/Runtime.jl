@@ -170,26 +170,27 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
     retCode = check_error(integrator)
     for cb in structuralCallbacks
       if cb.structureChanged
+        @info "Structure changed at $(i.t)"
         #= Find the correct variables and map them between the two models =#
         local newSystem = cb.system
+        println(commonVariableSet)
         indicesOfCommonVariables = getIndicesOfCommonVariables(getSyms(newSystem),
                                                                commonVariableSet;
                                                                destinationPrefix = cb.name)
         newU0 = Float64[i.u[idx] for idx in indicesOfCommonVariablesForStartingMode]
+        println(newU0)
         #= Save the old solution together with the name and the mode that was active =#
         push!(oldSols, (integrator.sol, getSyms(problem), activeModeName))
         #= Now we have the start values for the next part of the system=#
         integrator = init(cb.system,
                           alg;
-                          #                         t0 = i.t,
-                          #                          u0 = newU0,
-                          dt = 0.0000000001,
-                          #                          tstart = tspan[1],
-                          #                          tstop = tspan[2],
+                          #t = i.t,
+                          #u0 = newU0,
+                          #dt = 0.0000000001,
                           kwargs...)
         #=
           Reset with the new values of u0
-          and set the active moed to the mode we are currently using.
+          and set the active mode to the mode we are currently using.
         =#
         activeModeName = cb.name
         reinit!(integrator, newU0; t0 = i.t, reset_dt = true)
@@ -205,7 +206,8 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
   return oldSols
 end
 
-global SHOULD_DO_REINITIALIZATION = true
+#= Enable this switch to allow DOCC without uncessary recompilation. =#
+global SHOULD_DO_REINITIALIZATION = false
 
 """
   Custom solver function for Modelica code with structuralCallbacks to monitor the solving process
@@ -242,7 +244,9 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
         local oldHT = cb.stringToSimVarHT
         local newU0
         if ! SHOULD_DO_REINITIALIZATION
-          @time (newProblem, newSymbolTable, initialValues, sc) = recompilation(cb.name, cb, integrator.u, tspan, callbackConditions)
+          @info "Test syms before recompilation call..." getSyms(problem)
+          global TEMPORARY_PROBLEM = problem
+          @time (newProblem, newSymbolTable, initialValues, reducedSystem, specialCase) = recompilation(cb.name, cb, integrator.u, tspan, callbackConditions)
           #= Assuming the indices are the same (Which is not always true) =#
           local symsOfOldProblem = getSyms(problem)
           local symsOfNewProlem = getSyms(newProblem)
@@ -251,9 +255,13 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
                                           newSymbolTable,
                                           initialValues,
                                           integrator,
-                                          sc)
+                                          specialCase)
           println("U0 before variables are set:")
-          local discrete_events = REDUCED_SYSTEM.discrete_events
+          #=
+          TODO:
+            Also add the continous events here
+          =#
+          local discrete_events = reducedSystem.discrete_events
           @info "discrete_events:" discrete_events
           #= If there are discrete events these should be evaluated before proceeding =#
           events = if length(discrete_events) > 0
@@ -499,7 +507,7 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
 end
 
 """
-  Recompile the metamodel with some component changed.
+  Recompile the meta model with some component changed.
   Returns a tuple of a new problem together with a new symbol table.
 inputs:
   Name of the active model
@@ -507,6 +515,8 @@ inputs:
   The current u values of the integrator
   The provided timespan
   The callback conditions (This to make sure that the new model have the same callbacks)
+
+  The boolean sc (Special case indicates if the variables can be assumed to be unchanged or not)
 """
 function recompilation(activeModeName,
                        structuralCallback::StructuralChangeRecompilation,
@@ -515,7 +525,7 @@ function recompilation(activeModeName,
                        callbackConditions)::Tuple
   #=  Recompilation =#
   #= Have the SCode =#
-  #= - 1) Fetch the parameter from the structural callback =#
+  #= 1) Fetch the parameter from the structural callback =#
   local metaModel = structuralCallback.metaModel
   local modification = structuralCallback.modification
   local inProgram = MetaModelica.list(metaModel)
@@ -527,11 +537,11 @@ function recompilation(activeModeName,
     $(newValueExpr)
   end
   local newValue = eval(newValueExpr)
-  #= - 2) Change the parameters in the SCode via API (As specified by the modification)=#
+  #=  2) Change the parameters in the SCode via API (As specified by the modification)=#
   #=  2.1 Change the parameter so that it is the same as the modifcation. =#
   newProgram = MetaModelica.list(RuntimeUtil.setElementInSCodeProgram!(elementToChange, newValue, metaModel))
   local classToInstantiate = activeModeName
-  #=- 3) Call the frontend + the backend + JIT compile Julia code in memory =#
+  #= 3) Call the frontend + the backend + JIT compile Julia code in memory =#
   local flatModelica = first(OMFrontend.instantiateSCodeToFM(classToInstantiate, newProgram))
   #= 3.1 Run the backend=#
   (resultingModel, simulationCode) = runBackend(flatModelica, classToInstantiate)
@@ -553,18 +563,20 @@ function recompilation(activeModeName,
     =#
       callback = callbackConditions #Should be changed look at method below
   )
-  #=Changed System=#
+  #=4) Changed System=#
   #= 4.1 Update the structural callback with the new situation =#
   @match SOME(newMetaModel) = simulationCode.metaModel
   structuralCallback.metaModel = newMetaModel
   structuralCallback.stringToSimVarHT = simulationCode.stringToSimVarHT
-  #= 4.x) Assign this system to newSystem. =#
-  return (compositeProblem, simulationCode.stringToSimVarHT, initialValues, false)
+  #= 4.2) Assign this system to newSystem. =#
+  return (compositeProblem, simulationCode.stringToSimVarHT, initialValues, reducedSystem, false)
 end
 
 """
   Structural callback for dynamic connection handling.
-  Returns (problem, symbol table, initial values).
+  Returns (problem, symbol table, initial values, sc).
+The boolean sc (Special case indicates if the variables can be assumed to be unchanged or not).
+For the DOCC systems this can be assumed to be true.
 """
 function recompilation(activeModeName,
                        structuralCallback::StructuralChangeDynamicConnection,
@@ -606,12 +618,12 @@ function recompilation(activeModeName,
   (problem, callbacks, initialValues, reducedSystem, tspan, pars, vars) = @eval $(modelCall)
   @info "We have constructed a new problem..."
   global PROBLEM = problem
-  global REDUCED_SYSTEM = reducedSystem
   #= Update meta model somehow=#
   return (problem,
           simulationCode.stringToSimVarHT,
           problem.u0,
-          true)
+          true,
+          reducedSystem)
 end
 
 """
@@ -660,7 +672,7 @@ Returns, a tuple of the new model and the simulation code of this model.
 function runBackend(flatModelica, classToInstantiate)
   local bdae = OMBackend.lower(flatModelica)
   local simulationCode = OMBackend.generateSimulationCode(bdae; mode = OMBackend.MTK_MODE)
-  local newModel = OMBackend.CodeGeneration.ODE_MODE_MTK_MODEL_GENERATION(simulationCode, classToInstantiate)
+  local newModel = OMBackend.CodeGeneration.ODE_MODE_MTK_MODEL_GENERATION(simulationCode, classToInstantiate, [])
   return (newModel, simulationCode)
 end
 
@@ -701,7 +713,9 @@ end
 """
 function getIndicesOfCommonVariables(syms1::Vector{Symbol}, names::Vector{String}; destinationPrefix::String = "")
   #= The common variables have the name without the prefix of the destination system =#
-  local syms2 = [Symbol(destinationPrefix * "_" * name * "(t)") for name in names]
+  local syms2 = Symbol[Symbol(destinationPrefix * "_" * name * "(t)") for name in names]
+  @info "syms2" syms2
+  @info "syms1" syms1
   local indicesOfCommonVariables = Int[]
   local idxDict1 = DataStructures.OrderedDict()
   local idxDict2 = DataStructures.OrderedDict()
@@ -726,6 +740,7 @@ function getIndicesOfCommonVariables(syms1::Vector{Symbol}, names::Vector{String
       push!(indicesOfCommonVariables, dict[key])
     end
   end
+  println(indicesOfCommonVariables)
   return indicesOfCommonVariables
 end
 

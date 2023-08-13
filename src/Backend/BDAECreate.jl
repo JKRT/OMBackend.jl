@@ -415,8 +415,8 @@ function lowerIfEquation(eq::IF_EQ) where {IF_EQ}
   (_, falseEquations, _) = splitEquationsAndVars(eq.equations3)
   #= Check if this equation contains an Connections.branch call. DOCC case=#
   res = BDAE.IF_EQUATION(eq.condition1,
-                         trueEquations,
-                         falseEquations,
+                         listReverse(trueEquations),
+                         listReverse(falseEquations), #Should not really matter but I reverse just in case.
                          eq.source,
                          BDAE.EQ_ATTR_DEFAULT_UNKNOWN)
   return res

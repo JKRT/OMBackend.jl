@@ -95,9 +95,9 @@ function translate(frontendDAE::Union{DAE.DAE_LIST, OMFrontend.Main.FlatModel};
   local bDAE = lower(frontendDAE)
   local simCode
   if BackendMode == DAE_MODE
-    throw("DAE-mode is temporarily removed.")
+    throw("DAE-mode is deprecated.")
   elseif BackendMode == MTK_MODE
-    @debug "Generate simulation code"
+    #@debug "Generate simulation code"
     simCode = generateSimulationCode(bDAE; mode = MTK_MODE)
     (simCodeFunctions, externalRuntimeNeeded) = if functionList !== nothing
       generateSimCodeFunctions(functionList)
@@ -106,8 +106,8 @@ function translate(frontendDAE::Union{DAE.DAE_LIST, OMFrontend.Main.FlatModel};
     end
     @assign simCode.functions = simCodeFunctions
     @assign simCode.externalRuntime = externalRuntimeNeeded
-    @debug "Simulation code generated" SimulationCode.dumpSimCode(simCode)
-    write("simulationCodeStatistics.log", SimulationCode.dumpSimCode(simCode))
+    #@debug "Simulation code generated" SimulationCode.dumpSimCode(simCode)
+    debugWrite("simulationCodeStatistics.log", SimulationCode.dumpSimCode(simCode))
     return generateMTKTargetCode(simCode)
   else
     @error "No mode specificed: valid modes are:"
@@ -171,7 +171,7 @@ function lower(fm::OMFrontend.Main.FLAT_MODEL)
   local preprocessedFM = FrontendUtil.handleBuiltin(fm)
   local bDAE = BDAECreate.lower(preprocessedFM)
   @debug(BDAEUtil.stringHeading1(bDAE, "translated"));
-  write("initialBDAE.log", BDAEUtil.stringHeading1(bDAE, "residuals"))
+  debugWrite("initialBDAE.log", BDAEUtil.stringHeading1(bDAE, "residuals"))
   #= Expand arrays =#
   # Removed this pass since this can now
   #(bDAE, expandedVars) = Causalize.expandArrayVariables(bDAE)
@@ -185,14 +185,15 @@ function lower(fm::OMFrontend.Main.FLAT_MODEL)
   bDAE = Causalize.residualizeEveryEquation(bDAE)
   #= Convert equations to residual form =#
   @debug(BDAEUtil.stringHeading1(bDAE, "Residuals"));
-  write("residualTransformationAllParamsAndConstants.log", BDAEUtil.stringHeading1(bDAE, "residuals"))
+  debugWrite("residualTransformationAllParamsAndConstants.log", BDAEUtil.stringHeading1(bDAE, "residuals"))
   #=
-  Remove unused parameters and or constants.
-  Important optimization for some systems.
-  TODO: also check bindings of all parameters before readding this call.
+    Remove unused parameters and or constants.
+    Important optimization for some systems.
+    TODO: also check bindings of all parameters before readding this call.
   =#
   #bDAE = Causalize.detectUnusedParametersAndConstants(bDAE)
-  write("residualTransformation.log", BDAEUtil.stringHeading1(bDAE, "residuals"))
+  #= Find and reclassify discrete variables not marked as discrete. =#
+  debugWrite("residualTransformation.log", BDAEUtil.stringHeading1(bDAE, "residuals"))
   return bDAE
 end
 

@@ -38,15 +38,29 @@ Complex numbers are assumed to have been elaborated upon earlier in the translat
 function BDAE_VarKindToSimCodeVarKind(backendVar::BDAE.VAR)::SimulationCode.SimVarType
   varKind = @match (backendVar.varKind, backendVar.varType) begin
     #=  Standard cases, scalar real variables =#
-    (BDAE.STATE(__), _) => SimulationCode.STATE()
-    (BDAE.VARIABLE(__), DAE.T_REAL(__)) => SimulationCode.ALG_VARIABLE(0)
+    (BDAE.STATE(__), _) => begin
+      SimulationCode.STATE()
+    end
+    (BDAE.VARIABLE(__), DAE.T_REAL(__)) => begin
+      SimulationCode.ALG_VARIABLE(0)
+    end
     #= Parameters are always parameters. =#
-    (BDAE.PARAM(__) || BDAE.CONST(__), __) => SimulationCode.PARAMETER(backendVar.bindExp)
-    #= If none of the cases above. =#
-    (BDAE.DISCRETE(__), _) => SimulationCode.DISCRETE()
-    (_, DAE.T_INTEGER(__) || DAE.T_BOOL(__)) => SimulationCode.DISCRETE()
-    (_, DAE.T_COMPLEX(__)) => SimulationCode.DATA_STRUCTURE(backendVar.bindExp)
-    _ => @error("Kind $(typeof(backendVar.varKind)) of backend variable not handled.")
+    (BDAE.PARAM(__) || BDAE.CONST(__), DAE.T_COMPLEX(__)) => begin
+      SimulationCode.DATA_STRUCTURE(backendVar.bindExp)
+    end
+    (BDAE.PARAM(__) || BDAE.CONST(__), DAE.T_REAL(__) || DAE.T_BOOL(__) || DAE.T_INTEGER(__)) => begin
+      SimulationCode.PARAMETER(backendVar.bindExp)
+    end
+    (_, DAE.T_INTEGER(__)) => begin
+      SimulationCode.DISCRETE()
+    end
+    #= If none of the cases above match =#
+    (BDAE.DISCRETE(__), _) => begin
+      SimulationCode.DISCRETE()
+    end
+    _ => begin
+      @error("Variable: $(backendVar.varName) \n Category: $(typeof(backendVar.varKind)).\n Type: $(typeof(backendVar.varType)) of backend variable not handled.\n")
+    end
   end
 end
 
@@ -103,8 +117,15 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
    whenEqs::Vector{BDAE.WHEN_EQUATION},
    ifEqs::Vector{BDAE.IF_EQUATION},
    structuralTransitions::Vector{BDAE.Equation}) = allocateAndCollectSimulationEquations(equations)
-  #= Gather all irreductable variables =#
-  local irreductableVars::Vector{String} = vcat(occVars, getIrreductableVars(ifEqs, whenEqs, allBackendVars, stringToSimVarHT))
+  #=
+    Gather all irreductable variables.
+    NB: Should also include variables affected somehow with by a structural change.
+  =#
+  local irreductableVars::Vector{String} = vcat(occVars,
+                                                getIrreductableVars(ifEqs,
+                                                                    whenEqs,
+                                                                    allBackendVars,
+                                                                    stringToSimVarHT))
   (resEqs, irreductableVars) = handleZimmerThetaConstant(resEqs, irreductableVars, stringToSimVarHT)
   #=  Convert the structural transistions to the simcode representation. =#
   if ! isempty(shared.DOCC_equations)
@@ -165,7 +186,7 @@ function computeSharedVariables(auxEquationSystems)
   local setOfVariables = []
   local result = String[]
   for auxSystem in auxEquationSystems
-    namesAsIdentifiers = map(getLastIdentOfVar,
+    namesAsIdentifiers = map(getInnerIdentOfVar,
                              filter(BDAEUtil.isStateOrVariable, auxSystem.orderedVars))
     push!(setOfVariables, namesAsIdentifiers)
   end
@@ -174,6 +195,7 @@ function computeSharedVariables(auxEquationSystems)
   else
     String[]
   end
+  @info "result" result
   #= Returns the set of common variables =#
   return result
 end

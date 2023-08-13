@@ -24,9 +24,10 @@ function getElementFromSCodeProgram(inIdent::String, inClass::SCode.Element)
 end
 
 """
-  Given a name sets that element to a new value.
-  It then returns the modified SCodeProgram.
-Currently254 it is assumed to be at the top level of the class.
+Given a name sets that element to a new value.
+It then returns the modified SCodeProgram.
+Currently, it is assumed to be at the top level of the class.
+
 TODO: Fix for sublevels as well
 """
 function setElementInSCodeProgram!(inIdent::String, newValue::T, inClass::SCode.Element) where {T}
@@ -98,22 +99,26 @@ function createNewU0(symsOfOldProblem::Vector{Symbol},
                      initialValues,
                      integrator,
                      specialCase)
-#  @debug "Length of old and new" length(symsOfOldProblem) length(symsOfNewProblem)
+  # @debug "Length of old and new" length(symsOfOldProblem) length(symsOfNewProblem)
+  @info "Initial values" integrator.u
   local newU0 = Float64[last(initialValues[idx]) for idx in 1:length(symsOfNewProblem)]
+  @info "symsOfNewProblem" symsOfOldProblem
+  @info "symsOfNewProblem" symsOfNewProblem
   local variableNamesOldProblem = RuntimeUtil.convertSymbolsToStrings(symsOfOldProblem)
   local variableNamesNewProblem = RuntimeUtil.convertSymbolsToStrings(symsOfNewProblem)
-  @debug variableNamesOldProblem
-  @debug variableNamesNewProblem
+  @info "variableNamesOldProblem" variableNamesOldProblem
+  @info "variableNamesNewProblem" variableNamesNewProblem
   #= It was assumed to only be real variable not discretes, which might have other indices? =#
   local variableNamesWithoutPrefixesOP
   local variableNamesWithoutPrefixesNP
   if ! specialCase
-    variableNamesWithoutPrefixesOP = [replace(k, r".*_" => "") for k in variableNamesOldProblem]
-    variableNamesWithoutPrefixesNP = [replace(k, r".*_" => "") for k in variableNamesNewProblem]
-  else
+    #= _Remove the prefixes of the variable names <prefix>_<suffix> => <suffix> =#
+    variableNamesWithoutPrefixesOP = String[replace(k, r".*_" => "") for k in variableNamesOldProblem]
+    variableNamesWithoutPrefixesNP = String[replace(k, r".*_" => "") for k in variableNamesNewProblem]
+  else #= In the special case all the indices are the same as they where before the transformation. =#
     return integrator.u
   end
-  local largestProblem = if length(variableNamesOldProblem) > length(variableNamesOldProblem)
+  local largestProblem = if length(variableNamesOldProblem) > length(variableNamesNewProblem)#This is wrong adjust.
     variableNamesWithoutPrefixesOP
   else
     variableNamesWithoutPrefixesNP
@@ -432,7 +437,7 @@ function getVariableEqDepedenceViaIdx(idx::Int, system)
       push!(totalDependencies, equationIndex)
     end
   end
-  #= We now have All indices of the variables our equation depends on =#
+  #= We now have all indices of the variables our equation depends on =#
   return totalDependencies
 end
 

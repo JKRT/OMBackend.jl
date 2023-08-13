@@ -298,6 +298,10 @@ function isState(kind::BDAE.VarKind)
   return res
 end
 
+function isState(var::BDAE.VAR)
+  isState(var.varKind)
+end
+
 function isDiscrete(kind::BDAE.VarKind)
   res = @match kind begin
     BDAE.DISCRETE(__) => true

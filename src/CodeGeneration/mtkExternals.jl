@@ -50,8 +50,11 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE  S
 
 
 #=
-This file contains "hacks.
-This is done in order to get the equations on a MTK compatible format before calling functions such as structurally simplify."
+This file contains "hacks".
+This is done in order
+to get the equations on a MTK compatible format before calling functions such as structurally simplify.
+TODO:
+!Adjust the uncessary string conversions!
 =#
 
 #=
@@ -65,7 +68,6 @@ const D = Differential(t)
   Temporary rewrite function. Not very pretty...
   Original code by Chris R. Expanded to fix terms of type X * D(Y).
   The solution to solve it is not pretty and is probably flaky.
-
 #istree returns true if x is a term. If true, operation, arguments must also be defined for x appropriately.
 """
 function move_diffs(eq::Equation; rewrite)
@@ -119,7 +121,7 @@ function rewriteEquations(edeqs, iv, eVars, ePars, simCode)
   local der = ModelingToolkit.Differential(t)
   #= Remove the t's =#
   eVars = [Symbol(replace(string(i), "(t)" => "")) for i in eVars]
-  eVars = vcat(eVars, [Symbol("combi_Population_Lookup_bn_y")])
+  #Temporary fix for the ESCIMO climate model: eVars = vcat(eVars, [Symbol("combi_Population_Lookup_bn_y")])
   preEval = quote
     vars = ModelingToolkit.@variables begin
       $(eVars...)
@@ -138,9 +140,9 @@ function rewriteEquations(edeqs, iv, eVars, ePars, simCode)
     eval(generateExternalRuntimeImport(simCode))
   end
   #=
-    Register all functions s.t they can be used by the symbolic transformations.
+  Register all functions s.t they can be used by the symbolic transformations.
   =#
-    #= Delay evaluation of the register expression until we have constructed the =#
+  #= Delay evaluation of the register expression until we have constructed the functions =#
   local ftrs = generateRegisterCallsForCallExprs(simCode; funcArgGen = AlgorithmicCodeGeneration.generateIOL)
   for f in ftrs
     eval(f)
@@ -162,26 +164,23 @@ function rewriteEquations(edeqs, iv, eVars, ePars, simCode)
     eqStr = string(eq)
     if (contains(eqStr, "Differential")) # TODO expensive comp! Needs to be optimized.
     req = move_diffs(eq, rewrite = remove_diffs)
-      @info "Left hand side of the equation" req.lhs
+      #@info "Left hand side of the equation" req.lhs
       if req.lhs isa Real
         push!(rewrittenDeqs, req)
       elseif !(req.lhs in usedStates)
-        @info "Not a duplicate" req.lhs
-        @info "Used equations are" usedStates
+        #@info "Not a duplicate" req.lhs
+        #@info "Used equations are" usedStates
         push!(rewrittenDeqs, req)
         push!(usedStates, req.lhs)
       else
-        @info "Duplicate:" req.lhs
+        #@info "Duplicate:" req.lhs
         push!(rewrittenDeqs, eq)
       end
     else
       push!(rewrittenDeqs, eq)
     end
   end
-  #println(debugRewrite(rewrittenDeqs, iv, vars, parameters; separator="\n"))
-  #fail()
-  println("Rewritten number of deqs:")
-  println(length(rewrittenDeqs))
+  OMBackend.debugWrite("codeAfterBackendPreprocessing.log", debugRewrite(rewrittenDeqs, iv, vars, parameters; separator="\n"))
   return rewrittenDeqs
 end
 
@@ -189,8 +188,8 @@ end
 This function evaluates the supplied equations.
 In the case we are unable to evaluate them, we currently hack it by some string conversions.
 TODO:
-Fix me do this the proper way.
-This routine is way to slow currently...
+  Fix me do this the proper way.
+  This routine is way way to slow currently...
 """
 function evalEDeqs(edeqs)
   local deqs = []
@@ -307,17 +306,22 @@ simplification will allow models where `n_states = n_equations - n_inputs`.
 """
 TODO:
 Document why some parts here are outcommented
+
+The irreductable variables scheme does not work using plain simplify.
 """
-function structural_simplify(sys::ModelingToolkit.AbstractSystem, io = nothing; simplify = false, kwargs...)
+function structural_simplify(sys::ModelingToolkit.AbstractSystem,
+                             io = nothing;
+                             simplify = false,
+                             kwargs...)
   @info "Calling custom structural_simplify"
   #sys = ModelingToolkit.ode_order_lowering(sys)
   #sys = ModelingToolkit.dae_index_lowering(sys)
   #sys = ModelingToolkit.tearing(sys; simplify = simplify)
-  # if simplify
-  #   sys = ModelingToolkit.structural_simplify(sys, simplify = simplify)
-  # else
-  #   sys = ModelingToolkit.structural_simplify(sys, simplify = simplify)
-  # end TEMP REMEMBER TO UNCOMMENT ABOVE
-  #sys = ModelingToolkit.structural_simplify(sys, simplify = false)
+  if simplify #Note report this to the developers of modeling toolkit.
+    sys = ModelingToolkit.ode_order_lowering(sys)
+    sys = ModelingToolkit.dae_index_lowering(sys)
+    sys = ModelingToolkit.tearing(sys; simplify = false)
+  end
+  sys = ModelingToolkit.structural_simplify(sys, simplify = true)
   return sys
  end
