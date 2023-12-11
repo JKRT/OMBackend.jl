@@ -268,18 +268,11 @@ function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arr
     Get all component references.
     If this set is empty it means that we have a condition involving continuous time
   =#
-  local allCrefs = Util.getAllCrefs(wEq.condition)
-  local isContinuousCond::Bool = false
-  if isone(length(allCrefs)) && string(first(allCrefs)) == "time"
-    isContinuousCond = true
-  else
-    for cref in allCrefs
-      local ht = simCode.stringToSimVarHT
-      local var = last(ht[string(cref)])
-      #= If one variable in the condition is continuous treat it as a conditinous callback =#
-      isContinuousCond = isContinuousCond || !(SimulationCode.isDiscrete(var))
-    end
+  local isPeriodic = @match wEq.condition begin
+    DAE.CALL(Absyn.IDENT("sample"), args, attrs) => true
+    _ => false
   end
+  local isContinuousCond::Bool = isContinousCondition(wEq.condition, simCode)
   if isContinuousCond
     local isElseIf = if wEq.elsewhenPart !== nothing
       local elsePart = wEq.elsewhenPart.data
@@ -323,8 +316,16 @@ function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arr
       end
     else #= No elseif =#
        quote
-        $(Symbol("condition$(callbacks)")) = (x,t,integrator) -> begin
-          $(expToJuliaExp(cond, simCode))
+         $(Symbol("condition$(callbacks)")) = (x,t,integrator) -> begin
+           #= Sometime the index is first known at runtime =#
+           local xs = $(map(x -> Symbol(string(x) * "(t)"),
+                            Util.getAllCrefs(cond)))
+           #println($(cond))
+           #@info "Initial values of xs" xs
+           #@info "OMBackend.CodeGeneration.getSyms" OMBackend.CodeGeneration.getSyms(integrator.f)
+           xs = indexin(xs, OMBackend.CodeGeneration.getSyms(integrator.f))
+           #@info "xs after indexin" xs
+          $(expToJuliaExp(cond, simCode;))
         end
         $(Symbol("affect$(callbacks)!")) = (integrator) -> begin
           @info "Calling affect! at $(integrator.t)"
@@ -332,12 +333,12 @@ function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arr
           local x = integrator.u
           if integrator.dt == 0.0
             println("integrator.dt was zero. Aborting.")
-#            fail()
+            fail()
           end
           @info "t + dt = " t
-          if (Bool($(expToJuliaExp(wEq.condition, simCode))))
-            $(whenStmts...)
-          end
+          #if (Bool($(expToJuliaExp(wEq.condition, simCode))))
+          $(whenStmts...)
+          #end
         end
         $(Symbol("cb$(callbacks)")) = ContinuousCallback($(Symbol("condition$(callbacks)")),
                                                          $(Symbol("affect$(callbacks)!")),
@@ -347,6 +348,26 @@ function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arr
             eqToJulia(wEq.elsewhenPart.data, simCode, 0)
           end)
       end
+    end
+  elseif isPeriodic
+    @match DAE.CALL(Absyn.IDENT("sample"), args, attrs) = wEq.condition
+    @match start <| interval <| tail = args
+    quote
+      $(Symbol("affect$(callbacks)!")) = (integrator) -> begin
+        @info "Calling affect! at $(integrator.t)"
+        local t = integrator.t + integrator.dt
+        local x = integrator.u
+        if integrator.dt == 0.0
+          println("integrator.dt was zero. Aborting.")
+          fail()
+        end
+        @info "t + dt = " t
+        #if (Bool($(expToJuliaExp(wEq.condition, simCode))))
+        $(whenStmts...)
+        #end
+      end
+      Δt = $(expToJuliaExp(interval, simCode))
+      $(Symbol("cb$(callbacks)")) = PeriodicCallback($(Symbol("affect$(callbacks)!")), Δt)
     end
   else #= If none of the variables in the condition was continuous.. =#
     quote
@@ -414,6 +435,13 @@ function createWhenStatements(whenStatements::List, simCode::SimulationCode.SIM_
         if typeof(var.varKind) === SimulationCode.STATE
           push!(res, quote
                 integrator.u[$(index)] = $(expToJuliaExp(wStmt.value, simCode))
+                end)
+
+        elseif var.varKind isa SimulationCode.ALG_VARIABLE
+          push!(res, quote
+                  println(integrator.u[$(index)])
+                  integrator.u[$(index)] = $(expToJuliaExp(wStmt.value, simCode))
+                  println(integrator.u[10])
                 end)
         else
           throw("Unimplemented branch for: $(var.varKind)")
@@ -508,8 +536,11 @@ function expToJuliaExp(exp::DAE.Exp, context::C, varSuffix=""; varPrefix="x")::E
         end
       end
       DAE.LBINARY(exp1 = e1, operator = op, exp2 = e2) => begin
+        l = expToJuliaExp(e1, context, varPrefix=varPrefix)
+        o = DAE_OP_toJuliaOperator(op)
+        r = expToJuliaExp(e2, context, varPrefix=varPrefix)
         quote
-          $(expToJuliaExp(e1, context, varPrefix=varPrefix) + " " + SimulationCode.string(op) + " " + expToJuliaExp(e2, simCode, varPrefix=varPrefix))
+          $o($(l), $(r))
         end
       end
       DAE.RELATION(exp1 = e1, operator = op, exp2 = e2) => begin

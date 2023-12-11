@@ -328,7 +328,7 @@ function DAE_OP_toJuliaOperator(@nospecialize(op::DAE.Operator))
       DAE.POW_SCALAR_ARRAY() => :^
       DAE.POW_ARR() => :^
       DAE.POW_ARR2() => :^
-      DAE.AND() => :(&&)
+      DAE.AND() => :(&)
       DAE.OR() => :(||)
       DAE.NOT() => :(!)
       DAE.LESS() => :(<)
@@ -1056,4 +1056,28 @@ function writeEqsToFile(elems::Vector{Expr}, filename)
   println(buffer, "Number of items:" * string(length(elems)))
   println(buffer, "------------------------------------")
   write(filename, String(take!(buffer)))
+end
+
+"""
+  Returns true if there is no discrete variables in the condition.
+"""
+function isContinousCondition(cond::DAE.Exp, simCode)
+  println("Check if cond is cont.")
+  println(string(cond))
+  local allCrefs = Util.getAllCrefs(cond)
+  println(allCrefs)
+  isContinuousCond = false
+  if isone(length(allCrefs)) && string(first(allCrefs)) == "time"
+    isContinuousCond = true
+  else
+    for cref in allCrefs
+      println(string(cref))
+      local ht = simCode.stringToSimVarHT
+      local var = last(ht[string(cref)])
+      #= If one variable in the condition is continuous treat it as a conditinous callback =#
+      isContinuousCond = isContinuousCond || !(SimulationCode.isDiscrete(var))
+    end
+  end
+  println(isContinuousCond)
+  return isContinuousCond
 end

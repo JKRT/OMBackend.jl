@@ -1,6 +1,8 @@
 module RuntimeUtil
 
 import Absyn
+import DifferentialEquations
+import DifferentialEquations.ReturnCode
 import ListUtil
 import ModelingToolkit
 import OMBackend
@@ -14,26 +16,49 @@ import SCode
 using MetaModelica
 
 """
-  Wrapper to a function in SCode util.
-  inIdent is a string since frontend automatically remove certain parameters.
-  TODO: Also search for components in the innermost class.
+  Wrapper to a function in SCodeUtil.
 """
 function getElementFromSCodeProgram(inIdent::String, inClass::SCode.Element)
-  result = SCodeUtil.getElementNamed(inIdent, inClass)
+  result::SCode.Element = SCodeUtil.getElementNamed(inIdent, inClass)
   return result
 end
 
 """
+  Given a list of prefixes on the format <A>.<B>.<C>
+  returns the element pointed to by C.
+"""
+function getElementFromSCodeProgram(prefixes::Vector{String}, inClass::SCode.Element)
+  local currentElement::SCode.Element = inClass
+  for p in prefixes[2:end]
+    currentElement = getElementFromSCodeProgram(p, currentElement)
+  end
+  return currentElement
+end
+
+"""
+```
+setElementInSCodeProgram!(activeModeName,inIdent::String, newValue::T, inClass::SCode.Element)
+```
 Given a name sets that element to a new value.
 It then returns the modified SCodeProgram.
 Currently, it is assumed to be at the top level of the class.
+A SCodeElement is either a component like a variable or a class.
+See SCode.jl for info about the SCode representation.
 
 TODO: Fix for sublevels as well
 """
-function setElementInSCodeProgram!(inIdent::String, newValue::T, inClass::SCode.Element) where {T}
+function setElementInSCodeProgram!(activeModeName, inIdent::String, newValue::T, inClass::SCode.Element) where {T}
+  #=
+  Get the class name. The active class is required to be top level currently.
+  =#
+  write("modename.log", activeModeName)
+  local activeModeNamePrefixes::Vector{String} = map(string, split(activeModeName, "."))
+  local activeClass  = getElementFromSCodeProgram(activeModeNamePrefixes, inClass)
+  str = OMBackend.JuliaFormatter.format_text(string(activeClass))
+  write("active.log", str)
   #= Get all elements from the class together with the corresponding names =#
-  local elementToReplace = getElementFromSCodeProgram(inIdent, inClass)::SCode.Element
-  local elements = listArray(SCodeUtil.getClassElements(inClass))::Vector{SCode.Element}
+  local elementToReplace::SCode.Element = getElementFromSCodeProgram(inIdent, activeClass)
+  local elements::Vector{SCode.Element} = listArray(SCodeUtil.getClassElements(activeClass))
   local i = 1
   local indexOfElementToReplace = 0
   local outClass = inClass
@@ -48,7 +73,9 @@ function setElementInSCodeProgram!(inIdent::String, newValue::T, inClass::SCode.
   @assign modification.binding = makeCondition(newValue)
   @assign elementToReplace.modifications = modification
   elements[indexOfElementToReplace] = elementToReplace
+  #=TODO: It is a specific class that should be replaced here. Not all elements of the topmost class =#
   @assign outClass.classDef.elementLst = arrayList(elements)
+  write("modified.log", OMBackend.JuliaFormatter.format_text(string(outClass)))
   return outClass
 end
 
@@ -82,6 +109,14 @@ function convertSymbolsToStrings(symbols::Vector{Symbol})
 end
 
 """
+```
+createNewU0(symsOfOldProblem::Vector{Symbol},
+                     symsOfNewProblem::Vector{Symbol},
+                     newHT,
+                     initialValues,
+                     integrator,
+                     specialCase)
+```
   This function maps variables between two models during a structural change with recompilation.
   It returns a new vector of u₀ variables to initialize the new model.
   We do so by assigning the old values when the structural change occured for all variables
@@ -95,10 +130,10 @@ For now we return the array for the special case with dynamic overconstrained co
 """
 function createNewU0(symsOfOldProblem::Vector{Symbol},
                      symsOfNewProblem::Vector{Symbol},
-                     newHT,
                      initialValues,
                      integrator,
                      specialCase)
+  #=TODO: It was assumed to only be real variable not discretes, which might have other indices? =#
   # @debug "Length of old and new" length(symsOfOldProblem) length(symsOfNewProblem)
   @info "Initial values" integrator.u
   local newU0 = Float64[last(initialValues[idx]) for idx in 1:length(symsOfNewProblem)]
@@ -108,36 +143,42 @@ function createNewU0(symsOfOldProblem::Vector{Symbol},
   local variableNamesNewProblem = RuntimeUtil.convertSymbolsToStrings(symsOfNewProblem)
   @info "variableNamesOldProblem" variableNamesOldProblem
   @info "variableNamesNewProblem" variableNamesNewProblem
-  #= It was assumed to only be real variable not discretes, which might have other indices? =#
-  local variableNamesWithoutPrefixesOP
-  local variableNamesWithoutPrefixesNP
-  if ! specialCase
-    #= _Remove the prefixes of the variable names <prefix>_<suffix> => <suffix> =#
-    variableNamesWithoutPrefixesOP = String[replace(k, r".*_" => "") for k in variableNamesOldProblem]
-    variableNamesWithoutPrefixesNP = String[replace(k, r".*_" => "") for k in variableNamesNewProblem]
-  else #= In the special case all the indices are the same as they where before the transformation. =#
+  #= In the special case all the indices are the same as they where before the transformation. =#
+  if  specialCase
     return integrator.u
   end
-  local largestProblem = if length(variableNamesOldProblem) > length(variableNamesNewProblem)#This is wrong adjust.
+  #= _Remove the prefixes of the variable names <prefix>_<suffix> => <suffix> =#
+  local variableNamesWithoutPrefixesOP = String[replace(k, r".*_" => "")
+                                                for k in variableNamesOldProblem]
+  @info "variableNamesWithoutPrefixesOP" variableNamesWithoutPrefixesOP
+  local variableNamesWithoutPrefixesNP = String[replace(k, r".*_" => "")
+                                                for k in variableNamesNewProblem]
+  @info "variableNamesWithoutPrefixesOP" variableNamesWithoutPrefixesOP
+  local largestProblem = if length(variableNamesOldProblem) > length(variableNamesNewProblem)
     variableNamesWithoutPrefixesOP
   else
     variableNamesWithoutPrefixesNP
   end
   for v in largestProblem
     local varNameWithoutPrefix = v
-    if varNameWithoutPrefix in variableNamesWithoutPrefixesOP && varNameWithoutPrefix in variableNamesWithoutPrefixesNP
+    @info "Checking variable" varNameWithoutPrefix
+    if (varNameWithoutPrefix in variableNamesWithoutPrefixesOP) && (varNameWithoutPrefix in variableNamesWithoutPrefixesNP)
       local oldIndices = findall((x)-> x == varNameWithoutPrefix, variableNamesWithoutPrefixesOP)
-      @assert(length(oldIndices) == 1, "Zero or more than one variable with that name. Size of oldIndicies was $(length(oldIndices)). Name was $(v)")
+      @info "oldIndices" oldIndices
+      @assert(length(oldIndices) == 1,
+              "Zero or more than one variable with that name. Size of oldIndicies was $(length(oldIndices)). Name was $(v)")
       idxOldVar = first(oldIndices)
       #= Locate the index of a variable with that name in the set of new variables=#
       local indices = findall((x)-> x == varNameWithoutPrefix, variableNamesWithoutPrefixesNP)
+      @info "indices" indices
       #= I assume here that there are no duplicate variables =#
-      @assert(length(indices) == 1, "Zero or more than one variable with that name. Size of indices was $(length(indices)). Name was $(v)")
-      local varNameNew = variableNamesNewProblem[first(indices)]
-      local idxNewVar = getIdxFromEntry(newHT[varNameNew])
+      @assert(length(indices) == 1,
+              "Zero or more than one variable with that name. Size of indices was $(length(indices)). Name was $(v)")
+      local idxNewVar = first(indices)
       newU0[idxNewVar] = integrator.u[idxOldVar]
     end
   end
+  @info "newU0" newU0
   return newU0
 end
 
@@ -178,7 +219,6 @@ function createNewFlatModel(flatModel,
     println(OMFrontend.Main.toString(e))
   end
   println("********************************************************************")
-
   # println("Existing equations:")
   # println("********************************************************************")
   # @debug "Length of existing system:" length(newFlatModel.equations)
@@ -297,18 +337,18 @@ function resolveDOOCConnections(flatModel, name)
 end
 
 """
-author:johti17
+Author:johti17
 Iterative DFS:
-  Finds the path for a root variable passed as inV
+  Finds the path for a root variable passed as inV (in Vertices)
 """
 function findPath(g::Dict{String, Vector{String}}, inV)
   local v = OMFrontend.Main.toString(inV)
   local S = String[]
   local discovered = String[] #= Should ideally be int instead... =#
   push!(S, v)
-  while  ! isempty(S)
+  while !isempty(S)
     local v = pop!(S)
-    if ! (v in discovered)
+    if !(v in discovered)
       push!(discovered, v)
       neighbours = g[v]
       for n in neighbours
@@ -488,5 +528,29 @@ function getConstantValueOfEq(eqIdx::Int, system)::Float64
   return equation.rhs
 end
 
+
+function getCallbackSet(problem)
+  last(last(problem.kwargs))
+end
+
+"""
+```
+isReturnCodeSuccess(integrator::OrdinaryDiffEq.ODEIntegrator)
+```
+Returns true if the current return code of the supplied integrator argument is `Success`.
+"""
+function isReturnCodeSuccess(integrator::DifferentialEquations.OrdinaryDiffEq.ODEIntegrator)
+  integrator.sol.retcode == ReturnCode.Success
+end
+
+"""
+```
+isReturnCodeDefault(integrator::DifferentialEquations.OrdinaryDiffEq.ODEIntegrator)
+```
+Returns true if the current return code of the supplied integrator argument is `Default`.
+"""
+function isReturnCodeDefault(integrator::DifferentialEquations.OrdinaryDiffEq.ODEIntegrator)
+  integrator.sol.retcode == ReturnCode.Default
+end
 
 end #= module =#

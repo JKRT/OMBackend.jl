@@ -582,7 +582,7 @@ function getIrreductableVars(ifEquations::Vector{BDAE.IF_EQUATION},
     Remove them from the list
   =#
 
-  local knownIrreductables::Vector{BDAE.VAR} = algebraicAndStateVariables #filter(BDAEUtil.isState, algebraicAndStateVariables)
+  local knownIrreductables::Vector{BDAE.VAR} = filter((v) -> BDAEUtil.isState(v) , algebraicAndStateVariables)
   @info "Adding all states as irreductable variables" map(x->string(x.varName), knownIrreductables)
   push!(irreductables, map(x->string(x.varName), knownIrreductables))
   irreductables = collect(Iterators.flatten(irreductables))
@@ -635,4 +635,27 @@ end
 
 function getSimVarByName(name::String, ht::AbstractDict{String, Tuple{Integer, SimVar}})
   return last(ht[name])
+end
+
+function makeDummyVariableName(equationSystemName::String; idx::Int = 1)
+  return Base.string(equationSystemName, "__dummy", idx)
+end
+
+"""
+  Creates a dummy residual.
+  The dummy residual specifies that the derivative of a dummy variable is zero.
+  0 = dx(<dummy_name><idx>)/dt - 0
+"""
+function makeDummyResidualEquation(equationSystemName::String, idx::Int = 1)
+  local dummyName = makeDummyVariableName(equationSystemName; idx = idx)
+  local crefIdent = DAE.CREF_IDENT(dummyName, DAE.T_REAL_DEFAULT, MetaModelica.list())
+  local crefExpression = DAE.CREF(crefIdent, DAE.T_REAL_DEFAULT)
+  return BDAE.RESIDUAL_EQUATION(
+    DAE.BINARY(
+      DAE.CALL(Absyn.IDENT("der"), crefExpression <| MetaModelica.list(), DAE.callAttrBuiltinReal),
+      DAE.SUB(DAE.T_REAL_DEFAULT),
+      DAE.RCONST(0.0)),
+    DAE.T_SOURCEINFO_DEFAULT,
+    BDAE.EQ_ATTR_DEFAULT_DYNAMIC,
+  )
 end

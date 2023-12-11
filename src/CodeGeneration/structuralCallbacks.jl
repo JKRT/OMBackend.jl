@@ -48,21 +48,41 @@ end
 """
 function createStructuralCallback(simCode, simCodeStructuralTransition::SimulationCode.EXPLICIT_STRUCTURAL_TRANSISTION, idx)
   local structuralTransition = simCodeStructuralTransition.structuralTransition
-  local cond = transformToZeroCrossingCondition(structuralTransition.transistionCondition)
   local callbackName = createCallbackName(structuralTransition, 0)
-  quote
-    function $(Symbol(callbackName))(destinationSystem)
-      #= Represents a structural change. =#
-      local structuralChange = OMBackend.Runtime.StructuralChange($(structuralTransition.toState), false, destinationSystem)
-      #= The affect simply activates the structural callback informing us to generate code for a new system =#
-      function affect!(integrator)
-        structuralChange.structureChanged = true
+
+  if isContinousCondition(structuralTransition.transistionCondition, simCode)
+    local cond = transformToZeroCrossingCondition(structuralTransition.transistionCondition)
+    quote
+      function $(Symbol(callbackName))(destinationSystem, callbacks)
+        #= Represents a structural change. =#
+        local structuralChange = OMBackend.Runtime.StructuralChange($(structuralTransition.toState), false, destinationSystem, callbacks)
+        #= The affect simply activates the structural callback informing us to generate code for a new system =#
+        function affect!(integrator)
+          structuralChange.structureChanged = true
+        end
+        function condition(x, t, integrator)
+          return $(expToJuliaExp(cond, simCode))
+        end
+        local cb = ContinuousCallback(condition, affect!)
+        return (cb, structuralChange)
       end
-      function condition(x, t, integrator)
-        return $(expToJuliaExp(cond, simCode))
+    end
+  else
+    quote
+      function $(Symbol(callbackName))(destinationSystem, callbacks)
+        #= Represents a structural change. =#
+        local structuralChange = OMBackend.Runtime.StructuralChange($(structuralTransition.toState), false, destinationSystem, callbacks)
+        #= The affect simply activates the structural callback informing us to generate code for a new system =#
+        function affect!(integrator)
+          println("Potential structural change triggered at the callback " * $(callbackName) * " at $(integrator.t)")
+          structuralChange.structureChanged = true
+        end
+        function condition(x, t, integrator)
+          return $(expToJuliaExp(structuralTransition.transistionCondition, simCode))
+        end
+        local cb = DiscreteCallback(condition, affect!)
+        return (cb, structuralChange)
       end
-      local cb = ContinuousCallback(condition, affect!)
-      return (cb, structuralChange)
     end
   end
 end
@@ -115,11 +135,12 @@ end
 TODO:
 Also make sure to create possible other elements in the structural when equation
 """
-function createStructuralCallback(simCode, simCodeStructuralTransition::SimulationCode.IMPLICIT_STRUCTURAL_TRANSISTION, idx)
+function createStructuralCallback(simCode,
+                                  simCodeStructuralTransition::SimulationCode.IMPLICIT_STRUCTURAL_TRANSISTION,
+                                  idx)
   local structuralTransition = simCodeStructuralTransition.structuralWhenEquation
   local callbackName = createCallbackName(structuralTransition, idx)
   local whenCondition = structuralTransition.whenEquation.condition
-  local zeroCrossingCond = transformToZeroCrossingCondition(whenCondition)
   local stmtLst = structuralTransition.whenEquation.whenStmtLst
   local stringToSimVarHT = simCode.stringToSimVarHT
   (whenOperators, recompilationDirective) = createStructuralWhenStatements(stmtLst, simCode)
@@ -127,11 +148,17 @@ function createStructuralCallback(simCode, simCodeStructuralTransition::Simulati
     function affect!(integrator)
       #= Expand the when operators =#
       $(whenOperators...)
-      #= Change the struct to mark that a structural change have occured=#
+      println("Callback triggered at $(integrator.t)")
+      println("tprev at $(integrator.tprev)")
       structuralChange.structureChanged = true
+      integrator.just_hit_tstop = true
+      @info "integrator.t" integrator.t
+      structuralChange.timeAtChange = integrator.t
+      structuralChange.solutionAtChange = integrator.sol
+      terminate!(integrator, ReturnCode.Success)
     end
   end
-  callback = @match zeroCrossingCond begin
+  callback = @match whenCondition begin
     DAE.CALL(Absyn.IDENT("sample"), args, attrs) => begin
       @match start <| interval <| tail = args
       quote
@@ -140,13 +167,25 @@ function createStructuralCallback(simCode, simCodeStructuralTransition::Simulati
         local cb = PeriodicCallback(affect!, Δt)
       end
     end
-    _ => begin
-      quote
-        $(affect)
-        function condition(u, t, integrator)
-          return $(expToJuliaExpMTK(zeroCrossingCond, simCode))
+    _ #=Continuous  or discrete =# => begin
+      if isContinousCondition(whenCondition, simCode)
+        local zeroCrossingCond = transformToZeroCrossingCondition(whenCondition)
+        quote
+          $(affect)
+          function condition(u, t, integrator)
+            return $(expToJuliaExpMTK(zeroCrossingCond, simCode))
+          end
+          local cb = ContinuousCallback(condition, affect!)
         end
-        local cb = ContinuousCallback(condition, affect!)
+      else #= Discrete =#
+        quote
+          $(affect)
+          function condition(u, t, integrator)
+            return $(expToJuliaExpMTK(whenCondition, simCode))
+          end
+          local cb = ContinuousCallback(condition, affect!)
+        end
+
       end
     end
   end
@@ -193,10 +232,12 @@ function createStructuralCallback(simCode, simCodeStructuralTransition::Simulati
                                                                                false,
                                                                                $(metaModel),
                                                                                modification,
-                                                                               stringToSimVarHT)
+                                                                               stringToSimVarHT,
+                                                                               0.0,
+                                                                               Float64[])
       #=
         TODO, here we need to change the code generation
-        to encompass other types of callbacks not relying on zero crossing functions...
+        to encompass other types of callbacks not based on zero crossing functions...
       =#
       #= The affect simply activates the structural callback informing us to generate code for a new system =#
       $(callback)
@@ -248,9 +289,9 @@ function createStructuralAssignment(simCode, simCodeStructuralTransition::Simula
   local integratorCallbackName = structuralTransition.fromState * structuralTransition.toState * "_CALLBACK"
   local structuralChangeStructure = structuralTransition.fromState * structuralTransition.toState * "_STRUCTURAL_CHANGE"
   quote
-    ($(toStateProblem), _, _, _, _, _) = ($(toStateModel))(tspan)
-    ($(Symbol(integratorCallbackName)), $(Symbol(structuralChangeStructure))) = $(Symbol(callbackName))($(toStateProblem))
-    push!(structuralCallbacks, $(Symbol(structuralChangeStructure)))
+    ($(toStateProblem), callbacks, _, _, _, _) = ($(toStateModel))(tspan)
+    ($(Symbol(integratorCallbackName)), $(Symbol(structuralChangeStructure))) = $(Symbol(callbackName))($(toStateProblem), callbacks)
+    push!(structuralCallbacks, $(Symbol(structuralChangeStructure )))
     push!(callbackSet, ($(Symbol(integratorCallbackName))))
   end
 end
@@ -262,8 +303,8 @@ end
 function createStructuralAssignment(simCode, simCodeStructuralTransition::SimulationCode.IMPLICIT_STRUCTURAL_TRANSISTION, idx::Int)
   local structuralTransition = simCodeStructuralTransition.structuralWhenEquation
   local callbackName = createCallbackName(structuralTransition, idx)
-  local integratorCallbackName = callbackName * "_CALLBACK"
-  local structuralChangeStructure = callbackName * "_STRUCTURAL_CHANGE"
+  local integratorCallbackName = string(callbackName, "_CALLBACK")
+  local structuralChangeStructure = string(callbackName, "_STRUCTURAL_CHANGE")
   quote
     ($(Symbol(integratorCallbackName)), $(Symbol(structuralChangeStructure))) = $(Symbol(callbackName))()
     push!(structuralCallbacks, $(Symbol(structuralChangeStructure)))
@@ -274,8 +315,8 @@ end
 function createStructuralAssignment(simCode, simCodeStructuralTransition::SimulationCode.DYNAMIC_OVERCONSTRAINED_CONNECTOR_EQUATION, idx::Int)
   local structuralTransition = simCodeStructuralTransition.structuralDOCC_equation
   local callbackName = createCallbackName(structuralTransition, idx)
-  local integratorCallbackName = callbackName * "_CALLBACK"
-  local structuralChangeStructure = callbackName * "_STRUCTURAL_CHANGE"
+  local integratorCallbackName = string(callbackName,  "_CALLBACK")
+  local structuralChangeStructure = string(callbackName, "_STRUCTURAL_CHANGE")
   quote
     ($(Symbol(integratorCallbackName)), $(Symbol(structuralChangeStructure))) = $(Symbol(callbackName))()
     push!(structuralCallbacks, $(Symbol(structuralChangeStructure)))

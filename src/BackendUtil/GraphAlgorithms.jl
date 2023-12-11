@@ -64,10 +64,18 @@ function matching(dict::DataStructures.OrderedDict, n::Int)
   end
   #=Entry of algorithm=#
   local isSingular = false
+  local success::Bool
   for i in 1:n
     vMark = [false for j in 1:n]
     eMark = [false for j in 1:n]
-    success = pathFound(i)
+    try
+      success = pathFound(i)
+    catch e
+      local msg = "Failed to match equations to variables.
+                   A possible reason is that the system is over/under determined."
+      @error msg
+      throw(e)
+    end
     if !success
       isSingular = !success
     end

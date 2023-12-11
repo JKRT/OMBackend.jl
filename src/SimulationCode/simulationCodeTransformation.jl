@@ -93,30 +93,49 @@ end
 
 """
   Transform BDAE-Structure to SimulationCode.SIM_CODE
-  We only handle one equation system for now.
-  mode specifies what mode we should use for code generation.
+  The mode specifies what mode we should use for code generation.
+  Currently the old DAE-mode is deprecated.
+
+```
+transformToSimCode(backendDAE::BDAE.BACKEND_DAE; mode)::SimulationCode.SIM_CODE
+```
 """
 function transformToSimCode(backendDAE::BDAE.BACKEND_DAE; mode)::SimulationCode.SIM_CODE
   transformToSimCode(backendDAE.eqs, backendDAE.shared; mode = mode)
 end
 
 function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode)::SimulationCode.SIM_CODE
-  #=  Fech the main equation system. =#
+  #=  Fech the main equation system along with all subsystems =#
   @match [equationSystem, auxEquationSystems...] = equationSystems
   #= Fetch the different components of the model.=#
-  local allOrderedVars::Vector{BDAE.VAR} = [v  for v in equationSystem.orderedVars]
+  local allOrderedVars::Vector{BDAE.VAR} = BDAE.VAR[v  for v in equationSystem.orderedVars]
   local allSharedVars::Vector{BDAE.VAR} = getSharedVariablesLocalsAndGlobals(shared)
   local allBackendVars = vcat(allOrderedVars, allSharedVars)
   local simVars::Vector{SimulationCode.SIMVAR} = createAndCollectSimulationCodeVariables(allBackendVars, shared.flatModel)
   local occVars = map((v)-> v.name, filter((v) -> isOCCVar(v), simVars))
+  #=
+    Check if the model has state variables, if not introduce a dummy state
+  =#
+  local addDummyState = false
+  if count(isState, simVars) < 1
+    push!(simVars, SIMVAR(makeDummyVariableName(equationSystem.name), NONE(), STATE(), NONE()))
+    local dummyBDAE_Var = BDAE.VAR(DAE.makeDummyCrefIdentOfTypeReal(makeDummyVariableName(equationSystem.name)),
+                                   BDAE.STATE(),
+                                   DAE.T_REAL_DEFAULT)
+    push!(equationSystem.orderedVars, dummyBDAE_Var)
+    push!(allBackendVars, dummyBDAE_Var)
+    addDummyState = true
+  end
   # Assign indices and put all variable into an hash table
   local stringToSimVarHT = createIndices(simVars)
-  local equations = [eq for eq in equationSystem.orderedEqs]
+  local equations = BDAE.Equation[eq for eq in equationSystem.orderedEqs]
   #= Split equations into three parts. Residuals whenEquations and If-equations =#
   (resEqs::Vector{BDAE.RESIDUAL_EQUATION},
    whenEqs::Vector{BDAE.WHEN_EQUATION},
    ifEqs::Vector{BDAE.IF_EQUATION},
-   structuralTransitions::Vector{BDAE.Equation}) = allocateAndCollectSimulationEquations(equations)
+   structuralTransitions::Vector{BDAE.Equation}) = allocateAndCollectSimulationEquations(equations,
+                                                                                         equationSystem.name,
+                                                                                         addDummyState)
   #=
     Gather all irreductable variables.
     NB: Should also include variables affected somehow with by a structural change.
@@ -127,16 +146,23 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
                                                                     allBackendVars,
                                                                     stringToSimVarHT))
   (resEqs, irreductableVars) = handleZimmerThetaConstant(resEqs, irreductableVars, stringToSimVarHT)
-  #=  Convert the structural transistions to the simcode representation. =#
+  #= ...DOCC Handling... =#
   if ! isempty(shared.DOCC_equations)
-    append!(structuralTransitions, shared.DOCC_equations)
+    append!(structuralTransitions,
+            shared.DOCC_equations)
   end
+  #=  Convert the structural transitions to the simcode representation. =#
   local simCodeStructuralTransitions = createSimCodeStructuralTransitions(structuralTransitions)
   #= Sorting/Matching for the set of residual equations (This is used for the start condtions) =#
-  local eqVariableMapping = createEquationVariableBidirectionGraph(resEqs, ifEqs, whenEqs, allBackendVars, stringToSimVarHT)
+  local eqVariableMapping = createEquationVariableBidirectionGraph(resEqs,
+                                                                   ifEqs,
+                                                                   whenEqs,
+                                                                   allBackendVars,
+                                                                   stringToSimVarHT)
   local numberOfVariablesInMapping = length(eqVariableMapping.keys)
   (isSingular, matchOrder, digraph, stronglyConnectedComponents) =
-    matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT; mode = mode)
+    matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping,
+                                             stringToSimVarHT; mode = mode)
   #=
     The set of if equations needs to be handled in a separate way.
     Each branch might contain a separate section of variables etc that needs to be sorted and processed.
@@ -147,12 +173,43 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
                                                                         whenEqs,
                                                                         allBackendVars,
                                                                         stringToSimVarHT)
-  local structuralSubModels = []
+  local structuralSubModels = SIM_CODE[]
   local initialState = initialModeInference(equationSystem)
+  local topVars = String[]
   #= Use recursion to generate submodels =#
-  local sharedVariables = computeSharedVariables(auxEquationSystems)
+  local sharedVariables = if !isempty(auxEquationSystems)
+    computeSharedVariables(auxEquationSystems, allBackendVars)
+  else
+    String[]
+  end
+  #= Elaborate on all structural submodels if they exists =#
   for auxSys in auxEquationSystems
-    push!(structuralSubModels, transformToSimCode([auxSys], shared; mode = mode))
+    #= Add all top equations to the sub models =#
+    for eq in vcat(resEqs, whenEqs, ifEqs)
+      @match eq begin
+        BDAE.RESIDUAL_EQUATION(__) => begin
+          push!(auxSys.orderedEqs, eq)
+        end
+        BDAE.WHEN_EQUATION(__) => begin
+          push!(auxSys.orderedEqs, eq)
+        end
+        BDAE.IF_EQUATION(__) => begin
+          @error "If-equations are not allowed as a top level construct in a model with structural variability"
+          fail()
+        end
+      end
+    end
+    for v in allBackendVars
+      #= Add top level variables to the sub system. These variables are shared. =#
+      push!(auxSys.orderedVars, v)
+    end
+    local subSys = transformToSimCode([auxSys], shared; mode = mode)
+    push!(structuralSubModels, subSys)
+  end
+  if !isempty(auxEquationSystems)
+    for v in allBackendVars
+      push!(topVars, string(v.varName))
+    end
   end
   #= Construct SIM_CODE =#
   SimulationCode.SIM_CODE(equationSystem.name,
@@ -168,6 +225,8 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
                           simCodeStructuralTransitions,
                           structuralSubModels,
                           sharedVariables,
+                          topVars,
+                          if !isempty(auxEquationSystems) vcat(resEqs, whenEqs, ifEqs) else BDAE.Equation[] end,
                           initialState,
                           shared.metaModel,
                           shared.flatModel,
@@ -181,21 +240,29 @@ end
  Compute the state and algebraic variables that exists between one system and possible subsystems.
  We do so by looking at the final identifier for the given auxEquationSystems.
  Foo.x in one system is equal to bar.x in the other system.
+ Furthermore, variables defined at the top level is also added to this set.
+@author:johti17
 """
-function computeSharedVariables(auxEquationSystems)
-  local setOfVariables = []
+function computeSharedVariables(auxEquationSystems, allBackendVars::Vector{BDAE.VAR})
+  local setOfVariables = Vector{String}[]
   local result = String[]
+  local topLevelShared = String[]
   for auxSystem in auxEquationSystems
     namesAsIdentifiers = map(getInnerIdentOfVar,
                              filter(BDAEUtil.isStateOrVariable, auxSystem.orderedVars))
     push!(setOfVariables, namesAsIdentifiers)
+    #= Add the top level variables to this set. These are always shared =#
+    topLevelShared = map(getInnerIdentOfVar,
+                         filter(BDAEUtil.isStateOrAlgebraicOrDiscrete, allBackendVars))
   end
   result = if !isempty(setOfVariables)
-    intersect(setOfVariables...)
+    local variableIntersection = intersect(setOfVariables...)
+    vcat(variableIntersection, topLevelShared)
   else
     String[]
   end
   @info "result" result
+#  fail()
   #= Returns the set of common variables =#
   return result
 end
@@ -334,19 +401,23 @@ Author:johti17
   This function does matching, it also checks for strongly connected components.
 If the system is singular we try index reduction before proceeding.
 """
-function matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT; mode = OMBackend.MTK_MODE)::Tuple
-  (isSingular::Bool, matchOrder::Vector) = GraphAlgorithms.matching(eqVariableMapping, numberOfVariablesInMapping)
+function matchAndCheckStronglyConnectedComponents(eqVariableMapping,
+                                                  numberOfVariablesInMapping,
+                                                  stringToSimVarHT; mode = OMBackend.MTK_MODE)::Tuple
+  (isSingular::Bool, matchOrder::Vector) = GraphAlgorithms.matching(eqVariableMapping,
+                                                                    numberOfVariablesInMapping)
   local digraph::MetaGraphs.MetaDiGraph
-  local sccs::Array
+  local sccs::Vector
   #=
     Index reduction might resolve the issues with this system.
   =#
   if isSingular && mode == OMBackend.MTK_MODE
-    # @error "The system of equations is Singular"
-    # throw("Error: Singular system")
-    #= TODO: Try index reduction =#
     digraph = GraphAlgorithms.merge(matchOrder, eqVariableMapping)
     sccs = GraphAlgorithms.stronglyConnectedComponents(digraph)
+    #=
+      Dumps the equation graph if the correct flag (OMBackend.PLOT_EQUATION_GRAPH)
+      is defined earlier in the compilation process
+    =#
     plotEquationGraph(digraph, matchOrder, stringToSimVarHT)
     return (isSingular, matchOrder, digraph, sccs)
   end
@@ -376,7 +447,9 @@ end
   Author: johti17:
   Splits a given set of equations into different types
 """
-function allocateAndCollectSimulationEquations(equations::T)::Tuple where {T}
+function allocateAndCollectSimulationEquations(equations::T,
+                                               equationSystemName::String,
+                                               shouldAddDummyEquation::Bool)::Tuple where {T}
   local isIf(eq) = typeof(eq) === BDAE.IF_EQUATION
   local isWhen(eq) = typeof(eq) === BDAE.WHEN_EQUATION
   local isRe(eq) = typeof(eq) === BDAE.RESIDUAL_EQUATION
@@ -390,6 +463,9 @@ function allocateAndCollectSimulationEquations(equations::T)::Tuple where {T}
   whenEquations = filter(isWhen, equations)
   ifEquations = filter(isIf, equations)
   structuralTransitions = filter(isStructuralWhenOrTransition, equations)
+  if shouldAddDummyEquation
+    push!(regularEquations, makeDummyResidualEquation(equationSystemName))
+  end
   return (regularEquations, whenEquations, ifEquations, structuralTransitions)
 end
 

@@ -73,7 +73,7 @@ end
 function Base.string(eq::BDAE.EQSYSTEM)::String
   str::String = ""
   str = str + heading3("Variables") + BDAEUtil.mapEqSystemVariablesNoUpdate(eq, stringTraverse, "") + "\n"
-  str = str * "# Variables, Parameters and Constants = " * string(length(eq.orderedVars), "\n")
+  str = str * "#Total variables, parameters and constants = " * string(length(eq.orderedVars), "\n")
   str = str + heading3("Equations") + BDAEUtil.mapEqSystemEquationsNoUpdate(eq, stringTraverse, "") + "\n"
   str = str * "# Equations = " * string(length(eq.orderedEqs), "\n")
 end
@@ -602,6 +602,7 @@ function Base.string(structuralIfEquation::BDAE.STRUCTURAL_IF_EQUATION)
   local ifEqStr = replace(OMFrontend.Main.toString(structuralIfEquation.ifEquation), "\\n" => "\n")
   str *= ifEqStr * "\n"
 end
+
 
 function Base.string(stmt::DAE.STMT_ASSIGN)
   return string(stmt.exp1) * ":=" * string(stmt.exp) * "|" * string(stmt.type_)

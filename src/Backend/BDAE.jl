@@ -350,6 +350,10 @@ end
   end
 end
 
+STATE() = let
+  STATE(0, NONE(), false)
+end
+
 const WHENCLK_PRREFIX = "whenclk"::String
 
 #= equation kind =#

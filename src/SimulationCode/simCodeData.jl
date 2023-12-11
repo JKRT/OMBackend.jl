@@ -158,11 +158,10 @@ struct SIM_CODE{T0<:String,
                 T1<:AbstractDict{String, Tuple{Integer, SimVar}},
                 T2<:Vector{BDAE.RESIDUAL_EQUATION},
                 T22,
-                #= When equations are discret events (In the sense they occur once, the condition is checked per time step. ) =#
                 T4<:Vector{BDAE.WHEN_EQUATION},
                 #=
                   If equations are represented via a vector of possible branches in which the code can operate.
-                Similar to basic blocks
+                  Similar to basic blocks
                 =#
                 T5<:Vector{IF_EQUATION},
                 T6<:Bool,
@@ -205,6 +204,10 @@ struct SIM_CODE{T0<:String,
   subModels::T11
   " Variables that different submodels have in common"
   sharedVariables::T12
+  "Top variables"
+  topVariables::T12
+  "Shared equations. These are equations shared between structural submodels. These are required to be residuals."
+  sharedEquations::Vector{BDAE.Equation}
   "Initial model"
   activeModel::T13
   "The MetaModel. That is a reference from the model to a higher order representation of the model itself."

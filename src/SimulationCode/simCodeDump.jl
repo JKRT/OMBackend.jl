@@ -103,10 +103,12 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String = "Simula
   end
   print(buffer, BDAEUtil.LINE + "\n")
   print(buffer, "\n")
-  print(buffer, "Initial Equations" + "\n")
-  println(buffer, BDAEUtil.LINE)
-  for ieq in simCode.initialEquations
-    print(buffer, string(ieq))
+  if !isempty(simCode.initialEquations)
+    print(buffer, "Initial Equations" + "\n")
+    println(buffer, BDAEUtil.LINE)
+    for ieq in simCode.initialEquations
+      print(buffer, string(ieq))
+    end
   end
   println(buffer, BDAEUtil.LINE)
   print(buffer, "Residual Equations" + "\n")
@@ -117,24 +119,46 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String = "Simula
     print(buffer, "Index:" * string(i) * "|" * BDAE.string(eq))
   end
   println(buffer, BDAEUtil.LINE)
-  println(buffer, "If-equations")
-  print(buffer, BDAEUtil.LINE + "\n")
-  for ifEq in simCode.ifEquations
-    print(buffer, string(ifEq))
+  if !isempty(simCode.ifEquations)
+    println(buffer, "If-equations:")
+    print(buffer, BDAEUtil.LINE + "\n")
+    for ifEq in simCode.ifEquations
+      print(buffer, string(ifEq))
+    end
+    println(buffer, BDAEUtil.LINE)
   end
-  println(buffer, BDAEUtil.LINE)
-  println(buffer, "When-Equations")
-  println(buffer, BDAEUtil.LINE)
-  for wEq in simCode.whenEquations
-    print(buffer, string(wEq))
+  if !isempty(simCode.whenEquations)
+    println(buffer, "When-Equations:")
+    println(buffer, BDAEUtil.LINE)
+    for wEq in simCode.whenEquations
+      print(buffer, string(wEq))
+    end
+    println(buffer, BDAEUtil.LINE)
   end
-  println(buffer, BDAEUtil.LINE)
   if !isempty(simCode.structuralTransitions)
-    println(buffer, "Structural-Equations")
+    println(buffer, BDAEUtil.LINE)
+    println(buffer, "Structural-Equations:")
     println(buffer, BDAEUtil.LINE)
     for st in simCode.structuralTransitions
       print(buffer, string(st))
     end
+    println(buffer, BDAEUtil.LINE)
+  end
+  if !isempty(simCode.sharedEquations)
+    println(buffer, "Shared Variables:")
+    println(buffer, BDAEUtil.LINE)
+    for sv in simCode.sharedVariables
+      print(buffer, string(sv) * "\n")
+    end
+    println(buffer, BDAEUtil.LINE)
+  end
+  if !isempty(simCode.sharedEquations)
+    println(buffer, "Shared Equations:")
+    println(buffer, BDAEUtil.LINE)
+    for se in simCode.sharedEquations
+      print(buffer, string(se))
+    end
+    println(buffer, BDAEUtil.LINE)
   end
   println(buffer, BDAEUtil.LINE)
   nIfEqs = 0
@@ -158,15 +182,25 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String = "Simula
   println(buffer, "\tNumber of Algebraic Variables:" * string(length(algVariables)))
   println(buffer, "\tNumber of OCC Variables:" * string(length(occVariables)))
   println(buffer, "\tNumber of Discrete Variables:" * string(length(discreteVariables)))
-
   println(buffer, "Total Number of Equations:" * string(length(simCode.residualEquations) + nIfEqs + nWhenEquations))
   println(buffer, "\tNumber of Residual Equations:" * string(length(simCode.residualEquations)))
   println(buffer, "\tNumber of Equations in If-Equations:" * string(nIfEqs))
   println(buffer, "\tNumber of Equations in When-Equations:" * string(nWhenEquations))
   println(buffer, "Total Number of Functions:" * string(length(simCode.functions)))
   println(buffer, BDAEUtil.LINE)
-  local varsInEvent = 0
-  println(buffer, "Variables involved in events:")
+  #local varsInEvent = 0
+  #println(buffer, "Variables involved in events:")
+  print(buffer, BDAEUtil.DOUBLE_LINE + "\n")
+  println(buffer, "END SIM_CODE")
+  print(buffer, BDAEUtil.DOUBLE_LINE + "\n")
+  if !isempty(simCode.subModels)
+    for (i, sm) in enumerate(simCode.subModels)
+      println(buffer, "\n\n")
+      println(buffer, dumpSimCode(sm, "Structural-Sub-model #" * string(i)))
+      println(buffer, "\n\n")
+    end
+  end
+
   return String(take!(buffer))
 end
 
@@ -211,12 +245,19 @@ function string(ifEq::IF_EQUATION)
   return res
 end
 
-function string(ieq::SimulationCode.DYNAMIC_OVERCONSTRAINED_CONNECTOR_EQUATION)
+function Base.string(ieq::SimulationCode.DYNAMIC_OVERCONSTRAINED_CONNECTOR_EQUATION)
   BDAE.string(ieq.structuralDOCC_equation)
 end
 
 function string(st::IMPLICIT_STRUCTURAL_TRANSISTION)
   string(st.structuralWhenEquation)
+end
+
+function Base.string(simStructChange::SimulationCode.EXPLICIT_STRUCTURAL_TRANSISTION)
+  local structuralChange = simStructChange.structuralTransition
+  local str = "STRUCTURAL_TRANSITION: "
+  str = str * "FROM: <" * structuralChange.fromState * "> TO: <" * structuralChange.toState * "> WHEN: " * string(structuralChange.transistionCondition) * "\n"
+  return str
 end
 
 function string(f::EXTERNAL_MODELICA_FUNCTION)

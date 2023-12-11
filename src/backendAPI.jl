@@ -36,21 +36,23 @@ using Absyn
 using ModelingToolkit
 using SymbolicUtils
 using DifferentialEquations
+using OrdinaryDiffEq
 
+import ..CodeGeneration
+import ..Runtime
 import .Backend.BDAE
 import .Backend.BDAECreate
 import .Backend.BDAEUtil
 import .Backend.Causalize
-import ..CodeGeneration
-import OMBackend.CodeGeneration
 import .SimulationCode
-import ..Runtime
+
 import Base.Meta
-import SCode
 import JuliaFormatter
+import OMBackend.CodeGeneration
+import OMFrontend
 import Plots
 import REPL
-import OMFrontend
+import SCode
 
 const latexSymbols = REPL.REPLCompletions.latex_symbols
 #= Settings =#
@@ -351,18 +353,21 @@ function availableModels()::String
 end
 
 """
-`simulateModel(modelName::String; MODE = DAE_MODE ,tspan=(0.0, 1.0), solver = :solver)
-  Simulates model interactivly.
+```
+SimulateModel(modelName::String; MODE = DAE_MODE ,tspan=(0.0, 1.0), solver = :solver)
+```
+Simulates model interactivly.
 The solver need to be passed with a : before the name, example:
 OMBackend.simulateModel(modelName, tspan = (0.0, 1.0), solver = :(Tsit5()));
 """
 function simulateModel(modelName::String;
                        MODE = MTK_MODE,
-                       tspan=(0.0, 1.0),
+                       tspan = (0.0, 1.0),
                        solver = :(Rodas5()))
-  #= Strings containing . need to be in a format suitable for Julia =#
+  #= Strings using "." need to be in a format suitable for Julia =#
   modelName = replace(modelName, "." => "__")
   local modelCode::Expr
+  local strippedModel::Expr
   if MODE == MTK_MODE
     #= This does a redundant string conversion for now due to modeling toolkit being as is...=#
     try
@@ -372,12 +377,31 @@ function simulateModel(modelName::String;
       println("Available models are:")
       availableModels()
     end
+    local modelRunnable
     try
       @eval $(:(import OMBackend))
+      #= Added to adjust the recent DEFAULT_PRECS issue =#
+      @eval $(:(import OrdinaryDiffEq.DEFAULT_PRECS))
+      @eval $(:(using DifferentialEquations))
       #= Below is needed to pass the custom solver=#
       strippedModel = CodeGeneration.stripBeginBlocks(modelCode)
       @eval $strippedModel
-      local modelRunnable = Meta.parse("OMBackend.$(modelName)Simulate($(tspan); solver = $solver)")
+      #=
+      Evaluate the model runnable.
+        Expr(:kw,
+             :solver,
+             solver)
+      Is used to specify the keyword arguments that are being passed along.
+      =#
+      modelRunnable = eval(
+        Expr(:call,
+             Symbol(modelName, "Simulate"),
+             Expr(:kw,
+                  :solver,
+                  solver),
+             tspan,
+             )
+      )
       #= Run the model with the supplied tspan. =#
       @eval $modelRunnable
       #=
@@ -386,7 +410,9 @@ function simulateModel(modelName::String;
       =#
     catch err
       @info "Interactive evaluation failed with exception: $(typeof(err)) with mode: $(MODE)"
-#      println(modelCode)
+      @info "runnable" modelRunnable
+      @info "Julia Code:"
+      println(strippedModel)
       throw(err)
     end
   else

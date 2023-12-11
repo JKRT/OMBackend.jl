@@ -273,10 +273,26 @@ function isStateOrVariable(var::BDAE.VAR)
   return isStateOrVariable(kind)
 end
 
+function isStateOrAlgebraicOrDiscrete(var::BDAE.VAR)
+  local kind = var.varKind
+  return isStateOrAlgebraicOrDiscrete(kind)
+end
+
 function isStateOrVariable(kind::BDAE.VarKind)
   res = @match kind begin
     BDAE.VARIABLE(__) => true
     BDAE.STATE(__) => true
+    _ => false
+  end
+  return res
+end
+
+
+function isStateOrAlgebraicOrDiscrete(kind::BDAE.VarKind)
+  res = @match kind begin
+    BDAE.VARIABLE(__) => true
+    BDAE.STATE(__) => true
+    BDAE.DISCRETE(__) => true
     _ => false
   end
   return res

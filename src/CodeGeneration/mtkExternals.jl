@@ -306,8 +306,14 @@ simplification will allow models where `n_states = n_equations - n_inputs`.
 """
 TODO:
 Document why some parts here are outcommented
-
 The irreductable variables scheme does not work using plain simplify.
+
+
+It should be noted that for some models both running tearing and structurally simplify is needed.
+Report and issue for the MTK reporters giving an example of this behavior.
+
+One example is running tearing twice broke the system
+
 """
 function structural_simplify(sys::ModelingToolkit.AbstractSystem,
                              io = nothing;
@@ -317,11 +323,17 @@ function structural_simplify(sys::ModelingToolkit.AbstractSystem,
   #sys = ModelingToolkit.ode_order_lowering(sys)
   #sys = ModelingToolkit.dae_index_lowering(sys)
   #sys = ModelingToolkit.tearing(sys; simplify = simplify)
-  if simplify #Note report this to the developers of modeling toolkit.
-    sys = ModelingToolkit.ode_order_lowering(sys)
-    sys = ModelingToolkit.dae_index_lowering(sys)
-    sys = ModelingToolkit.tearing(sys; simplify = false)
-  end
-  sys = ModelingToolkit.structural_simplify(sys, simplify = true)
+   if simplify #Note report this to the developers of modeling toolkit.
+     sys = ModelingToolkit.ode_order_lowering(sys)
+     sys = ModelingToolkit.dae_index_lowering(sys)
+     #sys = ModelingToolkit.tearing(sys; simplify = false)
+     #Note some system breaks if tearing is run twice.
+     # Note2 In some cases we need to do index reduction before simplify
+   end
+  sys = ModelingToolkit.structural_simplify(sys, simplify = false)
   return sys
  end
+
+function getSyms(odeFunc::ODEFunction)
+  return odeFunc.syms
+end

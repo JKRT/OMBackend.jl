@@ -77,8 +77,12 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   end
   local structuralCallbacks = createStructuralCallbacks(simCode, simCode.structuralTransitions)
   local structuralAssignments = createStructuralAssignments(simCode, simCode.structuralTransitions)
-  #= Initialize array where the common variables are stored. That is variables all modes have =#
+  #=
+  Initialize array where the common variables are stored.
+  That is variables all modes have
+  =#
   local commonVariables = createCommonVariables(simCode.sharedVariables)
+  #= Append top level variables to the common variables =#
   #= END =#
   code = quote
     import DAE
@@ -102,8 +106,9 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
       $(structuralAssignments)
       $(commonVariables)
       #= END =#
-      callbackConditions = $(if isempty(structuralCallbacks)
-                               :(CallbackSet())
+      # Also need to have the original callbacks
+      callbackConditions = $(if !isempty(structuralCallbacks)
+                               :(CallbackSet(callbacks, callbackSet...))
                              else
                                :(CallbackSet(callbacks, callbackSet...))
                              end)
@@ -115,11 +120,19 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
         pars,
         callback = callbackConditions,
       )
+      #=
+      Note the difference between the two here.
+      In the case of recompilation we will get fresh callbacks updated to the new structure of the final code.
+      However, in the case of the static approach
+      =#
       result = $(if simCode.metaModel == nothing
-                 :(OMBackend.Runtime.OM_ProblemStructural($(activeModelName),
-                                                          compositeProblem,
-                                                          structuralCallbacks,
-                                                          commonVariables))
+                   :(OMBackend.Runtime.OM_ProblemStructural($(activeModelName),
+                                                            compositeProblem,
+                                                            structuralCallbacks,
+                                                            pars,
+                                                            commonVariables,
+                                                            $([Symbol(string(i,"(t)")) for i in simCode.topVariables]),
+                                                            callbackSet))
                  else
                  :(OMBackend.Runtime.OM_ProblemRecompilation($(activeModelName),
                                                              compositeProblem,
@@ -128,7 +141,7 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
                  end)
       return result
     end
-    function $(Symbol("$(MODEL_NAME)Simulate"))(tspan = (0.0, 1.0); solver=Rosenbrock23())
+    function $(Symbol("$(MODEL_NAME)Simulate"))(tspan = (0.0, 1.0); solver=Rodas5())
       $(Symbol("$(MODEL_NAME)Model_problem")) = $(Symbol("$(MODEL_NAME)Model"))(tspan)
       OMBackend.Runtime.solve($(Symbol("$(MODEL_NAME)Model_problem")), tspan, solver)
     end
@@ -164,6 +177,7 @@ function ODE_MODE_MTK_PROGRAM_GENERATION(simCode::SimulationCode.SIM_CODE, model
   program = quote
     using ModelingToolkit
     using DifferentialEquations
+    using OrdinaryDiffEq
     import ModelingToolkit.IfElse
     #= Add import to the external runtime if the generated code calls Modelica Functions =#
     $(if simCode.externalRuntime
@@ -173,7 +187,7 @@ function ODE_MODE_MTK_PROGRAM_GENERATION(simCode::SimulationCode.SIM_CODE, model
     $(DATA_STRUCTURE_ASSIGNMENTS...)
     $(generateRegisterCallsForCallExprs(simCode)...)
     $(model)
-    function $(Symbol("$(MODEL_NAME)Simulate"))(tspan = (0.0, 1.0); solver=Rosenbrock23())
+    function $(Symbol("$(MODEL_NAME)Simulate"))(tspan = (0.0, 1.0); solver=Rodas5())
       ($(Symbol("$(MODEL_NAME)Model_problem")), callbacks, ivs, $(Symbol("$(MODEL_NAME)Model_ReducedSystem")), tspan, pars, vars, irreductable) = $(Symbol("$(MODEL_NAME)Model"))(tspan)
       solve($(Symbol("$(MODEL_NAME)Model_problem")), solver)
     end
