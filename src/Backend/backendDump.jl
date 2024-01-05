@@ -240,7 +240,7 @@ function Base.string(whenEq::BDAE.WhenEquation)::String
     @match SOME(elseWhen) = whenEq.elsewhenPart
     str = str + "else" + string(elseWhen)
   end
-  return str + "end;\n"
+  return str + "end;"
 end
 
 function Base.string(whenOp::BDAE.WhenOperator)::String

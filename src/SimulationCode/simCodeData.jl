@@ -153,6 +153,13 @@ end
 """
   Root data structure containing information required for code generation to
   generate simulation code for a Modelica model.
+
+The topmost model of a system consisting of several sub models lacks:
+  - matchorder
+  - The graph of the equations
+  - Descriptions of the SCC
+  - Information if it is singular or not.
+This information is instead contained for each of the structural submodels, where one model is active at the time.
 """
 struct SIM_CODE{T0<:String,
                 T1<:AbstractDict{String, Tuple{Integer, SimVar}},

@@ -109,14 +109,13 @@ end
   Prints what equation involves which variable.
 The ht maps a string to the simcode variable structure in simcode data.
 """
-function dumpVariableEqMapping(mapping::OrderedDict, ht)::String
+function dumpVariableEqMapping(mapping::OrderedDict, residualEquations, ifEquations, whenEquations, ht)::String
   local dump = IOBuffer()
-  println(dump, "_VARIABLES_")
+  println(dump, "VARIABLES:")
   for v in keys(ht)
     println(dump, v * ":" * string(first(ht[v])))
   end
   println(dump, "EQUATION MAPPING:")
-  println(dump, "\n")
   local equations = keys(mapping)
   for e in equations
     variablesAtEq = "{"
@@ -124,8 +123,16 @@ function dumpVariableEqMapping(mapping::OrderedDict, ht)::String
       variablesAtEq *= "$(v),"
     end
     variablesAtEq *= "}"
-    println(dump, variablesAtEq)
     println(dump, "Equation $e: involves: $(variablesAtEq): Eq $(BDAEUtil.string(e))\n")
+  end
+  for (i, e) in enumerate(residualEquations)
+    println(dump, string("Equation " * string(i) * ":" * string(e)))
+  end
+  for (i, e) in enumerate(ifEquations)
+    println(dump, string("IF-Equation " * string(i) * ":" * string(e)))
+  end
+  for (i, e) in enumerate(whenEquations)
+    println(dump, string("WHEN-Equation " * string(i) * ":" * string(e)))
   end
   return String(take!(dump))
 end
@@ -220,9 +227,10 @@ function createIndices(simulationVars::Vector{SimulationCode.SIMVAR})::OrderedDi
         @assign var.index = SOME(stateCounter)
         stVar = SimulationCode.SIMVAR(var.name, var.index, SimulationCode.STATE_DERIVATIVE(var.name), var.attributes)
         push!(ht, var.name => (stateCounter, var))
-        #=Adding the state derivative as well=#
+        #= Adding the state derivative as well =#
         push!(ht, "der($(var.name))" => (stateCounter, stVar))
       end
+      #= For Overconstrained connectors. =#
       SimulationCode.OCC_VARIABLE(__) => begin
         push!(occVariables, var)
       end
@@ -277,7 +285,7 @@ end
 """
 function createEquationVariableBidirectionGraph(equations::Vector{BDAE.RESIDUAL_EQUATION},
                                                 ifEquations::IF_EQS,
-                                                whenEqs::WHEN_EQS,
+                                                whenEquations::WHEN_EQS,
                                                 allBackendVars::VARS,
                                                 stringToSimVarHT)::OrderedDict where{IF_EQS, WHEN_EQS, VARS}
   local eqCounter::Int = 0
@@ -332,8 +340,8 @@ function createEquationVariableBidirectionGraph(equations::Vector{BDAE.RESIDUAL_
   end when;
   Currently this construct breaks the compiler.
   I should investigat how to go about it.
-  For now lets merge in the equations in an initial when equation as ordinary equations. =#
-  for weq in whenEqs
+  For now lets merge in the equations in an initial-when equation as ordinary equations. =#
+  for weq in whenEquations
     @match weq begin
       BDAE.WHEN_EQUATION(_, BDAE.WHEN_STMTS(DAE.CALL(Absyn.IDENT("initial"), _, _), whenStmtLst, ewp), source, attr) => begin
         #= Go through all initial statements and add them as equations. =#
@@ -363,12 +371,16 @@ function createEquationVariableBidirectionGraph(equations::Vector{BDAE.RESIDUAL_
       end
     end
   end
-  write("eqMapping.log", dumpVariableEqMapping(variableEqMapping, stringToSimVarHT))
-  @debug "#stateVariables" length(stateVariables)
-  @debug "#discretes" nDiscretes
-  @debug "#algebraic" length(unknownVariables)
-  @debug "#equations" length(equations)
-  @debug "#state + algebraic = " length(unknownVariables) + length(stateVariables)
+  write("eqMapping.log", dumpVariableEqMapping(variableEqMapping,
+                                               equations,
+                                               ifEquations,
+                                               whenEquations,
+                                               stringToSimVarHT))
+  @debug "#stateVariables" * string(length(stateVariables))
+  @debug "#discretes" * string(nDiscretes)
+  @debug "#algebraic" * string(length(unknownVariables))
+  @debug "#equations" * string(length(equations))
+  @debug "#state + #algebraic = " * string(length(unknownVariables) + length(stateVariables))
   return variableEqMapping
 end
 

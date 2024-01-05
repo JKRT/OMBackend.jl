@@ -148,8 +148,7 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
   (resEqs, irreductableVars) = handleZimmerThetaConstant(resEqs, irreductableVars, stringToSimVarHT)
   #= ...DOCC Handling... =#
   if ! isempty(shared.DOCC_equations)
-    append!(structuralTransitions,
-            shared.DOCC_equations)
+    append!(structuralTransitions, shared.DOCC_equations)
   end
   #=  Convert the structural transitions to the simcode representation. =#
   local simCodeStructuralTransitions = createSimCodeStructuralTransitions(structuralTransitions)
@@ -160,9 +159,15 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
                                                                    allBackendVars,
                                                                    stringToSimVarHT)
   local numberOfVariablesInMapping = length(eqVariableMapping.keys)
-  (isSingular, matchOrder, digraph, stronglyConnectedComponents) =
-    matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping,
-                                             stringToSimVarHT; mode = mode)
+  (isSingular, matchOrder, digraph, stronglyConnectedComponents) = if isempty(auxEquationSystems)
+    matchAndCheckStronglyConnectedComponents(eqVariableMapping, numberOfVariablesInMapping, stringToSimVarHT; mode = mode)
+  else
+    #=
+    We have one or more subsystems.
+    In this case matching etc is not done, but instead kept for each submodel.
+    =#
+    (false, Int[], MetaGraphs.MetaDiGraph(), Vector{Int}[])
+  end
   #=
     The set of if equations needs to be handled in a separate way.
     Each branch might contain a separate section of variables etc that needs to be sorted and processed.
@@ -194,7 +199,7 @@ function transformToSimCode(equationSystems::Vector{BDAE.EQSYSTEM}, shared; mode
           push!(auxSys.orderedEqs, eq)
         end
         BDAE.IF_EQUATION(__) => begin
-          @error "If-equations are not allowed as a top level construct in a model with structural variability"
+          @error "If-equations are not supported as a top level construct in a model with static structural variability"
           fail()
         end
       end

@@ -72,7 +72,7 @@ function matching(dict::DataStructures.OrderedDict, n::Int)
       success = pathFound(i)
     catch e
       local msg = "Failed to match equations to variables.
-                   A possible reason is that the system is over/under determined."
+                   A possible reason is that the system is over/underdetermined."
       @error msg
       throw(e)
     end

@@ -214,8 +214,6 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
         #= Save the old solution together with the name and the mode that was active =#
         push!(oldSols, integrator.sol)
         #= Now we have the start values for the next part of the system=#
-        #println(cb.system)
-        global TST_PROB = cb.system
         newProbTest = ModelingToolkit.ODEProblem(
           newSystem.f.sys,
           newU0,
@@ -361,10 +359,10 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
       #= Calculate the length of the final step=#
       @info "tspan[2] - i.t" tspan[2] - i.t
       local finalStep = tspan[2] - i.t
-      step!(integrator, finalStep, true)
+      Base.invokelatest(step!, integrator, finalStep, true)
       break
     else
-      step!(integrator, integrator.dt, false)
+      Base.invokelatest(step!, integrator, integrator.dt, false)
     end
     #=
     If a structural callback was triggered at the last integration step this boolean variable is true.
@@ -480,7 +478,7 @@ function recompilation(activeModeName,
     #=
       TODO currently only handles a single structural callback.
     =#
-      callback = callbackConditions #Should be changed look at method below
+    callback = callbacks
   )
   #=4) Changed System=#
   #= 4.1 Update the structural callback with the new situation =#
@@ -541,7 +539,7 @@ function recompilation(activeModeName,
   return (problem,
           simulationCode.stringToSimVarHT,
           problem.u0,
-          true,
+          true, #= Returns true to indicate special case... =#
           reducedSystem)
 end
 

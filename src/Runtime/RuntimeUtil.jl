@@ -9,6 +9,7 @@ import OMBackend
 import OMBackend.SimulationCode
 import OMFrontend
 import OMFrontend.Main
+import OMFrontend.Main.AbsynUtil
 import OMFrontend.Main.SCodeUtil
 import OMFrontend.Main.Util
 import SCode
@@ -36,6 +37,16 @@ function getElementFromSCodeProgram(prefixes::Vector{String}, inClass::SCode.Ele
 end
 
 """
+
+"""
+function replaceElementInSCodeProgramByName(inClass, inElement, name::String)
+  local path::Absyn.Path = AbsynUtil.stringPath(name)
+  return SCodeUtil.replaceOrAddElementInProgram(list(inClass),
+                                         inElement,
+                                         path)
+end
+
+"""
 ```
 setElementInSCodeProgram!(activeModeName,inIdent::String, newValue::T, inClass::SCode.Element)
 ```
@@ -52,7 +63,9 @@ function setElementInSCodeProgram!(activeModeName, inIdent::String, newValue::T,
   Get the class name. The active class is required to be top level currently.
   =#
   write("modename.log", activeModeName)
+  write("original.log", OMBackend.JuliaFormatter.format_text(string(inClass)))
   local activeModeNamePrefixes::Vector{String} = map(string, split(activeModeName, "."))
+  write("prefixes.log", OMBackend.JuliaFormatter.format_text(string(activeModeNamePrefixes)))
   local activeClass  = getElementFromSCodeProgram(activeModeNamePrefixes, inClass)
   str = OMBackend.JuliaFormatter.format_text(string(activeClass))
   write("active.log", str)
@@ -61,7 +74,7 @@ function setElementInSCodeProgram!(activeModeName, inIdent::String, newValue::T,
   local elements::Vector{SCode.Element} = listArray(SCodeUtil.getClassElements(activeClass))
   local i = 1
   local indexOfElementToReplace = 0
-  local outClass = inClass
+  local modifiedClass = activeClass
   for element in elements
     if SCodeUtil.elementNameEqual(element, elementToReplace)
       indexOfElementToReplace = i
@@ -73,10 +86,21 @@ function setElementInSCodeProgram!(activeModeName, inIdent::String, newValue::T,
   @assign modification.binding = makeCondition(newValue)
   @assign elementToReplace.modifications = modification
   elements[indexOfElementToReplace] = elementToReplace
-  #=TODO: It is a specific class that should be replaced here. Not all elements of the topmost class =#
-  @assign outClass.classDef.elementLst = arrayList(elements)
-  write("modified.log", OMBackend.JuliaFormatter.format_text(string(outClass)))
-  return outClass
+  write("elementToReplace.log", string(OMBackend.JuliaFormatter.format_text(string(elementToReplace))))
+  @assign activeClass.classDef.elementLst = arrayList(elements)
+  #=Replace the element in the specific class. =#
+  #write("elementToReplace.log", OMBackend.JuliaFormatter.format_text(string(elementToReplace)))
+  @match modifiedProg <| nil = replaceElementInSCodeProgramByName(inClass,
+                                                                  activeClass,
+                                                                  activeModeName)
+  #local indices = getIndicesOfElementFromSCodeClass(activeModeNamePrefixes, inClass)
+  write("modifiedProg.log", OMBackend.JuliaFormatter.format_text(string(modifiedProg)))
+  #write("tmpClass.log", OMBackend.JuliaFormatter.format_text(string(inClass)))
+  #=
+  We need to update the top level class as well in this case.
+  To do this we need to search for the element representing the class wee modified in the top level program again.
+  =#
+  return modifiedProg
 end
 
 makeCondition(val::Bool) = begin
