@@ -478,7 +478,7 @@ function recompilation(activeModeName,
     #=
       TODO currently only handles a single structural callback.
     =#
-    callback = callbacks
+    callback = CallbackSet(callbackConditions, callbacks)
   )
   #=4) Changed System=#
   #= 4.1 Update the structural callback with the new situation =#
