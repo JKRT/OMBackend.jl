@@ -116,8 +116,8 @@ end
   Rewrite equations that do not conform to the requirements of MTK
 """
 function rewriteEquations(edeqs, iv, eVars, ePars, simCode)
-  println("Recived #edeqs")
-  println(length(edeqs))
+  # println("Recived #edeqs")
+  # println(length(edeqs))
   local der = ModelingToolkit.Differential(t)
   #= Remove the t's =#
   eVars = [Symbol(replace(string(i), "(t)" => "")) for i in eVars]
@@ -146,7 +146,6 @@ function rewriteEquations(edeqs, iv, eVars, ePars, simCode)
   local ftrs = generateRegisterCallsForCallExprs(simCode; funcArgGen = AlgorithmicCodeGeneration.generateIOL)
   for f in ftrs
     eval(f)
-    println("Register:" * string(f))
   end
   #==#
   local deqs = evalEDeqs(edeqs)
@@ -180,7 +179,7 @@ function rewriteEquations(edeqs, iv, eVars, ePars, simCode)
       push!(rewrittenDeqs, eq)
     end
   end
-  OMBackend.debugWrite("codeAfterBackendPreprocessing.log", debugRewrite(rewrittenDeqs, iv, vars, parameters; separator="\n"))
+  #OMBackend.debugWrite("codeAfterBackendPreprocessing.log", debugRewrite(rewrittenDeqs, iv, vars, parameters; separator="\n"))
   return rewrittenDeqs
 end
 
@@ -203,13 +202,8 @@ function evalEDeqs(edeqs)
         unSimplifiedString = replace(unSimplifiedString, "&&" => "&")
         unSimplifiedString = replace(unSimplifiedString, r"\bbegin\b" => "(")
         unSimplifiedString = replace(unSimplifiedString, r"\bend\b" => ")")
-        println(unSimplifiedString)
-        #println(estr)
+        #println(unSimplifiedString)
         estrExp = Meta.parse(unSimplifiedString)
-        #println("EQUATION:")
-        #println(eq)
-        #println("estrExp:")
-        #println(estrExp)
         estrExp2 = eval(estrExp)
         estrExp2LHS = estrExp2.lhs
         @assign estrExp2.lhs = 0
@@ -222,12 +216,8 @@ function evalEDeqs(edeqs)
       unSimplifiedString = replace(unSimplifiedString, "&&" => "&")
       unSimplifiedString = replace(unSimplifiedString, r"\bbegin\b" => "(")
       unSimplifiedString = replace(unSimplifiedString, r"\bend\b" => ")")
-      println(unSimplifiedString)
+      #println(unSimplifiedString)
       estrExp = Meta.parse(unSimplifiedString)
-      #println("EQUATION:")
-      #println(eq)
-      #println("estrExp:")
-      #println(estrExp)
       estrExp2 = eval(estrExp)
       estrExp2LHS = estrExp2.lhs
       @assign estrExp2.lhs = 0
@@ -235,7 +225,6 @@ function evalEDeqs(edeqs)
       push!(deqs, estrExp2)
     end
   end
-  println("!DONE!")
   return deqs
 end
 
@@ -319,7 +308,7 @@ function structural_simplify(sys::ModelingToolkit.AbstractSystem,
                              io = nothing;
                              simplify = false,
                              kwargs...)
-  @info "Calling custom structural_simplify"
+  #@info "Calling custom structural_simplify"
   #sys = ModelingToolkit.ode_order_lowering(sys)
   #sys = ModelingToolkit.dae_index_lowering(sys)
   #sys = ModelingToolkit.tearing(sys; simplify = simplify)

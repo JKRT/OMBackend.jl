@@ -148,11 +148,10 @@ function createStructuralCallback(simCode,
     function affect!(integrator)
       #= Expand the when operators =#
       $(whenOperators...)
-      println("Callback triggered at $(integrator.t)")
-      println("tprev at $(integrator.tprev)")
+      #println("Callback triggered at $(integrator.t)")
+      #println("tprev at $(integrator.tprev)")
       structuralChange.structureChanged = true
       integrator.just_hit_tstop = true
-      @info "integrator.t" integrator.t
       structuralChange.timeAtChange = integrator.t
       structuralChange.solutionAtChange = integrator.sol
       terminate!(integrator, ReturnCode.Success)
@@ -435,8 +434,8 @@ function createAffectCondPairForDOCC(cond,
   affectCondPair = if ! active_DOCC_Equations[idx]
     quote
       function affect!(integrator)
-        @info "Structural callback at:" integrator.t
-        @info "Structural callback Δt" integrator.dt
+        #@info "Structural callback at:" integrator.t
+        #@info "Structural callback Δt" integrator.dt
         local t = integrator.t
         local x = integrator.u
         structuralChange.structureChanged = true
@@ -452,8 +451,8 @@ function createAffectCondPairForDOCC(cond,
   else #= The equation is active at the start =#
     quote
       function affect!(integrator)
-        @info "Structural callback at:" integrator.t
-        @info "Structural callback Δt" integrator.dt
+        #@info "Structural callback at:" integrator.t
+        #@info "Structural callback Δt" integrator.dt
         local t = integrator.t
         local x = integrator.u
         structuralChange.structureChanged = true

@@ -97,10 +97,6 @@ function generateFunctions(functions::Vector{SimulationCode.ModelicaFunction})::
     push!(jFuncs, f)
     push!(names, func.name)
   end
-  println("Dumping the generated functions")
-  for f in jFuncs
-    @info f
-  end
   return jFuncs, names
 end
 

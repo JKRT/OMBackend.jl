@@ -43,9 +43,7 @@ function removeSmooth(eq::OMFrontend.Main.Equation)
       local arguments = OMFrontend.Main.arguments(call)
       @match x <| y <| nil = arguments
       local newEq = eq
-      println("Changed eq:" * OMFrontend.Main.toString(newEq))
       @assign newEq.rhs = y
-      println("Changed eq:" * OMFrontend.Main.toString(newEq))
       newEq
     end
     _ => eq

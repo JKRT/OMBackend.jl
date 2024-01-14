@@ -599,11 +599,10 @@ function expToJuliaExpMTK(@nospecialize(exp::DAE.Exp),
           @match DAE.DIM_INTEGER(i) = d
           lookUpStr *= string("[", i, "]")
         end
-        println("Lookup string:" * lookUpStr)
-        println("Replaced with:" * arrName)
+        @info "Lookup string:" * lookUpStr
+        @info "Replaced with:" * arrName
         indexAndVar = hashTable[lookUpStr]
         hashTable[arrName] = hashTable[lookUpStr]
-        println(exp)
         expr = quote $(Symbol(arrName)) end
         #fail()
         expr
@@ -895,8 +894,6 @@ function evalDAE_Expression(expr, simCode)::Expr
         return (bindExp, true, ht)
       else
         @warn "States and Algebraic variables in initial equations is not supported"
-        #@info "Expression was:" expr
-        #@info "Expression as string: \" $(string(expr)) \""
         shouldEval = false
         #fail()
         #return (expToJuliaExpMTK(), )
@@ -1062,22 +1059,17 @@ end
   Returns true if there is no discrete variables in the condition.
 """
 function isContinousCondition(cond::DAE.Exp, simCode)
-  println("Check if cond is cont.")
-  println(string(cond))
   local allCrefs = Util.getAllCrefs(cond)
-  println(allCrefs)
   isContinuousCond = false
   if isone(length(allCrefs)) && string(first(allCrefs)) == "time"
     isContinuousCond = true
   else
     for cref in allCrefs
-      println(string(cref))
       local ht = simCode.stringToSimVarHT
       local var = last(ht[string(cref)])
       #= If one variable in the condition is continuous treat it as a conditinous callback =#
       isContinuousCond = isContinuousCond || !(SimulationCode.isDiscrete(var))
     end
   end
-  println(isContinuousCond)
   return isContinuousCond
 end

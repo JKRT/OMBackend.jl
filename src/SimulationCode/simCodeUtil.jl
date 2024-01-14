@@ -272,9 +272,6 @@ function createIndices(simulationVars::Vector{SimulationCode.SIMVAR})::OrderedDi
       _ => continue
     end
   end
-  @info "stateCounter" stateCounter
-  @info "discreteCounter" discreteCounter
-  @info "algIndexCounter" algIndexCounter
   return ht
 end
 
@@ -371,16 +368,16 @@ function createEquationVariableBidirectionGraph(equations::Vector{BDAE.RESIDUAL_
       end
     end
   end
-  write("eqMapping.log", dumpVariableEqMapping(variableEqMapping,
-                                               equations,
-                                               ifEquations,
-                                               whenEquations,
-                                               stringToSimVarHT))
-  @debug "#stateVariables" * string(length(stateVariables))
-  @debug "#discretes" * string(nDiscretes)
-  @debug "#algebraic" * string(length(unknownVariables))
-  @debug "#equations" * string(length(equations))
-  @debug "#state + #algebraic = " * string(length(unknownVariables) + length(stateVariables))
+  # write("eqMapping.log", dumpVariableEqMapping(variableEqMapping,
+  #                                              equations,
+  #                                              ifEquations,
+  #                                              whenEquations,
+  #                                              stringToSimVarHT))
+  # @debug "#stateVariables" * string(length(stateVariables))
+  # @debug "#discretes" * string(nDiscretes)
+  # @debug "#algebraic" * string(length(unknownVariables))
+  # @debug "#equations" * string(length(equations))
+  # @debug "#state + #algebraic = " * string(length(unknownVariables) + length(stateVariables))
   return variableEqMapping
 end
 
@@ -595,7 +592,7 @@ function getIrreductableVars(ifEquations::Vector{BDAE.IF_EQUATION},
   =#
 
   local knownIrreductables::Vector{BDAE.VAR} = filter((v) -> BDAEUtil.isState(v) , algebraicAndStateVariables)
-  @info "Adding all states as irreductable variables" map(x->string(x.varName), knownIrreductables)
+  #@info "Adding all states as irreductable variables" map(x->string(x.varName), knownIrreductables)
   push!(irreductables, map(x->string(x.varName), knownIrreductables))
   irreductables = collect(Iterators.flatten(irreductables))
   irreductables = filter(irv -> !(irv != "time" && isParameter(last(ht[irv]))), irreductables)

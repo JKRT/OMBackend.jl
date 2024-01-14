@@ -266,8 +266,6 @@ function computeSharedVariables(auxEquationSystems, allBackendVars::Vector{BDAE.
   else
     String[]
   end
-  @info "result" result
-#  fail()
   #= Returns the set of common variables =#
   return result
 end
@@ -291,16 +289,16 @@ function initialModeInference(equationSystem::BDAE.EQSYSTEM)
 end
 
 function createSimCodeStructuralTransitions(structuralTransitions::Vector{ST}) where {ST}
-  local transistions = StructuralTransition[]
+  local transitions = StructuralTransition[]
   for st in structuralTransitions
     sst = @match st begin
       BDAE.STRUCTURAL_TRANSISTION(__) => SimulationCode.EXPLICIT_STRUCTURAL_TRANSISTION(st)
       BDAE.STRUCTURAL_WHEN_EQUATION(__) => SimulationCode.IMPLICIT_STRUCTURAL_TRANSISTION(st)
       BDAE.STRUCTURAL_IF_EQUATION(__) => SimulationCode.DYNAMIC_OVERCONSTRAINED_CONNECTOR_EQUATION(st)
     end
-    push!(transistions, sst)
+    push!(transitions, sst)
   end
-  return transistions
+  return transitions
 end
 
 """

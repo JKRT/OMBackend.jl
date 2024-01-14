@@ -226,7 +226,6 @@ function splitEquationsAndVars(elementLst::List{DAE.Element})::Tuple{List, List,
           variableLst,equationLst,initialEquationLst = splitEquationsAndVars(elem.dAElist)
         end
         DAE.NORETCALL(DAE.CALL(Absyn.IDENT("branch"), args)) => begin
-          @info "Matched the branch"
           @match arg1 <| arg2 <| nil = args
           equationLst = BDAE.BRANCH(arg1, arg2) <| equationLst
         end

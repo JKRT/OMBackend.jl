@@ -125,8 +125,8 @@ function detectParamsEqSystem(syst::BDAE.EQSYSTEM)::BDAE.EQSYSTEM
   local parStrs = Set(map((x) -> string(x.varName), pars))
   local parStrs2 = map((x) -> string(x.varName) * "|" * string(x.varType), pars)
   local buffer = IOBuffer()
-  println(buffer, parStrs2)
-  write("allpars.log", String(take!(buffer)))
+  #println(buffer, parStrs2)
+  #write("allpars.log", String(take!(buffer)))
 
   function detectParamExpression(exp::DAE.Exp, paramCrefs::Dict{DAE.ComponentRef, Bool})
     local cont::Bool

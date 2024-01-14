@@ -160,7 +160,6 @@ We should also statically detect if VSS simulation is needed since it is more re
   (Using the integrator interface) from DifferentialEquations.jl
 """
 function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
-  @info "Calling omProblem::OM_ProblemStructural"
   local problem = omProblem.problem
   local oldSystem = problem
   local structuralCallbacks = omProblem.structuralCallbacks
@@ -169,32 +168,21 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
   local activeModeName = omProblem.activeModeName
   #= Create integrator =#
   integrator = init(problem, alg, kwargs...)
-  global INTEGRATOR_TEST = integrator
-  global OLD_PROB = problem
   #@info "Value of tspan[2]" tspan[2]
   add_tstop!(integrator, tspan[2])
   local oldSols = []
   #= Run the integrator=#
   @label START_OF_INTEGRATION
   for i in integrator
-    @info "u values at Δt $(integrator.dt) & t = $(integrator.t)" integrator.u
+    #@info "u values at Δt $(integrator.dt) & t = $(integrator.t)" integrator.u
     #= Check structural callbacks in order =#
-    @info "Stepping at:" i.t
+    #@info "Stepping at:" i.t
     retCode = check_error(integrator)
     for cb in structuralCallbacks
       if cb.structureChanged && cb.name != activeModeName
-        @info "Structure changed at $(i.t) transition to $(cb.name) => $(cb.structureChanged)"
+        #@info "Structure changed at $(i.t) transition to $(cb.name) => $(cb.structureChanged)"
         #= Find the correct variables and map them between the two models =#
         local newSystem = cb.system
-        for eq in ModelingToolkit.equations(oldSystem.f.sys)
-          println(eq)
-        end
-        println(ModelingToolkit.states(oldSystem))
-        println("-------------------------------")
-        for eq in ModelingToolkit.equations(newSystem.f.sys)
-          println(eq)
-        end
-        println(ModelingToolkit.states(newSystem.f.sys))
         indicesOfCommonVariables = getIndicesOfCommonVariables(getSyms(newSystem)
                                                                ,getSyms(oldSystem)
                                                                ,omProblem.topVariables
@@ -210,7 +198,7 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
             newU0[indicesOfCommonVariables[oldIdx]] = integrator.u[oldIdx]
           end
         end
-        @info "New u0:" newU0
+        #@info "New u0:" newU0
         #= Save the old solution together with the name and the mode that was active =#
         push!(oldSols, integrator.sol)
         #= Now we have the start values for the next part of the system=#
@@ -232,7 +220,7 @@ function solve(omProblem::OM_ProblemStructural, tspan, alg; kwargs...)
         =#
         activeModeName = cb.name
         reinit!(integrator, newU0; t0 = i.t, reset_dt = true)
-        @info "New integrator" integrator.u
+        #@info "New integrator" integrator.u
         for cb in structuralCallbacks
           cb.structureChanged = false
         end
@@ -260,28 +248,24 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
   local structuralCallbacks = omProblem.structuralCallbacks
   local callbackConditions = omProblem.callbackConditions
   local activeModeName = omProblem.activeModeName
-  #local integrator = init(problem, alg, dtmax = 0.001, kwargs...)
   local integrator = init(problem, alg,  kwargs...)
   local solutions = []
+  #println("Start integration")
   #= Run the integrator=#
   @label START_OF_INTEGRATION
   while true
     local i = integrator
     local old_t = i.t
-    @info "Integration step was" i.t
-    @info "dt was:" i.dt
     #= Check structural callbacks in order =#
     retCode = check_error(integrator)
-    @info "Checking structural callbacks...."
     for j in 1:length(structuralCallbacks)
       local cb = structuralCallbacks[j]
-      println("Structure Changed? $(cb.structureChanged)")
+      #println("Structure Changed? $(cb.structureChanged)")
       if cb.structureChanged && i.t <= tspan[2]
-        @info "Recompilation directive triggered at:" i.t
-        @info "Δt is:" i.t - i.dt
+        #@info "Recompilation directive triggered at:" i.t
+        #@info "Δt is:" i.t - i.dt
         local newU0
-          @info "Test syms before recompilation call..." getSyms(problem)
-          global TEMPORARY_PROBLEM = problem
+          #@info "Test syms before recompilation call..." getSyms(problem)
           (newProblem, newSymbolTable, initialValues, reducedSystem, specialCase) = recompilation(cb.name,
                                                                                                   cb,
                                                                                                   integrator.u,
@@ -290,9 +274,9 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
           #= Assuming the indices are the same (Which is not always true) =#
           local symsOfOldProblem = getSyms(problem)
           local symsOfNewProlem = getSyms(newProblem)
-          @info "U0 before variables are set:"
-          @info integrator.u
-          @info i.u
+          #@info "U0 before variables are set:"
+          #@info integrator.u
+          #@info i.u
           newU0 = RuntimeUtil.createNewU0(symsOfOldProblem,
                                           symsOfNewProlem,
                                           initialValues,
@@ -305,11 +289,7 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
           local discrete_events = reducedSystem.discrete_events
           @info "discrete_events:" discrete_events
           =#
-          println("Generate new u0:")
-          println(newU0)
-          @info "New u0 generated"
           # # TMP for System 10 With optimization
-          global activeU0 = newU0
           #= Now we have the start values for the next part of the system=#
           integrator = init(newProblem,
                             alg,
@@ -328,12 +308,12 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
         #= ! This runs for both routines. That is initialization and recompilation !=#
         problem = newProblem
         #= Note that the structural event might be triggered again here (We kill it later) =#
-        @info "Stepping... at $(integrator.t)"
+        #@info "Stepping... at $(integrator.t)"
         Base.invokelatest(step!, integrator, integrator.dt, true)
-        @info "After step"
-        @info cb.structureChanged
-        @info "Time after step" integrator.t
-        @info "Time after step" i.t
+        #@info "After step"
+        #@info cb.structureChanged
+        #@info "Time after step" integrator.t
+        #@info "Time after step" i.t
         #=
         We reset the structural change pointer again here just to make sure
         that we do not trigger the structural callback again.
@@ -352,12 +332,12 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
       end
     end
     #= invoke latest to avoid world age problems =#
-    @info "i.t + i.dt" i.t + i.dt
-    @info "integrator.t + integrator.dt" integrator.t + integrator.dt
-    @info "integrator.t + integrator.dt" integrator.t + integrator.dtpropose
+    #@info "i.t + i.dt" i.t + i.dt
+    #@info "integrator.t + integrator.dt" integrator.t + integrator.dt
+    #@info "integrator.t + integrator.dt" integrator.t + integrator.dtpropose
     if integrator.t + integrator.dtpropose >= tspan[2]
       #= Calculate the length of the final step=#
-      @info "tspan[2] - i.t" tspan[2] - i.t
+      #@info "tspan[2] - i.t" tspan[2] - i.t
       local finalStep = tspan[2] - i.t
       Base.invokelatest(step!, integrator, finalStep, true)
       break
@@ -380,33 +360,32 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
           Save the old solution
           Resize the solution to the time t before the change.
           =#
-          @info cb.solutionAtChange.t
+          #@info cb.solutionAtChange.t
           local stopIdx = findlast((x) -> x == timeBeforeCallbackWasApplied, cb.solutionAtChange.t)
           @assert stopIdx !== nothing "Invalid callback occured during simulation"
-          @info "stopIdx" stopIdx
+          #@info "stopIdx" stopIdx
           solAtChange = cb.solutionAtChange #Used for error checking
           local modifiedSol = deepcopy(cb.solutionAtChange)
-          @info "modifiedSol" modifiedSol
-          @info "modifiedSol.t"  modifiedSol.t
-          global MODIFIED_SOL = modifiedSol
+          #@info "modifiedSol" modifiedSol
+          #@info "modifiedSol.t"  modifiedSol.t
           resize!(modifiedSol.t, stopIdx)
           resize!(modifiedSol.u, stopIdx)
-          @info "After resize..."
-          @info "modifiedSol" modifiedSol
-          @info "modifiedSol.t"  modifiedSol.t
+          ##@info "After resize..."
+          #@info "modifiedSol" modifiedSol
+          #@info "modifiedSol.t"  modifiedSol.t
           #= Assign the adjusted solution vector. =#
           uAtChange = modifiedSol.u
           timeAtChange = modifiedSol.t
           #= The modified solution is the solution before we start the next part of the solution process. =#
-          @info "Saving solution..."
+          #@info "Saving solution..."
           push!(solutions, modifiedSol)
         end
       end
       @assert !(isempty(solAtChange)) "Invalid structural change occured"
-      @info "Reinit"
-      @info "tprev" timeAtChange
-      @info "uAtChange" uAtChange
-      @info typeof(uAtChange)
+      #@info "Reinit"
+      #@info "tprev" timeAtChange
+      #@info "uAtChange" uAtChange
+      #@info typeof(uAtChange)
       reinit!(i,
               last(uAtChange);
               t0 = timeBeforeCallbackWasApplied,
@@ -414,9 +393,8 @@ function solve(omProblem::OM_ProblemRecompilation, tspan, alg; kwargs...)
               reset_dt = true,
               erase_sol = true,
               reinit_callbacks = false)
-      global INTEGRATOR = i
       i.just_hit_tstop = false
-      @info "Time after reinit" i.t
+      #@info "Time after reinit" i.t
     end
   end
   push!(solutions, integrator.sol)
@@ -463,7 +441,7 @@ function recompilation(activeModeName,
   #= 3.1 Run the backend=#
   (resultingModel, simulationCode) = runBackend(flatModelica, classToInstantiate)
   #= 4.0 Revaulate the model=#
-  local modelName = replace(activeModeName, "." => "__") * "Model"
+  local modelName = string(replace(activeModeName, "." => "__"), "Model")
   @eval $(resultingModel)
   modelCall = quote
     $(Symbol(modelName))($(tspan))
@@ -500,7 +478,7 @@ function recompilation(activeModeName,
                        integrator_u,
                        tspan,
                        callbackConditions)
-  @info "recompilation"
+  #@info "recompilation"
   #= Fetch the model that we were generating from memory. =#
   local flatModel = OMBackend.CodeGeneration.FLAT_MODEL
   local unresolvedConnectEquations = flatModel.unresolvedConnectEquations
@@ -508,20 +486,20 @@ function recompilation(activeModeName,
   local indexOfEquation = structuralCallback.index
   local equationIf = MetaModelica.listGet(flatModel.DOCC_equations, indexOfEquation)
   @assert length(equationIf.branches) == 1
-  println("Assertions fullfilled")
+  #println("Assertions fullfilled")
   if ! structuralCallback.activeEquations
-    println("First branch")
+    #println("First branch")
     equationsToAdd = first(equationIf.branches).body
     newFlatModel = RuntimeUtil.createNewFlatModel(flatModel, unresolvedConnectEquations, equationsToAdd)
   else
     newFlatModel = RuntimeUtil.createNewFlatModel(flatModel, indexOfEquation, unresolvedConnectEquations)
   end
   (resultingModel, simulationCode) = runBackend(newFlatModel, activeModeName)
-  println("New model generated")
+  #println("New model generated")
   local model = replace(activeModeName, "." => "__")
   local modelName = string(model, "Model")
   #local result = OMBackend.modelToString(model; MTK = true, keepComments = false, keepBeginBlocks = false)
-  println("We have a new model!\n");
+  #println("We have a new model!\n");
   resultingModel = OMBackend.CodeGeneration.stripComments(resultingModel)
   resultingModel = OMBackend.CodeGeneration.stripBeginBlocks(resultingModel)
   result = "$resultingModel"
@@ -533,8 +511,6 @@ function recompilation(activeModeName,
     $(Symbol(modelName))($(tspan))
   end
   (problem, callbacks, initialValues, reducedSystem, tspan, pars, vars) = @eval $(modelCall)
-  @info "We have constructed a new problem..."
-  global PROBLEM = problem
   #= Update meta model somehow=#
   return (problem,
           simulationCode.stringToSimVarHT,
@@ -551,20 +527,20 @@ function returnRootIndices(activeModeName,
                 integrator_u,
                 tspan,
                 callbackConditions)
-  @info "Calling returnRootIndices"
+  #@info "Calling returnRootIndices"
   local flatModel = OMBackend.CodeGeneration.FLAT_MODEL
   (variablestoReset, rootSources) = RuntimeUtil.resolveDOOCConnections(flatModel, flatModel.name)
-  @info "variablestoReset" variablestoReset
-  @info rootSources
+  #@info "variablestoReset" variablestoReset
+  #@info rootSources
   local rootVariables = keys(variablestoReset)
-  @info "Root variables" rootVariables
+  #@info "Root variables" rootVariables
   local ht = structuralCallback.stringToSimVarHT
   rootIndices = Int[]
   variablesToSet = []
   variablesToSetIdx = Vector{Int}[]
   for v in rootVariables
     indexOfRoot = first(ht[v])
-    @info "Index of $(v) was:" indexOfRoot
+    #@info "Index of $(v) was:" indexOfRoot
     push!(rootIndices, indexOfRoot)
     push!(variablesToSet, values(variablestoReset[v]))
   end
@@ -635,10 +611,8 @@ function getIndicesOfCommonVariables(syms1::Vector{Symbol} # New system
                                      ;destinationPrefix::String = ""
                                      ,srcPrefix::String = "")
   #= The common variables have the name without the prefix of the destination system =#
-  println(destinationPrefix)
-  println(srcPrefix)
-  @info "syms2 (Old System)" syms2
-  @info "syms1 (New System)" syms1
+  #@info "syms2 (Old System)" syms2
+  #@info "syms1 (New System)" syms1
   local newSyms = Symbol[]
   for name in syms2
     if name in topVariables
@@ -647,9 +621,9 @@ function getIndicesOfCommonVariables(syms1::Vector{Symbol} # New system
       push!(newSyms, Symbol(replace(string(name), srcPrefix => destinationPrefix)))
     end
   end
-  @info "newSyms" newSyms
-  @info "topVariables", topVariables
-  @info "common variables", inCommonVariables
+  #@info "newSyms" newSyms
+  #@info "topVariables", topVariables
+  #@info "common variables", inCommonVariables
   local indicesOfCommonVariables = Int[]
   local idxDict1 = DataStructures.OrderedDict()
   local idxDict2 = DataStructures.OrderedDict()
@@ -660,7 +634,7 @@ function getIndicesOfCommonVariables(syms1::Vector{Symbol} # New system
     idxDict2[sym] = i
   end
   local commonVariables = ∩(keys(idxDict1), keys(idxDict1))
-  @info "Common variables", commonVariables
+  #@info "Common variables", commonVariables
   (smallestKeyset, dict) = if length(keys(idxDict1)) < length(keys(idxDict2))
     keys(idxDict1), idxDict2
   else
@@ -673,7 +647,6 @@ function getIndicesOfCommonVariables(syms1::Vector{Symbol} # New system
       push!(indicesOfCommonVariables, 0)
     end
   end
-  println(indicesOfCommonVariables)
   return indicesOfCommonVariables
 end
 

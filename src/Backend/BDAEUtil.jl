@@ -394,7 +394,6 @@ function getAllVariables(eq::BDAE.RESIDUAL_EQUATION, vars::Vector{BDAE.VAR})::Ve
     else
     end
   end
-#  @info "Variables in eq: $(string(variablesInEq)) for eq: $(string(eq))"
   return variablesInEq
 end
 
@@ -409,7 +408,6 @@ function getAllVariables(assignment::BDAE.ASSIGN, vars::Vector{BDAE.VAR})::Vecto
                                                            assignment.right),
                                                 assignment.source, BDAE.NO_ATTRIBUTES())
   local variablesInEq = getAllVariables(assignmentAsEq, vars)
-#  @info "Variables in eq: $(string(variablesInEq)) for eq: $(string(eq))"
   return variablesInEq
 end
 
@@ -422,15 +420,12 @@ Ideally this function should also return a vector of component references
 function getAllVariables(eq::BDAE.IF_EQUATION, vars::Vector{BDAE.VAR})
   local condVars = map(c -> listArray(Util.getAllCrefs(c)), eq.conditions)
   condVars = map(x -> string(x), collect(Iterators.flatten(condVars)))
-  @info "condVars" condVars
   local ifEqEqsTrue = collect(Iterators.flatten(listArray(eq.eqnstrue)))
   local ifEqEqsFalse = listArray(eq.eqnsfalse)
   local trueVars = map(eq -> getAllVariables(eq, vars), ifEqEqsTrue)
   local falseVars = map(eq -> getAllVariables(eq, vars), ifEqEqsFalse)
   trueVars = collect(Iterators.flatten(trueVars))
   falseVars = collect(Iterators.flatten(falseVars))
-#  @info "trueVars" trueVars
-#  @info "falseVars" falseVars
   local res = vcat(condVars, trueVars, falseVars)
   #=FIXME: Not pretty =#
   res = map(x ->string(x), res)

@@ -288,22 +288,16 @@ function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arr
           $(expToJuliaExp(cond, simCode))
         end
         $(Symbol("affect$(callbacks)!")) = (integrator) -> begin
-          @info "Calling affect! at $(integrator.t) for continuous condition"
           local t = integrator.t + integrator.dt
           local x = integrator.u
-          @info "integrator.t" integrator.t
-          @info "integrator.dt" integrator.dt
-          @info "t + dt = " t
           if integrator.dt == 0.0
-            println("integrator.dt was zero. Aborting.")
-#            fail()
+            @error "integrator.dt was zero. Aborting."
+            fail()
           end
           if (Bool($(expToJuliaExp(wEq.condition, simCode))))
-            @info "Taking the first branch"
             $(whenStmts...)
             add_tstop!(integrator, integrator.t + 1E-12) #=TODO: Some small number for now=#
           else
-            @info "Running the else branch"
             $(createWhenStatements(elsePart.whenEquation.whenStmtLst, simCode)...)
             add_tstop!(integrator, integrator.t + 1E-12) #=TODO: Some small number for now=#
           end
@@ -320,22 +314,18 @@ function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arr
            #= Sometime the index is first known at runtime =#
            local xs = $(map(x -> Symbol(string(x) * "(t)"),
                             Util.getAllCrefs(cond)))
-           #println($(cond))
-           #@info "Initial values of xs" xs
-           #@info "OMBackend.CodeGeneration.getSyms" OMBackend.CodeGeneration.getSyms(integrator.f)
            xs = indexin(xs, OMBackend.CodeGeneration.getSyms(integrator.f))
-           #@info "xs after indexin" xs
           $(expToJuliaExp(cond, simCode;))
         end
         $(Symbol("affect$(callbacks)!")) = (integrator) -> begin
-          @info "Calling affect! at $(integrator.t)"
+          #@info "Calling affect! at $(integrator.t)"
           local t = integrator.t + integrator.dt
           local x = integrator.u
           if integrator.dt == 0.0
-            println("integrator.dt was zero. Aborting.")
+            @error "integrator.dt was zero. Aborting."
             fail()
           end
-          @info "t + dt = " t
+          #@info "t + dt = " t
           #if (Bool($(expToJuliaExp(wEq.condition, simCode))))
           $(whenStmts...)
           #end
@@ -354,14 +344,14 @@ function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arr
     @match start <| interval <| tail = args
     quote
       $(Symbol("affect$(callbacks)!")) = (integrator) -> begin
-        @info "Calling affect! at $(integrator.t)"
+        #@info "Calling affect! at $(integrator.t)"
         local t = integrator.t + integrator.dt
         local x = integrator.u
         if integrator.dt == 0.0
-          println("integrator.dt was zero. Aborting.")
+          @error "integrator.dt was zero. Aborting."
           fail()
         end
-        @info "t + dt = " t
+        #@info "t + dt = " t
         #if (Bool($(expToJuliaExp(wEq.condition, simCode))))
         $(whenStmts...)
         #end
@@ -375,9 +365,9 @@ function eqToJulia(eq::BDAE.WHEN_EQUATION, simCode::SimulationCode.SIM_CODE, arr
         Bool($(expToJuliaExp(cond, simCode)))
       end
     $(Symbol("affect$(callbacks)!")) = (integrator) -> begin
-      @info "Calling affect for discrete at $(integrator.t). Condition was:"
-      @info "Δt was:" integrator.dt
-      @info "Value of x is:" integrator.u
+      # @info "Calling affect for discrete at $(integrator.t). Condition was:"
+      # @info "Δt was:" integrator.dt
+      # @info "Value of x is:" integrator.u
       local t = integrator.t
       local x = integrator.u
       $(whenStmts...)
@@ -439,9 +429,7 @@ function createWhenStatements(whenStatements::List, simCode::SimulationCode.SIM_
 
         elseif var.varKind isa SimulationCode.ALG_VARIABLE
           push!(res, quote
-                  println(integrator.u[$(index)])
                   integrator.u[$(index)] = $(expToJuliaExp(wStmt.value, simCode))
-                  println(integrator.u[10])
                 end)
         else
           throw("Unimplemented branch for: $(var.varKind)")

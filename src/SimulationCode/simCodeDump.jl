@@ -77,7 +77,7 @@ function dumpSimCode(simCode::SimulationCode.SIM_CODE, heading::String = "Simula
     println(buffer, s * "| Index:" * string(first(simCode.stringToSimVarHT[s])))
   end
   print(buffer, BDAEUtil.LINE + "\n")
-  println("State Derivatives:")
+  println(buffer, "State Derivatives:")
   for sd in stateDerivatives
     println(buffer, sd * "| Index:" * string(first(simCode.stringToSimVarHT[sd])))
   end

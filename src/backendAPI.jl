@@ -108,8 +108,7 @@ function translate(frontendDAE::Union{DAE.DAE_LIST, OMFrontend.Main.FlatModel};
     end
     @assign simCode.functions = simCodeFunctions
     @assign simCode.externalRuntime = externalRuntimeNeeded
-    #@debug "Simulation code generated" SimulationCode.dumpSimCode(simCode)
-    debugWrite("simulationCodeStatistics.log", SimulationCode.dumpSimCode(simCode))
+    #debugWrite("simulationCodeStatistics.log", SimulationCode.dumpSimCode(simCode))
     return generateMTKTargetCode(simCode)
   else
     @error "No mode specificed: valid modes are:"
@@ -172,22 +171,19 @@ end
 function lower(fm::OMFrontend.Main.FLAT_MODEL)
   local preprocessedFM = FrontendUtil.handleBuiltin(fm)
   local bDAE = BDAECreate.lower(preprocessedFM)
-  @debug(BDAEUtil.stringHeading1(bDAE, "translated"));
-  debugWrite("initialBDAE.log", BDAEUtil.stringHeading1(bDAE, "residuals"))
+  #@debug(BDAEUtil.stringHeading1(bDAE, "translated"));
+  #debugWrite("initialBDAE.log", BDAEUtil.stringHeading1(bDAE, "residuals"))
   #= Expand arrays =#
   # Removed this pass since this can now
   #(bDAE, expandedVars) = Causalize.expandArrayVariables(bDAE)
-  @debug(BDAEUtil.stringHeading1(bDAE, "Array variables expanded"));
   #= Transform if expressions to if equations =#
-  @debug(BDAEUtil.stringHeading1(bDAE, "If equations transformed"));
   bDAE = Causalize.detectIfExpressions(bDAE)
   #= Mark state variables =#
   bDAE = Causalize.detectStates(bDAE)
-  @debug(BDAEUtil.stringHeading1(bDAE, "States marked"));
+  #@debug(BDAEUtil.stringHeading1(bDAE, "States marked"));
   bDAE = Causalize.residualizeEveryEquation(bDAE)
   #= Convert equations to residual form =#
-  @debug(BDAEUtil.stringHeading1(bDAE, "Residuals"));
-  debugWrite("residualTransformationAllParamsAndConstants.log", BDAEUtil.stringHeading1(bDAE, "residuals"))
+  #debugWrite("residualTransformationAllParamsAndConstants.log", BDAEUtil.stringHeading1(bDAE, "residuals"))
   #=
     Remove unused parameters and or constants.
     Important optimization for some systems.
@@ -435,7 +431,6 @@ function resimulateModel(modelName::String;
   =#
   try
     local modelRunnable = Meta.parse("OMBackend.$(modelName)Simulate($(tspan); solver = $(solver))")
-    @info modelRunnable
     res = @eval $modelRunnable
     return res
   catch #= The model is not compiled yet. Proceeding.. =#
@@ -478,4 +473,87 @@ function plot(sol::Runtime.OMSolutions; legend = false, limX = 0.0, limY = 1.0)
     prevP = p
   end
   return prevP
+end
+
+"""
+  Returns the value of a variable given a solution and a string.
+```
+  getVariableValues(sol, varName::String)
+```
+Example use:
+```julia
+OM.translate("HelloWorld", "./Models/HelloWorld.mo");
+sol = OM.simulate("HelloWorld");
+
+OM.OMBackend.getVariableValues(sol, "x")
+11-element Vector{Float64}:
+ 1.0
+ 0.7689684977240044
+ 0.555181390244627
+ 0.371869514552751
+ 0.23297802339017032
+ 0.13657983532457932
+ 0.07542877379860594
+ 0.039431995308782476
+ 0.019632381398183626
+ 0.009355999959425394
+ 0.006738051637508934
+```
+"""
+function getVariableValues(sol::ODESolution, varName::String)
+
+  varAsJLSym = if varName != "time"
+    Symbol(replace(varName, "." => "__"))
+  else
+    :t
+  end
+  try
+    res = sol[varAsJLSym]
+  catch
+    println("Did not locate a variable named " * varName * " in the model")
+  end
+end
+
+"""
+```
+getVariableValues(sols::Vector, variables...)
+```
+
+Similar to getVariableValues, but for solutions that have went through one or more structural changes.
+Here the same variable might have slightly different names depending on the context.
+
+For instance it might be called M.A first and then M.B when the structure of the model is changed.
+In the example above a pendulum goes through once such change.
+Here you can specify the variables in order, they will be collected and merged into the final vector.
+
+Example use:
+```
+julia> OM.OMBackend.getVariableValues(sols, "bouncingBall_x", "pendulum_x")
+vcat(OM.OMBackend.getVariableValues(sols, "pendulum_y", "bouncingBall_y")...)
+69-element Vector{Float64}:
+  10.0
+   ⋮
+   8.71359663258124
+   ⋮
+ -11.346053750176466
+   ⋮
+  3.3856338791378615
+```
+"""
+function getVariableValues(sols::Vector, variables...)
+  local vals = Any[]
+  for sol in sols
+    for v in variables
+      local vAsJLSym = if v != "time"
+        Symbol(replace(v, "." => "__"))
+      else
+        :t
+      end
+      try
+        push!(vals, sol[vAsJLSym])
+      catch
+      end
+    end
+  end
+  return vcat(vals...)
 end

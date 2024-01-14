@@ -62,13 +62,13 @@ function setElementInSCodeProgram!(activeModeName, inIdent::String, newValue::T,
   #=
   Get the class name. The active class is required to be top level currently.
   =#
-  write("modename.log", activeModeName)
-  write("original.log", OMBackend.JuliaFormatter.format_text(string(inClass)))
+  #write("modename.log", activeModeName)
+  #write("original.log", OMBackend.JuliaFormatter.format_text(string(inClass)))
   local activeModeNamePrefixes::Vector{String} = map(string, split(activeModeName, "."))
-  write("prefixes.log", OMBackend.JuliaFormatter.format_text(string(activeModeNamePrefixes)))
+  #write("prefixes.log", OMBackend.JuliaFormatter.format_text(string(activeModeNamePrefixes)))
   local activeClass  = getElementFromSCodeProgram(activeModeNamePrefixes, inClass)
-  str = OMBackend.JuliaFormatter.format_text(string(activeClass))
-  write("active.log", str)
+  #str = OMBackend.JuliaFormatter.format_text(string(activeClass))
+  #write("active.log", str)
   #= Get all elements from the class together with the corresponding names =#
   local elementToReplace::SCode.Element = getElementFromSCodeProgram(inIdent, activeClass)
   local elements::Vector{SCode.Element} = listArray(SCodeUtil.getClassElements(activeClass))
@@ -86,15 +86,14 @@ function setElementInSCodeProgram!(activeModeName, inIdent::String, newValue::T,
   @assign modification.binding = makeCondition(newValue)
   @assign elementToReplace.modifications = modification
   elements[indexOfElementToReplace] = elementToReplace
-  write("elementToReplace.log", string(OMBackend.JuliaFormatter.format_text(string(elementToReplace))))
+  #write("elementToReplace.log", string(OMBackend.JuliaFormatter.format_text(string(elementToReplace))))
   @assign activeClass.classDef.elementLst = arrayList(elements)
   #=Replace the element in the specific class. =#
   #write("elementToReplace.log", OMBackend.JuliaFormatter.format_text(string(elementToReplace)))
   @match modifiedProg <| nil = replaceElementInSCodeProgramByName(inClass,
                                                                   activeClass,
                                                                   activeModeName)
-  #local indices = getIndicesOfElementFromSCodeClass(activeModeNamePrefixes, inClass)
-  write("modifiedProg.log", OMBackend.JuliaFormatter.format_text(string(modifiedProg)))
+  #write("modifiedProg.log", OMBackend.JuliaFormatter.format_text(string(modifiedProg)))
   #write("tmpClass.log", OMBackend.JuliaFormatter.format_text(string(inClass)))
   #=
   We need to update the top level class as well in this case.
@@ -159,14 +158,13 @@ function createNewU0(symsOfOldProblem::Vector{Symbol},
                      specialCase)
   #=TODO: It was assumed to only be real variable not discretes, which might have other indices? =#
   # @debug "Length of old and new" length(symsOfOldProblem) length(symsOfNewProblem)
-  @info "Initial values" integrator.u
   local newU0 = Float64[last(initialValues[idx]) for idx in 1:length(symsOfNewProblem)]
-  @info "symsOfNewProblem" symsOfOldProblem
-  @info "symsOfNewProblem" symsOfNewProblem
+  #@info "symsOfNewProblem" symsOfOldProblem
+  #@info "symsOfNewProblem" symsOfNewProblem
   local variableNamesOldProblem = RuntimeUtil.convertSymbolsToStrings(symsOfOldProblem)
   local variableNamesNewProblem = RuntimeUtil.convertSymbolsToStrings(symsOfNewProblem)
-  @info "variableNamesOldProblem" variableNamesOldProblem
-  @info "variableNamesNewProblem" variableNamesNewProblem
+  #@info "variableNamesOldProblem" variableNamesOldProblem
+  #@info "variableNamesNewProblem" variableNamesNewProblem
   #= In the special case all the indices are the same as they where before the transformation. =#
   if  specialCase
     return integrator.u
@@ -174,10 +172,10 @@ function createNewU0(symsOfOldProblem::Vector{Symbol},
   #= _Remove the prefixes of the variable names <prefix>_<suffix> => <suffix> =#
   local variableNamesWithoutPrefixesOP = String[replace(k, r".*_" => "")
                                                 for k in variableNamesOldProblem]
-  @info "variableNamesWithoutPrefixesOP" variableNamesWithoutPrefixesOP
+  #@info "variableNamesWithoutPrefixesOP" variableNamesWithoutPrefixesOP
   local variableNamesWithoutPrefixesNP = String[replace(k, r".*_" => "")
                                                 for k in variableNamesNewProblem]
-  @info "variableNamesWithoutPrefixesOP" variableNamesWithoutPrefixesOP
+  #@info "variableNamesWithoutPrefixesOP" variableNamesWithoutPrefixesOP
   local largestProblem = if length(variableNamesOldProblem) > length(variableNamesNewProblem)
     variableNamesWithoutPrefixesOP
   else
@@ -185,16 +183,16 @@ function createNewU0(symsOfOldProblem::Vector{Symbol},
   end
   for v in largestProblem
     local varNameWithoutPrefix = v
-    @info "Checking variable" varNameWithoutPrefix
+    #@info "Checking variable" varNameWithoutPrefix
     if (varNameWithoutPrefix in variableNamesWithoutPrefixesOP) && (varNameWithoutPrefix in variableNamesWithoutPrefixesNP)
       local oldIndices = findall((x)-> x == varNameWithoutPrefix, variableNamesWithoutPrefixesOP)
-      @info "oldIndices" oldIndices
+      #@info "oldIndices" oldIndices
       @assert(length(oldIndices) == 1,
               "Zero or more than one variable with that name. Size of oldIndicies was $(length(oldIndices)). Name was $(v)")
       idxOldVar = first(oldIndices)
       #= Locate the index of a variable with that name in the set of new variables=#
       local indices = findall((x)-> x == varNameWithoutPrefix, variableNamesWithoutPrefixesNP)
-      @info "indices" indices
+      #@info "indices" indices
       #= I assume here that there are no duplicate variables =#
       @assert(length(indices) == 1,
               "Zero or more than one variable with that name. Size of indices was $(length(indices)). Name was $(v)")
@@ -202,7 +200,6 @@ function createNewU0(symsOfOldProblem::Vector{Symbol},
       newU0[idxNewVar] = integrator.u[idxOldVar]
     end
   end
-  @info "newU0" newU0
   return newU0
 end
 
@@ -303,7 +300,7 @@ function createNewFlatModel(flatModel,
   println("********************************************************************")
   println("Existing equations:")
   println("********************************************************************")
-  @info "Length of OLD FLAT MODEL:" length(OMBackend.CodeGeneration.OLD_FLAT_MODEL.equations)
+  println("Length of OLD FLAT MODEL:" * string(length(OMBackend.CodeGeneration.OLD_FLAT_MODEL.equations)))
   for e in OMBackend.CodeGeneration.OLD_FLAT_MODEL.equations
     println(OMFrontend.Main.toString(e))
   end
@@ -325,7 +322,7 @@ function createNewFlatModel(flatModel,
   newFlatModel = OMFrontend.Main.evaluate(newFlatModel)
   newFlatModel = OMFrontend.Main.simplifyFlatModel(newFlatModel)
   println("Final System")
-  @info "Length of final system:" length(newFlatModel.equations)
+  #@info "Length of final system:" length(newFlatModel.equations)
   println("********************************************************************")
   for e in newFlatModel.equations
     println(OMFrontend.Main.toString(e))
@@ -346,11 +343,7 @@ function resolveDOOCConnections(flatModel, name)
     pathsForRoots[OMFrontend.Main.toString(rv)] = p
   end
   for key in keys(pathsForRoots)
-    println("Assignments for $(key):")
     vars = pathsForRoots[key]
-    for v in vars
-      println("$(v) := $(key)")
-    end
   end
   local rootSources = Dict{String, String}()
   #= These are the equations for which the chain starts =#
@@ -404,7 +397,7 @@ Refactor this function
 """
 function evalDiscreteEvent(discreteEvent, u, time, system)
   @assert(length(discreteEvent.affects ) == 1, "Only length one of discrete affects supported")
-  @info "New iteration\n\n\n\n"
+  #@info "New iteration\n\n\n\n"
   local affect = first(discreteEvent.affects)
   local condition = discreteEvent.condition
   local args = condition.arguments
@@ -425,10 +418,6 @@ function evalDiscreteEvent(discreteEvent, u, time, system)
     operator = first(args).f
   end
   if typeof(lhs) != Float64 && string(lhs) != string(system.iv)
-    @info "args" args
-    @info "lhs" lhs
-    @info "lhs" typeof(lhs)
-    @info "rhs" rhs
     lhsIdx = findfirst((x)->x==1, indexin(stateVars, [lhs]))
   end
   if typeof(rhs) != Float64 && string(rhs) != string(system.iv)
@@ -436,7 +425,7 @@ function evalDiscreteEvent(discreteEvent, u, time, system)
   end
   rhsValue = if rhsIdx != 0
     varDeps = getVariableEqDepedenceViaIdx(rhsIdx, system)
-    @info "varDeps rhs" varDeps
+    #@info "varDeps rhs" varDeps
     rootIdx = getRootEquation(varDeps)
     getConstantValueOfEq(rootIdx, system)
   elseif string(rhs) == string(system.iv)
@@ -446,8 +435,8 @@ function evalDiscreteEvent(discreteEvent, u, time, system)
   end
   lhsValue = if lhsIdx != 0
     varDeps = getVariableEqDepedenceViaIdx(lhsIdx, system)
-    @info "varDeps lhs" varDeps
-    @info "root eq" getRootEquation(varDeps)
+    #@info "varDeps lhs" varDeps
+    #@info "root eq" getRootEquation(varDeps)
     rootIdx = getRootEquation(varDeps)
     getConstantValueOfEq(rootIdx, system)
   elseif string(lhs) == string(system.iv)
@@ -457,13 +446,13 @@ function evalDiscreteEvent(discreteEvent, u, time, system)
   end
   local affectIdx = findfirst((x)->x==1, indexin(stateVars, [affect.lhs]))
   local affectNewValue = affect.rhs
-  @info "lhs value was" lhsValue
-  @info "rhs value was" rhsValue
+  #@info "lhs value was" lhsValue
+  #@info "rhs value was" rhsValue
   if shouldApplyNegation
     if operator(lhsValue, rhsValue) == false
-      @info operator(lhsValue, rhsValue)
+      #@info operator(lhsValue, rhsValue)
       #= Also assuming here that the lhs is a variable and the rhs is a value =#
-      @info "Branch 1 Value was changed" discreteEvent.condition.f
+      #@info "Branch 1 Value was changed" discreteEvent.condition.f
       isChanged = true
     end
   else
@@ -510,7 +499,6 @@ end
   Note that if the supplied equation is not solved at the top level, this function returns 0
 """
 function getRootEquation(equationIndices; usedEqIndices = Set())::Int
-  @info "New call" equationIndices
   local G = ModelingToolkit.asgraph(OMBackend.Runtime.REDUCED_SYSTEM)
   local variableIdxToEquationIdx = G.badjlist
   local equationIdxToVariableIdx = G.fadjlist
@@ -543,8 +531,6 @@ Throws an error otherwise
 function getConstantValueOfEq(eqIdx::Int, system)::Float64
   local equations = ModelingToolkit.equations(system)
   local equation = equations[eqIdx]
-  @info "eq" equation
-  @info "lhs" typeof(equation.lhs)
   @assert typeof(equation.lhs) != Number || typeof(equation.rhs) != Number "One side (lhs/rhs )needs to be a constant float"
   if equation.lhs isa Number
     return equation.lhs

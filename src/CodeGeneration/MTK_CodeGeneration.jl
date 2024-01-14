@@ -58,7 +58,6 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   #= Generate code for algorithmic Modelica =#
   (functions, functionNames) = AlgorithmicCodeGeneration.generateFunctions(simCode.functions)
   if isempty(simCode.structuralTransitions) && length(simCode.subModels) < 1 && isnothing(simCode.flatModel)
-    @info "Standard generation"
     #= Generate using the standard name =#
     return ODE_MODE_MTK_PROGRAM_GENERATION(simCode, simCode.name, functions)
   end
@@ -159,7 +158,6 @@ function ODE_MODE_MTK_PROGRAM_GENERATION(simCode::SimulationCode.SIM_CODE, model
    This needs to be done for the SymbolicUtils.jl inorder for it to recognise certain symbols.
   =#
   for f in functions
-    println("Evaluating function in global scope...")
     eval(f)
   end
   local dataStructureVariables = String[]
@@ -266,18 +264,13 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
       SimulationCode.STATE_DERIVATIVE(__) => push!(stateDerivatives, varName)
     end
   end
-  #@info "Length of Algebraic variables:" length(algebraicVariables)
-  #@info "Length of States:" length(stateVariables)
-  #@info "Length of Discrete variables" length(discreteVariables)
-  #@info "Length of OCC variables" length(occVariables)
   local performIndexReduction = simCode.isSingular
-  @info "System needs index reduction?" performIndexReduction
   #= Create equations for variables not in a loop + parameters and stuff=#
   local EQUATIONS = createResidualEquationsMTK(stateVariables,
                                                algebraicVariables,
                                                simCode.residualEquations,
                                                simCode::SimulationCode.SIM_CODE)
-  writeEqsToFile(EQUATIONS, "equationFirstStageCodeGen.log")
+  #writeEqsToFile(EQUATIONS, "equationFirstStageCodeGen.log")
   #=
   If missing from variable map error is thrown check the start condition.
   Readded discretes here....
@@ -341,10 +334,6 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
                                simCode)
   #= Reset the callback counter=#
   RESET_CALLBACKS()
-  # @info "Length EQUATIONS:" length(EQUATIONS)
-  # @info "Length state variables" length(stateVariablesSym)
-  # @info "Length discrete variables" length(discreteVariables)
-  # @info "Length algebraic variables" length(algebraicVariablesSym)
   #=
     Formulate the problem as a DAE Problem.
     For this variant we keep it on its own line
@@ -672,7 +661,6 @@ function createIfEquation(stateVariables::Vector,
         local mtkCond = transformToMTKContinousConditionEquation(branch.condition, simCode)
         #= Evaluate the initial value condition. =#
         local ivCond = evalInitialCondition(mtkCond)
-        @info "Initial value" ivCond
         local branchesWithConds::Int = nBranches - 1 #TODO DOCC - 1
         local affects::Vector{Expr} = generateAffect(i, branchesWithConds, ivCond)
         local inverseAffects::Vector{Expr} = generateInverseAffect(i, branchesWithConds, ivCond)
@@ -684,7 +672,6 @@ function createIfEquation(stateVariables::Vector,
       end
     end
   end
-  #@info "All conditions" conditions
   #= Create the equations themselves =#
   local target = 1
   local resEqs = ifEq.branches[target].residualEquations
@@ -948,7 +935,7 @@ function decomposeEquations(equations, parameterAssignments)
     local fName = string("generateEquations", i)
     equationConstructor = quote
       function $(Symbol(fName))()
-        println("#Equation generated:" * $(string(length(eqv))) * "in: " * $(fName))
+        #println("#Equation generated:" * $(string(length(eqv))) * "in: " * $(fName))
         [$(eqv...)]
       end
     end
