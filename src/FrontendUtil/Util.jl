@@ -1,5 +1,6 @@
 module Util
 
+import Absyn
 import DAE
 import DoubleEnded
 
@@ -26,7 +27,7 @@ function traverseExpTopDown(inExp::DAE.Exp, func::Function, ext_arg::Type_a)::Tu
 end
 
 function traverseExpTopDown1(continueTraversal::Bool, inExp::DAE.Exp, func::Function, inArg::Type_a) ::Tuple{DAE.Exp, Type_a}
-  local outArg::Type_a
+  local outArg
   local outExp::DAE.Exp
   (outExp, outArg) = begin
     local aliases::List{List{String}}
@@ -43,7 +44,7 @@ function traverseExpTopDown1(continueTraversal::Bool, inExp::DAE.Exp, func::Func
     local e4::DAE.Exp
     local e4_1::DAE.Exp
     local e::DAE.Exp
-    local et::Type
+    local et::DAE.Type
     local expl::List{DAE.Exp}
     local expl_1::List{DAE.Exp}
     local ext_arg::Type_a
@@ -57,13 +58,13 @@ function traverseExpTopDown1(continueTraversal::Bool, inExp::DAE.Exp, func::Func
     local isExpisASUB::Option{Tuple{DAE.Exp, ModelicaInteger, ModelicaInteger}}
     local lstexpl::List{List{DAE.Exp}}
     local lstexpl_1::List{List{DAE.Exp}}
-    local op::Operator
+    local op::DAE.Operator
     local reductionInfo::DAE.ReductionInfo
     local rel::Function
     local riters::DAE.ReductionIterators
     local scalar::Bool
-    local t::Type
-    local tp::Type
+    local t::DAE.Type
+    local tp::DAE.Type
 
     if !continueTraversal
       return (inExp, inArg)
@@ -295,7 +296,7 @@ function traverseExpTopDown1(continueTraversal::Bool, inExp::DAE.Exp, func::Func
       (inExp, ext_arg)
      end
 
-     _  => begin
+      _  => begin
        throw("Error: traverseExpTopDown1 failed")
      end
 
@@ -304,8 +305,8 @@ function traverseExpTopDown1(continueTraversal::Bool, inExp::DAE.Exp, func::Func
   (outExp, outArg)
 end
 
-function traverseExpListTopDown(expLst::List{DAE.Exp}, func::Function, inArg::Type_a)
-  outArg::Type_a = inArg
+function traverseExpListTopDown(expLst::List{DAE.Exp}, func::Function, inArg)
+  outArg = inArg
   for e in expLst
     (_, outArg) = traverseExpTopDown1(true, e, func, outArg)
   end
@@ -322,7 +323,7 @@ function traverseExpTopDownCrefHelper(inCref::DAE.ComponentRef, rel::Function, i
     local name::String
     local subs::List{DAE.Subscript}
     local subs_1::List{DAE.Subscript}
-    local ty::Type
+    local ty::DAE.Type
     @match (inCref, rel, iarg) begin
       (DAE.CREF_QUAL(ident = name, identType = ty, subscriptLst = subs, componentRef = cr), _, arg)  => begin
         (subs_1, arg) = traverseExpTopDownSubs(subs, rel, arg)
@@ -448,14 +449,14 @@ function traverseExpBottomUp(inExp::DAE.Exp, inFunc::Function, inExtArg::T)  whe
     local e4::DAE.Exp
     local e4_1::DAE.Exp
     local ext_arg::T
-    local op::Operator
+    local op::DAE.Operator
     local rel::FuncExpType
     local expl_1::List{DAE.Exp}
     local expl::List{DAE.Exp}
     local fn::Absyn.Path
     local scalar::Bool
-    local tp::Type
-    local t::Type
+    local tp::DAE.Type
+    local t::DAE.Type
     local i::Integer
     local lstexpl_1::List{List{DAE.Exp}}
     local lstexpl::List{List{DAE.Exp}}
@@ -962,7 +963,7 @@ function traverseExpCref(inCref::DAE.ComponentRef, rel::Function, iarg::Type_a) 
     local name::String
     local cr::DAE.ComponentRef
     local cr_1::DAE.ComponentRef
-    local ty::Type
+    local ty::DAE.Type
     local subs::List{DAE.Subscript}
     local subs_1::List{DAE.Subscript}
     local arg::Type_a

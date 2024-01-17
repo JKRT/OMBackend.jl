@@ -220,7 +220,7 @@ struct CREFINDEX
   index::Integer
 end
 
-mutable struct VAR
+mutable struct VAR <: Var
   varName #= variable name =#
   varKind #= kind of variable =#::VarKind
   varDirection #= input, output or bidirectional =#
@@ -423,7 +423,7 @@ const EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND
     lhs
     rhs
     source
-    attributes
+    attributes::EquationAttributes
   end
 
   @Record ARRAY_EQUATION begin

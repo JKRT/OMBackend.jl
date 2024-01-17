@@ -324,5 +324,5 @@ function structural_simplify(sys::ModelingToolkit.AbstractSystem,
  end
 
 function getSyms(odeFunc::ODEFunction)
-  return odeFunc.syms
+  return ModelingToolkit.get_states(odeFunc.sys)
 end

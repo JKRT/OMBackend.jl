@@ -107,7 +107,7 @@ end
 
 function mapEqSystems(dae::BDAE.BACKEND_DAE, traversalOperation::Function)
   dae = begin
-    local eqs::Array{BDAE.EqSystem, 1}
+    local eqs::Vector{BDAE.BDAE.EQSYSTEM}
     @match dae begin
       BDAE.BACKEND_DAE(eqs = eqs) => begin
         for i in 1:arrayLength(eqs)

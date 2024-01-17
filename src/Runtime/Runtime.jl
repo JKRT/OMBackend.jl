@@ -586,15 +586,15 @@ end
 """
     Fetches the symbolic variables from a problem.
 """
-function getSyms(problem::ODEProblem)
-  return problem.f.syms
+function getSyms(problem::ODEProblem)::Vector{Symbol}
+  return [state.f.name for state in ModelingToolkit.get_states(problem.f.sys)]
 end
 
 """
   Fetches  the symbolic variables from a solution
 """
-function getSymsFromSolution(sol)
-  return sol.prob.f.syms
+function getSymsFromSolution(sol)::Vector{Symbol}
+  getSyms(sol.f.prob)
 end
 
 

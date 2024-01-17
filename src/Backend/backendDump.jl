@@ -247,7 +247,7 @@ function Base.string(whenOp::BDAE.WhenOperator)::String
   str = begin
     local e1::DAE.Exp
     local e2::DAE.Exp
-    local cref::DAE.ComponentRef
+    local cref::DAE.CREF
     @match whenOp begin
       BDAE.ASSIGN(left = e1, right = e2) => begin
         string(e1) + " := " + string(e2)

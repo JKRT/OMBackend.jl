@@ -58,7 +58,7 @@ function makeResidualEquation(eqn::BDAE.Equation)
     local lhs::DAE.Exp
     local rhs::DAE.Exp
     local source::DAE.ElementSource
-    local attr::EquationAttributes
+    local attr::BDAE.EquationAttributes
     @match eqn begin
       BDAE.EQUATION(lhs, rhs, source, attr) => begin
         BDAE.RESIDUAL_EQUATION(makeResidualExp(lhs, rhs), source, attr)
@@ -74,7 +74,7 @@ function makeResidualEquation(eqn::BDAE.Equation)
 end
 
 """
-johti17: 
+johti17:
   Transforms the sub-equations of an if-equation into residuals
 """
 function makeResidualIfEquation(eqn::BDAE.IF_EQUATION)::BDAE.IF_EQUATION

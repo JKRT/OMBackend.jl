@@ -422,10 +422,13 @@ function lowerIfEquation(eq::IF_EQ) where {IF_EQ}
 end
 
 """
-  Create binding equations.
-  See: https://specification.modelica.org/master/equations.html
+```
+createBindingEquations(variables::Vector)
+```
+Create the equation from the binding equations.
+See: https://specification.modelica.org/master/equations.html
 TODO:
-Add discrete binding equations in some other pile.
+ - Add discrete binding equations in some other pile.
 """
 function createBindingEquations(variables::Vector)
   bindingEqs = BDAE.Equation[]
@@ -435,8 +438,8 @@ function createBindingEquations(variables::Vector)
                SOME(bindExp), _, _, _, _, _) => begin
                  local lhs = DAE.CREF(vName, v.varType)
                  local rhs = bindExp
-                 push!(bindingEqs,
-                       BDAE.EQUATION(lhs, rhs, v.source, nothing))
+                 local eq =  BDAE.EQUATION(lhs, rhs, v.source, BDAE.NO_ATTRIBUTES())
+                 push!(bindingEqs, eq)
                end
       #= Binding equations with discrete type =#
       BDAE.VAR(vName, BDAE.STATE() || BDAE.VARIABLE(), _, DAE.T_BOOL(__),

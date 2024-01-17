@@ -99,8 +99,8 @@ end
 """
 function detectStatesEqSystem(syst::BDAE.EQSYSTEM)::BDAE.EQSYSTEM
   syst = begin
-    local vars::BDAE.Variables
-    local eqs::Array
+    local vars::Vector{BDAE.VAR}
+    local eqs::Vector{BDAE.Equation}
     local stateCrefs = Dict{DAE.ComponentRef, Bool}()
     @match syst begin
       BDAE.EQSYSTEM(name, vars, eqs, simpleEqs, initialEqs) => begin
