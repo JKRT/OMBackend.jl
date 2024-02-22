@@ -72,6 +72,7 @@ function info()
   end
 end
 
+
 """
   If this function is called a DAG representing the equations is plotted to your working directory.
 """
@@ -80,7 +81,10 @@ function plotGraph(shouldPlot::Bool)
 end
 
 """
-  MTK models
+  MTK Models that have been compiled one time.
+TODO: Optimaly we should keep the fronten structure
+in memory as well s.t we only recompile if the structure of the source file changes
+(Unless retranslation is forced).
 """
 const COMPILED_MODELS_MTK = Dict()
 
@@ -191,7 +195,7 @@ function lower(fm::OMFrontend.Main.FLAT_MODEL)
   =#
   #bDAE = Causalize.detectUnusedParametersAndConstants(bDAE)
   #= Find and reclassify discrete variables not marked as discrete. =#
-  debugWrite("residualTransformation.log", BDAEUtil.stringHeading1(bDAE, "residuals"))
+  #debugWrite("residualTransformation.log", BDAEUtil.stringHeading1(bDAE, "residuals"))
   return bDAE
 end
 
@@ -228,7 +232,6 @@ function generateTargetCode(simCode::SimulationCode.SIM_CODE)
   return (modelName, modelCode)
 end
 
-
 """
 `generateMTKTargetCode(simCode::SimulationCode.SIM_CODE)`
   Generates code interfacing ModelingToolkit.jl
@@ -252,7 +255,12 @@ function generateMTKTargetCode(simCode::SimulationCode.SIM_CODE)
 end
 
 function getCompiledModel(modelName)
-  return first(COMPILED_MODELS_MTK[modelName])
+  try
+    return first(COMPILED_MODELS_MTK[modelName])
+  catch e
+    @error "Model: $(modelName) is not compiled. Available models are: $(availableModels())"
+    throw(e)
+  end
 end
 
 """
@@ -268,7 +276,10 @@ end
 function writeModelToFile(modelName::String, filePath::String; keepComments = true, keepBeginBlocks = true)
   model = getCompiledModel(modelName)
   try
-    mAsStr = modelToString(modelName; MTK = true, keepComments = keepComments, keepBeginBlocks = keepBeginBlocks)
+    mAsStr = modelToString(modelName; MTK = true,
+                           keepComments = keepComments,
+                           keepBeginBlocks = keepBeginBlocks)
+    @info "After string conversion"
     try
       #= Replace top level begin/end =#
       beginIdx = last(findfirst("begin", mAsStr)) + 1
@@ -323,14 +334,20 @@ function modelToString(modelName::String; MTK = true, keepComments = true, keepB
       strippedModel = CodeGeneration.stripBeginBlocks(model)
     end
     local modelStr::String = "$strippedModel"
-    formattedResults = JuliaFormatter.format_text(modelStr;
-                                                  remove_extra_newlines = true,
-                                                  indent = 2,
-                                                  margin = 200,
-                                                  always_use_return = false)
+    local formattedResults
+    try
+      formattedResults = JuliaFormatter.format_text(modelStr;
+                                                    remove_extra_newlines = true,
+                                                    indent = 4,
+                                                    margin = 200,
+                                                    always_use_return = true)
+    catch e
+      @warn "Julia Formatter failed to format the output results due to $(e)"
+      formattedResults = modelStr
+    end
     return formattedResults
   catch e
-    @error "Model: $(modelName) is not compiled. Available models are: $(availableModels())"
+    @error "Model: $(modelName) is not compiled.\n Available models are: $(availableModels())"
     #throw("Error printing model")
     @info e
   end
@@ -406,9 +423,9 @@ function simulateModel(modelName::String;
       =#
     catch err
       @info "Interactive evaluation failed with exception: $(typeof(err)) with mode: $(MODE)"
-      @info "runnable" modelRunnable
+      @info "Runnable" modelRunnable
       @info "Julia Code:"
-      println(strippedModel)
+      #println(strippedModel)
       throw(err)
     end
   else

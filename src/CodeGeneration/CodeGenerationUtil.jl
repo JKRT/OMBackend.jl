@@ -960,16 +960,21 @@ The if expression:
 ```
 D(y) ~ ifelse(ifCond11 == true, uMin, ifelse(ifCond12 == true, uMax, u))
 ```
-will be generated along with variables for all sub branches.
+will be generated along with variables for the sub branches.
 
 """
-function generateIfExpressions(branches, target::Int, resEqIdx::Int, identifier::Int, simCode; subIdentifier::Int = identifier)
+function generateIfExpressions(branches,
+                               target::Int,
+                               resEqIdx::Int,
+                               identifier::Int,
+                               simCode;
+                               subIdentifier::Int = identifier)
   local branch = branches[target]
   if branch.targets == -1
     return :($(first(deCausalize(branch.residualEquations[resEqIdx], simCode))))
   end
   #= Otherwise generate code for the other part =#
-  local cond = :( $(Symbol("ifCond$(identifier)$(subIdentifier)")) == true )
+  local cond = :( $(Symbol(string("ifCond", identifier, subIdentifier))) == true )
   local rhs = first(deCausalize(branch.residualEquations[resEqIdx], simCode))
   quote
     ModelingToolkit.ifelse($(cond),
@@ -1038,6 +1043,10 @@ function isIntOrBool(@nospecialize(exp::DAE.Exp))
   end
 end
 
+"""
+`writeEqsToFile(elems::Vector{Expr}, filename)`
+  Used for logging.
+"""
 function writeEqsToFile(elems::Vector{Expr}, filename)
   buffer = IOBuffer()
   for e in elems

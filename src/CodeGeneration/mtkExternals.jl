@@ -116,8 +116,8 @@ end
   Rewrite equations that do not conform to the requirements of MTK
 """
 function rewriteEquations(edeqs, iv, eVars, ePars, simCode)
-  # println("Recived #edeqs")
-  # println(length(edeqs))
+  #println("Recived #edeqs")
+  #println(length(edeqs))
   local der = ModelingToolkit.Differential(t)
   #= Remove the t's =#
   eVars = [Symbol(replace(string(i), "(t)" => "")) for i in eVars]
@@ -191,6 +191,7 @@ TODO:
   This routine is way way to slow currently...
 """
 function evalEDeqs(edeqs)
+  #writeEqsToFile(edeqs, "beforeEqRewrite.log")
   local deqs = []
   for e in edeqs
     try

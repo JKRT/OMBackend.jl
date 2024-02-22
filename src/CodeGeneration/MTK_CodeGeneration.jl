@@ -270,7 +270,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
                                                algebraicVariables,
                                                simCode.residualEquations,
                                                simCode::SimulationCode.SIM_CODE)
-  #writeEqsToFile(EQUATIONS, "equationFirstStageCodeGen.log")
+  writeEqsToFile(EQUATIONS, "equationFirstStageCodeGen.log")
   #=
   If missing from variable map error is thrown check the start condition.
   Readded discretes here....
@@ -290,12 +290,12 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
   local IF_EQUATION_COMPONENTS::Vector{Tuple{Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Symbol}, Vector{Tuple}}} =
     createIfEquations(stateVariables, algebraicVariables, simCode)
   #= Symbolic names =#
-  local algebraicVariablesSym = [:($(Symbol(v))) for v in algebraicVariables]
-  local dataStructureVariablesSym = [Symbol(v) for v in dataStructureVariables]
-  local discreteVariablesSym = [:($(Symbol(v))) for v in discreteVariables]
-  local stateVariablesSym = [:($(Symbol(v))) for v in stateVariables]
-  local occVariablesSym = [:($(Symbol(v))) for v in occVariables]
-  local parVariablesSym = [Symbol(p) for p in parameters]
+  local algebraicVariablesSym = Symbol[:($(Symbol(v))) for v in algebraicVariables]
+  local dataStructureVariablesSym = Symbol[Symbol(v) for v in dataStructureVariables]
+  local discreteVariablesSym = Symbol[:($(Symbol(v))) for v in discreteVariables]
+  local stateVariablesSym = Symbol[:($(Symbol(v))) for v in stateVariables]
+  local occVariablesSym = Symbol[:($(Symbol(v))) for v in occVariables]
+  local parVariablesSym = Symbol[Symbol(p) for p in parameters]
   #=Preprocess the component of the if equations =#
   local DISCRETE_DUMMY_EQUATIONS = [:(der($(Symbol(dv))) ~ 0) for dv in discreteVariables]
   #= Create assignments for the dummies. =#
@@ -312,7 +312,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
   local ZERO_DYNAMICS_COND_EQUATIONS = collect(Iterators.flatten([component[3] for component in IF_EQUATION_COMPONENTS]))
   #= Expand the start conditions with initial equations for the zero dynamic equations for the conditional equations =#
   local ifConditionalStartEquations = [:($(Symbol(first(v))) => $(last(v))) for v in ifConditionNameAndIV]
-  local irreductableSyms = [Symbol(vn) for vn in simCode.irreductableVariables]
+  local irreductableSyms = Symbol[Symbol(vn) for vn in simCode.irreductableVariables]
   START_CONDTIONS_EQUATIONS = vcat(ifConditionalStartEquations,
                                    DISCRETE_START_VALUES,
                                    START_CONDTIONS_EQUATIONS)
@@ -386,7 +386,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SimulationCode.SIM_CODE, modelNa
       equationComponents = []
       $(stripBeginBlocks(decomposeEquations(EQUATIONS, PARAMETER_ASSIGNMENTS)))
       #= Generate the Equations =#
-      for constructor in equationConstructors
+      for constructor in equationConstructorCalls
         push!(equationComponents, constructor())
       end
       eqs = collect(Iterators.flatten(equationComponents))
@@ -577,6 +577,7 @@ So the first will have 1 and so on.
 function createIfEquations(stateVariables, algebraicVariables, simCode)
   local ifEquations = Tuple{Vector{Expr}, Vector{Expr}, Vector{Expr}, Vector{Symbol}, Vector{Tuple}}[]
   local identifier::Int
+  #= The identifier is increased by 1 in each iteration. =#
   for (identifier, ifEq) in enumerate(simCode.ifEquations)
     push!(ifEquations, createIfEquation(stateVariables, algebraicVariables, ifEq, identifier, simCode))
   end
@@ -675,17 +676,20 @@ function createIfEquation(stateVariables::Vector,
   #= Create the equations themselves =#
   local target = 1
   local resEqs = ifEq.branches[target].residualEquations
-  @assert(length(resEqs) == 1, "More than one equation in an if equation is not currently supported by OM.jl")
+  local msg = "More than one equation in an if equation is not currently supported by OpenModelica.jl"
+  @assert(length(resEqs) == 1, msg)
   local ifExpressions = Expr[]
   #= The number of residuals is the same for both branches. =#
-  for resEqIdx in 1:length(ifEq.branches[target].residualEquations)
+  local nResEqsInTarget = length(ifEq.branches[target].residualEquations)
+  for resEqIdx in 1:nResEqsInTarget
     local resEq = first(ifEq.branches[target].residualEquations)
     push!(ifExpressions,
           :($(last(deCausalize(resEq, simCode))) ~ $(generateIfExpressions(ifEq.branches,
                                                                            target,
                                                                            resEqIdx,
                                                                            identifier,
-                                                                           simCode))))
+                                                                           simCode;
+                                                                           subIdentifier = 1))))
   end
   #= Generate zero dynamic equations for the conditions =#
   conditionEquations = Expr[]
@@ -922,14 +926,16 @@ function decomposeEquations(equations, parameterAssignments)
   local nStateVars = length(equations)
   local equationVectors = collect(Iterators.partition(equations, 50))
   local exprs = Expr[]
-  local equationConstructorCalls = Expr[]
+  local equationConstructorCalls = Function[]
   local constructors = quote
     #= Moved from line below. It is maybe not needed to repeat it for each block to repeat this to much.. =#
     $(parameterAssignments...)
-    equationConstructors = Function[]
+    local equationConstructors::Vector{Function}
+    local equationConstructorCalls::Vector
   end
   push!(exprs, constructors)
   local i = 0
+  local functionNames = Symbol[]
   for equationVector in equationVectors
     eqv = [rewriteEq(i) for i in equationVector]
     local fName = string("generateEquations", i)
@@ -939,16 +945,15 @@ function decomposeEquations(equations, parameterAssignments)
         [$(eqv...)]
       end
     end
-    equationConstructorCall = :(push!(equationConstructors, $(Symbol(fName))))
+    push!(functionNames, Symbol(fName))
     push!(exprs, equationConstructor)
-    push!(equationConstructorCalls, equationConstructorCall)
+    #push!(equationConstructorCalls, equationConstructorCall)
     i += 1
   end
   expr = quote
     $(exprs...)
-    $(equationConstructorCalls...)
+    equationConstructorCalls = [$(functionNames...)]
   end
-  #expr = stripBeginBlocks(expr)
   return expr
 end
 
@@ -981,7 +986,7 @@ function decomposeStartEquations(equations)
 end
 
 """
-  Generates quoted Symbolics.@register_symbolic calls s.t externaly defined functions can be defined.
+  Generates quoted Symbolics.@register_symbolic calls s.t externaly defined functions is known during the simulation.
 """
 function generateRegisterCallsForCallExprs(simCode;
                                             funcArgGen::Function = AlgorithmicCodeGeneration.generateSignatureForRegistration)
