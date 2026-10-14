@@ -47,11 +47,14 @@ Handle concrete non variable arguments.
 function generateSimCodeFunctions(functionList::List{FRONTEND_FUNCTION})::Tuple{Vector{ModelicaFunction}, Bool}
   local functions = ModelicaFunction[]
   local externalFunctionsUsed = false
+  local inlineNames = Set{String}()
   for f in functionList
     local n = string(f.path)
     for d in f.derivatives
       _registerFunctionDerivative!(n, d, length(f.inputs))
     end
+    #= Inline = true (EARLY_INLINE in the frontend's mapping) =#
+    (f.attributes.inline isa DAE.EARLY_INLINE || f.attributes.inline isa DAE.NORM_INLINE) && push!(inlineNames, n)
     local inputs = map(f.inputs) do input
       OMFrontend.Frontend.convertFunctionParam(input)
     end
@@ -59,7 +62,9 @@ function generateSimCodeFunctions(functionList::List{FRONTEND_FUNCTION})::Tuple{
       OMFrontend.Frontend.convertFunctionParam(output)
     end
     local locals = map(f.locals) do l
-      OMFrontend.Frontend.convertFunctionParam(l)
+      #= read first: the conversion replaces a record's class by its DAE type =#
+      local fieldBindings = _fieldBindings(l)
+      _withFieldBindings(OMFrontend.Frontend.convertFunctionParam(l), fieldBindings)
     end
     if ! OMFrontend.Frontend.isExternal(f)
       local body::Vector{OMFrontend.Frontend.Statement} = OMFrontend.Frontend.getBody(f)
@@ -83,7 +88,95 @@ function generateSimCodeFunctions(functionList::List{FRONTEND_FUNCTION})::Tuple{
       push!(functions, EXTERNAL_MODELICA_FUNCTION(n, inputs, outputs, locals, language, libInfo))
     end
   end
+  _inlineDerivatives!(functions, inlineNames)
   return (functions, externalFunctionsUsed)
+end
+
+_inlineDerivativeName(n::String)::String = n * "__inlineDer"
+
+#= A derivative for an `Inline = true` function without a derivative annotation whose body is
+   `y := g(a1, ..., an)`, g with one: g's derivative function at the same arguments, as
+   OpenModelica inlines f before the index reduction (MSL IF97's rho_ph(p, h, phase, region)
+   := rho_props_ph(p, h, waterBaseProp_ph(...)), rho_props_ph's derivative rho_ph_der: Fluid's
+   MeasuringTemperature had no derivative of rho_ph). The synthesized function takes f's inputs
+   and a derivative for each Real one; an argument of g that takes a derivative must be one of
+   f's inputs or a literal. =#
+function _inlineDerivatives!(functions::Vector{ModelicaFunction}, inlineNames::Set{String})::Nothing
+  for f in copy(functions)
+    (f isa MODELICA_FUNCTION && f.name in inlineNames) || continue
+    local existing = get(FUNCTION_DERIVATIVES, f.name, nothing)
+    (existing === nothing || existing[1] == _inlineDerivativeName(f.name)) || continue
+    local synthesized = _inlineDerivative(f, functions)
+    synthesized === nothing && continue
+    push!(functions, synthesized)
+    FUNCTION_DERIVATIVES[f.name] = (synthesized.name, Int[], length(f.inputs))
+  end
+  return nothing
+end
+
+function _inlineDerivative(f::MODELICA_FUNCTION, functions::Vector{ModelicaFunction})::Union{Nothing, MODELICA_FUNCTION}
+  (length(f.outputs) == 1 && only(f.outputs).ty isa DAE.T_REAL && length(f.statements) == 1) || return nothing
+  all(v -> (v.ty isa DAE.T_REAL || v.ty isa DAE.T_INTEGER || v.ty isa DAE.T_BOOL) && isempty(v.dims), f.inputs) || return nothing
+  local stmt = only(f.statements)
+  (stmt isa DAE.STMT_ASSIGN && stmt.exp isa DAE.CALL) || return nothing
+  local call = stmt.exp
+  local gName = string(call.path)
+  local gd = get(FUNCTION_DERIVATIVES, gName, nothing)
+  gd === nothing && return nothing
+  local (gDerName, gExcluded, gN) = gd
+  local gArgs = collect(call.expLst)
+  local gk = findfirst(h -> h.name == gName, functions)
+  (gk === nothing || length(gArgs) != gN || length(functions[gk].inputs) != gN) && return nothing
+  local derOf = Dict{String, DAE.Exp}()
+  local derInputs = DAE.VAR[]
+  for v in f.inputs
+    v.ty isa DAE.T_REAL || continue
+    local cr = DAE.CREF_IDENT(string(v.componentRef) * "__der", DAE.T_REAL_DEFAULT, MetaModelica.nil)
+    push!(derInputs, @set v.componentRef = cr)
+    derOf[string(v.componentRef)] = DAE.CREF(cr, DAE.T_REAL_DEFAULT)
+  end
+  local derArgs = DAE.Exp[]
+  for (i, v) in enumerate(functions[gk].inputs)
+    (v.ty isa DAE.T_REAL && !(i in gExcluded)) || continue
+    local a = gArgs[i]
+    local d = a isa DAE.CREF ? get(derOf, string(a.componentRef), nothing) :
+              (a isa DAE.RCONST || a isa DAE.ICONST) ? DAE.RCONST(0.0) : nothing
+    d === nothing && return nothing
+    push!(derArgs, d)
+  end
+  local out = only(f.outputs)
+  local derCall = DAE.CALL(Absyn.IDENT(gDerName), MetaModelica.list(gArgs..., derArgs...), call.attr)
+  local body = DAE.Statement[DAE.STMT_ASSIGN(out.ty, DAE.CREF(out.componentRef, out.ty), derCall, stmt.source)]
+  return MODELICA_FUNCTION(_inlineDerivativeName(f.name), vcat(f.inputs, derInputs), [out], DAE.VAR[], body)
+end
+
+#= A record-typed local whose type carries its fields' bindings as written in the record
+   instance, which CodeGeneration's _recordLocal sets the fields from. The converted type
+   has them with the scope prefix stripped (NFConvertDAE.makeTypeRecordVar), so a field
+   default reading another field (`Real b = 2 * a`) read whatever `a` is in the function;
+   with the prefix it is the local's own field (`w.a`, generated as `w_a`). =#
+function _withFieldBindings(v::DAE.VAR, fieldBindings::Dict{String, DAE.Binding})::DAE.VAR
+  (isempty(fieldBindings) || !(v.ty isa DAE.T_COMPLEX)) && return v
+  local vars = DAE.Var[haskey(fieldBindings, tv.name) ?
+    DAE.TYPES_VAR(tv.name, tv.attributes, tv.ty, fieldBindings[tv.name], tv.bind_from_outside, tv.constOfForIteratorRange) :
+    tv for tv in v.ty.varLst]
+  @assign v.ty = DAE.T_COMPLEX(v.ty.complexClassType, arrayList(vars), v.ty.equalityConstraint, v.ty.usedExternally)
+  return v
+end
+
+#= The bindings of a record-typed function variable's fields, with their scope prefix, by
+   field name; empty for another variable. =#
+function _fieldBindings(node::OMFrontend.Frontend.InstNode)::Dict{String, DAE.Binding}
+  local F = OMFrontend.Frontend
+  local bindings = Dict{String, DAE.Binding}()
+  local ty = F.getType(F.component(node))
+  F.isvariant(ty, F.TYPE_COMPLEX) || return bindings
+  local cls = F.getClass(ty.cls)
+  (cls isa F.INSTANCED_CLASS && cls.restriction isa F.RESTRICTION_RECORD) || return bindings
+  for c in F.getComponents(cls.elements)
+    bindings[F.name(c)] = F.toDAE(F.getBinding(F.component(c)))
+  end
+  return bindings
 end
 
 #= A function's derivative annotation of order 1, by the function's name: the derivative
@@ -127,6 +220,17 @@ end
 """
   Flatten record parameters in a single function.
 """
+#= The (field, type) pairs of a local array of records with scalar fields; nothing for
+   another local. =#
+function _localRecordArrayFields(v::DAE.VAR)::Union{Nothing, Vector{Tuple{String, DAE.Type}}}
+  local elemTy = v.ty isa DAE.T_ARRAY ? _elementType(v.ty) : v.ty
+  (elemTy isa DAE.T_COMPLEX && elemTy.complexClassType isa DAE.ClassInf.RECORD) || return nothing
+  (v.ty isa DAE.T_ARRAY || !isempty(v.dims)) || return nothing
+  local fields = Tuple{String, DAE.Type}[(f.name, f.ty) for f in elemTy.varLst]
+  (isempty(fields) || any(f -> f[2] isa DAE.T_ARRAY || f[2] isa DAE.T_COMPLEX, fields)) && return nothing
+  return fields
+end
+
 function flattenRecordParametersInFunction(func::MODELICA_FUNCTION)::MODELICA_FUNCTION
   local flattenedInputs = DAE.VAR[]
   local flattenedOutputs = DAE.VAR[]
@@ -143,6 +247,15 @@ function flattenRecordParametersInFunction(func::MODELICA_FUNCTION)::MODELICA_FU
   for output in func.outputs
     flattenedVars = flattenRecordVar(output, recordFieldMap; inputNames = inputNames)
     append!(flattenedOutputs, flattenedVars)
+  end
+
+  #= A local array of records too (MSL ReferenceAir's Ice09 Gibbs function: `MyComplex[3]
+     r_2`, `MyComplex o[12]`): its element reads, field reads (o[1].re) and element writes
+     go to the field arrays CodeGeneration's _recordArrayLocal declares. Not a scalar
+     record local: generateLocals and the assignments' codegen take those. =#
+  for l in func.locals
+    local fields = _localRecordArrayFields(l)
+    fields === nothing || (recordFieldMap[string(l.componentRef)] = fields)
   end
 
   #= Transform statements to use flattened names =#
@@ -608,6 +721,24 @@ end
   are expanded into individual field arguments matching the flattened function
   signatures.
 """
+#= `(a, b, ...) = f(...)` as one residual per target, `a - f(...)[1]`, ...: the code generation
+   of the scalarized path has no tuple residuals (`(r_a, y2) - g(time)`, a MethodError; the
+   array path splits them itself). A record output is counted by its fields, as the targets
+   are (expandRecordArgsInExp) and a generated f returns it. Nothing for another shape. =#
+function _splitTupleResidual(@nospecialize(exp::DAE.Exp))::Union{Nothing, Vector{DAE.Exp}}
+  (exp isa DAE.BINARY && exp.operator isa DAE.SUB && exp.exp1 isa DAE.TUPLE && exp.exp2 isa DAE.CALL) || return nothing
+  local call = exp.exp2
+  (!call.attr.isImpure && call.attr.ty isa DAE.T_TUPLE) || return nothing
+  local out = DAE.Exp[]
+  for (k, target) in enumerate(exp.exp1.PR)
+    target isa DAE.CREF || return nothing
+    target.componentRef isa DAE.WILD && continue
+    (target.ty isa DAE.T_ARRAY || target.ty isa DAE.T_COMPLEX) && return nothing
+    push!(out, DAE.BINARY(target, DAE.SUB(target.ty), DAE.TSUB(call, k, target.ty)))
+  end
+  return out
+end
+
 function flattenRecordCallSites(simCode)
   #= Typed-eltype Vector to satisfy `Vector{RESIDUAL_EQUATION}` field under `infer=false`. =#
   local newResEqs = RESIDUAL_EQUATION[]
@@ -616,7 +747,12 @@ function flattenRecordCallSites(simCode)
     if eq isa BDAE.RESIDUAL_EQUATION || eq isa RESIDUAL_EQUATION
       local expDAE = toDAEExp(eq.exp)
       local newExp = expandRecordArgsInExp(expDAE)
-      push!(newResEqs, newExp === expDAE ? eq : typeof(eq)(newExp, eq.source, eq.attr))
+      local split = _splitTupleResidual(newExp)
+      if split === nothing
+        push!(newResEqs, newExp === expDAE ? eq : typeof(eq)(newExp, eq.source, eq.attr))
+      else
+        append!(newResEqs, [typeof(eq)(e, eq.source, eq.attr) for e in split])
+      end
     else
       push!(newResEqs, eq)
     end
@@ -746,6 +882,10 @@ function expandRecordArgsInExp(exp::DAE.Exp)::DAE.Exp
               end
             end
           end
+          #= A record literal (a record parameter folded to its value: MSL Spice3's
+             Model(m_dTemp = ...)) is its fields too; passed whole, the function got a
+             NamedTuple where it reads a field. =#
+          DAE.RECORD(_, exps, _, _) => append!(newArgs, DAE.Exp[expandRecordArgsInExp(e) for e in exps])
           _ => begin
             local expandedArg = expandRecordArgsInExp(arg)
             #= Check if the expanded argument has Complex record return type.
@@ -806,6 +946,25 @@ function expandRecordArgsInExp(exp::DAE.Exp)::DAE.Exp
     DAE.ARRAY(ty, scalar, arr) => begin
       local newArr = map(expandRecordArgsInExp, arr)
       DAE.ARRAY(ty, scalar, MetaModelica.list(newArr...))
+    end
+    #= A tuple equation's record element is its fields, as the callee returns them
+       ((D1.cc, D1.m_dCap) = diodeNoBypassCode(...) in MSL Spice3: D1_cc did not resolve). =#
+    DAE.TUPLE(elements) => begin
+      local newEls = DAE.Exp[]
+      local changed = false
+      for el in elements
+        @match el begin
+          DAE.CREF(cr, DAE.T_COMPLEX(DAE.ClassInf.RECORD(__), varLst, _)) => begin
+            local baseName = OMBackend.canonicalName(cr)
+            for field in varLst
+              push!(newEls, buildFieldArgExp(baseName * OMBackend.COMPONENT_SEPARATOR * field.name, field.ty))
+            end
+            changed = true
+          end
+          _ => push!(newEls, el)
+        end
+      end
+      changed ? DAE.TUPLE(MetaModelica.list(newEls...)) : exp
     end
     _ => exp
   end

@@ -665,22 +665,29 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
     end
   end
   local DATA_STRUCTURE_ASSIGNMENTS = createDataStructureAssignments(_dsVarNames, simCode)
+  #= and the modes' (their variables are theirs, a mode's table was undefined), after the
+     parameters they read: owned by the model's build, freed with it. A top-level one is in
+     every mode too: assigned once. =#
+  local MODE_DATA_STRUCTURE_PRELUDES = Expr[]
+  local _assigned = Set{String}(_dsVarNames)
+  for mode in simCode.subModels
+    local modeNames = String[]
+    for (varName, (_, var)) in mode.stringToSimVarHT
+      var.varKind isa SimulationCode.DATA_STRUCTURE && !(varName in _assigned) && push!(modeNames, varName)
+    end
+    isempty(modeNames) && continue
+    union!(_assigned, modeNames)
+    append!(MODE_DATA_STRUCTURE_PRELUDES, createStringParameterAssignments(mode), createArrayParameterPrelude(mode))
+    append!(DATA_STRUCTURE_ASSIGNMENTS, createDataStructureAssignments(modeNames, mode; owner = simCode.name))
+  end
   #= Append top level variables to the common variables =#
   #= END =#
   code = quote
-    import DAE
-    import DataStructures.OrderedCollections
-    using DataStructures.OrderedCollections: OrderedSet, OrderedDict
-    import SCode
-    import OMBackend
-    import OMBackend.CodeGeneration
-    import Setfield
-    using ModelingToolkit
-    using DifferentialEquations
-    using DiffEqCallbacks
+    $(_modeModuleImports())
     $(_moduleCompilerOptions())
     $(createStringParameterAssignments(simCode)...)
     $(createArrayParameterPrelude(simCode)...)
+    $(MODE_DATA_STRUCTURE_PRELUDES...)
     $(DATA_STRUCTURE_ASSIGNMENTS...)
     $(structuralModes...)
     $(structuralCallbacks...)
@@ -764,6 +771,52 @@ function ODE_MODE_MTK(simCode::SimulationCode.SIM_CODE)
   end
   local moduleExpr = Expr(:module, true, Symbol(MODEL_NAME), stripBeginBlocks(code))
   return (MODEL_NAME, moduleExpr)
+end
+
+"""
+    _modeModuleImports() -> Expr
+
+The imports of the module of a structural model (ODE_MODE_MTK) and of a recompiled model
+(recompiledModelModule), whose code is ODE_MODE_MTK_MODEL_GENERATION's.
+"""
+function _modeModuleImports()::Expr
+  return quote
+    import DAE
+    import DataStructures.OrderedCollections
+    using DataStructures.OrderedCollections: OrderedSet, OrderedDict
+    import SCode
+    import OMBackend
+    import OMBackend.CodeGeneration
+    import Setfield
+    using ModelingToolkit
+    using DifferentialEquations
+    using DiffEqCallbacks
+  end
+end
+
+"""
+    recompiledModelModule(simCode::SimulationCode.SIM_CODE, owner::String) -> Expr
+
+The module `Recompiled` of a model recompiled during its simulation (Runtime.recompilation), to
+evaluate in the model's module: its functions, the parameters and data structures (tables) its
+code reads at module level, the tables owned by the build of the model `owner` and freed with
+it, and `<name>Model`. Evaluated in the Runtime module the code had none of them (an
+UndefVarError of the first function or table).
+"""
+function recompiledModelModule(simCode::SimulationCode.SIM_CODE, owner::String)::Expr
+  local (functions, _) = AlgorithmicCodeGeneration.generateFunctions(simCode.functions)
+  local model = ODE_MODE_MTK_MODEL_GENERATION(simCode, simCode.name, functions; useDirectRHS = false)
+  local dataStructureNames = String[name for (name, (_, var)) in simCode.stringToSimVarHT
+                                    if var.varKind isa SimulationCode.DATA_STRUCTURE]
+  local code = quote
+    $(_modeModuleImports())
+    $(_moduleCompilerOptions())
+    $(createStringParameterAssignments(simCode)...)
+    $(createArrayParameterPrelude(simCode)...)
+    $(createDataStructureAssignments(dataStructureNames, simCode; owner = owner)...)
+    $(model)
+  end
+  return Expr(:module, true, :Recompiled, stripBeginBlocks(code))
 end
 
 """
@@ -904,6 +957,7 @@ function ODE_MODE_MTK_PROGRAM_GENERATION(simCode::SimulationCode.SIM_CODE, model
       local _initKw = OMBackend.CodeGeneration.defaultInitializeKwargs(_problemForSolver, kwargs,
                                                                        $(_modelHasTableClusters(simCode)))
       local _tolKw = OMBackend.CodeGeneration.defaultToleranceKwargs(_problemForSolver, kwargs)
+      OMBackend.CodeGeneration._resetRHSError!()
       local _sol = solve(_problemForSolver, _solver; kwargs..., _initKw..., _tolKw...)
       #= If the init-alg-remake'd problem produced InitialFailure (MTK could
          not reconcile init-alg hard-start u0 with the algebraic constraints),
@@ -923,6 +977,7 @@ function ODE_MODE_MTK_PROGRAM_GENERATION(simCode::SimulationCode.SIM_CODE, model
         end
         _sol = solve(_fallbackProb, _solver; kwargs..., _initKw..., _tolKw...)
       end
+      OMBackend.CodeGeneration._rethrowRHSError(_sol)
       #= Run `when terminal()` bodies once against the final solution (gated: emitted only if the model has a terminal event). =#
       $(createTerminalBodyRunner(simCode))
       OMBackend.CodeGeneration.dropPreInitializationPoint!(_sol)

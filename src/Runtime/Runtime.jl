@@ -544,18 +544,21 @@ function solve(omProblem::OM_ProblemRecompilation, tspan::Tuple, alg; kwargs...)
           # # TMP for System 10 With optimization
           #= Now we have the start values for the next part of the system=#
           local _t_init = time()
-          integrator = init(newProblem,
-                            alg,
-                            force_dtmin = true;
-                            kwargs...)
+          #= In the latest world, as the steps: the recompiled model's module is newer than this
+             solve, and init runs its callbacks' initialization (a table's time events: a
+             MethodError of the module's closures). =#
+          integrator = Base.invokelatest(init, newProblem,
+                                         alg;
+                                         force_dtmin = true,
+                                         kwargs...)
           @VSS_DEBUG @info "[solve OM_ProblemRecompilation] init(newProblem) done" elapsed_s=round(time()-_t_init, digits=2)
           local _t_reinit = time()
-          reinit!(integrator,
-                  newU0;
-                  t0 = i.t,
-                  tf = tspan[2],
-                  reset_dt = true,
-                  kwargs...)
+          Base.invokelatest(reinit!, integrator,
+                            newU0;
+                            t0 = i.t,
+                            tf = tspan[2],
+                            reset_dt = true,
+                            kwargs...)
           @VSS_DEBUG @info "[solve OM_ProblemRecompilation] reinit! done" elapsed_s=round(time()-_t_reinit, digits=2)
         #=
           Reset with the new values of u0
@@ -704,29 +707,32 @@ function recompilation(activeModeName,
     @VSS_DEBUG @info "[RECOMPILATION] step 1/7: parsed modification" elementToChange newValue elapsed_s=round(time()-_t_start, digits=2)
     #=  2) Change the parameters in the SCode via API (As specified by the modification)=#
     #=  2.1 Change the parameter so that it is the same as the modification. =#
-    newProgram = MetaModelica.list(RuntimeUtil.setElementInSCodeProgram!(activeModeName,
-                                                                         elementToChange,
-                                                                         newValue, metaModel))
+    #= with the classes the model was instantiated with (a library: the MSL for a model using it) =#
+    newProgram = RuntimeUtil.setElementInSCodeProgram!(activeModeName, elementToChange, newValue, metaModel) <|
+      OMFrontend.recompilationProgram(OMFrontend.Frontend.SCodeUtil.elementName(metaModel))
     @VSS_DEBUG @info "[RECOMPILATION] step 2/7: SCode mutated" elapsed_s=round(time()-_t_start, digits=2)
     local classToInstantiate = modelicaActiveModeName
     #= 3) Call the frontend + the backend + JIT compile Julia code in memory =#
-    local flatModelica = first(OMFrontend.instantiateSCodeToFM(classToInstantiate, newProgram))
+    local (flatModelica, functionCache) = OMFrontend.instantiateSCodeToFM(classToInstantiate, newProgram)
     @VSS_DEBUG @info "[RECOMPILATION] step 3/7: frontend (instantiateSCodeToFM) done" elapsed_s=round(time()-_t_start, digits=2)
     #= 3.1 Run the backend =#
-    local simulationCode = translateToSimCode(flatModelica, activeModeName)
+    local simulationCode = translateToSimCode(flatModelica, OMFrontend.cacheToFunctionList(functionCache))
     @VSS_DEBUG @info "[RECOMPILATION] step 4/7: backend (translateToSimCode) done" elapsed_s=round(time()-_t_start, digits=2)
     #= 3.2 Adjust variables and special parameters =#
     RuntimeUtil.updateInitialConditions!(simulationCode, integrator)
-    local resultingModel = translateToMTK(simulationCode, activeModeName)
+    #= the model's: the recompiled model's module is in its module, its build owns the tables =#
+    local owner = OMBackend.canonicalName(activeModeName)
+    local resultingModel = translateToMTK(simulationCode, owner)
     @VSS_DEBUG @info "[RECOMPILATION] step 5/7: MTK codegen (translateToMTK) done" elapsed_s=round(time()-_t_start, digits=2)
     #= 4.0 Revaulate the model=#
-    local modelName = string(OMBackend.canonicalName(activeModeName), "Model")
-    @eval $(resultingModel)
+    local modelName = string(owner, "Model")
+    local ownerModule = Base.invokelatest(getglobal, OMBackend, Symbol(owner))
+    Core.eval(ownerModule, resultingModel)
     @VSS_DEBUG @info "[RECOMPILATION] step 6/7: module @eval done" modelName elapsed_s=round(time()-_t_start, digits=2)
-    modelCall = quote
-      $(Symbol(modelName))($(tspan))
-    end
-    (problem, callbacks, finalInitialValues, initialValues, reducedSystem, tspan, pars, vars) = @eval $(modelCall)
+    local recompiled = Base.invokelatest(getglobal, ownerModule, :Recompiled)
+    local modelFunction = Base.invokelatest(getglobal, recompiled, Symbol(modelName))
+    (problem, callbacks, finalInitialValues, initialValues, reducedSystem, tspan, pars, vars) =
+      Base.invokelatest(modelFunction, tspan)
     @VSS_DEBUG @info "[RECOMPILATION] step 7/7: modelCall @eval done (submodel ODEProblem built)" elapsed_s=round(time()-_t_start, digits=2)
     # NoInit prevents MTK from re-running init NLS on within-mode reinit
     # events; the recompilation handler already supplies a consistent newU0
@@ -879,15 +885,23 @@ function queryAgent(componentsToChange::Vector{String},
   end
 end
 
-function translateToSimCode(flatModelica, classToInstantiate)
-  local bdae = OMBackend.lower(flatModelica)
-  local simulationCode = OMBackend.generateSimulationCode(bdae; mode = OMBackend.MTK_MODE)
-  simulationCode = OMBackend.SimulationCode.simplifyEnumLiteralPaths(simulationCode)
-  simulationCode = OMBackend.SimulationCode.canonicalizeCrefNames(simulationCode)
-  return simulationCode
+"""
+    translateToSimCode(flatModelica::OMFrontend.Frontend.FlatModel, functionList::List) -> SIM_CODE
+
+The SimCode of a recompiled model with its functions (`functionList`, the frontend's), through
+the SimCode passes of a translate (OMBackend.mtkSimCode).
+"""
+function translateToSimCode(flatModelica::OMFrontend.Frontend.FlatModel, functionList::List)::OMBackend.SimulationCode.SIM_CODE
+  return OMBackend.mtkSimCode(OMBackend.lower(flatModelica), functionList)
 end
 
-function translateToMTK(simulationCode, classToInstantiate)
+"""
+    translateToMTK(simulationCode::SIM_CODE, owner::String) -> Expr
+
+The module of a recompiled model (CodeGeneration.recompiledModelModule): its tables are owned by
+the build of the model `owner`.
+"""
+function translateToMTK(simulationCode::OMBackend.SimulationCode.SIM_CODE, owner::String)::Expr
   local checkResult = OMBackend.SimulationCode.SimCodeCheck.check(simulationCode)
   local canonicalErrors = filter(v -> v.rule === :canonical_cref_names && v.severity === :error,
                                  checkResult.violations)
@@ -895,8 +909,7 @@ function translateToMTK(simulationCode, classToInstantiate)
     local details = join([string(v.where, ": ", v.detail) for v in canonicalErrors], "\n")
     error("SimCode still contains non-canonical names before runtime code generation:\n" * details)
   end
-  local newModel = OMBackend.CodeGeneration.ODE_MODE_MTK_MODEL_GENERATION(simulationCode, simulationCode.name, []; useDirectRHS = false)
-  return newModel
+  return OMBackend.CodeGeneration.recompiledModelModule(simulationCode, owner)
 end
 
 """

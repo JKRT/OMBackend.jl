@@ -80,6 +80,22 @@ function generateInitialEquationsAsConstraints(initialEqs, simCode::SimulationCo
     end
     local ieqLhsDAE = SimulationCode.toDAEExp(ieq.lhs)
     local ieqRhsDAE = SimulationCode.toDAEExp(ieq.rhs)
+    #= A tuple equation of a call the build did not solve: one constraint per variable of the
+       left side, its output (MSL Filter's `({r[1], r[2]}, _, _, _) = roots.lowPass(cr, ...)`
+       with cr computed by the initialization; dropped, r kept 0 and the filter's states did
+       not move). =#
+    local targets = MTK_CodeGenerationUtil._tupleEquationTargets(ieqLhsDAE, ieqRhsDAE)
+    if targets !== nothing
+      for (target, element, _) in targets
+        try
+          push!(result, :($(expToJuliaExpMTK(target, simCode)) ~ $(_initialEquationRhs(element, simCode))))
+        catch err
+          OMBackend._fallback(err, :initialConstraintTuple; only = UnsupportedLowering, impact = :result)
+          @warn "[CODEGEN: initialConstraints] failed to lower a tuple element; constraint dropped" target err
+        end
+      end
+      continue
+    end
     local lhs = try
       expToJuliaExpMTK(ieqLhsDAE, simCode)
     catch err
@@ -641,7 +657,8 @@ end
 
 function _initialWhenOpToJulia(wStmt, simCode::SimulationCode.SIM_CODE,
                                renamedNames::OrderedSet{String} = OrderedSet{String}())
-  local sub = e -> _substituteBoundParameters(_preAtInitialization(e, simCode), simCode)
+  #= At initialization initial() is true, as in the early pass (_initialIsTrue). =#
+  local sub = e -> _substituteBoundParameters(_preAtInitialization(_initialIsTrue(e), simCode), simCode)
   local lowerAlg = e -> _initialDerivativeReads(_renameAlgIdentifiers(
     _resolveModelicaCallTargets(AlgorithmicCodeGeneration.expToJuliaExpAlg(sub(e))),
     renamedNames,
@@ -697,8 +714,8 @@ function _initialWhenOpToJulia(wStmt, simCode::SimulationCode.SIM_CODE,
   unsupported("initial when-statement variant", wStmt)
 end
 
-#= The early pass runs at initialization: initial() is true (a body that reads
-   it, MSL Fluid PumpingSystem: UndefVarError `initial`). =#
+#= Both initialization passes run at initialization: initial() is true (a body that
+   reads it, MSL Fluid PumpingSystem's TriggeredTrapezoid: UndefVarError `initial`). =#
 _initialIsTrue(@nospecialize(e)) = first(Util.traverseExpBottomUp(e, (x, acc) -> begin
     (x isa DAE.CALL && x.path isa Absyn.IDENT && x.path.name == "initial") ? (DAE.BCONST(true), acc) : (x, acc)
   end, nothing))
@@ -1019,6 +1036,21 @@ function generateInitialAlgorithmFunction(simCode::SimulationCode.SIM_CODE)::Exp
     if haskey(ht, name)
       sv = ht[name][2]
       if sv.varKind isa SimulationCode.PARAMETER || sv.varKind isa SimulationCode.ARRAY_PARAMETER
+        #= A parameter without a binding (fixed = false, set by the initialization: MSL 4
+           DCPowerSupply's vLim from its initial algorithm) is no module global: its value
+           is the problem's. =#
+        if sv.varKind isa SimulationCode.PARAMETER && !(sv.varKind.bindExp isa SOME)
+          local psym = Symbol(name)
+          push!(fetches, quote
+            local $(psym)
+            try
+              $(psym) = LATEST_PROBLEM.ps[$(QuoteNode(psym))]
+            catch _e
+              OMBackend._fallback(_e, :initAlgGetpValue)
+              push!(_unfetched, $(QuoteNode(psym)))
+            end
+          end)
+        end
         continue
       end
       if sv.varKind isa SimulationCode.DATA_STRUCTURE || sv.varKind isa SimulationCode.STRING

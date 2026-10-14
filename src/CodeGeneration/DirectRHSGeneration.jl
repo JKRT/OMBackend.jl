@@ -52,6 +52,37 @@
 # MTK-stage dump helpers (see CodeGeneration/mtkDump.jl).
 import .MTKDump: dumpBuildDirectRHSInputs, dumpRHSExpression
 
+#= A Modelica function's error in the right-hand side (an assert, Streams.error, a domain
+   error) rejects the step, as OpenModelica's solvers treat it: the solver retries smaller, and
+   an error a smaller step avoids does not end the run (MSL MeasuringTemperature: IF97's region
+   error at a relation crossing's re-evaluation of the step's start, with the values after the
+   crossing). If the solve fails anyway, the last such error is thrown (_rethrowRHSError), so a
+   persistent one ends the run as before. =#
+const LAST_RHS_ERROR = Ref{Any}(nothing)
+#= _RHS_STEP_ERRORS: asserts.jl, after ModelicaAssertionError (included after this file). =#
+struct _StepRejectingRHS{F} <: Function
+  f::F
+end
+function (r::_StepRejectingRHS)(du, u, p, t)
+  try
+    r.f(du, u, p, t)
+  catch err
+    err isa _RHS_STEP_ERRORS || rethrow()
+    LAST_RHS_ERROR[] = err
+    fill!(du, NaN)
+    return nothing
+  end
+  LAST_RHS_ERROR[] === nothing || (LAST_RHS_ERROR[] = nothing)
+  return nothing
+end
+_resetRHSError!() = (LAST_RHS_ERROR[] = nothing; nothing)
+function _rethrowRHSError(sol::ModelingToolkit.SciMLBase.AbstractODESolution)
+  local err = LAST_RHS_ERROR[]
+  LAST_RHS_ERROR[] = nothing
+  (err === nothing || ModelingToolkit.SciMLBase.successful_retcode(sol.retcode)) || throw(err)
+  return nothing
+end
+
 """
     _buildDirectODEFunction(rhsFunc, u0, p_vec, t0; mass_matrix, sys, jacFunc, jacProto)
 
@@ -68,6 +99,7 @@ them.
 function _buildDirectODEFunction(rhsFunc, u0, p_vec, t0;
                                  mass_matrix=nothing, sys=nothing,
                                  jacFunc=nothing, jacProto=nothing, tgradFunc=nothing)
+  rhsFunc = _StepRejectingRHS(rhsFunc)
   if !OMBackend.DIRECT_RHS_TYPE_ERASE[]
     local jacKw = jacFunc === nothing ? NamedTuple() : (; jac=jacFunc, jac_prototype=jacProto)
     local tgradKw = tgradFunc === nothing ? NamedTuple() : (; tgrad=tgradFunc)
@@ -746,6 +778,9 @@ function _collectHardInitializationValues(reducedSystem, finalInitialValues;
   local equationValues = Dict{String, Float64}()
   for eq in initEqs
     startswith(string(eq.lhs), "Differential(") && continue
+    #= A residual `0 ~ f(...)` gives no variable a value (MSL 4 SMPM_ResistiveBraking: two for
+       its free parameters idq_sr, read as two values of a variable named 0.0). =#
+    _literalNumericValue(eq.lhs) === nothing || continue
     local rhsVal = _literalNumericValue(eq.rhs)
     if rhsVal === nothing
       rhsVal = _tryToFloat64(eq.rhs; resolvedParams=resolvedParams)

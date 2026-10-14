@@ -87,8 +87,9 @@ function createParameterEquationsMTK(parameters::Vector, simCode::SimulationCode
       SimulationCode.PARAMETER(__) => begin
         local optAttributes::Option{DAE.VariableAttributes} = simVar.attributes
         @match optAttributes begin
+          #= Its start, a literal or an expression of other parameters (MSL 4.1.0's
+             lightning examples: a start that reads another parameter was refused). =#
           SOME(attr) where attr.start isa SOME => begin
-            @assert !(attr.start.data isa DAE.CREF) "Non-numeric start attributes are not currently supported"
             @match SOME(startVal) = attr.start
             startVal
           end
@@ -456,6 +457,10 @@ function createArrayParameterPrelude(simCode::SimulationCode.SIM_CODE)::Vector{E
       SimulationCode.PARAMETER(SOME(SimulationCode.RCONST(r))) => r
       SimulationCode.PARAMETER(SOME(SimulationCode.ICONST(i))) => i
       SimulationCode.PARAMETER(SOME(SimulationCode.BCONST(b))) => b
+      #= An element bound to an expression of parameters, its value at the build (MSL
+         4 BearingFriction's ExternalCombiTable1D(table = tau_pos) with RobotR3's
+         tau_pos = [0, Rv0 / unitTorque; ...]: the table was undefined). =#
+      SimulationCode.PARAMETER(SOME(e)) => SimulationCode.valueAtBuildStart(SimulationCode.toDAEExp(e), simCode)
       _ => nothing
     end
     val === nothing && continue
@@ -522,7 +527,15 @@ function createArrayParameterPrelude(simCode::SimulationCode.SIM_CODE)::Vector{E
   return exprs
 end
 
-function createDataStructureAssignments(dataStructureVariables::Vector{String}, simCode::SimulationCode.SIM_CODE)::Vector{Expr}
+"""
+    createDataStructureAssignments(dataStructureVariables, simCode; owner = simCode.name) -> Vector{Expr}
+
+The module-level assignments of the data structures (records, external objects) named in
+`dataStructureVariables`; an external object is registered under the model `owner`, whose build
+frees it (a structural mode's are its model's).
+"""
+function createDataStructureAssignments(dataStructureVariables::Vector{String}, simCode::SimulationCode.SIM_CODE;
+                                        owner::String = simCode.name)::Vector{Expr}
   local dsAssignments::Vector = Expr[]
   local ht = simCode.stringToSimVarHT
   #= Same Modelica-function name set used by rewriteEquations: needed to qualify
@@ -546,10 +559,14 @@ function createDataStructureAssignments(dataStructureVariables::Vector{String}, 
     if rhs isa Expr
       qualifyModelicaFunctions!(rhs, funcNames)
     end
-    #= an external object by its name in the terms that read it (ExternalObjectRef) =#
+    #= an external object by its name in the terms that read it (ExternalObjectRef), owned by
+       this model's build and freed with it by its class's destructor =#
+    local callee = bindExp isa SimulationCode.CALL ? OMBackend.canonicalName(string(bindExp.path)) : ""
+    local destructor = endswith(callee, "_constructor") ? Symbol(replace(callee, r"_constructor$" => "_destructor")) : Symbol("")
     expr = quote
       $(LineNumberNode(@__LINE__, "$ds eq"))
-      $(Symbol(simVar.name)) = OMBackend.CodeGeneration._externalObjectRef($(QuoteNode(Symbol(simVar.name))), $(rhs))
+      $(Symbol(simVar.name)) = OMBackend.CodeGeneration._externalObjectRef($(QuoteNode(Symbol(simVar.name))), $(rhs),
+                                                                        $(QuoteNode(destructor)), $(OMBackend.canonicalName(owner)))
     end
     push!(dsAssignments, expr)
     #= A record's fields by their flattened names too (`Medium_data[1]_MM`): the equations

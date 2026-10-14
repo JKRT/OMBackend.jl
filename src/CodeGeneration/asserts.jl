@@ -58,6 +58,10 @@ end
 Base.showerror(io::IO, e::ModelicaAssertionError) =
   print(io, "ModelicaAssertionError: assertion violated at time ", e.time, ": ", e.message, "\n  condition: ", e.condition)
 
+#= The errors of a Modelica function that reject a step instead of ending the run
+   (_StepRejectingRHS, _sidePartial). =#
+const _RHS_STEP_ERRORS = Union{ErrorException, DomainError, ModelicaAssertionError}
+
 #= One generated assert: the variables it reads (local name => variable name),
    the condition and message as functions of those values and the integrator,
    and a crossing function per relation of the condition (`a - b` for `a < b`,
@@ -121,6 +125,12 @@ function withAssertCallback(callbacks, problem, asserts::Vector)
     if a.condition(_assertValues(a, getter, integrator), integrator)
       violated[i] = false
     elseif !all && (atCrossing || integrator.t == τp)
+      pending[i] = integrator.t
+    elseif all && a.timeVarying && isnan(τp) && _atAssertBoundary(a, getter, integrator)
+      #= The initialization's state at a boundary a relation touches, past it by rounding
+         (MSL TanksWithEmptyingPipe1: level_start = height = 2, the level computed from the
+         mass 2 + 4e-16, `level <= height` failed, or not, by run): decided at the next check,
+         as a crossing. Further from the boundary it is reported at once. =#
       pending[i] = integrator.t
     elseif !(a.warning && violated[i])
       local τ = all || !isempty(a.crossings) ? integrator.t : _violationTime(a, getter, integrator)
@@ -199,6 +209,13 @@ end
 
 _assertValues(a::ModelicaAssert, getter, src) =
   getter === nothing ? NamedTuple() : NamedTuple{keys(a.observed)}(Tuple(getter(src)))
+
+#= Whether a relation of the assert is at its boundary up to rounding: its crossing function
+   within 1e-9 of zero at the integrator's state. =#
+function _atAssertBoundary(a::ModelicaAssert, getter, integrator::ModelingToolkit.SciMLBase.DEIntegrator)::Bool
+  local values = _assertValues(a, getter, integrator)
+  return any(f -> abs(Float64(f(values, (t = integrator.t,)))) <= 1e-9, a.crossings)
+end
 
 #= The solution at τ within the last step, as a value provider for the getters. =#
 _stateAt(integrator, τ) =

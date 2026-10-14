@@ -188,25 +188,27 @@ end
 
 """
 Transforms a DAE Condition into a MTK continuous condition.
+
+`normalized`: each relation's difference divided by its own scale, `1 + max(|a|, |b|)`
+(`_operandScaleExpr`), so that where min/max combine several relations a hysteresis is
+relative to each one's operands (OpenModelica's per-relation hysteresis).
 """
-function transformToMTKContinuousCondition(cond, simCode; atInitial::Bool = false)
+function transformToMTKContinuousCondition(cond, simCode; atInitial::Bool = false, normalized::Bool = false)
   # @match patterns are DAE.* only; convert SIM-side conditions at entry.
   if cond isa SimulationCode.Exp
     cond = SimulationCode.toDAEExp(cond)
   end
+  local difference = function (a::DAE.Exp, b::DAE.Exp)
+    local ja = expToJuliaExpMTK(a, simCode); local jb = expToJuliaExpMTK(b, simCode)
+    normalized || return :($(ja) - $(jb))
+    return :(($(ja) - $(jb)) / $(_operandScaleExpr(Any[ja, jb])))
+  end
+  local sub = c -> transformToMTKContinuousCondition(c, simCode; atInitial = atInitial, normalized = normalized)
   res = @match cond begin
-    DAE.RELATION(e1, DAE.LESS(__), e2) => begin
-      :($(expToJuliaExpMTK(e1, simCode)) - $(expToJuliaExpMTK(e2, simCode)))
-    end
-    DAE.RELATION(e1, DAE.LESSEQ(__), e2) => begin
-      :($(expToJuliaExpMTK(e1, simCode)) - $(expToJuliaExpMTK(e2, simCode)))
-    end
-    DAE.RELATION(e1, DAE.GREATER(__), e2) => begin
-      :($(expToJuliaExpMTK(e2, simCode)) - $(expToJuliaExpMTK(e1, simCode)))
-    end
-    DAE.RELATION(e1, DAE.GREATEREQ(__), e2) => begin
-      :($(expToJuliaExpMTK(e2, simCode)) - $(expToJuliaExpMTK(e1, simCode)))
-    end
+    DAE.RELATION(e1, DAE.LESS(__), e2) => difference(e1, e2)
+    DAE.RELATION(e1, DAE.LESSEQ(__), e2) => difference(e1, e2)
+    DAE.RELATION(e1, DAE.GREATER(__), e2) => difference(e2, e1)
+    DAE.RELATION(e1, DAE.GREATEREQ(__), e2) => difference(e2, e1)
     #= Boolean-valued sub-conditions: encode `b` (true=1, false=0) such that the
        result is *negative* when the original condition is TRUE — the convention
        used by min/max for OR/AND composition and by evalInitialCondition. The
@@ -220,23 +222,15 @@ function transformToMTKContinuousCondition(cond, simCode; atInitial::Bool = fals
     DAE.CREF(__) => begin
       :(0.5 - $(expToJuliaExpMTK(cond, simCode)))
     end
-    DAE.LBINARY(e1, DAE.OR(__), e2) => begin
-      :(min($(transformToMTKContinuousCondition(e1, simCode; atInitial = atInitial)),
-            $(transformToMTKContinuousCondition(e2, simCode; atInitial = atInitial))))
-    end
-    DAE.LBINARY(e1, DAE.AND(__), e2) => begin
-      :(max($(transformToMTKContinuousCondition(e1, simCode; atInitial = atInitial)),
-            $(transformToMTKContinuousCondition(e2, simCode; atInitial = atInitial))))
-    end
+    DAE.LBINARY(e1, DAE.OR(__), e2) => :(min($(sub(e1)), $(sub(e2))))
+    DAE.LBINARY(e1, DAE.AND(__), e2) => :(max($(sub(e1)), $(sub(e2))))
     #= Logical NOT: negate the inner condition =#
-    DAE.LUNARY(DAE.NOT(__), e) => begin
-      :(-($(transformToMTKContinuousCondition(e, simCode; atInitial = atInitial))))
-    end
+    DAE.LUNARY(DAE.NOT(__), e) => :(-($(sub(e))))
     #= Strip noEvent wrapper and recurse =#
     DAE.CALL(Absyn.IDENT("noEvent"), lst, _) => begin
       local innerArgs = collect(lst)
       if length(innerArgs) == 1
-        transformToMTKContinuousCondition(innerArgs[1], simCode; atInitial = atInitial)
+        sub(innerArgs[1])
       else
         OMBackend.unsupported("noEvent with several arguments in a condition", cond)
       end
@@ -463,6 +457,20 @@ function DAECallExpressionToMTKCallExpression(pathStr::String, expLst::List,
         end
       end
     end
+    #= noEvent(if c then a else b) on Real branches: only the branch c chooses (Symbolics'
+       ifelse evaluates and differentiates that one). The arithmetic lowering of if-expressions,
+       c*a + (1 - c)*b, turned a NaN of the other branch into the result: MSL ContinuousMean's
+       der(mu) = noEvent(if time >= t_0 + t_eps then (u - mu)/(time - t_0) else 0) was NaN at
+       t_0 (the Noise examples: Unstable at the first step). noEvent is how a model guards a
+       branch that is not defined where it is not chosen. =#
+    "noEvent" where (length(expLst) == 1 && listHead(expLst) isa DAE.IFEXP &&
+                     !(listHead(expLst).expCond isa DAE.BCONST) &&
+                     !_ifexpBranchIsNonReal(listHead(expLst).expThen) &&
+                     !_ifexpBranchIsNonReal(listHead(expLst).expElse)) => begin
+      local ie = listHead(expLst)
+      local lower = e -> expToJuliaExpMTK(e, simCode; varPrefix = varPrefix, varSuffix = varSuffix, derSymbol = derAsSymbol)
+      :(ifelse(OMBackend.CodeGeneration.MTK_CodeGenerationUtil._noEventCondition($(lower(ie.expCond))), $(lower(ie.expThen)), $(lower(ie.expElse))))
+    end
     #= delay(x, T[, Tmax]): x's value T ago, from the model's history of x (delays.jl). =#
     "delay" => begin
       local args = collect(expLst)
@@ -553,6 +561,13 @@ Base.@nospecializeinfer function _ifexpBranchIsNonReal(@nospecialize(e::DAE.Exp)
     _ => false
   end
 end
+
+#= The condition of a noEvent if-expression as ifelse takes it: a Bool, or a symbolic Bool. A
+   Boolean the backend holds as a Real (0 or 1: MSL ElastoGap's `contact`) is true above 1/2. =#
+_noEventCondition(c::Bool)::Bool = c
+_noEventCondition(c::Number)::Bool = !iszero(c)
+_noEventCondition(c::Symbolics.Num) = SymbolicUtils.symtype(Symbolics.unwrap(c)) <: Bool ? c : c > 0.5
+_noEventCondition(c::SymbolicUtils.BasicSymbolic) = SymbolicUtils.symtype(c) <: Bool ? c : c > 0.5
 
 #= SimCode-Exp entry: codegen consumes `SimulationCode.Exp`
    directly. The body below mirrors the `::DAE.Exp` version's dispatch
@@ -1413,15 +1428,17 @@ function expToJuliaExpMTK(@nospecialize(exp::DAE.Exp),
           elseif scalarizedResult !== nothing
             scalarizedResult
           elseif length(subExprs) == 1 && first(subExprs) isa Integer
-            #= Check for multi-output Modelica function call: ASUB(CALL(qualified_path, args), [ix]).
-               Array-returning functions are not multi-output tuple calls; they
-               must use normal indexing on the returned array. This matters for
-               Modelica.Math.Random.Generators.Xorshift128plus.initialState,
-               whose return type is Integer[4]. =#
+            #= An element of a Modelica function call's result: ASUB(CALL(qualified_path, args), [ix]),
+               an output of a multi-output function or an element of an array-returning one
+               (Modelica.Math.Random.Generators.Xorshift128plus.initialState, Integer[4]): the
+               result indexed, for numbers. With symbolic arguments (a parameter binding: MSL
+               PlanarLoops_analytic's normalizeWithAssert(n)[2]) an array whose size follows the
+               arguments is one opaque term, so the element is a term of its own. With literal
+               arguments the indexing stays: the result is numbers, and a parameter binding's
+               call is then evaluated once for all its elements (_parameterBindingExpr). =#
             local _asubCallResult = @match innerExp begin
-              DAE.CALL(path, expLst, DAE.CALL_ATTR(ty=DAE.T_ARRAY(__))) where {_isSimCodeFunctionPath(path, simCode)} => begin
-                nothing
-              end
+              DAE.CALL(path, expLst, DAE.CALL_ATTR(ty = DAE.T_ARRAY(__))) where {_isSimCodeFunctionPath(path, simCode) &&
+                                                                                   all(_isLiteralDAEExp, expLst)} => nothing
               DAE.CALL(path, expLst) where {_isSimCodeFunctionPath(path, simCode)} => begin
                 local callFuncName = Symbol(OMBackend.canonicalName(string(path)))
                 local fnQuote = QuoteNode(callFuncName)
@@ -2315,11 +2332,25 @@ function _conditionScaleExpr(@nospecialize(cond), simCode)
      period, inf, in `time >= T0 + Tfalling`) is left out: it made the
      hysteresis infinite. =#
   for rel in _eventRelations(cond)
-    for x in (expToJuliaExpMTK(rel.exp1, simCode), expToJuliaExpMTK(rel.exp2, simCode))
-      push!(terms, :(ModelingToolkit.ifelse(abs($(x)) < 1.0e300, abs($(x)), 0.0)))
-    end
+    push!(terms, expToJuliaExpMTK(rel.exp1, simCode), expToJuliaExpMTK(rel.exp2, simCode))
   end
   isempty(terms) && return 1.0
+  return _operandScaleExpr(terms)
+end
+
+#= A literal: a constant, its negation, an array of them. =#
+Base.@nospecializeinfer function _isLiteralDAEExp(@nospecialize(e::DAE.Exp))::Bool
+  @match e begin
+    DAE.ICONST(__) || DAE.RCONST(__) || DAE.SCONST(__) || DAE.BCONST(__) || DAE.ENUM_LITERAL(__) => true
+    DAE.UNARY(exp = x) => _isLiteralDAEExp(x)
+    DAE.ARRAY(array = xs) => all(_isLiteralDAEExp, xs)
+    _ => false
+  end
+end
+
+#= `1 + max(|x|, ...)` of lowered operands, an infinite one left out (above). =#
+function _operandScaleExpr(xs::Vector{Any})
+  local terms = Any[:(ModelingToolkit.ifelse(abs($(x)) < 1.0e300, abs($(x)), 0.0)) for x in xs]
   return length(terms) == 1 ? :(1.0 + $(terms[1])) : :(1.0 + max($(terms...)))
 end
 
@@ -2882,26 +2913,55 @@ end
 _timeAtBuildStart(@nospecialize(e)) = first(Util.traverseExpBottomUp(e, (x, acc) ->
   (x isa DAE.CREF && x.componentRef isa DAE.CREF_IDENT && x.componentRef.ident == "time" ? DAE.RCONST(0.0) : x, acc), nothing))
 
+"""
+    _tupleEquationTargets(lhs::DAE.Exp, rhs::DAE.Exp) -> Union{Nothing, Vector{Tuple{DAE.Exp, DAE.Exp, DAE.Type}}}
+
+The targets of a tuple equation `(t1, t2, ...) = f(...)` of a pure call: per variable of the
+left side, (its reference, the call's output or output element it equals, that one's type). A
+wildcard has none; an array of references takes the output's elements (MSL
+Blocks.Continuous.Filter: `({r[1], r[2]}, _, _, _) = roots.lowPass(cr, ...)`). `nothing` for
+another left side.
+"""
+function _tupleEquationTargets(lhs::DAE.Exp, rhs::DAE.Exp)::Union{Nothing, Vector{Tuple{DAE.Exp, DAE.Exp, DAE.Type}}}
+  (lhs isa DAE.TUPLE && rhs isa DAE.CALL && !rhs.attr.isImpure && rhs.attr.ty isa DAE.T_TUPLE) || return nothing
+  local targets = collect(lhs.PR)
+  local types = collect(rhs.attr.ty.types)
+  length(types) >= length(targets) || return nothing
+  local out = Tuple{DAE.Exp, DAE.Exp, DAE.Type}[]
+  for (k, t) in enumerate(targets)
+    if t isa DAE.CREF
+      t.componentRef isa DAE.WILD || push!(out, (t, DAE.TSUB(rhs, k, types[k]), types[k]))
+    elseif t isa DAE.ARRAY && types[k] isa DAE.T_ARRAY &&
+           all(e -> e isa DAE.CREF && !(e.componentRef isa DAE.WILD), t.array)
+      for (j, e) in enumerate(t.array)
+        push!(out, (e, DAE.ASUB(DAE.TSUB(rhs, k, types[k]), MetaModelica.list(DAE.INDEX(DAE.ICONST(j)))), types[k].ty))
+      end
+    else
+      return nothing
+    end
+  end
+  return out
+end
+
 #= `(p1, p2, ...) = f(...)`, every free parameter of the equation alone on the left and none in
    the call (Buildings' borehole resistances: `(x, Rgb, Rgg, RCondGro) = internalResistancesOneUTube(...)`,
    in HexInternalElement with states, in its validations without): each p_k bound to the call's
-   k-th output, its value at the build where the call interprets with the parameters' values,
-   else the output's expression (its symbolic term did not fold with a String argument, the
-   instance name). Not an impure f (one call for each output). =#
+   k-th output (or output element: _tupleEquationTargets), its value at the build where the call
+   interprets with the parameters' values, else the output's expression (its symbolic term did
+   not fold with a String argument, the instance name). Not an impure f (one call for each
+   output). =#
 function _bindTupleOfFreeParameters!(lhs::DAE.Exp, rhs::DAE.Exp, freeParams::Vector{String},
                                      simCode::SimulationCode.SimCode)::Bool
-  (lhs isa DAE.TUPLE && rhs isa DAE.CALL && !rhs.attr.isImpure && rhs.attr.ty isa DAE.T_TUPLE) || return false
-  local targets = collect(lhs.PR)
-  local names = String[string(e) for e in targets if e isa DAE.CREF]
-  (length(names) == length(targets) && issetequal(names, freeParams)) || return false
+  local targets = _tupleEquationTargets(lhs, rhs)
+  targets === nothing && return false
+  local binds = Tuple{String, DAE.Exp, DAE.Type}[(string(t), e, ty) for (t, e, ty) in targets]
+  local names = String[first(b) for b in binds]
+  (!isempty(names) && allunique(names) && issetequal(names, freeParams)) || return false
   any(c -> string(c) in names, Util.getAllCrefs(rhs)) && return false
-  local types = collect(rhs.attr.ty.types)
-  length(types) >= length(targets) || return false
   local ht = simCode.stringToSimVarHT
-  for (k, name) in enumerate(names)
+  for (name, element, ty) in binds
     local (idx, sv) = ht[name]
-    local element = DAE.TSUB(rhs, k, types[k])
-    local value = types[k] isa DAE.T_REAL ? SimulationCode.valueAtBuildStart(element, simCode) : nothing
+    local value = ty isa DAE.T_REAL ? SimulationCode.valueAtBuildStart(element, simCode) : nothing
     local binding = SimulationCode.toSimExp(value === nothing ? element : DAE.RCONST(value))
     ht[name] = (idx, SimulationCode.SIMVAR(sv.name, sv.index, SimulationCode.PARAMETER(SOME(binding)), sv.attributes))
   end
@@ -3142,6 +3202,88 @@ function solveParametricInitialEquations!(simCode::SimulationCode.SimCode)
     @debug "[SIMCODE: solveParametricInitialEquations] pass $pass solved $(length(solvedNames)) more parameter(s)" solvedNames
   end
   end #= while fixed-point =#
+  _solveCoupledParametricInitialEquations!(simCode)
+end
+
+#= The parametric initial equations left, of several free parameters each, solved together
+   where they are as many as their free parameters (MSL 4 SMPM_ResistiveBraking: the
+   steady-state currents idq_sr from two coupled equations; one at a time they were not
+   solved, and the free parameters kept their start values, 0). Not where one reads a
+   tunable parameter (its run's value is not known here) or the solve does not converge:
+   those stay unbound, as before. =#
+function _solveCoupledParametricInitialEquations!(simCode::SimulationCode.SimCode)
+  local ht = simCode.stringToSimVarHT
+  local isFreeParam = key -> begin
+    local entry = get(ht, key, nothing)
+    entry !== nothing && SimulationCode.isParameter(last(entry)) && !SimulationCode.hasBindingExp(last(entry))
+  end
+  local sides = Tuple{DAE.Exp, DAE.Exp}[]
+  local free = OrderedSet{String}()
+  for ieq in simCode.initialEquations
+    isParametricOnlyEquation(ieq, simCode) || continue
+    local (lhs, rhs) = map(_timeAtBuildStart, equationSides(ieq))
+    local names = OrderedSet{String}()
+    for side in (lhs, rhs)
+      Util.traverseExpBottomUp(side, (e, acc) -> begin
+        Util.isCref(e) && isFreeParam(string(e)) && push!(names, string(e))
+        (e, true, acc)
+      end, 0)
+    end
+    length(names) >= 2 || continue
+    any(side -> _readsTunableParameter(side, simCode), (lhs, rhs)) && return nothing
+    push!(sides, (lhs, rhs)); union!(free, names)
+  end
+  (isempty(sides) || length(sides) != length(free)) && return nothing
+  local names = collect(free)
+  local residuals = Any[]
+  for (lhs, rhs) in sides
+    local ok = Ref(true)
+    local l = _substituteBoundParameters(lhs, simCode; skipNames = free, shouldEval = ok)
+    local r = _substituteBoundParameters(rhs, simCode; skipNames = free, shouldEval = ok)
+    ok[] || return nothing
+    push!(residuals, :($(expToJuliaExpMTK(l, simCode)) - $(expToJuliaExpMTK(r, simCode))))
+  end
+  local residualFn = try
+    eval(Expr(:->, Expr(:tuple, Symbol.(names)...), Expr(:vect, residuals...)))
+  catch err
+    OMBackend._fallback(err, :coupledParametricInitResidual; expect = Union{UndefVarError, MethodError}, impact = :result)
+    return nothing
+  end
+  local f = x -> Float64.(Base.invokelatest(residualFn, x...))
+  local x = Float64[something(_startNumber(last(ht[n]), simCode), 0.0) for n in names]
+  local n = length(x)
+  local converged = false
+  try
+    for _ in 1:50
+      local fx = f(x)
+      all(isfinite, fx) || break
+      if maximum(abs, fx) <= 1e-10 * max(1.0, maximum(abs, x))
+        converged = true
+        break
+      end
+      local J = Matrix{Float64}(undef, n, n)
+      for k in 1:n
+        local h = max(abs(x[k]) * 1e-7, 1e-9)
+        local xp = copy(x); xp[k] += h
+        local xm = copy(x); xm[k] -= h
+        J[:, k] = (f(xp) .- f(xm)) ./ (2h)
+      end
+      local step = J \ fx
+      all(isfinite, step) || break
+      x .-= step
+    end
+  catch err
+    OMBackend._fallback(err, :coupledParametricInitNewton; expect = Union{UndefVarError, MethodError, LinearAlgebra.SingularException}, impact = :result)
+    return nothing
+  end
+  converged || return nothing
+  for (k, name) in enumerate(names)
+    local (idx, oldSV) = ht[name]
+    ht[name] = (idx, SimulationCode.SIMVAR(oldSV.name, oldSV.index,
+                                           SimulationCode.PARAMETER(SOME(SimulationCode.toSimExp(DAE.RCONST(x[k])))), oldSV.attributes))
+  end
+  @debug "[SIMCODE: solveParametricInitialEquations] solved $(n) coupled free parameters" names x
+  return nothing
 end
 
 #= True when every variable reference in `condition` is a DISCRETE simvar, a
