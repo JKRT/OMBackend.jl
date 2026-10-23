@@ -145,9 +145,11 @@ wrapped in a `RuntimeGeneratedFunction` for world-age safety.
 `splitInitialValues` demoted to guesses. Without these, algebraic variables
 default to 0.0, which may cause InitialFailure for DAE systems.
 
-Returns an `ODEProblem` ready for `solve()`.
+Returns an `ODEProblem` ready for `solve()`. `callbacks` is not specialized on: its type holds the generated
+module's closures (a new type per translate), and the method only passes it on; specialized, it compiled
+12-14 s again for each translate of MSL BatchPlant_StandardWater.
 """
-function buildDirectRHSProblem(reducedSystem, finalInitialValues, pars, tspan, callbacks;
+function buildDirectRHSProblem(reducedSystem, finalInitialValues, pars, tspan, @nospecialize(callbacks);
                                allInitialValues=nothing,  # kept for API compat but guesses from reducedSystem are preferred
                                liftedDiscretes=String[],
                                freeParameters=String[],
@@ -384,8 +386,12 @@ function buildDirectRHSProblem(reducedSystem, finalInitialValues, pars, tspan, c
     local discreteNames = OrderedSet{String}(liftedDiscretes)
     #= Plain names: an array element prints as `var"off[2]"(t)`. =#
     local isDiscreteKey = k -> _plainVariableName(k) in discreteNames
+    #= A state's start that is no fixed value is not held where an initialization equation of an observed variable
+       reads the state: that equation determines it (MSL R134a2 with p and h its volumes' states: `volume1.medium.T =
+       300` read h, held at the medium's default start, and the solve moved the fixed p instead). =#
+    local readByObservedInit = _statesReadByObservedInitialization(reducedSystem, states)
     local pinnedKeyStrSet = OrderedSet{String}(
-      k for k in union(explicitPinnedInitialValueKeys(reducedSystem, hardInitialValues),
+      k for k in union(setdiff(explicitPinnedInitialValueKeys(reducedSystem, hardInitialValues), readByObservedInit),
                        initEqPinKeys)
       if !isDiscreteKey(k))
     local pinnedIdx = Int[i for (i, st) in enumerate(states)
@@ -519,7 +525,15 @@ function buildDirectRHSProblem(reducedSystem, finalInitialValues, pars, tspan, c
     initRels === nothing || initRels.eval!(p_vec, u0, t0; finiteOnly = true)
     local uEntry = copy(u0)
     local firstErr = nothing
+    #= each unknown's rank in the model's order (the start values' order): an underdetermined
+       initialization fixes the first states (DAEInitSolve, phase 1b) =#
+    local declared = Dict{String, Int}()
+    for (k, pair) in enumerate(finalInitialValues)
+      get!(declared, _plainVariableName(pair.first), k)
+    end
+    local stateOrder = Int[get(declared, _plainVariableName(st), typemax(Int)) for st in states]
     local solveFree = (u, pv) -> _solveDAEInitializationFree!(u, initRhs, pv, mm, freeIdx, follow!; t0 = t0, sparsity = jacProto,
+                                                              stateOrder = stateOrder,
                                                               pinned=pinnedIdx,
                                                               derivative_targets=derivativeInitTargets,
                                                               eqLabels=eqLabels,
@@ -564,7 +578,7 @@ function buildDirectRHSProblem(reducedSystem, finalInitialValues, pars, tspan, c
     local resolveWith = (u, pv, ok) -> begin
       local kept = u[keptIdx]
       local un = _solveDAEInitializationFree!(u, initRhs, pv, mm, freeIdx, follow!; t0 = t0, sparsity = jacProto,
-                                              pinned=pinnedIdx,
+                                              stateOrder=stateOrder, pinned=pinnedIdx,
                                               derivative_targets=targetsNow[],
                                               eqLabels=eqLabels,
                                               extra_residuals=useExtra ? residualsAt(pv) : nothing,
@@ -656,7 +670,7 @@ function buildDirectRHSProblem(reducedSystem, finalInitialValues, pars, tspan, c
       targetsNow[] = targets
       try
         local solveRun = (uu, pp) -> _solveDAEInitializationFree!(uu, initRhs, pp, mm, freeIdx, follow!; t0 = t0, sparsity = jacProto,
-                                         pinned=pinnedIdx,
+                                         stateOrder=stateOrder, pinned=pinnedIdx,
                                          derivative_targets=targets,
                                          eqLabels=eqLabels,
                                          extra_residuals=useExtra ? residualsAt(pp) : nothing,
@@ -906,16 +920,43 @@ function _entryParameters(values, parsByName::AbstractDict{String})::OrderedSet{
 end
 
 """
+    _statesReadByObservedInitialization(reducedSystem, states) -> Set{String}
+
+The states (by name) the initialization equations of observed variables read through the observed definitions
+(followed through other observed variables): the initialization solves them, so their starts are not held.
+"""
+function _statesReadByObservedInitialization(reducedSystem, states)::Set{String}
+  local definitions = Dict{String, Any}(string(o.lhs) => o.rhs for o in ModelingToolkit.observed(reducedSystem))
+  local stateNames = Set{String}(string(st) for st in states)
+  local out = Set{String}()
+  local seen = Set{String}()
+  local pending = String[string(eq.lhs) for eq in ModelingToolkit.initialization_equations(reducedSystem)
+                         if haskey(definitions, string(eq.lhs))]
+  while !isempty(pending)
+    local name = pop!(pending)
+    name in seen && continue
+    push!(seen, name)
+    for v in Symbolics.get_variables(definitions[name])
+      local k = string(v)
+      k in stateNames ? push!(out, k) : (haskey(definitions, k) && push!(pending, k))
+    end
+  end
+  return out
+end
+
+"""
 Whether an initialization equation needs a solve: one that is not a start
 value `x = v`, a variable of the system and a number (a derivative row,
 `y = 2*x`, `2*x = 4`).
 """
 function _hasSolvedInitializationRows(reducedSystem; resolvedParams::Union{Dict{String,Float64},Nothing}=nothing)::Bool
-  local variables = Set{String}(string(v) for v in Iterators.flatten((ModelingToolkit.unknowns(reducedSystem),
-                                                                      ModelingToolkit.parameters(reducedSystem),
-                                                                      (o.lhs for o in ModelingToolkit.observed(reducedSystem)))))
+  local observedNames = Set{String}(string(o.lhs) for o in ModelingToolkit.observed(reducedSystem))
+  local variables = union(observedNames, Set{String}(string(v) for v in Iterators.flatten((ModelingToolkit.unknowns(reducedSystem),
+                                                                                         ModelingToolkit.parameters(reducedSystem)))))
+  #= A number for an observed variable is solved for too: it is no state's start (MSL R134a2 with p and h its
+     volumes' states: `volume1.medium.T = 300` left h at the medium's default, 420000 for 426130). =#
   return any(ModelingToolkit.initialization_equations(reducedSystem)) do eq
-    startswith(string(eq.lhs), "Differential(") || !(string(eq.lhs) in variables) ||
+    startswith(string(eq.lhs), "Differential(") || !(string(eq.lhs) in variables) || string(eq.lhs) in observedNames ||
       _tryToFloat64(eq.rhs; resolvedParams=resolvedParams) === nothing
   end
 end
@@ -1047,7 +1088,7 @@ function _symbolicInitializationResiduals(reducedSystem, states, params, iv, mm;
      lowering such a function. =#
   local gFunc = try
     local fExpr = Symbolics.build_function(exprs, states, params, iv; expression = Val{true}, cse = true)
-    _exprToRTGFunction(fExpr[1])
+    _exprToRTGFunction(_sinkBranchAssignments!(fExpr[1]))
   catch e
     OMBackend._fallback(e, :_symbolicInitializationResiduals_2, impact = :result)
     @debug "DirectRHS: could not build symbolic initialization residuals" exception = e
@@ -1121,7 +1162,7 @@ function _initialParameterAssignments(reducedSystem, states, params, iv; assigna
   isempty(keep) && return nothing
   local pFunc = try
     local fExpr = Symbolics.build_function(exprs[keep], states, params, iv; expression = Val{true}, cse = true)
-    _exprToRTGFunction(fExpr[1])
+    _exprToRTGFunction(_sinkBranchAssignments!(fExpr[1]))
   catch e
     OMBackend._fallback(e, :_initialParameterAssignments_2, impact = :result)
     @debug "DirectRHS: could not build the initial parameter assignments" exception = e
@@ -1260,7 +1301,7 @@ function _observedDerivativeTargets(reducedSystem, states, params, iv;
     local (I, J, _) = Symbolics.SparseArrays.findnz(Jw)
     local nzSym = collect(Symbolics.SparseArrays.nonzeros(Jw))
     local fExpr = Symbolics.build_function(nzSym, states, params, iv; expression = Val{true}, cse = true)
-    return (_exprToRTGFunction(_demoteWideNumericLiterals!(fExpr[2])), I, J, length(states), tgts)
+    return (_exprToRTGFunction(_sinkBranchAssignments!(_demoteWideNumericLiterals!(fExpr[2]))), I, J, length(states), tgts)
   catch e
     OMBackend._fallback(e, :_observedDerivativeTargets, impact = :result)
     @warn "DirectRHS: derivative initial equations on observed variables not differentiated; left out" exception = e
@@ -1328,7 +1369,7 @@ function _explicitTimeDerivative(exprs, states, params, iv)
     Symbolics.SparseArrays.nnz(Jt) == 0 && return _zeroTimeDerivative
     local col = Any[Jt[i, n + 1] for i in 1:length(exprs)]
     local fExpr = Symbolics.build_function(col, states, params, iv; expression = Val{true}, cse = true)
-    return _exprToRTGFunction(_demoteWideNumericLiterals!(fExpr[2]))
+    return _exprToRTGFunction(_sinkBranchAssignments!(_demoteWideNumericLiterals!(fExpr[2])))
   catch e
     OMBackend._fallback(e, :_explicitTimeDerivative)
     @debug "DirectRHS: explicit time derivative not symbolic; a finite difference instead" exception = e
@@ -1652,7 +1693,7 @@ function _buildRHSExpression(rhs_list, states, params, iv)
     local result = Symbolics.build_function(rhs_list, states, params, iv;
                                              expression=Val{true}, cse=true)
     @debug "DirectRHS: generated RHS function with CSE"
-    return _demoteWideNumericLiterals!(result[2])  # in-place form
+    return _hoistExtractorCalls!(_sinkBranchAssignments!(_demoteWideNumericLiterals!(result[2])))  # in-place form
   catch e
     OMBackend._fallback(e, :_buildRHSExpression)
     @warn "DirectRHS: CSE failed, using direct generation" exception=(e, catch_backtrace())
@@ -1701,7 +1742,7 @@ function _buildSparseJacobian(rhs_list, states, params, iv, u0, p_vec, t0)
     local nzSym = collect(Symbolics.SparseArrays.nonzeros(jacSym))
     local result = Symbolics.build_function(nzSym, states, params, iv;
                                             expression=Val{true}, cse=true)
-    local nzFunc = _exprToRTGFunction(_demoteWideNumericLiterals!(result[2]))
+    local nzFunc = _exprToRTGFunction(_sinkBranchAssignments!(_demoteWideNumericLiterals!(result[2])))
     local jacProto = similar(jacSym, Float64)
     jacProto.nzval .= 0.0
     local nnz0 = length(nzSym)
@@ -1910,6 +1951,113 @@ function _demoteWideNumericLiterals!(ex::Expr)
     ex.args[i] = _demoteWideNumericLiterals!(a)
   end
   return ex
+end
+
+"""
+    _sinkBranchAssignments!(ex) -> ex
+
+`build_function`'s code with CSE assigns every subterm before the `if` that selects an `ifelse`'s
+branch, so the branch not taken was evaluated too: a Modelica function there that fails for that
+branch's values failed the call (MSL PsychrometricData: `if x < 5e-6 then 200 else
+Medium.saturationTemperature(ps_phi[i])` at ps_phi = 0; MLS 3.6.5 evaluates the chosen branch only).
+In place, in each block: a CSE temporary that only one branch reads, directly or through the
+temporaries moved there, is assigned in the innermost branch that holds all its reads.
+"""
+function _sinkBranchAssignments!(ex::Expr)::Expr
+  local worklist = Any[ex]
+  while !isempty(worklist)
+    local e = pop!(worklist)
+    e isa Expr || continue
+    e.head === :block && _sinkBranchAssignmentsInBlock!(e)
+    append!(worklist, e.args)
+  end
+  return ex
+end
+
+"The CSE temporary (`##cse#k`) a statement assigns, or `nothing`."
+function _assignedTemporary(@nospecialize(st))::Union{Nothing, Symbol}
+  (st isa Expr && st.head === :(=) && length(st.args) == 2 && st.args[1] isa Symbol) || return nothing
+  return startswith(String(st.args[1]), "##cse#") ? st.args[1] : nothing
+end
+
+"The two-branch `if` a temporary's statement assigns, or `nothing` (an `elseif` chain is not split)."
+function _assignedIf(@nospecialize(st))::Union{Nothing, Expr}
+  _assignedTemporary(st) === nothing && return nothing
+  local rhs = st.args[2]
+  return rhs isa Expr && rhs.head === :if && length(rhs.args) == 3 ? rhs : nothing
+end
+
+"The temporaries of `defined` that `e` reads, added to `out`."
+function _readTemporaries!(out::Set{Symbol}, @nospecialize(e), defined::Dict{Symbol, Int})::Set{Symbol}
+  if e isa Symbol
+    haskey(defined, e) && push!(out, e)
+  elseif e isa Expr
+    for a in e.args
+      _readTemporaries!(out, a, defined)
+    end
+  end
+  return out
+end
+
+"The longest common prefix of two branch paths."
+function _commonBranchPrefix(a::Vector{Tuple{Int, Int}}, b::Vector{Tuple{Int, Int}})::Vector{Tuple{Int, Int}}
+  local n = 0
+  while n < min(length(a), length(b)) && a[n + 1] == b[n + 1]
+    n += 1
+  end
+  return a[1:n]
+end
+
+"""
+`_sinkBranchAssignments!` in the statements of one block. From the last statement back, each
+temporary's reads are known when its assignment is reached (CSE assigns before it reads): its place
+is the common prefix of the branch paths of its reads (a path: `(statement, 2)` for a then branch,
+`(statement, 3)` for an else branch, outermost first); a statement in a branch reads in that
+branch, its own branches one level deeper.
+"""
+function _sinkBranchAssignmentsInBlock!(block::Expr)::Expr
+  local stmts = block.args
+  local defined = Dict{Symbol, Int}()
+  for (i, st) in enumerate(stmts)
+    local v = _assignedTemporary(st)
+    v === nothing || (defined[v] = i)
+  end
+  any(i -> _assignedIf(stmts[i]) !== nothing, values(defined)) || return block
+  local place = [Tuple{Int, Int}[] for _ in stmts]
+  local readAt = Dict{Symbol, Vector{Tuple{Int, Int}}}()
+  local record! = (reads::Set{Symbol}, at::Vector{Tuple{Int, Int}}) -> for s in reads
+    readAt[s] = haskey(readAt, s) ? _commonBranchPrefix(readAt[s], at) : at
+  end
+  for i in length(stmts):-1:1
+    local st = stmts[i]
+    local v = _assignedTemporary(st)
+    v === nothing || (place[i] = get(readAt, v, Tuple{Int, Int}[]))
+    local ifex = _assignedIf(st)
+    if ifex === nothing
+      record!(_readTemporaries!(Set{Symbol}(), v === nothing ? st : st.args[2], defined), place[i])
+    else
+      record!(_readTemporaries!(Set{Symbol}(), ifex.args[1], defined), place[i])
+      for k in (2, 3)
+        record!(_readTemporaries!(Set{Symbol}(), ifex.args[k], defined), vcat(place[i], [(i, k)]))
+      end
+    end
+  end
+  local moved = Dict{Tuple{Int, Int}, Vector{Int}}()
+  for i in eachindex(stmts)
+    isempty(place[i]) || push!(get!(moved, last(place[i]), Int[]), i)
+  end
+  isempty(moved) && return block
+  local branchStatements = b -> b isa Expr && b.head === :block ? b.args : Any[b]
+  function rebuild(i::Int)
+    local st = stmts[i]
+    local ifex = _assignedIf(st)
+    (ifex === nothing || !(haskey(moved, (i, 2)) || haskey(moved, (i, 3)))) && return st
+    local branches = [Expr(:block, Any[rebuild(j) for j in get(moved, (i, k), Int[])]..., branchStatements(ifex.args[k])...)
+                      for k in (2, 3)]
+    return Expr(:(=), st.args[1], Expr(:if, ifex.args[1], branches...))
+  end
+  block.args = Any[rebuild(i) for i in eachindex(stmts) if isempty(place[i])]
+  return block
 end
 
 
@@ -2400,15 +2548,20 @@ events of the MTK system it was built with (its callbacks other than those of
 `buildCallbacks`, the set it was built from). A solve uses the problem's alone:
 solve() merges `problem.kwargs[:callback]` with the callbacks it is given, so a
 callback in both would run twice. The structural (VSS) paths build their
-problems from the build's callbacks, which stay the full set.
+problems from the build's callbacks, which stay the full set. With the
+algebraic step control among `callbacks`, the problem's `isoutofdomain` is its
+step-end check (AlgebraicDomainCheck).
 """
 function withProblemCallbacks(problem, buildCallbacks, callbacks)
   local built = Base.IdSet{Any}(_callbackList(buildCallbacks))
   local own = filter(c -> !(c in built), _callbackList(get(problem.kwargs, :callback, nothing)))
+  #= With the algebraic step control, its check of a step end before the step is accepted. =#
+  local control = _stepControl(callbacks)
+  local domain = control === nothing ? NamedTuple() : (; isoutofdomain = AlgebraicDomainCheck(control))
   #= Lazily: a remake of an MTK problem with trivial initialization would
      otherwise run it now, at build time, instead of in the solve. =#
   return ModelingToolkit.SciMLBase.remake(problem; callback = DiffEqBase.CallbackSet(own..., _callbackList(callbacks)...),
-                                          lazy_initialization = true)
+                                          lazy_initialization = true, domain...)
 end
 _callbackList(::Nothing) = Any[]
 _callbackList(cb::DiffEqBase.CallbackSet) = Any[cb.continuous_callbacks..., cb.discrete_callbacks...]

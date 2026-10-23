@@ -354,7 +354,7 @@ function createIfEquation(stateVariables::Vector,
   local anyRelayCondBranch::Bool =
     any(b -> b.identifier != -1 && _conditionReferencesRelayTarget(b.condition, _rT0),
         ifEq.branches)
-  local relations = Tuple{Symbol, Any, Any}[]
+  local relations = Tuple{Symbol, Any, Any, Bool}[]
   local initLiterals = Expr[]
   for branch in ifEq.branches
     i += 1
@@ -427,9 +427,11 @@ function createIfEquation(stateVariables::Vector,
        values (which would form a circular init dependency). =#
     local zcLhs = _extractZeroCrossingLHS(mtkCond)
     local thisSym::Symbol = allIfCondSyms[i]
-    if MTK_CodeGenerationUtil._ifConditionAllDiscreteOrParameter(branch.condition, simCode)
+    if MTK_CodeGenerationUtil._ifConditionAllDiscreteOrParameter(branch.condition, simCode) ||
+       MTK_CodeGenerationUtil._ifConditionLiteral(branch.condition, simCode)
       #= A discrete or parameter condition: the residuals gate directly on it
-         (generateIfExpressions), whose own update event localises the step.
+         (generateIfExpressions), whose own update event localises the step; a
+         noEvent condition: the residuals gate on it as written (MLS 3.7.4).
          No crossing function, no callback. =#
       push!(ivConditions, ivCond)
     #= A condition with initial() is a relation (a constant crossing function
@@ -462,7 +464,7 @@ function createIfEquation(stateVariables::Vector,
         scaleExpr = 1.0
       end
       local hystCond = :((($(zcHyst)) + $(ZC_HYSTERESIS) * ($(scaleExpr)) * (1 - 2 * $(thisSym))) ~ 0)
-      push!(relations, (thisSym, zcHyst, scaleExpr))
+      push!(relations, (thisSym, zcHyst, scaleExpr, _ifConditionDependsOnTime(branch.condition)))
       #= The literal value at initialization, from the solved initial state
          (the static value comes from start attributes). Not for conditions
          on other lifted if-expressions: their values are not ready then. =#
