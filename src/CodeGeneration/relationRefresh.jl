@@ -283,13 +283,29 @@ function variableName(@nospecialize(v))::Union{Nothing, String}
 end
 
 """
-    _plainVariableName(v) -> String
+    _variableNames(xs) -> OrderedSet{String}
 
-The name in a variable's printed form (`var"x[1]"(t)` -> `x[1]`). Only for the initialization's pin sets
-(DirectRHSGeneration, mtkExternals), which key the variables by their printed form throughout; new code takes the
-name from the symbol (`variableName`).
+The names (`variableName`) of the variables among `xs`, in order; anything else (a derivative, a number) has none.
 """
-_plainVariableName(@nospecialize(v))::String = replace(string(v), "(t)" => "", "var\"" => "", "\"" => "")
+function _variableNames(xs)::OrderedSet{String}
+  local out::OrderedSet{String} = OrderedSet{String}()
+  for x in xs
+    local name::Union{Nothing, String} = variableName(x)
+    name === nothing || push!(out, name)
+  end
+  return out
+end
+
+"""
+    mtkDerivativeVariables(sys) -> Set{Any}
+
+The variables MTK created for derivatives (`xˍt`, which no SimCode variable is): the ones its schedule substitutes
+for derivatives (`dummy_sub`: `D(x) => xˍt`), unwrapped.
+"""
+function mtkDerivativeVariables(sys::ModelingToolkit.AbstractSystem)::Set{Any}
+  ModelingToolkit.get_schedule(sys) === nothing && return Set{Any}()
+  return Set{Any}(Symbolics.unwrap(v) for v in values(ModelingToolkit.get_schedule(sys).dummy_sub))
+end
 
 """
     isIndependentVariable(v) -> Bool

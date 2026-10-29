@@ -546,10 +546,8 @@ function defaultToleranceKwargs(problem, kwargs)
   problem.f.sys === nothing && return (;)
   local unknowns = ModelingToolkit.get_unknowns(problem.f.sys)
   length(unknowns) == length(problem.u0) || return (;)
-  #= OMBackend's dummy derivatives by their kind; MTK's own (`xˍt`, which no SimCode variable is): the variables its
-     schedule substitutes for derivatives (`dummy_sub`: `D(x) => xˍt`) =#
-  local schedule = ModelingToolkit.get_schedule(problem.f.sys)
-  local mtkDerivatives::Set{Any} = schedule === nothing ? Set{Any}() : Set{Any}(values(schedule.dummy_sub))
+  #= OMBackend's dummy derivatives by their kind; MTK's own by its schedule =#
+  local mtkDerivatives::Set{Any} = mtkDerivativeVariables(problem.f.sys)
   local isDerivative = (u) -> begin
     local k::Union{Nothing, SimCodeKind} = simCodeKind(u)
     k === nothing ? Symbolics.unwrap(u) in mtkDerivatives : k.irKind isa SC.IR.DUMMY_DER
