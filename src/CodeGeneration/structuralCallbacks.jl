@@ -180,7 +180,7 @@ function createStructuralCallback(simCode::SC.SIM_CODE, structuralTransition::SC
         #= Build a name→MTK-index map so condition functions use the correct u[i].
            MTK may reorder unknowns relative to the SimCode state indices. =#
         local _mtk_idx = Dict{String, Int}(
-          split(string(v), "(")[1] => i
+          OMBackend.CodeGeneration.variableName(v) => i
           for (i, v) in enumerate(ModelingToolkit.unknowns(reducedSystem)))
         stringToSimVarHT = $(simCode.stringToSimVarHT)
         local structuralChange = OMBackend.Runtime.StructuralChangeAgenticRecompilation(
@@ -220,7 +220,7 @@ function createStructuralCallback(simCode::SC.SIM_CODE, structuralTransition::SC
     quote
       function $(Symbol(callbackName))(reducedSystem, pars)
         local _mtk_idx = Dict{String, Int}(
-          split(string(v), "(")[1] => i
+          OMBackend.CodeGeneration.variableName(v) => i
           for (i, v) in enumerate(ModelingToolkit.unknowns(reducedSystem)))
         stringToSimVarHT = $(simCode.stringToSimVarHT)
         local modification::Tuple{String, String} = $(modification)

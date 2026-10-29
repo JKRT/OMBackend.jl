@@ -267,7 +267,40 @@ end
    relation becomes true (MLS 8.3.5). The operands are read by name, so they
    may be unknowns, observed variables or parameters. =#
 
-_plainVariableName(@nospecialize(v)) = replace(string(v), "(t)" => "", "var\"" => "", "\"" => "")
+"""
+    variableName(v) -> Union{Nothing, String}
+
+The name of the symbolic variable `v` as SimCode names it (`opener[3]_tSwitch` for `var"opener[3]_tSwitch"(t)`, `R`
+for a parameter), from the symbol's own name, not from its printing; `nothing` for anything else (a derivative
+`Differential(t)(x)`, a sum, a number).
+"""
+function variableName(@nospecialize(v))::Union{Nothing, String}
+  local x = Symbolics.unwrap(v)
+  x isa SymbolicUtils.BasicSymbolic || return nothing
+  SymbolicUtils.issym(x) && return String(nameof(x))
+  (SymbolicUtils.iscall(x) && SymbolicUtils.issym(SymbolicUtils.operation(x))) || return nothing
+  return String(nameof(SymbolicUtils.operation(x)))
+end
+
+"""
+    _plainVariableName(v) -> String
+
+The name in a variable's printed form (`var"x[1]"(t)` -> `x[1]`). Only for the initialization's pin sets
+(DirectRHSGeneration, mtkExternals), which key the variables by their printed form throughout; new code takes the
+name from the symbol (`variableName`).
+"""
+_plainVariableName(@nospecialize(v))::String = replace(string(v), "(t)" => "", "var\"" => "", "\"" => "")
+
+"""
+    isIndependentVariable(v) -> Bool
+
+Whether `v` is the system's independent variable (time): the one plain symbol that is no parameter (an unknown is a
+call `x(t)`, a parameter carries the parameter metadata).
+"""
+function isIndependentVariable(@nospecialize(v))::Bool
+  local x = Symbolics.unwrap(v)
+  return x isa SymbolicUtils.BasicSymbolic && SymbolicUtils.issym(x) && !ModelingToolkit.isparameter(x)
+end
 
 """
     namedValueFunctions(sys, names) -> Vector or nothing
@@ -286,18 +319,14 @@ function namedValueFunctions(sys, names::Vector{String})
 end
 
 """
-The system's unknowns, observed variables and parameters by plain name.
+The system's unknowns, observed variables and parameters by name (`variableName`).
 """
 function _variablesByPlainName(sys)::Dict{String, Any}
   local byName = Dict{String, Any}()
-  for v in ModelingToolkit.unknowns(sys)
-    byName[_plainVariableName(v)] = v
-  end
-  for eq in ModelingToolkit.observed(sys)
-    byName[_plainVariableName(eq.lhs)] = eq.lhs
-  end
-  for p in ModelingToolkit.parameters(sys)
-    byName[_plainVariableName(p)] = p
+  for v in Iterators.flatten((ModelingToolkit.unknowns(sys), (eq.lhs for eq in ModelingToolkit.observed(sys)),
+                              ModelingToolkit.parameters(sys)))
+    local name::Union{Nothing, String} = variableName(v)
+    name === nothing || (byName[name] = v)
   end
   return byName
 end

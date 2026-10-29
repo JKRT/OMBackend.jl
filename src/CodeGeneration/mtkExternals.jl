@@ -2337,15 +2337,15 @@ The left sides of the initialization equations that fix a value (a literal
 or parameter right side). A signal-valued one (its rhs references a
 time-dependent variable, unknown or observed) determines its lhs through
 the init solve's residual rows; marking the lhs fixed would hold it at a
-stale numeric guess that fights the very equation it encodes. Parameters
-print without the (t) suffix and stay pinnable; occursin also catches array
-elements and derivative forms whose printed form does not END with it.
+stale numeric guess that fights the very equation it encodes. A right side of
+parameters and time only stays pinnable (`ModelingToolkit.isparameter`,
+`isIndependentVariable`).
 """
 function _fixedTrueLhsStrs(initEqs)::OrderedSet{String}
   local out = OrderedSet{String}()
   for eq in initEqs
     local rhsVars = Symbolics.get_variables(eq.rhs)
-    any(occursin("(t)", string(v)) for v in rhsVars) && continue
+    any(v -> !(ModelingToolkit.isparameter(v) || isIndependentVariable(v)), rhsVars) && continue
     push!(out, string(eq.lhs))
   end
   return out

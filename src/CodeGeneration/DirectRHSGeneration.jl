@@ -742,8 +742,8 @@ function _evaluateDiscreteInitialRows!(u0::Vector{Float64}, reducedSystem, state
   local idxs = Int[]
   local exprs = Any[]
   for eq in ModelingToolkit.initialization_equations(reducedSystem)
+    ModelingToolkit.isdifferential(eq.lhs) && continue
     local key = string(eq.lhs)
-    startswith(key, "Differential(") && continue
     local i = get(stateIdx, key, nothing)
     (i !== nothing && _plainVariableName(key) in discreteNames) || continue
     _literalNumericValue(eq.rhs) === nothing || continue
@@ -797,7 +797,7 @@ function _collectHardInitializationValues(reducedSystem, finalInitialValues;
      Checked when `valuesMayDiffer` is given, but not for the names in it. =#
   local equationValues = Dict{String, Float64}()
   for eq in initEqs
-    startswith(string(eq.lhs), "Differential(") && continue
+    ModelingToolkit.isdifferential(eq.lhs) && continue
     #= A residual `0 ~ f(...)` gives no variable a value (MSL 4 SMPM_ResistiveBraking: two for
        its free parameters idq_sr, read as two values of a variable named 0.0). =#
     _literalNumericValue(eq.lhs) === nothing || continue
@@ -956,7 +956,7 @@ function _hasSolvedInitializationRows(reducedSystem; resolvedParams::Union{Dict{
   #= A number for an observed variable is solved for too: it is no state's start (MSL R134a2 with p and h its
      volumes' states: `volume1.medium.T = 300` left h at the medium's default, 420000 for 426130). =#
   return any(ModelingToolkit.initialization_equations(reducedSystem)) do eq
-    startswith(string(eq.lhs), "Differential(") || !(string(eq.lhs) in variables) || string(eq.lhs) in observedNames ||
+    ModelingToolkit.isdifferential(eq.lhs) || !(string(eq.lhs) in variables) || string(eq.lhs) in observedNames ||
       _tryToFloat64(eq.rhs; resolvedParams=resolvedParams) === nothing
   end
 end
@@ -2796,7 +2796,7 @@ function _tryToFloat64(val; resolvedParams::Union{Dict{String,Float64},Nothing}=
   end
   #= A start value reading time: the build's start time, 0 (u0 is built once;
      _startTimeGuard refuses another start time). It was 0.0 with a warning. =#
-  local timeVars = filter(v -> string(v) == "t", freeVars)
+  local timeVars = filter(isIndependentVariable, freeVars)
   if !isempty(timeVars)
     return _tryToFloat64(Symbolics.substitute(unwrapped, Dict{Any, Any}(v => 0.0 for v in timeVars));
                          resolvedParams = resolvedParams)
@@ -2885,7 +2885,7 @@ function _readsUnknowns(@nospecialize(val), resolvedParams)::Bool
     OMBackend._fallback(e, :_readsUnknowns)
     return true
   end
-  return any(v -> string(v) != "t" && (resolvedParams === nothing || !haskey(resolvedParams, string(v))), vars)
+  return any(v -> !isIndependentVariable(v) && (resolvedParams === nothing || !haskey(resolvedParams, string(v))), vars)
 end
 
 """
