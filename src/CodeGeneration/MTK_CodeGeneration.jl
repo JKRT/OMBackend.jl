@@ -508,7 +508,7 @@ end
 
 The absolute tolerance per unknown of a mass-matrix problem whose algebraic
 unknowns include derivatives (`xˍt`: MTK's dummy derivatives from index
-reduction): Inf for those, so the error control leaves them out, and the
+reduction, the variables its schedule substitutes for derivatives): Inf for those, so the error control leaves them out, and the
 solve's abstol (1e-6 by default) for the others. Nothing when the caller gave
 an abstol per unknown, or for a problem without such unknowns.
 
@@ -536,10 +536,13 @@ function defaultToleranceKwargs(problem, kwargs)
   problem.f.sys === nothing && return (;)
   local unknowns = ModelingToolkit.get_unknowns(problem.f.sys)
   length(unknowns) == length(problem.u0) || return (;)
-  #= OMBackend's dummy derivatives by their kind; MTK's own (`xˍt`, which no SimCode variable is) by its name =#
+  #= OMBackend's dummy derivatives by their kind; MTK's own (`xˍt`, which no SimCode variable is): the variables its
+     schedule substitutes for derivatives (`dummy_sub`: `D(x) => xˍt`) =#
+  local schedule = ModelingToolkit.get_schedule(problem.f.sys)
+  local mtkDerivatives::Set{Any} = schedule === nothing ? Set{Any}() : Set{Any}(values(schedule.dummy_sub))
   local isDerivative = (u) -> begin
     local k::Union{Nothing, SimCodeKind} = simCodeKind(u)
-    k === nothing ? occursin("ˍt", String(ModelingToolkit.getname(u))) : k.irKind isa SC.IR.DUMMY_DER
+    k === nothing ? Symbolics.unwrap(u) in mtkDerivatives : k.irKind isa SC.IR.DUMMY_DER
   end
   local derivatives::Vector{Int} = Int[k for k in rows if isDerivative(unknowns[k])]
   isempty(derivatives) && return (;)
