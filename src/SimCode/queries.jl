@@ -59,9 +59,9 @@ withBinding(k::ARRAY_PARAMETER, b::Union{Nothing, Exp})::SimVarType = ARRAY_PARA
 withBinding(k::SimVarType, ::Union{Nothing, Exp})::SimVarType = k
 
 "A variable with another category."
-withKind(v::SIMVAR, k::SimVarType)::SIMVAR = SIMVAR(v.name, v.index, k, v.attributes, v.elementType)
+withKind(v::SIMVAR, k::SimVarType)::SIMVAR = SIMVAR(v.name, v.index, k, v.attributes, v.elementType, v.irKind)
 "A variable with the index `index` (and the category `k`)."
-withIndex(v::SIMVAR, index::Int, k::SimVarType = v.varKind)::SIMVAR = SIMVAR(v.name, index, k, v.attributes, v.elementType)
+withIndex(v::SIMVAR, index::Int, k::SimVarType = v.varKind)::SIMVAR = SIMVAR(v.name, index, k, v.attributes, v.elementType, v.irKind)
 
 hasStructuralTransitions(sc::SIM_CODE)::Bool = !isempty(sc.structuralTransitions)
 hasSubModels(sc::SIM_CODE)::Bool = !isempty(sc.subModels)

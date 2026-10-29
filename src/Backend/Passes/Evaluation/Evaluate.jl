@@ -250,7 +250,7 @@ function setsConstant(eq::IR.Equation, variables::IR.VariableSet)::Union{Nothing
   local (x, c) = isLiteral(eq.rhs) ? (eq.lhs, eq.rhs) : isLiteral(eq.lhs) ? (eq.rhs, eq.lhs) : (nothing, nothing)
   x isa IR.CREF || return nothing
   local v = get(variables, x.cref.name, nothing)
-  (v !== nothing && v.kind isa IR.ALGEBRAIC && v.ty isa IR.T_REAL) || return nothing
+  (v !== nothing && v.kind isa Union{IR.ALGEBRAIC, IR.ALGEBRAIC_DER} && v.ty isa IR.T_REAL) || return nothing
   return (x.cref.name, c)
 end
 

@@ -261,7 +261,7 @@ function eliminateAliasVariables(simCode::SIM_CODE)::SIM_CODE
   for (name, attributes) in mergedAttributes
     haskey(newHT, name) || continue
     local (index, v) = newHT[name]
-    attributes == v.attributes || (newHT[name] = (index, SIMVAR(v.name, v.index, v.varKind, attributes, v.elementType)))
+    attributes == v.attributes || (newHT[name] = (index, SIMVAR(v.name, v.index, v.varKind, attributes, v.elementType, v.irKind)))
   end
   local (observedVariables, observedEquations) = observationPairs(eliminated, pairs, removed, residuals, replacements, refs)
   local aliasMap = withAliases(simCode.aliasMap, filter(e -> !(e.eliminatedName in stillRead), entries))
@@ -537,7 +537,7 @@ function eliminateRHSEquivalentEquations(simCode::SIM_CODE)::SIM_CODE
   for (name, attributes) in mergedAttributes
     haskey(newHT, name) || continue
     local (index, v) = newHT[name]
-    attributes == v.attributes || (newHT[name] = (index, SIMVAR(v.name, v.index, v.varKind, attributes, v.elementType)))
+    attributes == v.attributes || (newHT[name] = (index, SIMVAR(v.name, v.index, v.varKind, attributes, v.elementType, v.irKind)))
   end
   local eliminatedSet = Set{String}(eliminated)
   return update(simCode;

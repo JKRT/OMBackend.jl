@@ -682,11 +682,14 @@ const NO_ATTRIBUTES = SimVarAttributes(nothing, nothing, nothing, nothing, nothi
                                        nothing, nothing, false)
 
 """
-    SIMVAR(name, index, varKind, attributes, elementType)
+    SIMVAR(name, index, varKind, attributes, elementType, irKind = nothing)
 
 A simulation variable: its name, index (1-based, per category; `nothing` before indexing),
-category, attributes, and the type of its scalars (of an array variable, of its elements):
-what the code generators read to declare an Integer, Boolean or enumeration variable.
+category, attributes, the type of its scalars (of an array variable, of its elements):
+what the code generators read to declare an Integer, Boolean or enumeration variable, and
+its kind in OMJLIR (`IR.VariableKind`: a state, a state's derivative as an algebraic
+unknown, index reduction's dummy derivative or dummy state, ...), the variables it names
+by their simulation names (`simKind`); `nothing` for a variable that is not the IR's.
 """
 struct SIMVAR <: Node
   name::String
@@ -694,7 +697,11 @@ struct SIMVAR <: Node
   varKind::SimVarType
   attributes::SimVarAttributes
   elementType::SType
+  irKind::Union{Nothing, IR.VariableKind}
 end
+
+SIMVAR(name::String, index::Union{Nothing, Int}, varKind::SimVarType, attributes::SimVarAttributes, elementType::SType) =
+  SIMVAR(name, index, varKind, attributes, elementType, nothing)
 
 #= ==================================================================================== =#
 #= Functions and initial algorithms                                                     =#

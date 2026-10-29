@@ -159,7 +159,7 @@ state derivative or an algebraic variable, not a when-equation's target.
 function isContinuousVariable(v::IR.Variable, discretes::Set{Symbol})::Bool
   v.ty isa IR.T_REAL || return false
   v.name in discretes && return false
-  return v.kind isa Union{IR.STATE, IR.STATE_DER, IR.ALGEBRAIC}
+  return v.kind isa Union{IR.STATE, IR.STATE_DER, IR.ALGEBRAIC, IR.ALGEBRAIC_DER}
 end
 
 "The built-in calls whose arguments are not read at the current time as continuous variables."

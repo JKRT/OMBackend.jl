@@ -135,7 +135,7 @@ function ifEquationVariables(names::Names, eq::IR.IF_EQUATION, vars::Vector{IR.V
       local differentiated = Set{String}(vcat(derivativeNames(names, e.lhs), derivativeNames(names, e.rhs)))
       for v in vars
         local n = simName(names, v.cref)
-        ((v.kind isa IR.ALGEBRAIC && n in read) || n in differentiated) && push!(out, n)
+        ((v.kind isa Union{IR.ALGEBRAIC, IR.ALGEBRAIC_DER} && n in read) || n in differentiated) && push!(out, n)
       end
     end
   end

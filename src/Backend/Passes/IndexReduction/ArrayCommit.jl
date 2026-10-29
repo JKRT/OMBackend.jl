@@ -59,7 +59,7 @@ end
 
 The kind of each structure variable of the element view whose kind the plan changes (`plannedKind`), the selected
 states linked to their derivatives as `linkStateDerivative!` links them: a state's derivative `\$STATEDER.x`
-(STATE_DER), the derivative variable it read algebraic unless it is a state itself.
+(STATE_DER), the derivative variable it read an algebraic unknown (ALGEBRAIC_DER) unless it is a state itself.
 """
 function plannedKinds(s::Structure, dummies::Set{Int})::Dict{Symbol, IR.VariableKind}
   local kinds = Dict{Symbol, IR.VariableKind}()
@@ -72,7 +72,7 @@ function plannedKinds(s::Structure, dummies::Set{Int})::Dict{Symbol, IR.Variable
     local link = stateDerivativeName(state)
     kinds[state] = IR.STATE(1, link, true)
     kinds[link] = IR.STATE_DER(state)
-    get(kinds, derivative, nothing) isa IR.STATE || (kinds[derivative] = IR.ALGEBRAIC())
+    get(kinds, derivative, nothing) isa IR.STATE || (kinds[derivative] = IR.ALGEBRAIC_DER(state))
   end
   return kinds
 end
@@ -164,6 +164,7 @@ end
 "The variable a kind names: a state's derivative, a derivative's state, a dummy's counterpart."
 kindVariable(k::IR.STATE)::Symbol = k.derivative
 kindVariable(k::IR.STATE_DER)::Symbol = k.state
+kindVariable(k::IR.ALGEBRAIC_DER)::Symbol = k.state
 kindVariable(k::IR.DUMMY_DER)::Symbol = k.dummyState
 kindVariable(k::IR.DUMMY_STATE)::Symbol = k.dummyDerivative
 

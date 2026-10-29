@@ -473,7 +473,7 @@ function knownValues(model::OMJLIR.Model)::Dict{Symbol, OMJLIR.Expression}
   local byName = Dict{String, Symbol}()
   local shared = Set{String}()
   for v in model.variables
-    v.kind isa OMJLIR.ALGEBRAIC || continue
+    v.kind isa Union{OMJLIR.ALGEBRAIC, OMJLIR.ALGEBRAIC_DER} || continue
     local n = replace(String(v.name), "." => "_")
     haskey(byName, n) ? push!(shared, n) : (byName[n] = v.name)
   end

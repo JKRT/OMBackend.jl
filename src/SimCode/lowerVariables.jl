@@ -39,6 +39,29 @@
 const HT = OrderedDict{String, Tuple{Int, SIMVAR}}
 
 """
+    simKind(k, variables, names) -> IR.VariableKind
+
+The OMJLIR kind `k` of a variable as the simulation code keeps it (`SIMVAR.irKind`): the variables it names (a
+state's derivative, a derivative's state, a dummy's counterpart, a clocked state's previous value) by their
+simulation names; a state's derivative variable, which the simulation code writes `der(x)`, as `der(x)`.
+"""
+function simKind(k::IR.VariableKind, variables::IR.VariableSet, names::Names)::IR.VariableKind
+  local sim = (x::Symbol) -> begin
+    local v = get(variables, x, nothing)
+    v === nothing && return x
+    v.kind isa IR.STATE_DER && return Symbol("der(", simName(names, variables[v.kind.state].cref), ")")
+    return Symbol(simName(names, v.cref))
+  end
+  k isa IR.STATE && return IR.STATE(k.index, k.derivative === nothing ? nothing : sim(k.derivative), k.natural)
+  k isa IR.STATE_DER && return IR.STATE_DER(sim(k.state))
+  k isa IR.ALGEBRAIC_DER && return IR.ALGEBRAIC_DER(sim(k.state))
+  k isa IR.DUMMY_DER && return IR.DUMMY_DER(sim(k.dummyState))
+  k isa IR.DUMMY_STATE && return IR.DUMMY_STATE(sim(k.dummyDerivative))
+  k isa IR.CLOCKED_STATE && return IR.CLOCKED_STATE(sim(k.previous), k.isStartFixed)
+  return k
+end
+
+"""
     simVarKind(v, names)
 
 The category of the variable `v` in the simulation code:
@@ -55,7 +78,7 @@ function simVarKind(v::IR.Variable, names::Names)::SimVarType
   local binding = () -> v.binding === nothing ? nothing : simExp(names, v.binding)
   local known = k isa Union{IR.PARAMETER, IR.CONSTANT}
   k isa IR.STATE && return STATE()
-  (k isa IR.ALGEBRAIC && ty isa IR.T_REAL) && return ALG_VARIABLE(0)
+  (k isa Union{IR.ALGEBRAIC, IR.ALGEBRAIC_DER} && ty isa IR.T_REAL) && return ALG_VARIABLE(0)
   #= index reduction's dummy states and dummy derivatives (OMBACKEND_INDEX_REDUCTION) are algebraic =#
   (k isa Union{IR.DUMMY_STATE, IR.DUMMY_DER} && ty isa IR.T_REAL) && return ALG_VARIABLE(0)
   (known && ty isa Union{IR.T_RECORD, IR.T_CLASS, IR.T_EXTERNAL_OBJECT}) && return DATA_STRUCTURE(binding())

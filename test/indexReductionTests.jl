@@ -289,9 +289,17 @@ _irEquationOf(eqs::Vector{_IRM.Equation}, name::Symbol)::_IRM.SCALAR_EQUATION =
     local kind = name -> model.variables[name].kind
     @test kind(:phi1) isa _IRM.STATE && kind(:w1) isa _IRM.STATE
     @test kind(:phi2) isa _IRM.DUMMY_STATE && kind(:w2) isa _IRM.DUMMY_STATE
-    #= each state's derivative an algebraic unknown, linked by $STATEDER.x = $DER.x =#
+    #= each state's derivative an algebraic unknown (ALGEBRAIC_DER), linked by $STATEDER.x = $DER.x =#
     @test kind(:phi1).derivative === Symbol("\$STATEDER.phi1")
-    @test kind(Symbol("\$DER.phi1")) isa _IRM.ALGEBRAIC
+    @test kind(Symbol("\$DER.phi1")) == _IRM.ALGEBRAIC_DER(:phi1)
+    @test kind(Symbol("\$DER.phi2")) == _IRM.DUMMY_DER(:phi2)
+    #= SimCode keeps the kinds, the variables they name by their simulation names (a state's derivative der(x)) =#
+    local simCode = OMBackend.SimCode.lowerStructuralModes(model)
+    local irKind = name::String -> last(simCode.stringToSimVarHT[name]).irKind
+    @test irKind("phi1") == _IRM.STATE(1, Symbol("der(phi1)"), true)
+    @test irKind("\$DER_phi1") == _IRM.ALGEBRAIC_DER(:phi1)
+    @test irKind("phi2") == _IRM.DUMMY_STATE(Symbol("\$DER_phi2"))
+    @test irKind("\$DER_phi2") == _IRM.DUMMY_DER(:phi2)
   end
 
   @testset "derivative unknowns: a piecewise coefficient 0 in a branch is not solved through" begin

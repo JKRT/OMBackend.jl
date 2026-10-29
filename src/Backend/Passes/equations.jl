@@ -151,7 +151,7 @@ end
 function addBindingEquations!(variables::IR.VariableSet, partition::IR.Partition)::Nothing
   for v in variables
     v.binding === nothing && continue
-    local continuous = v.kind isa Union{IR.STATE, IR.ALGEBRAIC}
+    local continuous = v.kind isa Union{IR.STATE, IR.ALGEBRAIC, IR.ALGEBRAIC_DER}
     local discrete = continuous || v.kind isa IR.DISCRETE
     local lhs = IR.CREF(v.cref, v.ty)
     if continuous && v.ty isa IR.T_REAL

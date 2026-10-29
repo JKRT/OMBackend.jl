@@ -554,6 +554,8 @@ derivative's state) by their elements at `index`.
 elementKind(kind::IR.STATE, index::Vector{Int}, E::Elements)::IR.VariableKind =
   IR.STATE(kind.index, kind.derivative === nothing ? nothing : elementName(kind.derivative, index, E), kind.natural)
 elementKind(kind::IR.STATE_DER, index::Vector{Int}, E::Elements)::IR.VariableKind = IR.STATE_DER(elementName(kind.state, index, E))
+elementKind(kind::IR.ALGEBRAIC_DER, index::Vector{Int}, E::Elements)::IR.VariableKind =
+  IR.ALGEBRAIC_DER(elementName(kind.state, index, E))
 elementKind(kind::IR.DUMMY_DER, index::Vector{Int}, E::Elements)::IR.VariableKind = IR.DUMMY_DER(elementName(kind.dummyState, index, E))
 elementKind(kind::IR.DUMMY_STATE, index::Vector{Int}, E::Elements)::IR.VariableKind =
   IR.DUMMY_STATE(elementName(kind.dummyDerivative, index, E))
@@ -833,7 +835,7 @@ readsContinuousArray(e::IR.Expression, variables::IR.VariableSet)::Bool =
   IR.anyExp(x -> x isa IR.CREF && isContinuousArray(get(variables, unsubscriptedName(x.cref), nothing)), e)
 
 isContinuousArray(::Nothing)::Bool = false
-isContinuousArray(v::IR.Variable)::Bool = v.ty isa IR.T_ARRAY && v.kind isa Union{IR.STATE, IR.STATE_DER, IR.ALGEBRAIC}
+isContinuousArray(v::IR.Variable)::Bool = v.ty isa IR.T_ARRAY && v.kind isa Union{IR.STATE, IR.STATE_DER, IR.ALGEBRAIC, IR.ALGEBRAIC_DER}
 
 """
     elementAt(e, subscripts, element, variables) -> Expression

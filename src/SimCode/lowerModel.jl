@@ -94,9 +94,9 @@ every mode has, then the top level's states, algebraic and discrete variables by
 """
 function sharedModeVariables(model::IR.Model)::Vector{String}
   local inMode = v::IR.Variable -> length(v.cref.parts) > 1 ? join((String(p.name) for p in v.cref.parts[2:end]), ".") : String(v.cref.parts[1].name)
-  local perMode = [String[inMode(v) for v in mode.variables if v.kind isa Union{IR.STATE, IR.ALGEBRAIC}] for mode in model.modes]
+  local perMode = [String[inMode(v) for v in mode.variables if v.kind isa Union{IR.STATE, IR.ALGEBRAIC, IR.ALGEBRAIC_DER}] for mode in model.modes]
   local common = isempty(perMode) ? String[] : intersect(perMode...)
-  return vcat(common, String[inMode(v) for v in model.variables if v.kind isa Union{IR.STATE, IR.ALGEBRAIC, IR.DISCRETE}])
+  return vcat(common, String[inMode(v) for v in model.variables if v.kind isa Union{IR.STATE, IR.ALGEBRAIC, IR.ALGEBRAIC_DER, IR.DISCRETE}])
 end
 
 #= ==================================================================================== =#
@@ -114,7 +114,7 @@ function lowerSystem(model::IR.Model, variables::IR.VariableSet, partition::IR.P
   local vars = IR.Variable[v for v in variables if !(v.kind isa IR.STATE_DER)]
   local names = systemNames(vars, model.name)
   local simVars = SIMVAR[SIMVAR(simName(names, v.cref), nothing, simVarKind(v, names), simVarAttributes(v, names),
-                                simType(IR.elementType(v.ty))) for v in vars]
+                                simType(IR.elementType(v.ty)), simKind(v.kind, variables, names)) for v in vars]
   local ht = createIndices(simVars)
   local eqs = classifyEquations(partition.equations)
   local initialAlgorithms = INITIAL_ALGORITHM[INITIAL_ALGORITHM(simStatements(names, w.branches[1].body), w.kind === IR.INITIAL_SECTION)

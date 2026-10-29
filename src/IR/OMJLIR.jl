@@ -57,7 +57,8 @@ Conventions:
   is that of NB, so index reduction (Pantelides, dummy derivatives) can work on it: it adds
   derivative variables and differentiated equations, links an equation to its derivative
   (`EquationAttributes.derivative`) and marks dummy derivatives and states (`DUMMY_DER`,
-  `DUMMY_STATE`).
+  `DUMMY_STATE`). A selected state's derivative variable that its link to the state's
+  derivative made an algebraic unknown is `ALGEBRAIC_DER`.
 - Expressions, types and component references are immutable values with structural equality
   (`==`, `hash`). Variables and equations are mutable entities with identity (NB's
   pointers): a pass changes a variable's kind or an equation's attributes in place, and every
@@ -866,6 +867,17 @@ end
 
 "The derivative `der(state)` as a variable of its own."
 struct STATE_DER <: VariableKind
+  state::Symbol
+end
+
+"""
+    ALGEBRAIC_DER(state)
+
+The derivative of `state` as an algebraic unknown: index reduction's derivative variable `\$DER.x` of a selected
+state, which the link `\$STATEDER.x = \$DER.x` (`STATE_DER`, the state's derivative) made algebraic. Algebraic for
+every pass that asks for an algebraic variable.
+"""
+struct ALGEBRAIC_DER <: VariableKind
   state::Symbol
 end
 
@@ -1790,6 +1802,7 @@ _print(io::IO, a::EquationAttributes) =
 _print(io::IO, ::ALGEBRAIC) = print(io, "algebraic")
 _print(io::IO, k::STATE) = print(io, "state(", k.index, k.derivative === nothing ? "" : ", der = $(k.derivative)", ")")
 _print(io::IO, k::STATE_DER) = print(io, "der(", k.state, ")")
+_print(io::IO, k::ALGEBRAIC_DER) = print(io, "algebraic der(", k.state, ")")
 _print(io::IO, k::DUMMY_DER) = print(io, "dummy der(", k.dummyState, ")")
 _print(io::IO, k::DUMMY_STATE) = print(io, "dummy state, der = ", k.dummyDerivative)
 _print(io::IO, ::DISCRETE) = print(io, "discrete")

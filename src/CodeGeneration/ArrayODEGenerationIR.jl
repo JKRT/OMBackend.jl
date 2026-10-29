@@ -831,7 +831,7 @@ function _generateIR(model::OIR.Model, modelName::String; functions::Union{Nothi
       g.nDiscrete += n
       append!(d0, startOf.(names))
       append!(discreteNamesOrdered, elementNames)
-    elseif kind isa Union{OIR.ALGEBRAIC, OIR.DUMMY_STATE, OIR.DUMMY_DER}
+    elseif kind isa Union{OIR.ALGEBRAIC, OIR.ALGEBRAIC_DER, OIR.DUMMY_STATE, OIR.DUMMY_DER}
       vtype == :real || ns("the algebraic variable $(nm), not Real")
       local fixed::Vector{Bool} = Bool[fixedOf(x, false) for x in names]
       kind isa OIR.DUMMY_STATE && any(fixed) && ns("a fixed start on the dummy state $(nm)")

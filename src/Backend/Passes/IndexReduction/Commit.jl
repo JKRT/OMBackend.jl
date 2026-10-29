@@ -293,7 +293,7 @@ function linkStateDerivative!(model::IR.Model, partition::IR.Partition, state::S
   push!(model.variables, IR.Variable(link, IR.T_REAL(), IR.STATE_DER(state), nothing, IR.NO_ATTRIBUTES, IR.NO_DIRECTION,
                                      false, IR.NOT_CONNECTOR, IR.NO_SOURCE, :indexReduction))
   model.variables[state].kind = IR.STATE(1, link, true)
-  model.variables[derivative].kind isa IR.STATE || (model.variables[derivative].kind = IR.ALGEBRAIC())
+  model.variables[derivative].kind isa IR.STATE || (model.variables[derivative].kind = IR.ALGEBRAIC_DER(state))
   local ref = name -> IR.CREF(model.variables[name].cref, IR.T_REAL())
   push!(partition.equations, IR.SCALAR_EQUATION(ref(link), ref(derivative), IR.T_REAL(), IR.NO_SOURCE, IR.DEFAULT_ATTRIBUTES))
   return nothing

@@ -42,10 +42,9 @@
     isDerivativeUnknown(v) -> Bool
 
 Whether `v` is a derivative unknown of a reduced partition: a dummy derivative, or a state's
-derivative variable `\$DER.x` that its link `\$STATEDER.x = \$DER.x` made algebraic.
+derivative variable that its link `\$STATEDER.x = \$DER.x` made algebraic (ALGEBRAIC_DER).
 """
-isDerivativeUnknown(v::IR.Variable)::Bool =
-  v.kind isa IR.DUMMY_DER || (v.kind isa IR.ALGEBRAIC && startswith(String(v.name), "\$DER."))
+isDerivativeUnknown(v::IR.Variable)::Bool = v.kind isa Union{IR.DUMMY_DER, IR.ALGEBRAIC_DER}
 
 "Whether `eq` is a state's derivative link `\$STATEDER.x = \$DER.x`: the state's differential row, which determines no derivative unknown."
 isDerivativeLink(eq::IR.Equation)::Bool =

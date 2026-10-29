@@ -385,6 +385,7 @@ end
 function rolledKind(kind::IR.VariableKind, memberOf::Dict{String, Tuple{Int, Int}}, names::RolledNames)::IR.VariableKind
   kind isa IR.STATE && kind.derivative !== nothing && return IR.STATE(kind.index, rolledName(kind.derivative, memberOf, names), kind.natural)
   kind isa IR.STATE_DER && return IR.STATE_DER(rolledName(kind.state, memberOf, names))
+  kind isa IR.ALGEBRAIC_DER && return IR.ALGEBRAIC_DER(rolledName(kind.state, memberOf, names))
   kind isa Union{IR.DUMMY_DER, IR.DUMMY_STATE, IR.CLOCKED_STATE} && throw(NotHandled("an instance's variable of kind $(nameof(typeof(kind)))"))
   return kind
 end

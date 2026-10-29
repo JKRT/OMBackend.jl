@@ -210,7 +210,7 @@ function propagateInitialValues(simCode::SIM_CODE)::SIM_CODE
     (v.varKind isa PARAMETER || v.attributes.start !== nothing) && continue
     local a = withAttributes(v.attributes; start = RCONST(value),
                              fixed = v.elementType isa TYPE_REAL ? v.attributes.fixed : BCONST(false))
-    newHT[name] = (index, SIMVAR(v.name, v.index, v.varKind, a, v.elementType))
+    newHT[name] = (index, SIMVAR(v.name, v.index, v.varKind, a, v.elementType, v.irKind))
   end
   @debug "[SIMCODE: $(simCode.name): propagateInitialValues] resolved $(length(resolved)) (rounds = $(rounds))"
   return update(simCode; stringToSimVarHT = newHT)
