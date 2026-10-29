@@ -114,7 +114,7 @@ function lowerSystem(model::IR.Model, variables::IR.VariableSet, partition::IR.P
   local vars = IR.Variable[v for v in variables if !(v.kind isa IR.STATE_DER)]
   local names = systemNames(vars, model.name)
   local simVars = SIMVAR[SIMVAR(simName(names, v.cref), nothing, simVarKind(v, names), simVarAttributes(v, names),
-                                simType(IR.elementType(v.ty)), simKind(v.kind, variables, names)) for v in vars]
+                                simType(IR.elementType(v.ty)), simKind(v.kind, variables, names), v.origin) for v in vars]
   local ht = createIndices(simVars)
   local eqs = classifyEquations(partition.equations)
   local initialAlgorithms = INITIAL_ALGORITHM[INITIAL_ALGORITHM(simStatements(names, w.branches[1].body), w.kind === IR.INITIAL_SECTION)
@@ -139,8 +139,7 @@ function lowerSystem(model::IR.Model, variables::IR.VariableSet, partition::IR.P
                   String(codeName(Symbol(something(model.initialMode, model.name)))), model.frontendModel, irreducibles,
                   functions, any(f -> f isa EXTERNAL_MODELICA_FUNCTION, functions),
                   RESIDUAL_EQUATION[], String[], AliasEntry[], nothing, initialAlgorithms, asserts, String[],
-                  any(v -> v.kind isa Union{IR.DUMMY_STATE, IR.DUMMY_DER}, vars),
-                  String[simName(names, v.cref) for v in vars if v.kind isa IR.DUMMY_DER])
+                  any(v -> v.kind isa Union{IR.DUMMY_STATE, IR.DUMMY_DER}, vars))
 end
 
 """
