@@ -2785,7 +2785,7 @@ function _tryToFloat64(val; resolvedParams::Union{Dict{String,Float64},Nothing}=
   local cv = _constantNumber(val)
   cv === nothing || return Float64(cv)
   local unwrapped = val isa Symbolics.Num ? Symbolics.unwrap(val) : val
-  # Constant symbolic expression (no free variables): parse its string repr
+  # The free variables: time, parameters by name; a constant term is folded at the end
   local freeVars = try
     Symbolics.get_variables(unwrapped)
   catch _e
@@ -2798,15 +2798,6 @@ function _tryToFloat64(val; resolvedParams::Union{Dict{String,Float64},Nothing}=
   if !isempty(timeVars)
     return _tryToFloat64(Symbolics.substitute(unwrapped, Dict{Any, Any}(v => 0.0 for v in timeVars));
                          resolvedParams = resolvedParams)
-  end
-  if isempty(freeVars)
-    local str = string(val)
-    local f = tryparse(Float64, str)
-    f !== nothing && return f
-    #= A Boolean start value (MSL FluxTubes' asc(start = true)): a symbolic
-       constant true that became 0.0, false. =#
-    local b = tryparse(Bool, str)
-    b !== nothing && return Float64(b)
   end
   if resolvedParams !== nothing
     # Direct name lookup (handles bare parameter references)
