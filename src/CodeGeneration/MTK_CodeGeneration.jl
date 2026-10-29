@@ -431,6 +431,16 @@ simCodeKind(@nospecialize(u))::Union{Nothing, SimCodeKind} =
   SymbolicUtils.getmetadata(Symbolics.unwrap(u), SimCodeKind, nothing)
 
 """
+Symbolics metadata of the parameters the generated model declares for its if-equations' conditions (`ifCond…`,
+`generateDiscreteIfCondDeclaration`).
+"""
+struct IfConditionParameter end
+
+"Whether `p` is a parameter the generated model declared for an if-equation's condition."
+isIfConditionParameter(@nospecialize(p))::Bool =
+  SymbolicUtils.getmetadata(Symbolics.unwrap(p), IfConditionParameter, false)
+
+"""
     simCodeKinds(simCode) -> Vector{Tuple{Symbol, SimCodeKind}}
 
 Each variable of the simulation code by name with what it is there (`SimCodeKind`), for the generated model's

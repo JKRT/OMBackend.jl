@@ -2966,18 +2966,20 @@ moved its friction modes' switching off the reference (event conditions read int
 algebraic unknowns).
 """
 function _ifConditionReaders(reduced::ModelingToolkit.AbstractSystem, original::ModelingToolkit.AbstractSystem)::Vector{Any}
-  local conditions = Set{Any}(Symbolics.unwrap(p) for p in ModelingToolkit.parameters(original)
-                              if startswith(string(p), "ifCond"))
+  local conditions = Set{Any}(Symbolics.unwrap(p) for p in ModelingToolkit.parameters(original) if isIfConditionParameter(p))
   isempty(conditions) && return Any[]
   local observed = ModelingToolkit.observed(reduced)
-  #= the derivatives index reduction created that read a condition, directly or through each other =#
+  #= the derivatives index reduction created (the variables MTK's schedule substitutes for derivatives) that read a
+     condition, directly or through each other =#
+  local schedule = ModelingToolkit.get_schedule(reduced)
+  local created::Set{Any} = schedule === nothing ? Set{Any}() : Set{Any}(values(schedule.dummy_sub))
   local derivatives = Set{Any}()
   local changed = true
   while changed
     changed = false
     for eq in observed
       local lhs = Symbolics.unwrap(eq.lhs)
-      (lhs in derivatives || !occursin("ˍt", string(lhs))) && continue
+      (lhs in derivatives || !(lhs in created)) && continue
       if any(v -> v in conditions || v in derivatives, Symbolics.get_variables(eq.rhs))
         push!(derivatives, lhs)
         changed = true

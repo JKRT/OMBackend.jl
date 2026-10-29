@@ -242,9 +242,11 @@ function generateDiscreteIfCondDeclaration(ifCondParamDecls::Vector{Expr}, ifCon
   end
   local nameQuotes = [QuoteNode(s) for s in ifCondNames]
   quote
-    local _ifCondParams = ModelingToolkit.@parameters begin
-      $(ifCondParamDecls...)
-    end
+    #= each marked as an if-equation's condition (`isIfConditionParameter`) =#
+    local _ifCondParams = [Symbolics.wrap(SymbolicUtils.setmetadata(Symbolics.unwrap(p), OMBackend.CodeGeneration.IfConditionParameter, true))
+                           for p in ModelingToolkit.@parameters begin
+                             $(ifCondParamDecls...)
+                           end]
     local _ifCondBindBlock = Expr(:block)
     for (name, p) in zip([$(nameQuotes...)], _ifCondParams)
       push!(_ifCondBindBlock.args, :($name = $p))
