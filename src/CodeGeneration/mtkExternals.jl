@@ -2769,9 +2769,11 @@ end
 """
     injectObservedEquations(sys, observedEqs)
 
-Append `observedEqs` to the observed equations of a completed system.
-Used to inject observed equations AFTER structural_simplify so they do not
-interfere with AffectSystem tearing during callback compilation.
+Append `observedEqs` to the observed equations of a completed system, one per
+left-hand side variable (by `variableName`; the first of `observedEqs`, none for
+a variable the system observes already). Used to inject observed equations
+AFTER structural_simplify so they do not interfere with AffectSystem tearing
+during callback compilation.
 
 Updates the full parent chain so that MTK's getproperty delegation
 (which walks parents until it finds a root) can resolve the new variables.

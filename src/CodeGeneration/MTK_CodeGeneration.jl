@@ -1441,18 +1441,9 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SC.SIM_CODE, modelName::String, 
       #= Inject observed equations post-simplification so they do not interfere
          with AffectSystem tearing during callback compilation. =#
       if @isdefined(observedEqs) && !isempty(observedEqs)
-        #= Deduplicate observed equations by LHS variable name before injection.
-           Both alias and eliminated observed blocks can produce the same equation. =#
-        local _seenLHS = OrderedSet{String}()
-        local _uniqueObs = Symbolics.Equation[]
-        for _obs in observedEqs
-          local _lhsKey = string(Symbolics.unwrap(_obs.lhs))
-          if !(_lhsKey in _seenLHS)
-            push!(_seenLHS, _lhsKey)
-            push!(_uniqueObs, _obs)
-          end
-        end
-        reducedSystem = OMBackend.CodeGeneration.injectObservedEquations(reducedSystem, _uniqueObs)
+        #= One equation per left-hand side (injectObservedEquations): both alias and eliminated observed blocks can
+           produce the same equation. =#
+        reducedSystem = OMBackend.CodeGeneration.injectObservedEquations(reducedSystem, observedEqs)
       end
       #= Callbacks setup =#
       local eventParameters = [$(PARAMETER_RAW_ARRAY...)]
