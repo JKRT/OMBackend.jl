@@ -300,9 +300,10 @@ end
     mtkDerivativeVariables(sys) -> Set{Any}
 
 The variables MTK created for derivatives (`xˍt`), unwrapped: the ones its schedule substitutes for derivatives
-(`dummy_sub`: `D(x) => xˍt`) that the generated model did not declare (no `SimCodeKind`). The schedule substitutes the
-model's own variables too (`D(body.r_0) => body.v_0`, MSL HeatLosses): taken as MTK's, the bodies' velocities were
-given MTK's derivative starts and the solve ended in NaN at its first step.
+(`dummy_sub`: `D(x) => xˍt`) that the generated model did not declare (no `SimCodeKind` of their own: `xˍt` keeps
+`x`'s, `simCodeKind`). The schedule substitutes the model's own variables too (`D(body.r_0) => body.v_0`, MSL
+HeatLosses): taken as MTK's, the bodies' velocities were given MTK's derivative starts and the solve ended in NaN at
+its first step.
 """
 function mtkDerivativeVariables(sys::ModelingToolkit.AbstractSystem)::Set{Any}
   ModelingToolkit.get_schedule(sys) === nothing && return Set{Any}()

@@ -50,7 +50,7 @@ function derivativesOfDummyStates(simCode::SIM_CODE)::SIM_CODE
   local reference = name -> EXP_CREF(SimCref(Symbol(name)), TYPE_REAL())
   local derivativeOf = name -> begin
     haskey(ht, name) || return nothing
-    local kind = last(ht[name]).irKind
+    local kind::Union{Nothing, IR.VariableKind} = last(ht[name]).irKind
     kind isa IR.DUMMY_STATE || return nothing
     local d::String = String(kind.dummyDerivative)
     haskey(ht, d) && return reference(d)

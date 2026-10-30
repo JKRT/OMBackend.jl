@@ -2149,21 +2149,11 @@ function _derivativesAsSystemTerms(sys, exprs)
 end
 
 """
-    resolveAliasInitialValue(diffState, fullEqs, ivMap)
-
-  Resolve the initial value of a differential state that has no direct Modelica
-  start value (typically an MTK-generated derivative variable like `Xˍt`).
-
-  Scans `fullEqs` for a 2-variable linear equation where one variable is
-  `diffState` and the other has a known value in `ivMap`. Uses symbolic
-  variable analysis (`Symbolics.get_variables`, `isequal`, `substitute`).
-
-  Returns the resolved value, or `nothing` if no alias equation was found.
+Per-call-site index of the candidate (non-differential) equations, keyed by
+the names of the variables each contains (`variableName`). A scan of every
+equation for every resolve made initialization quadratic in system size on
+large reduced systems and dominated the whole simulate call.
 """
-#= Per-call-site index of the candidate (non-differential) equations, keyed by
-   the names of the variables each contains (`variableName`). A scan of every
-   equation for every resolve made initialization quadratic in system size on
-   large reduced systems and dominated the whole simulate call. =#
 struct AliasEqIndex
   exprs::Vector{Any}
   varCounts::Vector{Int}
@@ -2193,6 +2183,18 @@ function buildAliasEqIndex(eqs)::AliasEqIndex
   return AliasEqIndex(exprs, varCounts, byVar)
 end
 
+"""
+    resolveAliasInitialValue(diffState, idx, ivMap)
+
+  Resolve the initial value of a differential state that has no direct Modelica
+  start value (typically an MTK-generated derivative variable like `Xˍt`).
+
+  Scans the equations of `idx` that read `diffState` for a linear one whose
+  other variables have known values in `ivMap`. Uses symbolic variable analysis
+  (`Symbolics.get_variables`, `isequal`, `substitute`).
+
+  Returns the resolved value, or `nothing` if no alias equation was found.
+"""
 function resolveAliasInitialValue(diffState, idx::AliasEqIndex, ivMap::Dict)
   for i in get(idx.byVar, variableName(diffState), Int[])
     #= Rational{Int} arithmetic inside substitute/simplify can overflow the
@@ -2259,6 +2261,7 @@ function _resolveAliasFromExpr(diffState, @nospecialize(expr), varCount::Int, iv
   return nothing
 end
 
+"`resolveAliasInitialValue` over the equations `fullEqs` (their index built here)."
 function resolveAliasInitialValue(diffState, fullEqs, ivMap::Dict)
   return resolveAliasInitialValue(diffState, buildAliasEqIndex(fullEqs), ivMap)
 end
@@ -2315,14 +2318,15 @@ or parameter right side). A signal-valued one (its rhs references a
 time-dependent variable, unknown or observed) determines its lhs through
 the init solve's residual rows; marking the lhs fixed would hold it at a
 stale numeric guess that fights the very equation it encodes. A right side of
-parameters and time only stays pinnable (`ModelingToolkit.isparameter`,
-`isIndependentVariable`).
+constant parameters and time only stays pinnable: one that reads a variable of
+time (a call `x(t)`: an unknown, or a parameter MTK made of a discrete, `d(t)`)
+does not.
 """
 function _fixedTrueLhsStrs(initEqs)::OrderedSet{String}
-  local out = OrderedSet{String}()
+  local out::OrderedSet{String} = OrderedSet{String}()
   for eq in initEqs
     local rhsVars = Symbolics.get_variables(eq.rhs)
-    any(v -> !(ModelingToolkit.isparameter(v) || isIndependentVariable(v)), rhsVars) && continue
+    any(v -> SymbolicUtils.iscall(Symbolics.unwrap(v)), rhsVars) && continue
     local name::Union{Nothing, String} = variableName(eq.lhs)
     name === nothing || push!(out, name)
   end
@@ -2961,7 +2965,7 @@ moved its friction modes' switching off the reference (event conditions read int
 algebraic unknowns).
 """
 function _ifConditionReaders(reduced::ModelingToolkit.AbstractSystem, original::ModelingToolkit.AbstractSystem)::Vector{Any}
-  local conditions = Set{Any}(Symbolics.unwrap(p) for p in ModelingToolkit.parameters(original) if isIfConditionParameter(p))
+  local conditions::Set{Any} = Set{Any}(Symbolics.unwrap(p) for p in ModelingToolkit.parameters(original) if isIfConditionParameter(p))
   isempty(conditions) && return Any[]
   local observed = ModelingToolkit.observed(reduced)
   #= the derivatives index reduction created (the variables MTK's schedule substitutes for derivatives) that read a

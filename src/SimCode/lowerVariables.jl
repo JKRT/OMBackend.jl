@@ -46,8 +46,8 @@ state's derivative, a derivative's state, a dummy's counterpart, a clocked state
 simulation names; a state's derivative variable, which the simulation code writes `der(x)`, as `der(x)`.
 """
 function simKind(k::IR.VariableKind, variables::IR.VariableSet, names::Names)::IR.VariableKind
-  local sim = (x::Symbol) -> begin
-    local v = get(variables, x, nothing)
+  local sim::Function = (x::Symbol) -> begin
+    local v::Union{Nothing, IR.Variable} = get(variables, x, nothing)
     v === nothing && return x
     v.kind isa IR.STATE_DER && return Symbol("der(", simName(names, variables[v.kind.state].cref), ")")
     return Symbol(simName(names, v.cref))

@@ -407,15 +407,16 @@ function emitProblemConstruction(useDirectRHS::Bool, skipInitializeProb::Bool)::
 end
 
 """
-    SimCodeKind(category, irKind, irOrigin)
+    SimCodeKind(name, category, irKind, irOrigin)
 
 What an MTK variable is in the simulation code, as Symbolics metadata the generated model sets where it declares
-its variables: its SimCode category (the type of `SIMVAR.varKind`: STATE, ALG_VARIABLE, DISCRETE, ...), its OMJLIR
-kind (`SIMVAR.irKind`: ALGEBRAIC_DER, DUMMY_DER, ...) and its OMJLIR origin (`:model`, or the pass that introduced
-it). Immutable values only: the generated code's hash, which decides whether a translate reuses the compiled
-module, stays the same for the same model.
+its variables: the variable's name, its SimCode category (the type of `SIMVAR.varKind`: STATE, ALG_VARIABLE,
+DISCRETE, ...), its OMJLIR kind (`SIMVAR.irKind`: ALGEBRAIC_DER, DUMMY_DER, ...) and its OMJLIR origin (`:model`, or
+the pass that introduced it). Immutable values only: the generated code's hash, which decides whether a translate
+reuses the compiled module, stays the same for the same model.
 """
 struct SimCodeKind
+  name::Symbol
   category::Type{<:SC.SimVarType}
   irKind::Union{Nothing, SC.IR.VariableKind}
   irOrigin::Union{Nothing, Symbol}
@@ -425,10 +426,14 @@ end
     simCodeKind(u) -> Union{Nothing, SimCodeKind}
 
 What the MTK variable `u` is in the simulation code; `nothing` for a variable the code generation or MTK made
-(MTK's derivative variables `xˍt`, if-equation and relation variables).
+(MTK's derivative variables `xˍt`, if-equation and relation variables). A variable MTK derives from a declared one
+keeps its metadata (Symbolics' `rename`: `xˍt` from `x`), so the kind is `u`'s only where it names `u`.
 """
-simCodeKind(@nospecialize(u))::Union{Nothing, SimCodeKind} =
-  SymbolicUtils.getmetadata(Symbolics.unwrap(u), SimCodeKind, nothing)
+function simCodeKind(@nospecialize(u))::Union{Nothing, SimCodeKind}
+  local x = Symbolics.unwrap(u)
+  local k::Union{Nothing, SimCodeKind} = SymbolicUtils.getmetadata(x, SimCodeKind, nothing)
+  return k !== nothing && variableName(x) == String(k.name) ? k : nothing
+end
 
 """
 Symbolics metadata of the parameters the generated model declares for its if-equations' conditions (`ifCond…`,
@@ -447,8 +452,30 @@ Each variable of the simulation code by name with what it is there (`SimCodeKind
 declarations.
 """
 simCodeKinds(simCode::SC.SIM_CODE)::Vector{Tuple{Symbol, SimCodeKind}} =
-  Tuple{Symbol, SimCodeKind}[(Symbol(name), SimCodeKind(typeof(v.varKind), v.irKind, v.irOrigin))
+  Tuple{Symbol, SimCodeKind}[(Symbol(name), SimCodeKind(Symbol(name), typeof(v.varKind), v.irKind, v.irOrigin))
                              for (name, (_, v)) in simCode.stringToSimVarHT]
+
+"""
+    simCodeKindsExpr(simCode) -> Expr
+
+Code that builds `simCodeKinds(simCode)`, for the generated model: printed (`writeModelToFile`), it is Julia that
+parses, where the values themselves print in OMJLIR's notation.
+"""
+function simCodeKindsExpr(simCode::SC.SIM_CODE)::Expr
+  local entries::Vector{Expr} = Expr[:(($(QuoteNode(n)), $(_constructorExpr(k)))) for (n, k) in simCodeKinds(simCode)]
+  return :(Tuple{Symbol, OMBackend.CodeGeneration.SimCodeKind}[$(entries...)])
+end
+
+"The constructor call of a `SimCodeKind`, its category and OMJLIR kind by their qualified names."
+_constructorExpr(k::SimCodeKind)::Expr =
+  :(OMBackend.CodeGeneration.SimCodeKind($(QuoteNode(k.name)), OMBackend.SimCode.$(nameof(k.category)),
+                                         $(_constructorExpr(k.irKind)), $(QuoteNode(k.irOrigin))))
+_constructorExpr(::Nothing)::Nothing = nothing
+_constructorExpr(k::SC.IR.VariableKind)::Expr =
+  Expr(:call, :(OMBackend.OMJLIR.$(nameof(typeof(k)))),
+       (_literalExpr(getfield(k, f)) for f in fieldnames(typeof(k)))...)
+_literalExpr(x::Symbol)::QuoteNode = QuoteNode(x)
+_literalExpr(x::Union{Nothing, Bool, Int})::Union{Nothing, Bool, Int} = x
 
 """
     defaultSolverFor(solver, problem, reducedSystem, eventTriggers, hasWhens) -> solver
@@ -465,7 +492,7 @@ dt at the first event. A solver the user chose is kept. Runs here rather than
 in the generated module, where a model variable (`count`) shadows Base.
 """
 function defaultSolverFor(solver, problem, reducedSystem, eventTriggers::AbstractSet{Symbol}, hasWhens::Bool)
-  local ODECore = OrdinaryDiffEq.OrdinaryDiffEqCore
+  local ODECore::Module = OrdinaryDiffEq.OrdinaryDiffEqCore
   solver isa Union{ODECore.OrdinaryDiffEqRosenbrockAlgorithm, ODECore.OrdinaryDiffEqRosenbrockAdaptiveAlgorithm} || return solver
   local name::String = string(nameof(typeof(solver)))
   local n = problem.u0 === nothing ? 0 : length(problem.u0)
@@ -477,8 +504,8 @@ function defaultSolverFor(solver, problem, reducedSystem, eventTriggers::Abstrac
     return OMBackend.daeFallbackSolver()
   end
   (hasWhens || nDiff == n) && return solver
-  local unknowns = ModelingToolkit.unknowns(reducedSystem)
-  local isModelDiscrete = (u) -> begin
+  local unknowns::Vector = ModelingToolkit.unknowns(reducedSystem)
+  local isModelDiscrete::Function = (u) -> begin
     local k::Union{Nothing, SimCodeKind} = simCodeKind(u)
     k !== nothing && k.category === SC.DISCRETE && !(ModelingToolkit.getname(u) in eventTriggers)
   end
@@ -541,20 +568,20 @@ reference at reltol 1e-6 (MTK's path 0.03 %).
 function defaultToleranceKwargs(problem, kwargs)
   local abstol = get(kwargs, :abstol, 1.0e-6)
   abstol isa Number || return (;)
-  local rows = _algebraicRows(problem.f)
+  local rows::Vector{Int} = _algebraicRows(problem.f)
   isempty(rows) && return (;)
   problem.f.sys === nothing && return (;)
-  local unknowns = ModelingToolkit.get_unknowns(problem.f.sys)
+  local unknowns::Vector = ModelingToolkit.get_unknowns(problem.f.sys)
   length(unknowns) == length(problem.u0) || return (;)
   #= OMBackend's dummy derivatives by their kind; MTK's own by its schedule =#
   local mtkDerivatives::Set{Any} = mtkDerivativeVariables(problem.f.sys)
-  local isDerivative = (u) -> begin
+  local isDerivative::Function = (u) -> begin
     local k::Union{Nothing, SimCodeKind} = simCodeKind(u)
     k === nothing ? Symbolics.unwrap(u) in mtkDerivatives : k.irKind isa SC.IR.DUMMY_DER
   end
   local derivatives::Vector{Int} = Int[k for k in rows if isDerivative(unknowns[k])]
   isempty(derivatives) && return (;)
-  local perUnknown = fill(Float64(abstol), length(problem.u0))
+  local perUnknown::Vector{Float64} = fill(Float64(abstol), length(problem.u0))
   perUnknown[derivatives] .= Inf
   return (; abstol = perUnknown)
 end
@@ -1185,10 +1212,12 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SC.SIM_CODE, modelName::String, 
     for (name, (_, sv)) in simCode.stringToSimVarHT
     if sv.varKind isa Union{SC.PARAMETER, SC.ARRAY_PARAMETER})
   #= after OMBackend's index reduction, a state and the derivative variables aliased to it (`\$DER.x`)
-     form relays: the declared state keeps its name =#
+     form relays: the state keeps its name, unless introduceDerivatives or index reduction made it (a second-order
+     chain's `\$DER.x`, a state set's variables); `der_x` of lowerHigherOrderDerivatives is a state of the model =#
   local _relayKeep = simCode.indexReduced ?
     union(_condDiscretes, OrderedSet{Symbol}(Symbol(s) for s in stateVariables
-                                             if last(simCode.stringToSimVarHT[s]).irOrigin === :model)) : _condDiscretes
+                                             if !(last(simCode.stringToSimVarHT[s]).irOrigin in
+                                                  (:introduceDerivatives, :indexReduction)))) : _condDiscretes
   #= Not a representative: a discrete the demotion made algebraic. Of a pure alias of two discretes it demoted one;
      kept as the relay's representative it had no equation left and its held partner was substituted away (MSL
      ControlledTanks' radio buttons: `pre(shut.reset[2]) = false` then read no variable of the system). =#
@@ -1328,7 +1357,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SC.SIM_CODE, modelName::String, 
       #= Declare ifCond variables as discrete time-dependent parameters.
          These are modified by SymbolicContinuousCallback affects and are NOT
          part of the ODE state vector, so the solver never perturbs them. =#
-      $(generateDiscreteIfCondDeclaration(ifCondParamDecls, ifCondParamNames))
+      $(generateDiscreteIfCondDeclaration(ifCondParamDecls, ifCondParamNames, Symbol[Symbol(v) for v in ifConditionalVariables]))
       #=
         Only variables that are present in the equation system later should be a part of the variables in the MTK system.
         This means that certain algebraic variables should not be listed among the variables (These are the discrete variables).
@@ -1350,7 +1379,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SC.SIM_CODE, modelName::String, 
       end
       #= what each variable is in the simulation code (`simCodeKind`) =#
       local _declared = Set{Symbol}(first.(vars))
-      for (sym, kind) in $(simCodeKinds(simCode))
+      for (sym, kind) in $(simCodeKindsExpr(simCode))
         sym in _declared || continue
         push!(_batchBlock.args, :($sym = SymbolicUtils.setmetadata($sym, OMBackend.CodeGeneration.SimCodeKind, $kind)))
       end

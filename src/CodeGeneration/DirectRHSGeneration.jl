@@ -2145,7 +2145,7 @@ function _buildStateVector(states, finalInitialValues;
   if observedEquations !== nothing && !isempty(observedEquations)
     aliasMatched = _propagateObservedAliasInitialValues!(
       u0, states, matchedSet, hardValueMap, observedEquations;
-      equationsByVariable = something(observedIndex, _observedEquationsByVariable(observedEquations)))
+      equationsByVariable = observedIndex === nothing ? _observedEquationsByVariable(observedEquations) : observedIndex)
   end
   # Fill unmatched states from system guesses (post-simplification variable space).
   # These provide Modelica start values for algebraic variables whose pre-simplification
@@ -2794,7 +2794,7 @@ function _tryToFloat64(val; resolvedParams::Union{Dict{String,Float64},Nothing}=
   end
   #= A start value reading time: the build's start time, 0 (u0 is built once;
      _startTimeGuard refuses another start time). It was 0.0 with a warning. =#
-  local timeVars = filter(isIndependentVariable, freeVars)
+  local timeVars::AbstractVector = filter(isIndependentVariable, freeVars)
   if !isempty(timeVars)
     return _tryToFloat64(Symbolics.substitute(unwrapped, Dict{Any, Any}(v => 0.0 for v in timeVars));
                          resolvedParams = resolvedParams)

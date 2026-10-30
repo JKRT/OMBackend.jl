@@ -2069,16 +2069,16 @@ function performStructuralSimplify(; observedFilter::Union{Nothing, Vector{Strin
   local patternStrings = observedFilter isa Vector{Regex} ? [p.pattern for p in observedFilter] : observedFilter
   return quote
     $simplifyExpr
-    local _obsPatterns = [Regex(p) for p in $(patternStrings)]
-    local _allObs = ModelingToolkit.observed(reducedSystem)
-    local _nBefore = length(_allObs)
+    local _obsPatterns::Vector{Regex} = Regex[Regex(p) for p in $(patternStrings)]
+    local _allObs::AbstractVector{Symbolics.Equation} = ModelingToolkit.observed(reducedSystem)
+    local _nBefore::Int = length(_allObs)
     #= Keep matched observed equations AND the transitive closure of observed
        variables their RHS references; dropping a dependency leaves it
        referenced-but-undefined in the residual/init build_function. By the
        left-hand side's symbol; a pattern matches the variable's name. =#
-    local _obsByLhs = Dict{Any, Any}(eq.lhs => eq for eq in _allObs)
-    local _keep = OrderedSet{Any}()
-    local _stack = Any[eq.lhs for eq in _allObs
+    local _obsByLhs::Dict{Any, Any} = Dict{Any, Any}(eq.lhs => eq for eq in _allObs)
+    local _keep::OrderedSet{Any} = OrderedSet{Any}()
+    local _stack::Vector{Any} = Any[eq.lhs for eq in _allObs
                        if any(p -> occursin(p, something(OMBackend.CodeGeneration.variableName(eq.lhs), "")), _obsPatterns)]
     #= Also seed from observed vars referenced by the system equations and the
        initialization equations: the residual / init build_function references them
@@ -2094,16 +2094,16 @@ function performStructuralSimplify(; observedFilter::Union{Nothing, Vector{Strin
       end
     end
     while !isempty(_stack)
-      local _lhs = pop!(_stack)
+      local _lhs::Any = pop!(_stack)
       (_lhs in _keep) && continue
       push!(_keep, _lhs)
-      local _eq = get(_obsByLhs, _lhs, nothing)
+      local _eq::Union{Nothing, Symbolics.Equation} = get(_obsByLhs, _lhs, nothing)
       _eq === nothing && continue
       for _v in Symbolics.get_variables(_eq.rhs)
         (haskey(_obsByLhs, _v) && !(_v in _keep)) && push!(_stack, _v)
       end
     end
-    local _filteredObs = filter(eq -> eq.lhs in _keep, _allObs)
+    local _filteredObs::AbstractVector{Symbolics.Equation} = filter(eq -> eq.lhs in _keep, _allObs)
     if length(_filteredObs) < _nBefore
       @debug "[MTK GEN: observed] observedFilter: kept $(length(_filteredObs)) of $(_nBefore) MTK observed equations"
       reducedSystem = Setfield.set(reducedSystem, Setfield.PropertyLens{:observed}(), _filteredObs)

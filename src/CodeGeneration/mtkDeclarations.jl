@@ -234,19 +234,21 @@ Generate code to declare ifCond variables as plain parameters (not time-dependen
 These parameters are modified by SymbolicContinuousCallback affects and are NOT
 part of the ODE state vector, so the solver never perturbs them during Jacobian
 computation. Using plain parameters (not `p(t)`) avoids MTK creating Shift operators.
-Returns a no-op expression if there are no ifCond parameters.
+Returns a no-op expression if there are no ifCond parameters. Those named in `conditions` (the if-equations'
+conditions, not the hysteresis or the homotopy parameter declared with them) are marked (`isIfConditionParameter`).
 """
-function generateDiscreteIfCondDeclaration(ifCondParamDecls::Vector{Expr}, ifCondNames::Vector{Symbol})
+function generateDiscreteIfCondDeclaration(ifCondParamDecls::Vector{Expr}, ifCondNames::Vector{Symbol},
+                                           conditions::Vector{Symbol})
   if isempty(ifCondParamDecls)
     return :()
   end
-  local nameQuotes = [QuoteNode(s) for s in ifCondNames]
+  local nameQuotes::Vector{QuoteNode} = [QuoteNode(s) for s in ifCondNames]
+  local marked::Vector{Bool} = Bool[s in conditions for s in ifCondNames]
   quote
-    #= each marked as an if-equation's condition (`isIfConditionParameter`) =#
-    local _ifCondParams = [Symbolics.wrap(SymbolicUtils.setmetadata(Symbolics.unwrap(p), OMBackend.CodeGeneration.IfConditionParameter, true))
-                           for p in ModelingToolkit.@parameters begin
+    local _ifCondParams = [m ? Symbolics.wrap(SymbolicUtils.setmetadata(Symbolics.unwrap(p), OMBackend.CodeGeneration.IfConditionParameter, true)) : p
+                           for (m, p) in zip($(marked), ModelingToolkit.@parameters begin
                              $(ifCondParamDecls...)
-                           end]
+                           end)]
     local _ifCondBindBlock = Expr(:block)
     for (name, p) in zip([$(nameQuotes...)], _ifCondParams)
       push!(_ifCondBindBlock.args, :($name = $p))
