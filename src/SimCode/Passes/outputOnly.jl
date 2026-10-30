@@ -55,11 +55,11 @@ whole array, or by a subscript that is no literal; by `arrayBase`).
 """
 function equationVariableNames(e::Exp, ht::HT, elements::Dict{Symbol, Vector{String}})::OrderedSet{String}
   local names = OrderedSet{String}()
-  local seen::Set{Tuple{SimCref, Bool}} = Set{Tuple{SimCref, Bool}}()
-  for read in crefReads!(Tuple{SimCref, Bool}[], e)
+  local seen::Set{Read} = Set{Read}()
+  for read::Read in crefReads!(Read[], e)
     read in seen && continue
     push!(seen, read)
-    local (c::SimCref, dynamic::Bool) = read
+    local (c::SimCref, dynamic::Bool) = (read.cref, read.dynamic)
     local name::String = crefName(c)
     if !dynamic && haskey(ht, name)
       push!(names, name)

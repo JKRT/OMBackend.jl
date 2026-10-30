@@ -213,11 +213,11 @@ isdefined(@__MODULE__, :BackendTestMocks) || include(joinpath(@__DIR__, "backend
       local dynamic = Set{Symbol}()
       SC.crefNames!(SC.OrderedSet{String}(), dynamicRead; dynamic)
       @test dynamic == Set([:A])
-      @test (SC.SimCref(:A), true) in SC.crefReads!(Tuple{SC.SimCref, Bool}[], dynamicRead)
+      @test SC.Read(SC.SimCref(:A), true) in SC.crefReads!(SC.Read[], dynamicRead)
       #= an element read: the array's key and subscripts, its reference the element's =#
-      local element = first(SC.crefReads!(Tuple{SC.SimCref, Bool}[], SC.ASUB(SC.EXP_CREF(SC.SimCref(:A, Int[], aRef), SC.TYPE_REAL()),
-                                                                             SC.Exp[SC.ICONST(2)])))
-      @test SC.crefName(element[1]) == "A[2]" && element[1].ref.name === Symbol("A[2]") && !element[2]
+      local element = first(SC.crefReads!(SC.Read[], SC.ASUB(SC.EXP_CREF(SC.SimCref(:A, Int[], aRef), SC.TYPE_REAL()),
+                                                             SC.Exp[SC.ICONST(2)])))
+      @test SC.crefName(element.cref) == "A[2]" && element.cref.ref.name === Symbol("A[2]") && !element.dynamic
     end
 
     @testset "ifConditionNames!: the names of if-expression conditions" begin

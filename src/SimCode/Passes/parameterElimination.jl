@@ -131,7 +131,8 @@ function dataStructureArrayElements!(names::OrderedSet{String}, simCode::SIM_COD
   for (_, (_, v)) in ht
     (v.varKind isa DATA_STRUCTURE && v.varKind.bindExp isa CALL) || continue
     crefNames!(names, v.varKind.bindExp; dynamic)
-    for (c, _) in crefReads!(Tuple{SimCref, Bool}[], v.varKind.bindExp)
+    for read::Read in crefReads!(Read[], v.varKind.bindExp)
+      local c::SimCref = read.cref
       (c.ref !== nothing && isempty(c.subs) && !isElementCref(c.ref)) && push!(wholes, c.ref.name)
     end
   end

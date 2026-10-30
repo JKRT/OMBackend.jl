@@ -142,22 +142,13 @@ equationExps(eq::Equation)::Vector{Exp} = Exp[]
 """
     whenCrefNames!(names, w)
 
-The references of a when-clause: its condition's, its statements' (an assignment's sides, a
-reinit's state and value, a call's, an assert's condition and message), its elsewhen arms'.
+The references of a when-clause: its condition's, its statements' (`statementCrefNames!`: an
+assignment's sides, a reinit's state and value, a call's, an assert's, a terminate's message,
+nested statements'), its elsewhen arms'.
 """
 function whenCrefNames!(names::OrderedSet{String}, w::WHEN_STMTS; dynamic::Union{Nothing, Set{Symbol}} = nothing)::OrderedSet{String}
   crefNames!(names, w.condition; dynamic)
-  for s in w.body
-    if s isa ASSIGN
-      crefNames!(names, s.left; dynamic); crefNames!(names, s.right; dynamic)
-    elseif s isa REINIT
-      push!(names, crefName(s.stateVar)); crefNames!(names, s.value; dynamic)
-    elseif s isa NORETCALL
-      crefNames!(names, s.exp; dynamic)
-    elseif s isa ASSERT
-      crefNames!(names, s.condition; dynamic); crefNames!(names, s.message; dynamic)
-    end
-  end
+  statementCrefNames!(names, w.body; dynamic)
   w.elsewhenPart === nothing || whenCrefNames!(names, w.elsewhenPart; dynamic)
   return names
 end

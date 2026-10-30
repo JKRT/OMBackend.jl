@@ -147,52 +147,69 @@ an array read by literal subscripts also as its element (`R_T[1][2]`: `crefName`
 `dynamic`, that array (its `arrayBase`) recorded there.
 """
 function crefNames!(names::OrderedSet{String}, e::Exp; dynamic::Union{Nothing, Set{Symbol}} = nothing)::OrderedSet{String}
-  if e isa EXP_CREF
-    push!(names, crefName(e.cref))
-  elseif e isa DER
-    push!(names, crefName(e.cref))
-  elseif e isa PRE
-    push!(names, crefName(e.cref))
-  elseif e isa ASUB && e.exp isa EXP_CREF
-    if all(s -> s isa ICONST, e.subs)
-      push!(names, crefName(e.exp.cref, Int[s.value for s in e.subs]))
-    elseif dynamic !== nothing && e.exp.cref.ref !== nothing && any(s -> anyExp(x -> x isa Union{EXP_CREF, DER, PRE}, s), e.subs)
-      push!(dynamic, arrayBase(e.exp.cref.ref))
+  foreachRead(e) do c::SimCref, index::Union{Nothing, Vector{Int}}, isDynamic::Bool
+    if isDynamic
+      (dynamic !== nothing && c.ref !== nothing) && push!(dynamic, arrayBase(c.ref))
+    else
+      push!(names, index === nothing ? crefName(c) : crefName(c, index))
     end
-  end
-  for c in children(e)
-    crefNames!(names, c; dynamic)
   end
   return names
 end
 
 """
-    crefReads!(reads, e) -> Vector{Tuple{SimCref, Bool}}
+    foreachRead(f, e)
 
-The references `e` reads, in order, each with whether it is read by a subscript that reads a
-variable (`true`): a reference, a derivative's state, a `pre(x)`'s variable; an array read by
-literal subscripts as its element (`elementRead`); by a subscript that reads a variable, the
-array (`true`), whose element no subscript names.
+`f(c, index, dynamic)` for each reference `e` reads, in order, the one traversal of `crefNames!`, `crefReads!` and
+`dynamicArrays!`: a reference, a derivative's state, a `pre(x)`'s variable (`index` nothing); an array read by literal
+subscripts, `c` the array and `index` the subscripts (its element's name `crefName(c, index)`, its reference
+`elementRead(c, index)`, made only where asked); by a subscript that reads a variable, the array, `dynamic`.
 """
-function crefReads!(reads::Vector{Tuple{SimCref, Bool}}, e::Exp)::Vector{Tuple{SimCref, Bool}}
+function foreachRead(f::F, e::Exp)::Nothing where {F}
   if e isa Union{EXP_CREF, DER, PRE}
-    push!(reads, (e.cref, false))
+    f(e.cref, nothing, false)
   elseif e isa ASUB && e.exp isa EXP_CREF
-    if all(s -> s isa ICONST, e.subs)
-      push!(reads, (elementRead(e.exp.cref, Int[s.value for s in e.subs]), false))
-    elseif any(s -> anyExp(x -> x isa Union{EXP_CREF, DER, PRE}, s), e.subs)
-      push!(reads, (e.exp.cref, true))
+    if all(s::Exp -> s isa ICONST, e.subs)
+      f(e.exp.cref, Int[(s::ICONST).value for s in e.subs], false)
+    elseif any(s::Exp -> anyExp(x::Exp -> x isa Union{EXP_CREF, DER, PRE}, s), e.subs)
+      f(e.exp.cref, nothing, true)
     end
   end
   for c in children(e)
-    crefReads!(reads, c)
+    foreachRead(f, c)
+  end
+  return nothing
+end
+
+"""
+    Read(cref, dynamic)
+
+A reference an expression reads (`crefReads!`): a variable's, an array element's by literal subscripts (`elementRead`),
+or, `dynamic`, an array read by a subscript that reads a variable, whose element no subscript names.
+"""
+struct Read
+  cref::SimCref
+  dynamic::Bool
+end
+Base.:(==)(a::Read, b::Read)::Bool = a.cref == b.cref && a.dynamic == b.dynamic
+Base.isequal(a::Read, b::Read)::Bool = a == b
+Base.hash(r::Read, h::UInt)::UInt = hash(r.dynamic, hash(r.cref, h))
+
+"""
+    crefReads!(reads, e) -> Vector{Read}
+
+The references `e` reads, in order (`foreachRead`), an element's by literal subscripts as its reference (`elementRead`).
+"""
+function crefReads!(reads::Vector{Read}, e::Exp)::Vector{Read}
+  foreachRead(e) do c::SimCref, index::Union{Nothing, Vector{Int}}, isDynamic::Bool
+    push!(reads, Read(index === nothing ? c : elementRead(c, index), isDynamic))
   end
   return reads
 end
 
-"The arrays `e` reads by a subscript that reads a variable (`crefReads!`'s flagged reads, by `arrayBase`), pushed onto `dynamic`."
+"The arrays `e` reads by a subscript that reads a variable (`foreachRead`'s dynamic reads, by `arrayBase`), pushed onto `dynamic`."
 function dynamicArrays!(dynamic::Set{Symbol}, e::Exp)::Set{Symbol}
-  for (c::SimCref, isDynamic::Bool) in crefReads!(Tuple{SimCref, Bool}[], e)
+  foreachRead(e) do c::SimCref, _::Union{Nothing, Vector{Int}}, isDynamic::Bool
     (isDynamic && c.ref !== nothing) && push!(dynamic, arrayBase(c.ref))
   end
   return dynamic
