@@ -38,7 +38,8 @@
 #= A parameter binding in Julia (createParameterEquationsMTK, createParameterAssignmentsMTK).
    An element of the result of a call with literal arguments, `p[i, j] = f(...)[i, j]` (an
    array parameter scalarized), reads one evaluation of the call: `_parameterCalls`, a local
-   of the model function, by the call's code. Every element called it (Buildings'
+   of the model function, by the call's hash (of the SimCode call: its generated code's text
+   carried the code generator's line numbers). Every element called it (Buildings'
    TemperatureResponseMatrix: 152 calls of an impure function that computes a g-function
    and writes a file, 15 s each); a binding is evaluated once. =#
 """
@@ -56,7 +57,7 @@ function _parameterBindingExpr(bindExp::SC.Exp, simCode::SC.SIM_CODE)
   end
   (ref isa Expr && ref.head === :ref && ref.args[1] isa Expr) || return e
   local callExpr = ref.args[1]
-  ref.args[1] = :(get!(() -> $callExpr, _parameterCalls, $(hash(string(callExpr)))))
+  ref.args[1] = :(get!(() -> $callExpr, _parameterCalls, $(hash((bindExp::SC.ASUB).exp))))
   return e
 end
 
