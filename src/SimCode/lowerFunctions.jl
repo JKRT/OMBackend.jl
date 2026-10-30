@@ -92,7 +92,7 @@ function simFunctionVariable(names::Names, v::IR.FunctionVariable)::FunctionVari
                       ICONST(something(IR.dimensionSize(d), 0)))
   end
   return FunctionVariable(String(v.name), simType(v.ty), dimensions, v.binding === nothing ? nothing : simExp(names, v.binding),
-                          Pair{String, Exp}[String(n) => simExp(names, e) for (n, e) in v.fieldBindings])
+                          Pair{String, Exp}[String(n) => simExp(names, e) for (n, e) in v.fieldBindings], IR.ComponentRef(v.name, v.ty))
 end
 
 "`s` without `smooth(p, e)` (as `e`, its own smooth() kept), in an assignment, a call, a condition, a range, a loop's body (the previous backend's)."

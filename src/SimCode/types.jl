@@ -712,13 +712,14 @@ SIMVAR(name::String, index::Union{Nothing, Int}, varKind::SimVarType, attributes
 #= ==================================================================================== =#
 
 """
-    FunctionVariable(name, ty, dimensions, default, fieldDefaults)
+    FunctionVariable(name, ty, dimensions, default, fieldDefaults, cref)
 
-An input, output or protected variable of a function: its name; its type (an array's
-TYPE_ARRAY, a size an expression gives -1); an array's dimensions as expressions, for its
-allocation (`ICONST(n)`, an expression of the inputs `size(u, 1)`, `ICONST(0)` for `:`); its
-default value (`nothing` for none); for a record instance its fields' defaults (the
-instance's modifiers, the record's), by field.
+An input, output or protected variable of a function: its name (its identifier in the
+generated function); its type (an array's TYPE_ARRAY, a size an expression gives -1); an
+array's dimensions as expressions, for its allocation (`ICONST(n)`, an expression of the
+inputs `size(u, 1)`, `ICONST(0)` for `:`); its default value (`nothing` for none); for a record
+instance its fields' defaults (the instance's modifiers, the record's), by field; its IR
+reference (what the function body's references to it are, the name derived from it).
 """
 struct FunctionVariable <: Node
   name::String
@@ -726,6 +727,7 @@ struct FunctionVariable <: Node
   dimensions::Vector{Exp}
   default::Union{Nothing, Exp}
   fieldDefaults::Vector{Pair{String, Exp}}
+  cref::IR.ComponentRef
 end
 
 """

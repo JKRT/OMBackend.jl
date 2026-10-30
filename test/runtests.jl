@@ -340,6 +340,8 @@ import .ExampleModels
 
   #= ── 13. The names Modelica function statements read ──────────── =#
   include("functionBodyCrefsTests.jl")
+  #= the partial evaluation of function calls, its environment by references =#
+  include("functionEvaluationTests.jl")
 
   #= ── 14. Protected variables keep their attributes ────────────── =#
   include("protectedAttributesTests.jl")
