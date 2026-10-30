@@ -295,7 +295,8 @@ function linkStateDerivative!(model::IR.Model, partition::IR.Partition, state::S
   model.variables[state].kind = IR.STATE(1, link, true)
   model.variables[derivative].kind isa IR.STATE || (model.variables[derivative].kind = IR.ALGEBRAIC_DER(state))
   local ref = name -> IR.CREF(model.variables[name].cref, IR.T_REAL())
-  push!(partition.equations, IR.SCALAR_EQUATION(ref(link), ref(derivative), IR.T_REAL(), IR.NO_SOURCE, IR.DEFAULT_ATTRIBUTES))
+  push!(partition.equations, IR.SCALAR_EQUATION(ref(link), ref(derivative), IR.T_REAL(), IR.NO_SOURCE,
+                                                IR.DERIVATIVE_LINK_ATTRIBUTES))
   return nothing
 end
 
@@ -303,7 +304,7 @@ end
 function setDerivative!(eq::IR.Equation, derivative::IR.Equation)::Nothing
   hasfield(typeof(eq), :attributes) || return nothing
   local a = eq.attributes
-  eq.attributes = IR.EquationAttributes(a.kind, a.differentiated, derivative)
+  eq.attributes = IR.EquationAttributes(a.kind, a.differentiated, derivative, a.derivativeLink)
   return nothing
 end
 

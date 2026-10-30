@@ -555,14 +555,14 @@ conditions kept). Throws NotHandled for an algorithm and the other kinds.
 """
 function differentiateEquation(eq::IR.SCALAR_EQUATION, seeds::Seeds)::IR.Equation
   return IR.SCALAR_EQUATION(differentiate(eq.lhs, seeds), differentiate(eq.rhs, seeds), eq.ty, eq.source,
-                            IR.EquationAttributes(eq.attributes.kind, true, nothing))
+                            IR.EquationAttributes(eq.attributes.kind, true, nothing, false))
 end
 
 function differentiateEquation(eq::IR.IF_EQUATION, seeds::Seeds)::IR.Equation
   local branches = IR.EquationBranch[IR.EquationBranch(b.condition, IR.Equation[differentiateEquation(e, seeds) for e in b.equations])
                                       for b in eq.branches]
   return IR.IF_EQUATION(branches, IR.Equation[differentiateEquation(e, seeds) for e in eq.elseEquations], eq.source,
-                        IR.EquationAttributes(eq.attributes.kind, true, nothing))
+                        IR.EquationAttributes(eq.attributes.kind, true, nothing, false))
 end
 
 differentiateEquation(eq::IR.Equation, ::Seeds)::IR.Equation =

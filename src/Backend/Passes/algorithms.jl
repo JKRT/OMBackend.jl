@@ -755,7 +755,7 @@ function residualsOfAlgorithms(algorithms::Vector{IR.ALGORITHM}, constrained::Se
 end
 
 "A dynamic equation: already classified, not one for the discrete synthesis."
-const DYNAMIC = IR.EquationAttributes(IR.EQ_CONTINUOUS, false, nothing)
+const DYNAMIC = IR.EquationAttributes(IR.EQ_CONTINUOUS, false, nothing, false)
 
 """
 The residuals of `v := e` for a discrete `v`: `v = e`; of an array `v`, one per element

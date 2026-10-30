@@ -300,7 +300,7 @@ function differentiatedForEquation(eq::IR.FOR_EQUATION, chains::Dict{Vector{Int}
     end
   end
   isempty(body) && return nothing
-  return IR.FOR_EQUATION(eq.iterator, body, eq.source, IR.EquationAttributes(eq.attributes.kind, true, nothing))
+  return IR.FOR_EQUATION(eq.iterator, body, eq.source, IR.EquationAttributes(eq.attributes.kind, true, nothing, false))
 end
 
 "The scalar equation `eq` of the arrays-kept model at the iterator `values`, in the element view's form (`equationExpression`)."
@@ -377,7 +377,7 @@ function linkEquation(link::IR.Variable, derivative::IR.Variable, sizes::Vector{
   local subscripts = iteratorSubscripts(sizes)
   local element = v::IR.Variable -> IR.CREF(distributedCref(v, subscripts), IR.T_REAL())
   return nestedFor(IR.Equation[IR.SCALAR_EQUATION(element(link), element(derivative), IR.T_REAL(), IR.NO_SOURCE,
-                                                  IR.DEFAULT_ATTRIBUTES)], sizes)
+                                                  IR.DERIVATIVE_LINK_ATTRIBUTES)], sizes)
 end
 
 "A variable the array form of a plan adds, of no attributes."
@@ -419,7 +419,7 @@ function stateLinks(s::Structure, dummies::Set{Int}, E::Elements, derivatives::D
     push!(links, link)
     push!(variables, link)
     push!(equations, IR.SCALAR_EQUATION(IR.CREF(link.cref, IR.T_REAL()), IR.CREF(derivative.cref, IR.T_REAL()), IR.T_REAL(),
-                                        IR.NO_SOURCE, IR.DEFAULT_ATTRIBUTES))
+                                        IR.NO_SOURCE, IR.DERIVATIVE_LINK_ATTRIBUTES))
   end
   return (links, equations)
 end

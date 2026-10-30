@@ -607,7 +607,7 @@ function scalarVariables(variables::IR.VariableSet, E::Elements)::IR.VariableSet
 end
 
 "An equation's attributes `a` without the link to its derivative (an equation of the array model)."
-unlinked(a::IR.EquationAttributes)::IR.EquationAttributes = IR.EquationAttributes(a.kind, a.differentiated, nothing)
+unlinked(a::IR.EquationAttributes)::IR.EquationAttributes = IR.EquationAttributes(a.kind, a.differentiated, nothing, a.derivativeLink)
 
 """
     scalarEquations!(out, origins, eq, origin, values, E)

@@ -91,7 +91,7 @@ function equationKey(eq::IR.Equation, h::UInt = zero(UInt))::UInt
         foreach(e -> (h = equationKey(e, h)), b.equations)
       end
     elseif x isa IR.EquationAttributes
-      h = hash((x.kind, x.differentiated), h)
+      h = hash((x.kind, x.differentiated, x.derivativeLink), h)
     else
       h = hash(x, h)
     end

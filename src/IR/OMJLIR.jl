@@ -728,20 +728,26 @@ of a clock (`EQ_CLOCKED`); `EQ_UNKNOWN` before classification.
 @enum EquationKind EQ_CONTINUOUS EQ_DISCRETE EQ_CLOCKED EQ_UNKNOWN
 
 """
-    EquationAttributes(kind, differentiated, derivative)
+    EquationAttributes(kind, differentiated, derivative, derivativeLink)
 
 `kind`: when the equation is evaluated. `differentiated`: the equation is the time
 derivative of another (made by index reduction). `derivative`: the equation's time
-derivative, once index reduction differentiated it; `nothing` before.
+derivative, once index reduction differentiated it; `nothing` before. `derivativeLink`: the
+equation links a selected state's derivative to the derivative variable the differentiated
+equations read (index reduction's `\$STATEDER.x = \$DER.x`): the state's differential row.
 """
 struct EquationAttributes
   kind::EquationKind
   differentiated::Bool
   derivative::Union{Nothing, Equation}
+  derivativeLink::Bool
 end
 
 "The attributes of an equation before classification."
-const DEFAULT_ATTRIBUTES = EquationAttributes(EQ_UNKNOWN, false, nothing)
+const DEFAULT_ATTRIBUTES = EquationAttributes(EQ_UNKNOWN, false, nothing, false)
+
+"The attributes of a state's derivative link (`derivativeLink`) before classification."
+const DERIVATIVE_LINK_ATTRIBUTES = EquationAttributes(EQ_UNKNOWN, false, nothing, true)
 
 "`lhs = rhs` of scalar type `ty`."
 mutable struct SCALAR_EQUATION <: Equation
@@ -1797,7 +1803,8 @@ _print(io::IO, eq::ASSERT_EQUATION, ::String) =
   (print(io, "assert("); _printJoined(io, Expression[eq.condition, eq.message, eq.level]); print(io, ")"))
 
 _print(io::IO, a::EquationAttributes) =
-  print(io, a.kind, a.differentiated ? " differentiated" : "", a.derivative === nothing ? "" : " (has derivative)")
+  print(io, a.kind, a.differentiated ? " differentiated" : "", a.derivativeLink ? " derivative link" : "",
+        a.derivative === nothing ? "" : " (has derivative)")
 
 _print(io::IO, ::ALGEBRAIC) = print(io, "algebraic")
 _print(io::IO, k::STATE) = print(io, "state(", k.index, k.derivative === nothing ? "" : ", der = $(k.derivative)", ")")

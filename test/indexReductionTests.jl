@@ -293,6 +293,11 @@ _irEquationOf(eqs::Vector{_IRM.Equation}, name::Symbol)::_IRM.SCALAR_EQUATION =
     @test kind(:phi1).derivative === Symbol("\$STATEDER.phi1")
     @test kind(Symbol("\$DER.phi1")) == _IRM.ALGEBRAIC_DER(:phi1)
     @test kind(Symbol("\$DER.phi2")) == _IRM.DUMMY_DER(:phi2)
+    #= the links marked as such (their attributes' derivativeLink), one per state; the model's own equations not =#
+    local eqs::Vector{_IRM.Equation} = model.continuous[1].equations
+    local isLink = (eq::_IRM.Equation) -> eq isa _IRM.SCALAR_EQUATION && eq.attributes.derivativeLink
+    @test _IRd.isDerivativeLink(_irEquationOf(eqs, Symbol("\$STATEDER.phi1")))
+    @test count(isLink, eqs) == 2 && _irEquationOf(eqs, Symbol("\$STATEDER.w1")).attributes.derivativeLink
     #= SimCode keeps the kinds, the variables they name by their simulation names (a state's derivative der(x)) =#
     local simCode = OMBackend.SimCode.lowerStructuralModes(model)
     local irKind = name::String -> last(simCode.stringToSimVarHT[name]).irKind
@@ -472,6 +477,14 @@ _irEquationOf(eqs::Vector{_IRM.Equation}, name::Symbol)::_IRM.SCALAR_EQUATION =
     @test kind("phi2") isa _IRM.DUMMY_STATE && kind("w2") isa _IRM.DUMMY_STATE
     @test m.variables[Symbol("\$DER.\$DER.phi1")].ty isa _IRM.T_ARRAY
     @test kind("\$STATEDER.phi1") isa _IRM.STATE_DER
+    #= the for-equation's body marked as the link, its elements too once scalarized =#
+    local linkBodies::Vector{_IRM.Equation} = _IRM.Equation[eq.body[1] for eq in m.continuous[1].equations
+                                                            if eq isa _IRM.FOR_EQUATION && length(eq.body) == 1 &&
+                                                               _IRd.isDerivativeLink(eq.body[1])]
+    @test length(linkBodies) == 2 && all(b -> occursin("\$STATEDER.", string(b.lhs)), linkBodies)
+    local scalarLinks::Vector{String} = String[string(eq.lhs) for eq in _IRd.scalarizeArrays(m).model.continuous[1].equations
+                                                if _IRd.isDerivativeLink(eq)]
+    @test length(scalarLinks) == 2 * _IRM.dimensionSize(m.variables[:phi1].ty.dimensions[1])
     #= pendulums in a for-equation: the constraint differentiated twice in array form, the iterator kept; the dynamic
        state sets of the elements one family over them (its selection matrix A[i, j, c], its when-equation in the
        for-equation); the start values choose differently per element (x the dummy of the first, y of the others) =#

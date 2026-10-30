@@ -46,9 +46,8 @@ derivative variable that its link `\$STATEDER.x = \$DER.x` made algebraic (ALGEB
 """
 isDerivativeUnknown(v::IR.Variable)::Bool = v.kind isa Union{IR.DUMMY_DER, IR.ALGEBRAIC_DER}
 
-"Whether `eq` is a state's derivative link `\$STATEDER.x = \$DER.x`: the state's differential row, which determines no derivative unknown."
-isDerivativeLink(eq::IR.Equation)::Bool =
-  eq isa IR.SCALAR_EQUATION && eq.lhs isa IR.CREF && startswith(String(eq.lhs.cref.name), "\$STATEDER.")
+"Whether `eq` is a state's derivative link `\$STATEDER.x = \$DER.x` (its attributes' `derivativeLink`): the state's differential row, which determines no derivative unknown."
+isDerivativeLink(eq::IR.Equation)::Bool = eq isa IR.SCALAR_EQUATION && eq.attributes.derivativeLink
 
 "Whether `e` reads no unknown (only parameters, constants and literals; not `time`): a coefficient the code generators solve through."
 function readsNoUnknown(e::IR.Expression, variables::IR.VariableSet)::Bool
