@@ -733,21 +733,22 @@ end
 
 """
 The simulation code checked before the code generation (SimCode.check): a reference that
-resolves to no variable, eliminated variable or builtin aborts it with the located reason (the
-code generation would otherwise throw a bare UndefVarError deep in MTK); the other violations
-are reported.
+resolves to no variable, eliminated variable or builtin (the code generation would otherwise
+throw a bare UndefVarError deep in MTK), and a variable or reference without its IR reference or
+with structure in a part's name (`checkReferences`: the passes would answer structural questions
+on it wrongly), abort it with the located reasons; the other violations are reported.
 """
 function _checkSimCodeBeforeCodegen(simCode::SimCode.SIM_CODE, checkSimCode::Bool)::Nothing
   checkSimCode || return nothing
   local result = SimCode.check(simCode)
-  local blocking = filter(v -> v.severity === :error && v.rule === :cref_resolution, result.violations)
+  local blocking = filter(v -> v.severity === :error && v.rule in (:cref_resolution, :references), result.violations)
   if !isempty(blocking)
-    local details = join([string("  - ", v.where, ": ", v.detail) for v in blocking], "\n")
+    local details = join([string("  - ", v.rule, " @ ", v.where, ": ", v.detail) for v in blocking], "\n")
     throw(SimCode.SimCodeCheckError(
       string("Code generation aborted for ", simCode.name, ": ", length(blocking),
-             " unresolved component reference(s). These references do not resolve ",
-             "against the simulation variable table, the eliminated-variable set, or ",
-             "the builtin set, so code generation would raise an undefined-variable error.\n", details)))
+             " violation(s) of the simulation code's references: a component reference that resolves ",
+             "to no simulation variable, eliminated variable or builtin (code generation would raise an ",
+             "undefined-variable error), or one without its IR reference.\n", details)))
   end
   SimCode.report(stderr, result; modelName = simCode.name)
   return nothing

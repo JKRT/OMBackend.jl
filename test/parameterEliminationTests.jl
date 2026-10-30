@@ -5,6 +5,7 @@
 using Test
 import OMBackend
 import OMFrontend
+isdefined(@__MODULE__, :BackendTestMocks) || include(joinpath(@__DIR__, "backendTestMocks.jl"))
 
 const EIP_SOLUTION = OMBackend.CodeGeneration.ModelingToolkit.SciMLBase.AbstractODESolution
 
@@ -29,4 +30,23 @@ _eipParameters(sc::OMBackend.SimCode.SIM_CODE)::Vector{String} =
   @test x ≈ 12.0
   local (_, y::Float64) = _eipRun("EnumIndexedParameters.Dynamic", "y")
   @test isapprox(y, 2.0; atol = 1e-6)
+end
+
+#= The rule's other half on the simulation code (no translation: a variable subscript reaches SimCode only where the
+   lowering keeps it): an array read by a subscript that reads a variable keeps its elements, its other parameters are
+   folded. =#
+@testset "An array read by a variable subscript keeps its elements" begin
+  local M = BackendTestMocks
+  local SC = OMBackend.SimCode
+  local element::Function = (name::String, k::Int) -> M.simVar("$(name)[$(k)]", SC.PARAMETER(SC.RCONST(Float64(k))))
+  local sc::SC.SIM_CODE = M.mockSimCode(SC.SIMVAR[element("A", 1), element("A", 2), element("A", 3), element("B", 1), element("B", 2),
+                                                  M.simVar("i", SC.DISCRETE(), SC.TYPE_INTEGER()), M.simVar("y", SC.ALG_VARIABLE(0))])
+  local arrays::Dict{String, Symbol} = Dict{String, Symbol}("A[$(k)]" => :A for k in 1:3)
+  merge!(arrays, Dict{String, Symbol}("B[$(k)]" => :B for k in 1:2))
+  local aRef::OMBackend.OMJLIR.ComponentRef = OMBackend.OMJLIR.ComponentRef(:A)
+  local read::SC.Exp = SC.ASUB(SC.EXP_CREF(SC.SimCref(:A, Int[], aRef), SC.TYPE_ARRAY(SC.TYPE_REAL(), Int[3])), SC.Exp[M.simCref("i", SC.TYPE_INTEGER())])
+  local residual::SC.Exp = SC.BINARY(M.simCref("y"), SC.OP_SUB, SC.BINARY(read, SC.OP_ADD, M.simCref("B[2]")))
+  sc = SC.update(sc; arrayOf = arrays, residualEquations = SC.RESIDUAL_EQUATION[SC.RESIDUAL_EQUATION(residual, SC.NO_SOURCE, SC.EQ_ATTR_DEFAULT)])
+  local kept::Vector{String} = sort(String[k for (k, (_, v)) in SC.eliminateConstantParameters(sc).stringToSimVarHT if v.varKind isa SC.PARAMETER])
+  @test kept == ["A[1]", "A[2]", "A[3]"]
 end
