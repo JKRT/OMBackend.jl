@@ -354,7 +354,7 @@ function expToJuliaExpMTK(e::SC.EXP_CREF, simCode::SC.SIM_CODE)::Expr
     local element = _arrayElementExpr(String(e.cref.sym), Any[s for s in e.cref.subs], simCode)
     element === nothing || return element
   end
-  return _variableExpr(SC.crefName(e.cref), simCode)
+  return _variableExpr(e.cref, simCode)
 end
 
 "`der(x)`: `D(x)`."
@@ -554,13 +554,14 @@ expToJuliaExpMTK(e::SC.Exp, ::SC.SIM_CODE)::Expr = OMBackend.unsupported("expres
 #= ==================================================================================== =#
 
 """
-    _variableExpr(name, simCode)
+    _variableExpr(c, simCode)
 
-The variable `name`: its symbol in the table; an eliminated alias's representative (the
-substitution missed the reference); an element by a variable subscript from its array's table
-(`_dynamicSubscriptLookup`); else the name itself.
+The variable the reference `c` reads: its symbol in the table; an eliminated alias's
+representative (the substitution missed the reference); an element by a variable subscript from
+its array's table (`_dynamicSubscriptLookup` of its IR reference); else its name itself.
 """
-function _variableExpr(name::String, simCode::SC.SIM_CODE)::Expr
+function _variableExpr(c::SC.SimCref, simCode::SC.SIM_CODE)::Expr
+  local name::String = SC.crefName(c)
   local entry = get(simCode.stringToSimVarHT, name, nothing)
   entry === nothing || return quote $(Symbol(last(entry).name)) end
   local (aliasResolved, aliasExpr) = resolveAliasedCref(name, simCode)
@@ -568,7 +569,7 @@ function _variableExpr(name::String, simCode::SC.SIM_CODE)::Expr
     @warn "expToJuliaExpMTK: resolved alias-eliminated cref via fallback" name
     return aliasExpr
   end
-  local dynamic = _dynamicSubscriptLookup(name, simCode)
+  local dynamic::Union{Nothing, Expr} = c.ref === nothing ? nothing : _dynamicSubscriptLookup(c.ref, simCode)
   dynamic === nothing || return dynamic
   return quote $(Symbol(name)) end
 end
@@ -594,7 +595,8 @@ function _wholeArrayExpr(e::SC.EXP_CREF, simCode::SC.SIM_CODE)::Expr
     return aliasExpr
   end
   length(ty.dims) <= 2 || OMBackend.unsupported("an array of more than two dimensions without variables", name)
-  local element::Function = (idx::Vector{Int}) -> expToJuliaExpMTK(SC.EXP_CREF(SC.SimCref(Symbol(name), idx, nothing), ty.elementType), simCode)
+  local element::Function = (idx::Vector{Int}) -> expToJuliaExpMTK(SC.EXP_CREF(SC.SimCref(Symbol(name), idx,
+    e.cref.ref === nothing ? nothing : SC.IR.elementCref(e.cref.ref, idx)), ty.elementType), simCode)
   length(ty.dims) == 1 && return Expr(:vect, (element([i]) for i in 1:ty.dims[1])...)
   return Expr(:vcat, (Expr(:row, (element([i, j]) for j in 1:ty.dims[2])...) for i in 1:ty.dims[1])...)
 end
@@ -643,11 +645,6 @@ function _subscriptExpr(s::SC.Exp, simCode::SC.SIM_CODE)
 end
 
 """
-A subscript as the flattened names write it (`2`, `idx`); `?` for another expression.
-"""
-_subscriptText(s::SC.Exp)::String = s isa SC.ICONST ? string(s.value) : s isa SC.EXP_CREF ? SC.crefName(s.cref) : "?"
-
-"""
 `exp[subs...]`. With literal subscripts: an element of an array output of a call
 (`tupleArrayElementAt`), the scalar variable of an array's element (a record's field array,
 `frame_b.R.T[1, 1]`), an output of a function's call (`tupleElementCall`); else the indexing.
@@ -660,8 +657,8 @@ function expToJuliaExpMTK(e::SC.ASUB, simCode::SC.SIM_CODE)::Expr
   local subs = Any[_subscriptExpr(s, simCode) for s in e.subs]
   all(s -> s isa Integer, subs) && return _literalSubscriptExpr(e, Int[s for s in subs], simCode)
   local inner = e.exp
-  if inner isa SC.EXP_CREF
-    local table = _dynamicSubscriptLookup(SC.crefName(inner.cref) * join("[" * _subscriptText(s) * "]" for s in e.subs), simCode)
+  if inner isa SC.EXP_CREF && inner.cref.ref !== nothing
+    local table::Union{Nothing, Expr} = _dynamicSubscriptLookup(inner.cref.ref, e.subs, simCode)
     table === nothing || return table
   end
   if inner isa SC.ARRAY_EXP && length(subs) == 1
@@ -752,56 +749,98 @@ function _selectionChain(symbols::Vector{Symbol}, index)
 end
 
 """
-    _dynamicSubscriptLookup(name, simCode)
+    _dynamicSubscriptLookup(ref, simCode)
 
-`base[idx][2]`, a flattened name whose subscript is a variable (the array crefs the backend
-flattened: CDL's Integer TimeTable `y[:] = val[idx, :]`, idx a discrete; its elements kept): the
-lookup of the table of base's elements, all known at the build (the dimensions from the names
-in the table), indexed at run time; for elements not known at the build (`fixed = false`
-parameters the initialization computes, variables: Buildings' DX coils' `uacp[stage].UAcp`),
-one subscript a variable, the element the index selects among their variables; nothing
+The reference `ref` with a subscript that reads a variable, `base[idx, 2]` (the array references the backend
+flattened: CDL's Integer TimeTable `y[:] = val[idx, :]`, idx a discrete; its elements kept): its first subscripted
+part's subscripts (literal Integers and variables, one at least a variable), literal subscripts only in the parts
+after it (a record array's field, Buildings' DX coils' `uacp[stage].UAcp`): `_dynamicElementLookup`; nothing
 otherwise.
 """
-function _dynamicSubscriptLookup(name::String, simCode::SC.SIM_CODE)::Union{Expr, Nothing}
-  #= a record array's field after the subscripts (`uacp[stage]_UAcp`): literal subscripts only there =#
-  local m = match(r"^([^\[\]]+)((?:\[[^\[\]]+\])+)((?:[^\[\]]|\[[0-9]+\])*)$", name)
-  m === nothing && return nothing
-  local base = String(m.captures[1])
-  local suffix = String(m.captures[3])
-  local subs = String[String(x.captures[1]) for x in eachmatch(r"\[([^\[\]]+)\]", m.captures[2])]
-  all(s -> tryparse(Int, s) !== nothing, subs) && return nothing
-  local ht = simCode.stringToSimVarHT
-  local index = Any[]
-  for s in subs
-    local i = tryparse(Int, s)
-    if i !== nothing
-      push!(index, i)
-    else
-      local entry = get(ht, s, nothing)
+function _dynamicSubscriptLookup(ref::SC.IR.ComponentRef, simCode::SC.SIM_CODE)::Union{Expr, Nothing}
+  local k::Union{Nothing, Int} = findfirst(p::SC.IR.CrefPart -> !isempty(p.subscripts) && SC.IR.memberName(p) === nothing, ref.parts)
+  k === nothing && return nothing
+  for p::SC.IR.CrefPart in ref.parts[k + 1:end]
+    SC.IR.literalIndices(p.subscripts) === nothing && return nothing
+  end
+  local index::Vector{Union{Int, Symbol}} = Union{Int, Symbol}[]
+  for s::SC.IR.Subscript in ref.parts[k].subscripts
+    local i::Union{Nothing, Int, Symbol} = _dynamicIndex(s, simCode)
+    i === nothing && return nothing
+    push!(index, i)
+  end
+  return _dynamicElementLookup(SC.IR.upToFirstSubscripted(ref), index, ref.parts[k + 1:end], simCode)
+end
+
+"""
+    _dynamicSubscriptLookup(ref, subs, simCode)
+
+The array reference `ref` subscripted by the expressions `subs` (an `ASUB`'s: literal Integers and variables), after
+the literal subscripts of its last part (no other part subscripted): `_dynamicElementLookup`; nothing otherwise.
+"""
+function _dynamicSubscriptLookup(ref::SC.IR.ComponentRef, subs::Vector{SC.Exp}, simCode::SC.SIM_CODE)::Union{Expr, Nothing}
+  local array::SC.IR.ComponentRef = SC.IR.upToFirstSubscripted(ref)
+  length(array.parts) == length(ref.parts) || return nothing
+  local own::Union{Nothing, Vector{Int}} = SC.IR.literalIndices(SC.IR.subscripts(ref))
+  own === nothing && return nothing
+  local index::Vector{Union{Int, Symbol}} = Union{Int, Symbol}[own...]
+  for s::SC.Exp in subs
+    if s isa SC.ICONST
+      push!(index, s.value)
+    elseif s isa SC.EXP_CREF
+      local entry::Union{Nothing, Tuple{Int, SC.SIMVAR}} = get(simCode.stringToSimVarHT, SC.crefName(s.cref), nothing)
       entry === nothing && return nothing
       push!(index, Symbol(last(entry).name))
+    else
+      return nothing
     end
   end
+  return _dynamicElementLookup(array, index, SC.IR.CrefPart[], simCode)
+end
+
+"A subscript as `_dynamicElementLookup`'s index: a literal Integer's value, a variable's symbol; nothing for another."
+function _dynamicIndex(s::SC.IR.Subscript, simCode::SC.SIM_CODE)::Union{Nothing, Int, Symbol}
+  local i::Union{Nothing, Int} = SC.IR.literalIndex(s)
+  i === nothing || return i
+  (s isa SC.IR.INDEX && s.exp isa SC.IR.CREF) || return nothing
+  local entry::Union{Nothing, Tuple{Int, SC.SIMVAR}} = get(simCode.stringToSimVarHT, SC.identifierOf(simCode, s.exp.cref), nothing)
+  return entry === nothing ? nothing : Symbol(last(entry).name)
+end
+
+"""
+    _dynamicElementLookup(array, index, fields, simCode)
+
+The element `index` (literal Integers and variables' symbols, one at least a variable) of the array reference
+`array`, followed by the parts `fields`: the lookup of the table of the array's elements, all known at the build (the
+extent of each dimension from the element variables), indexed at run time; for elements not known at the build
+(`fixed = false` parameters the initialization computes, variables), one subscript a variable, the element the index
+selects among their variables; nothing otherwise. The elements by their references' identifiers (`identifierOf`).
+"""
+function _dynamicElementLookup(array::SC.IR.ComponentRef, index::Vector{Union{Int, Symbol}}, fields::Vector{SC.IR.CrefPart},
+                               simCode::SC.SIM_CODE)::Union{Expr, Nothing}
+  all(i -> i isa Int, index) && return nothing
+  local ht::SC.HT = simCode.stringToSimVarHT
+  local name::Function = (I::Vector{Int}) ->
+    SC.identifierOf(simCode, SC.IR.ComponentRef(SC.IR.CrefPart[SC.IR.elementCref(array, I).parts; fields]))
   #= the extent of each dimension: the elements along it from 1 =#
-  local key = (d::Int, k::Int) -> base * join("[" * string(j == d ? k : 1) * "]" for j in eachindex(subs)) * suffix
-  local dims = Int[]
-  for d in eachindex(subs)
-    local n = 0
-    while haskey(ht, key(d, n + 1))
+  local dims::Vector{Int} = Int[]
+  for d in eachindex(index)
+    local n::Int = 0
+    while haskey(ht, name(Int[j == d ? n + 1 : 1 for j in eachindex(index)]))
       n += 1
     end
     n == 0 && return nothing
     push!(dims, n)
   end
-  local names = map(I -> base * join("[" * string(i) * "]" for i in Tuple(I)) * suffix, CartesianIndices(Tuple(dims)))
-  local table = _knownValues(names, simCode)
+  local names::Array{String} = map(I::CartesianIndex -> name(collect(Int, Tuple(I))), CartesianIndices(Tuple(dims)))
+  local table::Union{Nothing, Array{Float64}} = _knownValues(names, simCode)
   table === nothing || return :(OMBackend.CodeGeneration.constTableLookup($(table), $(index...)))
-  local dynamic = findall(s -> tryparse(Int, s) === nothing, subs)
+  local dynamic::Vector{Int} = findall(i -> !(i isa Int), index)
   length(dynamic) == 1 || return nothing
-  local d = only(dynamic)
-  local symbols = Symbol[]
+  local d::Int = only(dynamic)
+  local symbols::Vector{Symbol} = Symbol[]
   for k in 1:dims[d]
-    local entry = get(ht, base * join("[" * (j == d ? string(k) : subs[j]) * "]" for j in eachindex(subs)) * suffix, nothing)
+    local entry::Union{Nothing, Tuple{Int, SC.SIMVAR}} = get(ht, name(Int[j == d ? k : index[j]::Int for j in eachindex(index)]), nothing)
     entry === nothing && return nothing
     push!(symbols, Symbol(last(entry).name))
   end
@@ -1129,7 +1168,7 @@ bindings of the parameters it reads.
 function _readsTunableParameter(e::SC.Exp, simCode::SC.SIM_CODE)::Bool
   isempty(OMBackend.TUNABLE_PARAMETERS[]) && return false
   local resolved = _substituteBoundParameters(e, simCode; keepTunable = true)
-  return any(OMBackend.isTunableParameter, SC.crefNames!(OrderedSet{String}(), resolved))
+  return any(OMBackend.isTunableParameter, SC.identifierNames!(OrderedSet{String}(), resolved))
 end
 
 """
@@ -1876,7 +1915,7 @@ limitsAtInit` never held).
 """
 function _ifConditionAllDiscreteOrParameter(condition::SC.Exp, simCode::SC.SIM_CODE)::Bool
   _hasInitialCall(condition) && return false
-  local refs = SC.crefNames!(OrderedSet{String}(), condition)
+  local refs = SC.identifierNames!(OrderedSet{String}(), condition)
   isempty(refs) && return false
   local ht = simCode.stringToSimVarHT
   for name in refs

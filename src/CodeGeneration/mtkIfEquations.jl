@@ -155,7 +155,7 @@ end
 
 function _ifConditionDependsOnTime(condition::SC.Exp)::Bool
   local refs::OrderedSet{String} = OrderedSet{String}()
-  SC.crefNames!(refs, condition)
+  SC.identifierNames!(refs, condition)
   return "time" in refs
 end
 
@@ -175,7 +175,7 @@ per-branch continuous callback.
 """
 function _ifConditionIsPureTimeEvent(condition::SC.Exp, simCode::SC.SIM_CODE)::Bool
   local refs::OrderedSet{String} = OrderedSet{String}()
-  SC.crefNames!(refs, condition)
+  SC.identifierNames!(refs, condition)
   ("time" in refs) || return false
   local ht = simCode.stringToSimVarHT
   for name in refs
@@ -231,7 +231,7 @@ One for each conditional variable created.
 function _conditionReferencesRelayTarget(condition::SC.Exp, rT0::AbstractDict{Symbol, Float64})::Bool
   isempty(rT0) && return false
   local refs::OrderedSet{String} = OrderedSet{String}()
-  SC.crefNames!(refs, condition)
+  SC.identifierNames!(refs, condition)
   for name in refs
     haskey(rT0, Symbol(name)) && return true
   end

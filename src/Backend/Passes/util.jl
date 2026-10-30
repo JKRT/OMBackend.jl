@@ -202,22 +202,6 @@ function rangeValues(range::IR.Expression)::Union{Nothing, Vector{Int}}
   return collect(a:s:b)
 end
 
-"""
-    crefsOverlap(a, b)
-
-Whether the references `a` and `b` name the same variable or one a part of the other (`buf` and
-`buf[2]`, `r` and `r.x`), by their parts: the shorter's are the longer's first ones, its last part
-not subscripted or subscripted as the longer's.
-"""
-function crefsOverlap(a::IR.ComponentRef, b::IR.ComponentRef)::Bool
-  local (short::IR.ComponentRef, long::IR.ComponentRef) = length(a.parts) <= length(b.parts) ? (a, b) : (b, a)
-  local n::Int = length(short.parts)
-  (n == 1 || IR.ComponentRef(short.parts[1:n - 1]) == IR.ComponentRef(long.parts[1:n - 1])) || return false
-  local (s::IR.CrefPart, l::IR.CrefPart) = (short.parts[n], long.parts[n])
-  s.name === l.name || return false
-  return isempty(s.subscripts) || IR.flatName(IR.CrefPart[s]) === IR.flatName(IR.CrefPart[l])
-end
-
 "The references `e` reads, those inside `pre()` (values before the event) left out."
 crefsReadOutsidePre(e::IR.Expression)::Vector{IR.ComponentRef} = crefsReadOutsidePre!(IR.ComponentRef[], e)
 

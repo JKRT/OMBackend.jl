@@ -466,7 +466,7 @@ function isParametricOnlyEquation(eq::SC.Equation, simCode::SC.SIM_CODE)::Bool
   hasEquationSides(eq) || return false
   local ht = simCode.stringToSimVarHT
   local names = OrderedSet{String}()
-  foreach(e -> SC.crefNames!(names, e), equationSides(eq))
+  foreach(e -> SC.identifierNames!(names, e), equationSides(eq))
   return !any(names) do n
     local entry = get(ht, n, nothing)
     entry !== nothing && (SC.isStateOrAlgebraic(last(entry)) || SC.isDiscrete(last(entry)))

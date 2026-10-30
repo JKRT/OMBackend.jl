@@ -492,9 +492,27 @@ function _initAlgStartValue(sv::SC.SIMVAR, simCode::SC.SIM_CODE)::Float64
 end
 
 """
+The element variables of the array whose identifier is `name`, each with its one literal index (`x[1]`, `x[2]` of `x`;
+a 2-D array's not matched), in the order of their indices: the variables whose references are subscripted on their
+last part only by it, the reference without it having that identifier.
+"""
+function _arrayElementVariables(name::String, simCode::SC.SIM_CODE)::Vector{Tuple{String, Int}}
+  local out::Vector{Tuple{String, Int}} = Tuple{String, Int}[]
+  for (key::String, entry::Tuple{Int, SC.SIMVAR}) in simCode.stringToSimVarHT
+    local ref::Union{Nothing, SC.IR.ComponentRef} = last(entry).cref
+    (ref === nothing || SC.IR.memberName(ref.parts[end]) !== nothing) && continue
+    local subscripts::Vector{SC.IR.Subscript} = SC.IR.subscripts(ref)
+    length(subscripts) == 1 || continue
+    local k::Union{Nothing, Int} = SC.IR.literalIndex(only(subscripts))
+    (k === nothing || SC.identifierOf(simCode, SC.IR.withoutLastSubscripts(ref)) != name) || push!(out, (key, k))
+  end
+  return sort!(out; by = last)
+end
+
+"""
 The non-parameter variables that the assignments to `lhsNames` set, as (assigned name,
 variable, index into the assigned value): the name itself (index nothing), or for an array
-its scalarized elements name[k] present in the table (`x := {1, 2, 3}`; 2-D names x[1][2]
+its element variables by one index (`_arrayElementVariables`: `x := {1, 2, 3}`; a 2-D array's
 are not matched). A for loop's iterator (`iterators`, also among the assigned names) is no
 variable, even where an array of its name is. An array parameter is refused (captured as one
 number; none in MSL 3.2.3: 14 initial algorithms).
@@ -509,14 +527,7 @@ function _initAlgTargets(lhsNames, simCode::SC.SIM_CODE, iterators::Set{String} 
     elseif name in iterators
       Tuple{String, Union{Nothing, Int}}[]
     else
-      local prefix = string(name, "[")
-      local idx = Int[]
-      for key in keys(ht)
-        (startswith(key, prefix) && endswith(key, "]")) || continue
-        local k = tryparse(Int, SubString(key, ncodeunits(prefix) + 1, prevind(key, lastindex(key))))
-        k === nothing || push!(idx, k)
-      end
-      Tuple{String, Union{Nothing, Int}}[(string(name, "[", k, "]"), k) for k in sort!(idx)]
+      Tuple{String, Union{Nothing, Int}}[(key, k) for (key, k) in _arrayElementVariables(name, simCode)]
     end
     for (el, k) in elems
       local sv = last(ht[el])

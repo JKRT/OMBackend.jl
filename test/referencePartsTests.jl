@@ -27,12 +27,12 @@ import OMBackend
   end
 
   @testset "references overlap by their parts" begin
-    @test P.crefsOverlap(ref(part(:buf)), ref(part(:buf, [2])))
-    @test P.crefsOverlap(ref(part(:r)), ref(part(:r), part(:x)))
-    @test P.crefsOverlap(ref(part(:r, [1])), ref(part(:r, [1]), part(:x)))
-    @test !P.crefsOverlap(ref(part(:buf, [1])), ref(part(:buf, [12])))
-    @test !P.crefsOverlap(ref(part(:x)), ref(part(:xy)))
-    @test !P.crefsOverlap(ref(part(:m, [1])), ref(part(:m, [1, 2])))
+    @test IRp.crefsOverlap(ref(part(:buf)), ref(part(:buf, [2])))
+    @test IRp.crefsOverlap(ref(part(:r)), ref(part(:r), part(:x)))
+    @test IRp.crefsOverlap(ref(part(:r, [1])), ref(part(:r, [1]), part(:x)))
+    @test !IRp.crefsOverlap(ref(part(:buf, [1])), ref(part(:buf, [12])))
+    @test !IRp.crefsOverlap(ref(part(:x)), ref(part(:xy)))
+    @test !IRp.crefsOverlap(ref(part(:m, [1])), ref(part(:m, [1, 2])))
   end
 
   @testset "an algorithm's wholes; the arrays equations constrain" begin

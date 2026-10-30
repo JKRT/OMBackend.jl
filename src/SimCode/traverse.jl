@@ -138,24 +138,34 @@ mapStatement(f::F, s::Statement) where {F} = mapStatementExps(e -> mapExp(f, e),
 mapStatements(f::F, body::Vector{Statement}) where {F} = Statement[mapStatement(f, s) for s in body]
 
 """
-    crefNames!(names, e)
+    crefNames!(names, e; dynamic, element = elementKey)
 
 The names of the variables `e` reads, in order: a reference's name (with its subscripts,
 `x[1]` of an array element), a derivative's state's, a `pre(x)`'s variable;
-an array read by literal subscripts also as its element (`R_T[1][2]`: `crefName` of its
-`elementRead`). An array read by a subscript that reads a variable is the array's read only; with
+an array read by literal subscripts also as its element, `element(c, index)` (`elementKey`: its reference's flat
+name). An array read by a subscript that reads a variable is the array's read only; with
 `dynamic`, that array (its `arrayBase`) recorded there.
 """
-function crefNames!(names::OrderedSet{String}, e::Exp; dynamic::Union{Nothing, Set{Symbol}} = nothing)::OrderedSet{String}
+function crefNames!(names::OrderedSet{String}, e::Exp; dynamic::Union{Nothing, Set{Symbol}} = nothing,
+                    element::K = elementKey)::OrderedSet{String} where {K}
   foreachRead(e) do c::SimCref, index::Union{Nothing, Vector{Int}}, isDynamic::Bool
     if isDynamic
       (dynamic !== nothing && c.ref !== nothing) && push!(dynamic, arrayBase(c.ref))
     else
-      push!(names, index === nothing ? crefName(c) : elementKey(c, index))
+      push!(names, index === nothing ? crefName(c) : element(c, index))
     end
   end
   return names
 end
+
+"""
+    identifierNames!(names, e) -> OrderedSet{String}
+
+`crefNames!` in the code view (`codeView`): the identifiers of the variables `e` reads, an array element read by
+literal subscripts by its array's identifier and the subscripts (`crefName(c, index)`: `a_b[1][2]`), as the
+generated code indexes it.
+"""
+identifierNames!(names::OrderedSet{String}, e::Exp)::OrderedSet{String} = crefNames!(names, e; element = crefName)
 
 """
     foreachRead(f, e)
@@ -240,8 +250,7 @@ The element `index` (literal subscripts) of the array reference `c`: its key and
 followed by `index`, its IR reference the array's subscripted on its last part (`x[1,2]` of `x`).
 """
 function elementRead(c::SimCref, index::Vector{Int})::SimCref
-  local ref::Union{Nothing, IR.ComponentRef} = c.ref === nothing ? nothing :
-    IR.appendSubscripts(c.ref, IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index])
+  local ref::Union{Nothing, IR.ComponentRef} = c.ref === nothing ? nothing : IR.elementCref(c.ref, index)
   return SimCref(c.sym, Int[c.subs; index], ref)
 end
 

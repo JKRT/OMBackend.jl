@@ -170,7 +170,7 @@ function classifyVariables(simCode::SC.SIM_CODE)::ClassifiedVariables
     #= String parameters are non-numeric; excluded from MTK parameter system. =#
     #= StateSelect → MTK state_priority, only on actual MTK unknowns. =#
     local priority = var.elementType isa SC.TYPE_REAL ? get(STATE_PRIORITIES, something(var.attributes.stateSelect, :default), nothing) : nothing
-    if priority !== nothing && varType isa Union{SC.STATE, SC.ALG_VARIABLE, SC.ARRAY} && !startswith(varName, "der(")
+    if priority !== nothing && varType isa Union{SC.STATE, SC.ALG_VARIABLE, SC.ARRAY}
       push!(statePriorityPairs, (Symbol(varName), priority))
     end
   end
@@ -290,7 +290,8 @@ function substituteRelayAliasesInWhens(simCode::SC.SIM_CODE, relayAliases::Dict{
   for (k, r) in relayAliases
     local ty = get(tyOf, string(k), nothing)
     ty === nothing && continue
-    replacements[string(k)] = SC.Replacement(SC.EXP_CREF(SC.SimCref(Symbol(r)), ty), false, false)
+    local entry::Union{Nothing, Tuple{Int, SC.SIMVAR}} = get(simCode.stringToSimVarHT, string(r), nothing)
+    replacements[string(k)] = SC.Replacement(SC.EXP_CREF(SC.SimCref(Symbol(r), Int[], entry === nothing ? nothing : last(entry).cref), ty), false, false)
   end
   isempty(replacements) && return simCode
   return SC.update(simCode; whenEquations = SC.WHEN_EQUATION[SC.WHEN_EQUATION(SC.substitute(w.whenEquation, replacements), w.source, w.attr)
@@ -1641,7 +1642,7 @@ stack (a long chain); a cycle is broken where the search entered it.
 function _eliminatedDependencyOrder(elimVars::Vector{String}, elimEqs::Vector{SC.RESIDUAL_EQUATION})::Vector{Int}
   local position = Dict(v => i for (i, v) in enumerate(elimVars))
   local reads = map(elimEqs) do eq
-    local names = SC.crefNames!(OrderedSet{String}(), eq.exp)
+    local names = SC.identifierNames!(OrderedSet{String}(), eq.exp)
     Int[position[n] for n in names if haskey(position, n)]
   end
   local order = Int[]

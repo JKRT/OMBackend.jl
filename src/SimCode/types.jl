@@ -940,6 +940,21 @@ codeName(sc::SIM_CODE, key::AbstractString)::String = get(sc.codeNames, key, key
 "The key of the variable the IR reference `ref` names; `nothing` for one that names none."
 keyOf(sc::SIM_CODE, ref::IR.ComponentRef)::Union{Nothing, String} = get(sc.keyByReference, ref.name, nothing)
 
+"""
+    identifierOf(sc, ref) -> String
+
+The identifier of the IR reference `ref` in the code view `sc` (`codeView`): its variable's (`keyOf`), else derived
+from the reference (`derivedKey`: a field of a record whose fields are the variables, an element of an array kept
+whole).
+"""
+function identifierOf(sc::SIM_CODE, ref::IR.ComponentRef)::String
+  local id::Union{Nothing, String} = keyOf(sc, ref)
+  return id === nothing ? derivedKey(ref) : id
+end
+
+"The IR reference of the variable `v`; an error naming it if it has none (a test's mock)."
+irRef(v::SIMVAR)::IR.ComponentRef = v.cref === nothing ? error("SimCode variable $(v.name) has no IR reference") : v.cref
+
 "The keys by the IR references' names of `references`; an error naming both keys if two variables have one reference."
 function referenceKeys(references::Dict{String, IR.ComponentRef})::Dict{Symbol, String}
   local byReference::Dict{Symbol, String} = Dict{Symbol, String}()

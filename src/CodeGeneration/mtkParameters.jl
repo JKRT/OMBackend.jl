@@ -320,55 +320,45 @@ constructors. Two cases:
 """
 function createArrayParameterPrelude(simCode::SC.SIM_CODE)::Vector{Expr}
   local exprs::Vector{Expr} = Expr[]
-  local ht = simCode.stringToSimVarHT
+  local ht::SC.HT = simCode.stringToSimVarHT
 
   #= Restrict the prelude to arrays actually referenced by DATA_STRUCTURE
      constructor calls. Emitting every ARRAY_PARAMETER at module top would
      shadow MTK's per-model parameter handling for arrays not needed at
      module-load time (e.g. body_r_CM in MultiBody models), perturbing the
      resulting integration trajectory. =#
-  local neededBases = OrderedSet{String}()
+  local neededBases::OrderedSet{String} = OrderedSet{String}()
   for (_, (_, simVar)) in ht
     (simVar.varKind isa SC.DATA_STRUCTURE && simVar.varKind.bindExp isa SC.CALL) &&
-      SC.crefNames!(neededBases, simVar.varKind.bindExp)
+      SC.identifierNames!(neededBases, simVar.varKind.bindExp)
   end
-  #= Also include any ARRAY_PARAMETER whose subscripted form appears in
-     residual equations. This rescues `world_gravityArrowHead_lengthDirection[2]`
-     and the cluster of MultiBody examples where `eliminateDeadParameters` /
-     `eliminateConstantParameters` did not substitute the subscripted CREF
-     (parent was kept as ARRAY_PARAMETER but never emitted module-top), so
-     MTK eval fails with `<name>[idx] not defined`. We collect base names of
-     CREFs that appear in residuals and intersect with the set of
-     ARRAY_PARAMETERs in HT so we only emit parents that actually exist. =#
-  local _residualCrefs = OrderedSet{String}()
-  for eq in simCode.residualEquations
-    SC.crefNames!(_residualCrefs, eq.exp)
-  end
-  for _n in _residualCrefs
-    local _bracket = findfirst('[', _n)
-    if _bracket !== nothing
-      local _base = _n[1:_bracket-1]
-      local _entry = get(ht, _base, nothing)
-      _entry === nothing && continue
-      _entry[2].varKind isa SC.ARRAY_PARAMETER && push!(neededBases, _base)
+  #= Also an ARRAY_PARAMETER an element of which the residual equations read (the array of the
+     element's reference). This rescues `world_gravityArrowHead_lengthDirection[2]` and the
+     cluster of MultiBody examples where `eliminateDeadParameters` / `eliminateConstantParameters`
+     did not substitute the element (the array was kept as ARRAY_PARAMETER but never emitted
+     module-top), so MTK eval fails with `<name>[idx] not defined`.
+     An element read whose array and itself are no variables is an orphan (the defensive fallback
+     at the end), recorded here so that it is emitted even when no array is needed. =#
+  local reads::Vector{SC.Read} = SC.Read[]
+  foreach(eq -> SC.crefReads!(reads, eq.exp), simCode.residualEquations)
+  local orphans::OrderedSet{String} = OrderedSet{String}()
+  for r::SC.Read in reads
+    local ref::Union{Nothing, SC.IR.ComponentRef} = r.cref.ref
+    (r.dynamic || ref === nothing) && continue
+    local array::SC.IR.ComponentRef = SC.IR.upToFirstSubscripted(ref)
+    array === ref && continue
+    local base::String = SC.identifierOf(simCode, array)
+    local entry::Union{Nothing, Tuple{Int, SC.SIMVAR}} = get(ht, base, nothing)
+    if entry !== nothing
+      last(entry).varKind isa SC.ARRAY_PARAMETER && push!(neededBases, base)
+    else
+      local name::String = SC.crefName(r.cref)
+      haskey(ht, name) || push!(orphans, name)
     end
   end
-  #= Collect orphan subscripted CREFs (referenced in residuals, base NOT in HT)
-     before the early-return so the defensive fallback at the end of this
-     function still emits even when no DATA_STRUCTURE/ARRAY_PARAMETER paths
-     fire. Recorded here so the fallback loop downstream can consume them. =#
-  local _orphanRefsEarly = OrderedSet{String}()
-  for _n in _residualCrefs
-    local _bracket = findfirst('[', _n)
-    _bracket === nothing && continue
-    local _base = _n[1:_bracket-1]
-    haskey(ht, _base) && continue
-    haskey(ht, _n) && continue
-    push!(_orphanRefsEarly, _n)
-  end
   if isempty(neededBases)
-    for _ref in _orphanRefsEarly
-      push!(exprs, :( $(Symbol(_ref)) = 0.0 ))
+    for name in orphans
+      push!(exprs, :( $(Symbol(name)) = 0.0 ))
     end
     return exprs
   end
@@ -389,19 +379,20 @@ function createArrayParameterPrelude(simCode::SC.SIM_CODE)::Vector{Expr}
     push!(exprs, :( $(Symbol(simVar.name)) = $(rhs) ))
   end
 
+  #= A needed array whose elements are the variables (scalarized parameters): the elements by
+     their references' indices, the array by its reference's identifier. =#
   local scalarGroups = Dict{String, Vector{Tuple{Vector{Int}, Any, Int}}}()
-  for (varName, (_, simVar)) in ht
-    local bracketIdx = findfirst('[', varName)
-    bracketIdx === nothing && continue
-    local baseName = varName[1:bracketIdx-1]
+  for (_, (_, simVar)) in ht
+    local ref::Union{Nothing, SC.IR.ComponentRef} = simVar.cref
+    ref === nothing && continue
+    local array::SC.IR.ComponentRef = SC.IR.upToFirstSubscripted(ref)
+    #= an element of the array: subscripted on its last part only =#
+    (array === ref || length(array.parts) != length(ref.parts)) && continue
+    local baseName::String = SC.identifierOf(simCode, array)
     baseName ∈ neededBases || continue
     baseName ∈ emitted && continue
-    local idxStr = varName[bracketIdx:end]
-    local indices = Int[]
-    for m in eachmatch(r"\[(\d+)\]", idxStr)
-      push!(indices, parse(Int, m.captures[1]))
-    end
-    isempty(indices) && continue
+    local indices::Union{Nothing, Vector{Int}} = SC.IR.literalIndices(SC.IR.subscripts(ref))
+    (indices === nothing || isempty(indices)) && continue
     #= A literal binding; one of an expression of parameters, its value at the build (MSL 4
        BearingFriction's ExternalCombiTable1D(table = tau_pos) with RobotR3's tau_pos = [0, Rv0
        / unitTorque; ...]: the table was undefined). =#
@@ -442,9 +433,8 @@ function createArrayParameterPrelude(simCode::SC.SIM_CODE)::Vector{Expr}
     push!(exprs, :( $(Symbol(baseName)) = $(arr) ))
   end
 
-  #= Defensive fallback: a residual references `<name>[i]` for some base
-     that is NOT in HT (no ARRAY_PARAMETER, no scalarized PARAMETER) and was
-     therefore not emitted by either of the two passes above. Observed for
+  #= Defensive fallback: a residual reads an element `<name>[i]` whose array is no variable (no
+     ARRAY_PARAMETER, no scalarized PARAMETER), so neither pass above emitted it. Observed for
      the `World` component's `gravityArrowHead.lengthDirection[2..3]` cluster
      on MultiBody examples (RollingWheel / Surfaces / RollingWheelSetDriving
      / ...): the frontend instantiates the parent record but never registers
@@ -455,17 +445,8 @@ function createArrayParameterPrelude(simCode::SC.SIM_CODE)::Vector{Expr}
      not the parent. Default value 0.0 is wrong if the model actually uses
      the parameter dynamically, but for visualization-only constants
      (`gravityArrowHead`, axis arrows, ...) it is benign. =#
-  local _orphanRefs = OrderedSet{String}()
-  for _n in _residualCrefs
-    local _bracket = findfirst('[', _n)
-    _bracket === nothing && continue
-    local _base = _n[1:_bracket-1]
-    haskey(ht, _base) && continue
-    haskey(ht, _n) && continue
-    push!(_orphanRefs, _n)
-  end
-  for _ref in _orphanRefs
-    push!(exprs, :( $(Symbol(_ref)) = 0.0 ))
+  for name in orphans
+    push!(exprs, :( $(Symbol(name)) = 0.0 ))
   end
 
   return exprs
@@ -520,12 +501,13 @@ function createDataStructureAssignments(dataStructureVariables::Vector{String}, 
           OMBackend._fallback(_e, :recordFieldBinding; only = UnsupportedLowering, impact = :result)
           continue
         end
-        local fieldSym = Symbol(simVar.name * "_" * field)
+        local fieldRef::SC.IR.ComponentRef = SC.fieldCref(SC.irRef(simVar), field)
+        local fieldSym::Symbol = Symbol(SC.identifierOf(simCode, fieldRef))
         push!(dsAssignments, :($(fieldSym) = $(fieldRhs)))
         #= An array field's elements by their scalarized names too (`Medium_data_alow[1]`). =#
         if fieldExp isa SC.ARRAY_EXP
           for k in eachindex(fieldExp.elements)
-            push!(dsAssignments, :($(Symbol("$(fieldSym)[$(k)]")) = $(fieldSym)[$(k)]))
+            push!(dsAssignments, :($(Symbol(SC.identifierOf(simCode, SC.IR.elementCref(fieldRef, Int[k])))) = $(fieldSym)[$(k)]))
           end
         end
       end
@@ -538,26 +520,30 @@ end
 """
 For an array of records `base[1..n]` among the data structures, each field as an array
 `base_field = [base[1]_field, ...]`: a whole record array passed to a function goes field
-by field (`h_T(Medium_data_name, Medium_data_MM, ...)`).
+by field (`h_T(Medium_data_name, Medium_data_MM, ...)`). The elements by their references (an
+element's last literal index), the identifiers derived from the array's.
 """
 function _recordArrayFieldArrays(dataStructureVariables::Vector{String}, simCode::SC.SIM_CODE)::Vector{Expr}
-  local ht = simCode.stringToSimVarHT
-  local elements = OrderedDict{String, Dict{Int, Vector{String}}}()
+  local ht::SC.HT = simCode.stringToSimVarHT
+  local elements::OrderedDict{SC.IR.ComponentRef, Dict{Int, Vector{String}}} = OrderedDict{SC.IR.ComponentRef, Dict{Int, Vector{String}}}()
   for ds in dataStructureVariables
-    local m = match(r"^(.*)\[(\d+)\]$", ds)
-    m === nothing && continue
-    local k = ht[ds][2].varKind
-    local bindExp = k isa SC.DATA_STRUCTURE ? k.bindExp : nothing
+    local simVar::SC.SIMVAR = last(ht[ds])
+    local bindExp = simVar.varKind isa SC.DATA_STRUCTURE ? simVar.varKind.bindExp : nothing
     bindExp isa SC.RECORD || continue
-    get!(elements, m.captures[1], Dict{Int, Vector{String}}())[parse(Int, m.captures[2])] = bindExp.fieldNames
+    local ref::SC.IR.ComponentRef = SC.irRef(simVar)
+    local subscripts::Vector{SC.IR.Subscript} = SC.IR.subscripts(ref)
+    local index::Union{Nothing, Int} = isempty(subscripts) ? nothing : SC.IR.literalIndex(last(subscripts))
+    index === nothing && continue
+    local array::SC.IR.ComponentRef = SC.IR.withLastSubscripts(ref, subscripts[1:end - 1])
+    get!(elements, array, Dict{Int, Vector{String}}())[index] = bindExp.fieldNames
   end
-  local out = Expr[]
-  for (base, byIndex) in elements
-    local n = length(byIndex)
+  local out::Vector{Expr} = Expr[]
+  for (array::SC.IR.ComponentRef, byIndex::Dict{Int, Vector{String}}) in elements
+    local n::Int = length(byIndex)
     (all(i -> haskey(byIndex, i), 1:n) && allequal(values(byIndex))) || continue
     for field in byIndex[1]
-      local parts = [Symbol("$(base)[$(i)]_$(field)") for i in 1:n]
-      push!(out, :($(Symbol(base * "_" * field)) = [$(parts...)]))
+      local parts::Vector{Symbol} = Symbol[Symbol(SC.identifierOf(simCode, SC.fieldCref(SC.IR.elementCref(array, Int[i]), field))) for i in 1:n]
+      push!(out, :($(Symbol(SC.identifierOf(simCode, SC.fieldCref(array, field)))) = [$(parts...)]))
     end
   end
   return out

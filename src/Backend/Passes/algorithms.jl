@@ -458,7 +458,7 @@ function tupleAssignElements(targets::Vector{IR.Expression}, rhs::IR.Expression)
   local readBack = Tuple{IR.Expression, IR.Expression}[]
   for element in elements
     local name = first(element).cref.name
-    if any(r::IR.ComponentRef -> crefsOverlap(r, first(element).cref), read)
+    if any(r::IR.ComponentRef -> IR.crefsOverlap(r, first(element).cref), read)
       local ty = IR.typeOf(first(element))
       (ty isa IR.T_ARRAY || ty isa IR.T_RECORD) &&
         unsupported("a tuple assignment whose function reads the array or record target $(name)", rhs)

@@ -797,7 +797,7 @@ circuit's own current and voltage.
 """
 function _modelHasSwitchClusters(simCode::SC.SIM_CODE)::Bool
   local ht = simCode.stringToSimVarHT
-  local names = (exps...) -> (local ns = OrderedSet{String}(); foreach(e -> SC.crefNames!(ns, e), exps); ns)
+  local names = (exps...) -> (local ns = OrderedSet{String}(); foreach(e -> SC.identifierNames!(ns, e), exps); ns)
   local isAlgebraic = name -> haskey(ht, name) && last(ht[name]).varKind isa SC.ALG_VARIABLE
   local isUnknown = name -> haskey(ht, name) && !SC.isParameter(last(ht[name]))
   local ifConds = [names((b.condition for b in ifEq.branches)...) for ifEq in simCode.ifEquations]
@@ -1218,12 +1218,12 @@ struct _EquationGraph
 end
 
 function _equationGraph(simCode::SC.SIM_CODE)::_EquationGraph
-  local names = OrderedSet{String}[SC.crefNames!(OrderedSet{String}(), eq.exp) for eq in simCode.residualEquations]
+  local names = OrderedSet{String}[SC.identifierNames!(OrderedSet{String}(), eq.exp) for eq in simCode.residualEquations]
   for ifEq in simCode.ifEquations
     local ns = OrderedSet{String}()
     for b in ifEq.branches
-      SC.crefNames!(ns, b.condition)
-      foreach(eq -> SC.crefNames!(ns, eq.exp), b.residualEquations)
+      SC.identifierNames!(ns, b.condition)
+      foreach(eq -> SC.identifierNames!(ns, eq.exp), b.residualEquations)
     end
     push!(names, ns)
   end
@@ -1311,7 +1311,7 @@ function _discreteClusterSpec(cond::SC.Exp, rels::Vector{SC.RELATION}, assigns::
   local atStart = !_condHasInitial(cond) ? 0 : (table ? 2 : 1)
   local memberNames = String[string(d) for (d, _, _) in assigns]
   local readNames = OrderedSet{String}(string(o) for o in operands)
-  foreach(r -> SC.crefNames!(readNames, r), buffered)
+  foreach(r -> SC.identifierNames!(readNames, r), buffered)
   local coupled = _clusterCoupled(memberNames, readNames, graph)
   return :(OMBackend.CodeGeneration.DiscreteCluster($(memberNames),
                                                    Any[$([d for (d, _, _) in assigns]...)],
@@ -1574,8 +1574,7 @@ function _whenBodyCalls(statements::Vector{SC.Statement}, simCode::SC.SIM_CODE):
   local calls::Dict{SC.CALL, Symbol} = Dict{SC.CALL, Symbol}()
   local definitions::Vector{Expr} = Expr[]
   any(>(1), values(counts)) || return (calls, definitions)
-  local written::Set{String} = Set{String}(_crefBase(n) for n in _bodyWrites(statements))
-  foreach(s -> s isa SC.REINIT && push!(written, _crefBase(SC.crefName(s.stateVar))), statements)
+  local written::Vector{SC.IR.ComponentRef} = _writtenArrays(statements)
   #= The names carry the body's hash: several bodies share a scope (the terminal bodies, a when's
      elsewhen arms, a periodic when's refreshes), and a local function of the same name in one of
      them replaced the other's (two RealFFT blocks: the second's FFT in both). =#
@@ -1598,13 +1597,32 @@ function _whenBodyCalls(statements::Vector{SC.Statement}, simCode::SC.SIM_CODE):
 end
 
 """
-Whether `call` reads a variable of `written` (the bases of the names a body assigns): by its base, or as a
-field of a written record (`r_f` of `r`: a tuple's record target is assigned field by field).
+The variables a when body assigns or reinitializes, by the arrays of their references (`upToFirstSubscripted`:
+`buf` of `buf[3]`): the references of an assignment's left-hand side (a subscript's too), a reinit's state.
 """
-function _readsWritten(call::SC.CALL, written::Set{String})::Bool
-  return any(SC.allCrefNames(call)) do name
-    local base::String = _crefBase(name)
-    base in written || any(w -> startswith(base, w * "_"), written)
+function _writtenArrays(statements::Vector{SC.Statement})::Vector{SC.IR.ComponentRef}
+  local out::Vector{SC.IR.ComponentRef} = SC.IR.ComponentRef[]
+  local written!::Function = (c::SC.SimCref) -> (c.ref === nothing || push!(out, SC.IR.upToFirstSubscripted(c.ref)); nothing)
+  for s in statements
+    if s isa SC.ASSIGN
+      SC.foreachExp(x::SC.Exp -> (x isa Union{SC.EXP_CREF, SC.DER, SC.PRE} && written!(x.cref); nothing), s.left)
+    elseif s isa SC.REINIT
+      written!(s.stateVar)
+    end
+  end
+  return out
+end
+
+"""
+Whether `call` reads a variable of `written` (`_writtenArrays`): a reference whose array overlaps a written one
+(`IR.crefsOverlap`: the same, a field of a written record, a record a field of which is written: a tuple's record
+target is assigned field by field). A reference without an IR reference (`time`) names no variable.
+"""
+function _readsWritten(call::SC.CALL, written::Vector{SC.IR.ComponentRef})::Bool
+  return SC.anyExp(call) do x::SC.Exp
+    (x isa Union{SC.EXP_CREF, SC.DER, SC.PRE} && x.cref.ref !== nothing) || return false
+    local array::SC.IR.ComponentRef = SC.IR.upToFirstSubscripted(x.cref.ref)
+    return any(w::SC.IR.ComponentRef -> SC.IR.crefsOverlap(w, array), written)
   end
 end
 
@@ -1631,9 +1649,6 @@ _statementExps(s::SC.NORETCALL)::Vector{SC.Exp} = SC.Exp[s.exp]
 _statementExps(s::SC.ASSERT)::Vector{SC.Exp} = SC.Exp[s.condition, s.message, s.level]
 _statementExps(s::SC.TERMINATE)::Vector{SC.Exp} = SC.Exp[s.message]
 _statementExps(::SC.Statement)::Vector{SC.Exp} = SC.Exp[]
-
-"A variable's name without its subscripts (`buf` of `buf[3]`, of `buf[?]`)."
-_crefBase(name::String)::String = String(first(split(name, '['; limit = 2)))
 
 """
 The statements of a when body (createWhenStatementsMTK), with the calls of

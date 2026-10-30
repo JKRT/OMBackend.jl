@@ -1163,6 +1163,25 @@ appendSubscripts(c::ComponentRef, subscripts::Vector{Subscript})::ComponentRef =
 "`c` without its last part's subscripts (`a[1].x` of `a[1].x[2]`)."
 withoutLastSubscripts(c::ComponentRef)::ComponentRef = withLastSubscripts(c, Subscript[])
 
+"""
+    crefsOverlap(a, b)
+
+Whether the references `a` and `b` name the same variable or one a part of the other (`buf` and
+`buf[2]`, `r` and `r.x`), by their parts: the shorter's are the longer's first ones, its last part
+not subscripted or subscripted as the longer's.
+"""
+function crefsOverlap(a::ComponentRef, b::ComponentRef)::Bool
+  local (short::ComponentRef, long::ComponentRef) = length(a.parts) <= length(b.parts) ? (a, b) : (b, a)
+  local n::Int = length(short.parts)
+  (n == 1 || ComponentRef(short.parts[1:n - 1]) == ComponentRef(long.parts[1:n - 1])) || return false
+  local (s::CrefPart, l::CrefPart) = (short.parts[n], long.parts[n])
+  s.name === l.name || return false
+  return isempty(s.subscripts) || flatName(CrefPart[s]) === flatName(CrefPart[l])
+end
+
+"The element `index` (literal Integer indices) of the array reference `c`: `c` with them after its last part's subscripts (`x[1,2]` of `x`)."
+elementCref(c::ComponentRef, index::Vector{Int})::ComponentRef = appendSubscripts(c, Subscript[INDEX(INTEGER(k)) for k in index])
+
 "`c` without the subscripts of its parts (`a.x` of `a[1].x[2]`; a slice's part keeps its inner ones, `T_SLICE`)."
 withoutSubscripts(c::ComponentRef)::ComponentRef = ComponentRef(CrefPart[CrefPart(p.name, Subscript[], p.ty) for p in c.parts])
 

@@ -218,6 +218,13 @@ isdefined(@__MODULE__, :BackendTestMocks) || include(joinpath(@__DIR__, "backend
       local element = first(SC.crefReads!(SC.Read[], SC.ASUB(SC.EXP_CREF(SC.SimCref(:A, Int[], aRef), SC.TYPE_REAL()),
                                                              SC.Exp[SC.ICONST(2)])))
       @test SC.crefName(element.cref) == "A[2]" && element.cref.ref.name === Symbol("A[2]") && !element.dynamic
+      #= the two key spaces of an element read: the passes' IR flat name, the code view's identifier (the array's
+         identifier and the subscripts, as the generated code indexes it) =#
+      local abRef = OMBackend.OMJLIR.ComponentRef(OMBackend.OMJLIR.CrefPart[OMBackend.OMJLIR.CrefPart(:a, OMBackend.OMJLIR.Subscript[], OMBackend.OMJLIR.T_REAL()),
+                                                                         OMBackend.OMJLIR.CrefPart(:b, OMBackend.OMJLIR.Subscript[], OMBackend.OMJLIR.T_REAL())])
+      local abRead = SC.ASUB(SC.EXP_CREF(SC.SimCref(:a_b, Int[], abRef), SC.TYPE_REAL()), SC.Exp[SC.ICONST(1), SC.ICONST(2)])
+      @test "a.b[1,2]" in SC.crefNames!(SC.OrderedSet{String}(), abRead)
+      @test collect(SC.identifierNames!(SC.OrderedSet{String}(), abRead)) == ["a_b[1][2]", "a_b"]
     end
 
     @testset "ifConditionNames!: the names of if-expression conditions" begin
