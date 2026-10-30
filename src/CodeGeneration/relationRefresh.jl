@@ -886,8 +886,9 @@ function _initialize!(e::EventIteration, integrator)
   #= Only the values the tick changed: the clusters initialize theirs below
      (a pulse true from the start is no edge). =#
   local moved = before === nothing ? Int[] : Int[k for k in eachindex(before) if !isequal(before[k], integrator.u[k])]
-  #= A new solve (a re-simulation reuses the callbacks): no instant repeated yet. =#
+  #= A new solve (a re-simulation reuses the callbacks): no instant repeated yet, no degenerate restart. =#
   e.instant[] = (NaN, 0)
+  e.stall[] = (NaN, 0)
   _initializeRelations!(e, integrator)
   local start = integrator.u
   if !isempty(moved)

@@ -32,4 +32,8 @@ import OMFrontend
     s.t[findfirst(j::Int -> s.t[j] > 0.025 && q[j] > 0.5, eachindex(s.t))]
   end
   @test isapprox([arcOffAt(sol, k) for k in 1:3], [0.028594113, 0.028594051, 0.025102795]; atol = 1.0e-6)
+  #= a second solve of the cached build takes the same path: the event iteration's memory of degenerate step restarts
+     (`stall`) was kept from the first, and the arcs of phases 1 and 2 went out at 29.288 ms =#
+  local again = OMBackend.simulateModel(OMBackend.canonicalName("ArcSwitchYD.Switching"); tspan = (0.0, 0.06))
+  @test [arcOffAt(again, k) for k in 1:3] == [arcOffAt(sol, k) for k in 1:3]
 end
