@@ -178,8 +178,6 @@ isElementCref(ref::IR.ComponentRef)::Bool = arrayBase(ref) !== ref.name
 isComplexPartCref(ref::IR.ComponentRef)::Bool =
   length(ref.parts) >= 2 && ref.parts[end].name in (:re, :im) && IR.elementType(ref.parts[end - 1].ty) isa IR.T_RECORD
 
-"Whether the variable `name` of `ht` is an element of an array (by its reference, `isElementCref`)."
-isElementVariable(ht::HT, name::String)::Bool = (local sv = last(ht[name]); sv.cref !== nothing && isElementCref(sv.cref))
 
 
 """
@@ -244,7 +242,7 @@ function deadStateNames(simCode::SIM_CODE)::Vector{String}
   local names::Set{String} = Set{String}(crefName(c) for c in derived)
   local bases::Set{Symbol} = Set{Symbol}(arrayBase(c.ref) for c in derived if c.ref !== nothing)
   return String[v.name for (_, (_, v)) in simCode.stringToSimVarHT
-                if v.varKind isa STATE && !(v.name in names) && !(v.cref !== nothing && arrayBase(v.cref) in bases)]
+                if v.varKind isa STATE && !(v.name in names) && !(v.cref !== nothing && something(elementArray(simCode, v.name), v.cref.name) in bases)]
 end
 
 """

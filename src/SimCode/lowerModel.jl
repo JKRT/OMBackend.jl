@@ -149,7 +149,8 @@ function lowerSystem(model::IR.Model, variables::IR.VariableSet, partition::IR.P
                   String(codeName(Symbol(something(model.initialMode, model.name)))), model.frontendModel, irreducibles,
                   functions, any(f -> f isa EXTERNAL_MODELICA_FUNCTION, functions),
                   RESIDUAL_EQUATION[], String[], AliasEntry[], nothing, initialAlgorithms, asserts, String[],
-                  any(v -> v.kind isa Union{IR.DUMMY_STATE, IR.DUMMY_DER}, vars), references, referenceKeys(references))
+                  any(v -> v.kind isa Union{IR.DUMMY_STATE, IR.DUMMY_DER}, vars), references, referenceKeys(references),
+                  elementArrays(references))
 end
 
 """

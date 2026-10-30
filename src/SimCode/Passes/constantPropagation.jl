@@ -118,8 +118,8 @@ function propagateConstants(simCode::SIM_CODE)::SIM_CODE
       end
       local (_, unknown, parameter, negated) = c
       unknown in excluded && continue
-      local unknownRef::Union{Nothing, IR.ComponentRef} = get(simCode.references, unknown, nothing)
-      (unknownRef !== nothing && isElementCref(unknownRef) && arrayBase(unknownRef) in wholeArrays) && continue
+      local array::Union{Nothing, Symbol} = elementArray(simCode, unknown)
+      (array !== nothing && array in wholeArrays) && continue
       haskey(replacements, unknown) && continue
       replacements[unknown] = Replacement(parameter, negated, true)
       eliminatedBy[i] = unknown

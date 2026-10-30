@@ -120,20 +120,22 @@ function dynamicallyIndexedElements!(names::OrderedSet{String}, simCode::SIM_COD
     (ref !== nothing && nonIntegerSubscripted(ref)) && push!(bases, arrayBase(ref))
   end
   isempty(bases) && return names
-  for (k, (_, sv)) in simCode.stringToSimVarHT
-    (sv.cref !== nothing && isElementCref(sv.cref) && arrayBase(sv.cref) in bases) && push!(names, k)
+  for k::String in keys(simCode.stringToSimVarHT)
+    local array::Union{Nothing, Symbol} = elementArray(simCode, k)
+    (array !== nothing && array in bases) && push!(names, k)
   end
   return names
 end
 
 """
-    dataStructureArrayElements!(names, ht)
+    dataStructureArrayElements!(names, simCode)
 
 The names an external object's constructor reads (`CombiTimeTable(..., table, ...)`), and the
 elements of the arrays it reads whole (its references not an element's, `crefReads!`): the code
 generators rebuild the array from its elements.
 """
-function dataStructureArrayElements!(names::OrderedSet{String}, ht::HT; dynamic::Union{Nothing, Set{Symbol}} = nothing)::OrderedSet{String}
+function dataStructureArrayElements!(names::OrderedSet{String}, simCode::SIM_CODE; dynamic::Union{Nothing, Set{Symbol}} = nothing)::OrderedSet{String}
+  local ht::HT = simCode.stringToSimVarHT
   local wholes::Set{Symbol} = Set{Symbol}()
   for (_, (_, v)) in ht
     (v.varKind isa DATA_STRUCTURE && v.varKind.bindExp isa CALL) || continue
@@ -143,8 +145,9 @@ function dataStructureArrayElements!(names::OrderedSet{String}, ht::HT; dynamic:
     end
   end
   isempty(wholes) && return names
-  for (k, (_, sv)) in ht
-    (sv.cref !== nothing && isElementCref(sv.cref) && arrayBase(sv.cref) in wholes) && push!(names, k)
+  for k::String in keys(ht)
+    local array::Union{Nothing, Symbol} = elementArray(simCode, k)
+    (array !== nothing && array in wholes) && push!(names, k)
   end
   return names
 end
@@ -294,7 +297,7 @@ function eliminateConstantParameters(simCode::SIM_CODE)::SIM_CODE
   for (_, (_, v)) in ht
     v.varKind isa Union{PARAMETER, ARRAY_PARAMETER} && v.varKind.bindExp !== nothing && ifConditionNames!(kept, v.varKind.bindExp; dynamic)
   end
-  dataStructureArrayElements!(kept, ht; dynamic)
+  dataStructureArrayElements!(kept, simCode; dynamic)
   complexFieldNames!(kept, simCode.residualEquations, simCode)
   complexFieldNames!(kept, simCode.initialEquations, simCode)
   functionBodyNames!(kept, simCode.functions; dynamic)
@@ -476,7 +479,7 @@ function eliminateDeadParameters(simCode::SIM_CODE)::SIM_CODE
     local b = bindingOf(v.varKind)
     (v.varKind isa Union{PARAMETER, ARRAY_PARAMETER, DATA_STRUCTURE} && b !== nothing) && crefNames!(read, b; dynamic)
   end
-  dataStructureArrayElements!(read, ht; dynamic)
+  dataStructureArrayElements!(read, simCode; dynamic)
   dynamicallyIndexedElements!(read, simCode, dynamic)
   local dead = String[name for (name, (_, v)) in ht if v.varKind isa PARAMETER && !(name in read) && !isTunableParameter(name)]
   isempty(dead) && return simCode

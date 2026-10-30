@@ -191,7 +191,7 @@ function checkReferenceResolution(simCode::SIM_CODE)::Vector{CheckViolation}
   local ht = simCode.stringToSimVarHT
   local known = union(OrderedSet{String}(keys(ht)), OrderedSet{String}(simCode.eliminatedVariables), BUILTIN_NAMES)
   #= the arrays whose elements are variables (`arrayBase` of their references) =#
-  local bases = Set{Symbol}(arrayBase(sv.cref) for (_, (_, sv)) in ht if sv.cref !== nothing)
+  local bases = Set{Symbol}(something(elementArray(simCode, k), sv.cref.name) for (k, (_, sv)) in ht if sv.cref !== nothing)
   for (i, eq) in enumerate(simCode.residualEquations)
     local bound = Set{String}()
     foreachExp(e -> e isa REDUCTION && foreach(it -> push!(bound, String(it.name)), e.iterators), eq.exp)

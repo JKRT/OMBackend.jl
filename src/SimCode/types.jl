@@ -908,6 +908,24 @@ struct SIM_CODE
   references::Dict{String, IR.ComponentRef}
   "The keys by the IR references' names (`references` inverted): the variable a reference names (`keyOf`)."
   keyByReference::Dict{Symbol, String}
+  "The array each element variable is an element of, by its key (`arrayBase` of its reference, once at lowering; the eliminated ones' too): `elementArray`."
+  arrayOf::Dict{String, Symbol}
+end
+
+"""
+The array the variable `key` is an element of (`arrayBase` of its reference: `x` of `x[2]`, `c` of `c[2].T`), from
+`SIM_CODE.arrayOf`; `nothing` for a variable that is no element.
+"""
+elementArray(sc::SIM_CODE, key::String)::Union{Nothing, Symbol} = get(sc.arrayOf, key, nothing)
+
+"The arrays of the element variables of `references`, by their keys (`SIM_CODE.arrayOf`)."
+function elementArrays(references::Dict{String, IR.ComponentRef})::Dict{String, Symbol}
+  local out::Dict{String, Symbol} = Dict{String, Symbol}()
+  for (key::String, ref::IR.ComponentRef) in references
+    local array::Symbol = arrayBase(ref)
+    array === ref.name || (out[key] = array)
+  end
+  return out
 end
 
 "The key of the variable the IR reference `ref` names; `nothing` for one that names none."

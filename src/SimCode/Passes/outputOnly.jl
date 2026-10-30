@@ -35,11 +35,12 @@
 
 #= Elimination of the variables that only feed outputs (eliminateNonDynamic). =#
 
-"The element variables of the arrays by the arrays (their references' `arrayBase`: `x` => `x[1]`, `x[2]`)."
-function elementsByBase(ht::HT)::Dict{Symbol, Vector{String}}
-  local index = Dict{Symbol, Vector{String}}()
-  for (name, (_, sv)) in ht
-    (sv.cref !== nothing && isElementCref(sv.cref)) && push!(get!(index, arrayBase(sv.cref), String[]), name)
+"The element variables of the arrays by the arrays (`elementArray`: `x` => `x[1]`, `x[2]`)."
+function elementsByBase(simCode::SIM_CODE)::Dict{Symbol, Vector{String}}
+  local index::Dict{Symbol, Vector{String}} = Dict{Symbol, Vector{String}}()
+  for name::String in keys(simCode.stringToSimVarHT)
+    local array::Union{Nothing, Symbol} = elementArray(simCode, name)
+    array === nothing || push!(get!(index, array, String[]), name)
   end
   return index
 end
@@ -90,7 +91,7 @@ function freshMatching(simCode::SIM_CODE)::Tuple{Vector{Int}, Dict{String, Int},
   end
   local n = length(numberOf)
   length(residuals) > n && return (Int[], numberOf, nameOf)
-  local elements = elementsByBase(ht)
+  local elements = elementsByBase(simCode)
   local rows = OrderedDict{Int, Vector{Int}}()
   for (i, eq) in enumerate(residuals)
     rows[i] = sort(unique(Int[numberOf[r] for r in equationVariableNames(eq.exp, ht, elements) if haskey(numberOf, r)]))
@@ -127,8 +128,8 @@ function essentialEquations(simCode::SIM_CODE, matchOrder::Vector{Int}, nameOf::
     (i > 0 && haskey(nameOf, k)) || continue
     local name = nameOf[k]
     solvedBy[name] = i
-    local ref::Union{Nothing, IR.ComponentRef} = get(simCode.references, name, nothing)
-    (ref !== nothing && isElementCref(ref)) && push!(get!(solvedByBase, arrayBase(ref), Int[]), i)
+    local array::Union{Nothing, Symbol} = elementArray(simCode, name)
+    array === nothing || push!(get!(solvedByBase, array, Int[]), i)
   end
   local seeds = OrderedSet{Int}()
   local seed! = n -> haskey(solvedBy, n) && push!(seeds, solvedBy[n])
@@ -234,7 +235,7 @@ function eliminateOutputOnlyVariables(simCode::SIM_CODE, options::EliminationOpt
   isempty(matchOrder) && return simCode
   local ht = simCode.stringToSimVarHT
   local residuals = simCode.residualEquations
-  local elements = elementsByBase(ht)
+  local elements = elementsByBase(simCode)
   local reads = OrderedSet{String}[equationVariableNames(eq.exp, ht, elements) for eq in residuals]
   local essential = essentialEquations(simCode, matchOrder, nameOf, reads)
   length(essential) == length(residuals) && return simCode
@@ -272,8 +273,8 @@ function eliminateOutputOnlyVariables(simCode::SIM_CODE, options::EliminationOpt
   end
   #= a variable read, or the variable of its array (`arrayBase` of its reference, `keyByReference`) =#
   local stillRead = name::String -> begin
-    local ref::Union{Nothing, IR.ComponentRef} = get(simCode.references, name, nothing)
-    local base::Union{Nothing, String} = (ref === nothing || !isElementCref(ref)) ? nothing : get(simCode.keyByReference, arrayBase(ref), nothing)
+    local array::Union{Nothing, Symbol} = elementArray(simCode, name)
+    local base::Union{Nothing, String} = array === nothing ? nothing : get(simCode.keyByReference, array, nothing)
     any(n -> any(i -> !(i in removed), get(readBy, n, OrderedSet{Int}())), base === nothing ? (name,) : (name, base)) ||
       name in whenReads || name in initialReads || name in complexParts
   end
