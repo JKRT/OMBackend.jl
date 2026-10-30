@@ -109,12 +109,47 @@ abstract type VariableKind <: Node end
 "How a partition is evaluated: continuously, or at the ticks of a clock."
 abstract type Association <: Node end
 
-"Fields compared one by one: the IR values are trees of vectors, strings and symbols."
-function Base.:(==)(a::T, b::T)::Bool where {T <: Node}
-  for f in fieldnames(T)
-    getfield(a, f) == getfield(b, f) || return false
+"""
+    fieldComparison(T, compare) -> Union{Bool, Expr}
+
+The body of a field-by-field comparison of two values `a`, `b` of the node type `T`:
+`compare(a.f₁, b.f₁) && compare(a.f₂, b.f₂) && ...`, `true` for a type without fields. For the
+`@generated` `==` and `isequal` of OMJLIR's and SimCode's nodes (defined before them: a generator
+runs in the world of its definition).
+"""
+function fieldComparison(T::DataType, compare::Function)::Union{Bool, Expr}
+  local ex::Union{Bool, Expr} = true
+  for f in reverse(fieldnames(T))
+    ex = :($compare(getfield(a, $(QuoteNode(f))), getfield(b, $(QuoteNode(f)))) && $ex)
   end
-  return true
+  return ex
+end
+
+"""
+    fieldHashing(T, hashField) -> Expr
+
+The body of the hash of a value `a` of the node type `T` with the seed `h`: the type's name hashed,
+then each field by `hashField` in field order, as a loop over `fieldnames(T)` would.
+"""
+function fieldHashing(T::DataType, hashField::Function)::Expr
+  local ex::Expr = :(hash($(QuoteNode(nameof(T))), h))
+  for f in fieldnames(T)
+    ex = :($hashField(getfield(a, $(QuoteNode(f))), $ex))
+  end
+  return ex
+end
+
+"A value's field hashed: an enumeration value by its integer (Base's hash has its type's), any other value by its own."
+fieldHash(x::Enum, h::UInt)::UInt = hash(Integer(x), h)
+fieldHash(x::Any, h::UInt)::UInt = hash(x, h)
+
+"""
+Fields compared one by one: the IR values are trees of vectors, strings and symbols. Unrolled per
+type (`fieldComparison`): a field read by a name known only at run time is a dynamic `getfield`
+that boxes an `Int`, `Float64` or enumeration field.
+"""
+@generated function Base.:(==)(a::T, b::T)::Bool where {T <: Node}
+  return fieldComparison(T, ==)
 end
 Base.:(==)(::Node, ::Node)::Bool = false
 
@@ -123,11 +158,8 @@ Fields compared one by one with `isequal`, as `hash` hashes them: the identity o
 `Set` key (`REAL(0.0)` and `REAL(-0.0)` apart, `REAL(NaN)` equal to itself; `==` has them the
 other way round, as numbers).
 """
-function Base.isequal(a::T, b::T)::Bool where {T <: Node}
-  for f in fieldnames(T)
-    isequal(getfield(a, f), getfield(b, f)) || return false
-  end
-  return true
+@generated function Base.isequal(a::T, b::T)::Bool where {T <: Node}
+  return fieldComparison(T, isequal)
 end
 Base.isequal(::Node, ::Node)::Bool = false
 
@@ -135,19 +167,11 @@ Base.isequal(::Node, ::Node)::Bool = false
 Fields hashed one by one after the type's name: the same in every build. A type's own hash, and
 with it an enumeration value's, Julia derives from its module's build id, new with every
 precompile (the code generators' names and the iteration order of a `Dict` or `Set` of values
-changed with it).
+changed with it). Unrolled per type (`fieldHashing`).
 """
-function Base.hash(a::T, h::UInt)::UInt where {T <: Node}
-  local r::UInt = hash(nameof(T), h)
-  for f in fieldnames(T)
-    r = fieldHash(getfield(a, f), r)
-  end
-  return r
+@generated function Base.hash(a::T, h::UInt)::UInt where {T <: Node}
+  return fieldHashing(T, fieldHash)
 end
-
-"A value's field hashed: an enumeration value by its integer (Base's hash has its type's), any other value by its own."
-fieldHash(x::Enum, h::UInt)::UInt = hash(Integer(x), h)
-fieldHash(x::Any, h::UInt)::UInt = hash(x, h)
 
 #= ==================================================================================== =#
 #= Source locations                                                                     =#

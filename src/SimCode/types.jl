@@ -47,12 +47,9 @@ expressions, statements, variables and their parts.
 """
 abstract type Node end
 
-"Fields compared one by one: the values are trees of vectors, strings and symbols."
-function Base.:(==)(a::T, b::T)::Bool where {T <: Node}
-  for f in fieldnames(T)
-    getfield(a, f) == getfield(b, f) || return false
-  end
-  return true
+"Fields compared one by one: the values are trees of vectors, strings and symbols (unrolled per type, as OMJLIR's: `IR.fieldComparison`)."
+@generated function Base.:(==)(a::T, b::T)::Bool where {T <: Node}
+  return IR.fieldComparison(T, ==)
 end
 Base.:(==)(::Node, ::Node)::Bool = false
 
@@ -61,21 +58,14 @@ Fields compared one by one with `isequal`, as `hash` hashes them: the identity o
 `Set` key (`RCONST(0.0)` and `RCONST(-0.0)` apart, `RCONST(NaN)` equal to itself; `==` has
 them the other way round, as numbers).
 """
-function Base.isequal(a::T, b::T)::Bool where {T <: Node}
-  for f in fieldnames(T)
-    isequal(getfield(a, f), getfield(b, f)) || return false
-  end
-  return true
+@generated function Base.isequal(a::T, b::T)::Bool where {T <: Node}
+  return IR.fieldComparison(T, isequal)
 end
 Base.isequal(::Node, ::Node)::Bool = false
 
-"Fields hashed one by one after the type's name, an enumeration value by its integer: the same in every build (as OMJLIR's values, `IR.fieldHash`)."
-function Base.hash(a::T, h::UInt)::UInt where {T <: Node}
-  local r::UInt = hash(nameof(T), h)
-  for f in fieldnames(T)
-    r = IR.fieldHash(getfield(a, f), r)
-  end
-  return r
+"Fields hashed one by one after the type's name, an enumeration value by its integer: the same in every build (unrolled, as OMJLIR's values: `IR.fieldHashing`, `IR.fieldHash`)."
+@generated function Base.hash(a::T, h::UInt)::UInt where {T <: Node}
+  return IR.fieldHashing(T, IR.fieldHash)
 end
 
 #= ==================================================================================== =#
