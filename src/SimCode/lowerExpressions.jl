@@ -276,7 +276,7 @@ function simCrefExp(names::Names, cref::IR.ComponentRef, ty::IR.ModelicaType)::E
   end
   local last = cref.parts[end]
   local baseCref::IR.ComponentRef = IR.withoutLastSubscripts(cref)
-  local base = simName(names, baseCref)
+  local base::String = simName(names, baseCref)
   if !(base in names.known)
     local field = recordFieldExp(names, cref)
     field === nothing || return field
@@ -311,10 +311,10 @@ function recordFieldExp(names::Names, cref::IR.ComponentRef)::Union{Nothing, Exp
     local prefix = cref.parts[k]
     local ty = isempty(prefix.subscripts) ? prefix.ty : IR.elementType(prefix.ty)
     ty isa IR.T_RECORD || continue
-    local recordCref = IR.ComponentRef(cref.parts[1:k])
-    local name = simName(names, recordCref)
+    local recordCref::IR.ComponentRef = IR.ComponentRef(cref.parts[1:k])
+    local name::String = simName(names, recordCref)
     name in names.scalars || continue
-    local exp = EXP_CREF(SimCref(Symbol(name), Int[], recordCref), simType(ty))
+    local exp::Exp = EXP_CREF(SimCref(Symbol(name), Int[], recordCref), simType(ty))
     for p in @view cref.parts[k + 1:end]
       ty isa IR.T_RECORD || return nothing
       local i = findfirst(f -> f.name === p.name, ty.fields)

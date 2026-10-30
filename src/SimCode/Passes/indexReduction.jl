@@ -47,7 +47,7 @@ with no derivative variable stays too (the code generators report it).
 function derivativesOfDummyStates(simCode::SIM_CODE)::SIM_CODE
   local ht = simCode.stringToSimVarHT
   local aliases = Dict{String, Tuple{String, Bool}}(e.eliminatedName => (e.representativeName, e.negated) for e in simCode.aliasMap)
-  local reference = name -> EXP_CREF(SimCref(Symbol(name), Int[], get(simCode.references, name, nothing)), TYPE_REAL())
+  local reference::Function = (name::String) -> EXP_CREF(SimCref(Symbol(name), Int[], get(simCode.references, name, nothing)), TYPE_REAL())
   local derivativeOf = name -> begin
     haskey(ht, name) || return nothing
     local kind::Union{Nothing, IR.VariableKind} = last(ht[name]).irKind

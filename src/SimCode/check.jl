@@ -191,7 +191,7 @@ function checkReferenceResolution(simCode::SIM_CODE)::Vector{CheckViolation}
   local ht = simCode.stringToSimVarHT
   local known = union(OrderedSet{String}(keys(ht)), OrderedSet{String}(simCode.eliminatedVariables), BUILTIN_NAMES)
   #= the arrays whose elements are variables (`arrayBase` of their references) =#
-  local bases = Set{Symbol}(something(elementArray(simCode, k), sv.cref.name) for (k, (_, sv)) in ht if sv.cref !== nothing)
+  local bases::Set{Symbol} = Set{Symbol}(something(elementArray(simCode, k), sv.cref.name) for (k, (_, sv)) in ht if sv.cref !== nothing)
   for (i, eq) in enumerate(simCode.residualEquations)
     local bound = Set{String}()
     foreachExp(e -> e isa REDUCTION && foreach(it -> push!(bound, String(it.name)), e.iterators), eq.exp)
@@ -223,7 +223,7 @@ reference the equations read (residual, initial, if-equations' branches, when bo
 algorithms) has one (`SimCref.ref`): the structure of every name, so that no pass takes a name apart.
 """
 function checkReferences(simCode::SIM_CODE)::Vector{CheckViolation}
-  local out = CheckViolation[]
+  local out::Vector{CheckViolation} = CheckViolation[]
   for (key, (_, sv)) in simCode.stringToSimVarHT
     (sv.cref === nothing || !haskey(simCode.references, key)) &&
       push!(out, CheckViolation(:references, :error, key, "variable without its IR reference"))

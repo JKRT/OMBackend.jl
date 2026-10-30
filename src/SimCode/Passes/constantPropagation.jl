@@ -96,7 +96,7 @@ function propagateConstants(simCode::SIM_CODE)::SIM_CODE
   local ht = simCode.stringToSimVarHT
   local excluded = Set{String}(Iterators.flatten((simCode.sharedVariables, simCode.irreducibleVariables)))
   #= the arrays read whole (a reference that is no element, `arrayBase` its own name): their elements stay variables =#
-  local wholeArrays = Set{Symbol}()
+  local wholeArrays::Set{Symbol} = Set{Symbol}()
   for eq in simCode.residualEquations, (c, _) in crefReads!(Tuple{SimCref, Bool}[], eq.exp)
     (c.ref !== nothing && isempty(c.subs) && !isElementCref(c.ref)) && push!(wholeArrays, c.ref.name)
   end

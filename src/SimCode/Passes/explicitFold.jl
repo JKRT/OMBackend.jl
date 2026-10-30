@@ -164,7 +164,7 @@ function orientReciprocalEquations(simCode::SIM_CODE)::SIM_CODE
   local oriented = 0
   local residuals = RESIDUAL_EQUATION[]
   for eq in simCode.residualEquations
-    local e = reciprocalOrientation(eq.exp, simCode, uses, excluded)
+    local e::Union{Nothing, Exp} = reciprocalOrientation(eq.exp, simCode, uses, excluded)
     e === nothing ? push!(residuals, eq) : (push!(residuals, RESIDUAL_EQUATION(e, eq.source, eq.attr)); oriented += 1)
   end
   oriented == 0 && return simCode

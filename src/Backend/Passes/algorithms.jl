@@ -797,7 +797,7 @@ function residualsOfAssignment!(out::Vector{IR.Equation}, s::IR.ASSIGNMENT, cons
   end
   local elementTy = IR.elementType(ty)
   for k in 1:n
-    local cref = IR.withLastSubscripts(lhs.cref, IR.Subscript[IR.subscripts(lhs.cref)..., IR.INDEX(IR.INTEGER(k))])
+    local cref::IR.ComponentRef = IR.withLastSubscripts(lhs.cref, IR.Subscript[IR.subscripts(lhs.cref)..., IR.INDEX(IR.INTEGER(k))])
     (cref.name in constrained.names || cref.name in whenLifted) && continue
     local rhsK = IR.SUBSCRIPTED(s.rhs, IR.Subscript[IR.INDEX(IR.INTEGER(k))], elementTy)
     push!(out, IR.SCALAR_EQUATION(IR.CREF(cref, elementTy), rhsK, elementTy, s.source, DYNAMIC))
@@ -881,7 +881,7 @@ function algorithmValue(e::IR.Expression, run::AlgorithmRun)::IR.Expression
     end
     name in run.wholes && unsupported("a read of a whole array or record that an algorithm section assigns part by part", x)
     #= x[j]: one of the elements the section assigns, chosen by the index (its array by its parts, `elementBase`) =#
-    local base = elementBase(cref)
+    local base::Symbol = elementBase(cref)
     if base !== name && base in run.wholes && any(s -> !isLiteralIndex(s), IR.subscripts(cref))
       local elements = scalarizedCref(IR.CREF(cref, x.ty), Int[], x)
       elements isa IR.IF_EXPRESSION || unsupported("this read of an array an algorithm section assigns", x)
@@ -934,7 +934,7 @@ function realAssignmentEquations(stmts::Vector{IR.Statement}, source::IR.Source,
     return IR.Equation[]
   end
   local (ops, assigned) = bodyStatements(body, BodyLowering(false, true, "an algorithm section with Real targets"))
-  local run = AlgorithmRun(ops, assigned, realStarts)
+  local run::AlgorithmRun = AlgorithmRun(ops, assigned, realStarts)
   local values = Tuple{Symbol, IR.CREF}[]
   local out = IR.Equation[]
   for op in ops

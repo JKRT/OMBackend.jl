@@ -226,7 +226,7 @@ function wholeDerivative(cref::IR.ComponentRef, ty::IR.ModelicaType, seeds::Seed
     return elementsDerivative(cref, sizes, Int[], IR.elementType(ty), seeds)
   end
   ty isa IR.T_REAL || return ZERO
-  local d = seeds.variable(cref.name)
+  local d::Union{Nothing, IR.Expression} = seeds.variable(cref.name)
   return d === nothing ? ZERO : d
 end
 

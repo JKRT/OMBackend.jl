@@ -345,7 +345,7 @@ function Structure(variables::IR.VariableSet, partition::IR.Partition, functions
                    derived::Vector{Symbol} = Symbol[])::Structure
   local functionsByName = Dict{Symbol, IR.ModelicaFunction}(f.name => f for f in functions)
   local discretes = discreteTargets(partition)
-  local s = Structure(Symbol[], IR.ComponentRef[], Dict{Symbol, Int}(), Int[], Int[], Row[], Vector{Int}[], Int[], Int[])
+  local s::Structure = Structure(Symbol[], IR.ComponentRef[], Dict{Symbol, Int}(), Int[], Int[], Row[], Vector{Int}[], Int[], Int[])
   for v in variables
     isContinuousVariable(v, discretes) && addVariable!(s, v.cref)
   end

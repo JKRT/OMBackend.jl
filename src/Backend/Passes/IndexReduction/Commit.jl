@@ -79,7 +79,7 @@ function plan(model::IR.Model, partition::IR.Partition;
   #= the structure the code generators see: the known values substituted =#
   local folded = withKnownValues(model, partition; known)
   local functions = Dict{Symbol, IR.ModelicaFunction}(f.name => f for f in model.functions)
-  local derived = expandDerivatives!(folded.equations, continuousNames(model.variables, folded), model.variables, functions)
+  local derived::Vector{Symbol} = expandDerivatives!(folded.equations, continuousNames(model.variables, folded), model.variables, functions)
   local s = Structure(model.variables, folded, model.functions; derived)
   local nRows = length(s.rows)
   nRows == unknownCount(s) ||
@@ -225,7 +225,7 @@ function dynamicSetParts(model::IR.Model, s::Structure, set::DynamicSet, k::Int)
   local realRef = name::Symbol -> IR.CREF(haskey(model.variables, name) ? model.variables[name].cref :
                                           haskey(s.index, name) ? s.crefs[s.index[name]] : IR.ComponentRef(name, IR.T_REAL()), IR.T_REAL())
   local integerRef = cref::IR.ComponentRef -> IR.CREF(cref, IR.T_INTEGER())
-  local A = IR.ComponentRef[stateSetCref(k, :A, IR.Subscript[IR.INDEX(IR.INTEGER(j)), IR.INDEX(IR.INTEGER(i))], IR.T_INTEGER())
+  local A::Matrix{IR.ComponentRef} = IR.ComponentRef[stateSetCref(k, :A, IR.Subscript[IR.INDEX(IR.INTEGER(j)), IR.INDEX(IR.INTEGER(i))], IR.T_INTEGER())
                             for j in 1:n-1, i in 1:n]
   #= the candidate the j-th state selects where candidate d is the dummy =#
   local index = (d::Int, j::Int) -> j < d ? j : j + 1
@@ -238,11 +238,11 @@ function dynamicSetParts(model::IR.Model, s::Structure, set::DynamicSet, k::Int)
   end
   local selection = (j::Int, names::Vector{Symbol}) -> foldl(plus, IR.Expression[times(integerRef(A[j, i]), realRef(names[i])) for i in 1:n])
   #= each level: its variables V and their states x =#
-  local levels = Tuple{Vector{Symbol}, Vector{IR.ComponentRef}}[]
+  local levels::Vector{Tuple{Vector{Symbol}, Vector{IR.ComponentRef}}} = Tuple{Vector{Symbol}, Vector{IR.ComponentRef}}[]
   for (l, candidates) in enumerate(vcat([set.candidates], set.linked))
     local V = Symbol[s.variables[s.antiderivative[c]] for c in candidates]
     local D = Symbol[s.variables[c] for c in candidates]
-    local x = IR.ComponentRef[setStateCref(k, l, j) for j in 1:n-1]
+    local x::Vector{IR.ComponentRef} = IR.ComponentRef[setStateCref(k, l, j) for j in 1:n-1]
     push!(levels, (V, x))
     for j in 1:n-1
       local derivative::IR.ComponentRef = IR.derivativeCref(x[j])

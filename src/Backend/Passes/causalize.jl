@@ -380,7 +380,7 @@ function runtimeIndexChoice(e::IR.Expression, iterators::Set{Symbol})::IR.Expres
   (ty isa IR.T_ARRAY && length(ty.dimensions) == 1 && ty.dimensions[1] isa IR.DIM_SIZE) || return e
   local n = ty.dimensions[1].size
   n > 0 || return e
-  local element = k -> IR.CREF(IR.ComponentRef(IR.CrefPart[e.cref.parts[1:end-1];
+  local element::Function = k -> IR.CREF(IR.ComponentRef(IR.CrefPart[e.cref.parts[1:end-1];
                                                            IR.CrefPart(last.name, IR.Subscript[IR.INDEX(IR.INTEGER(k))], ty)]),
                                ty.elementType)
   local choice::IR.Expression = element(n)
@@ -417,7 +417,7 @@ function resolveBindingReferences!(variables::IR.VariableSet)::Nothing
     local changed = false
     for v in variables
       v.binding isa IR.CREF || continue
-      local target = legacyName(IR.withoutLastSubscripts(v.binding.cref))
+      local target::String = legacyName(IR.withoutLastSubscripts(v.binding.cref))
       isTunableParameter(target) && continue
       local b::Union{Nothing, IR.Expression} = get(bindings, target, nothing)
       (b === nothing || b isa IR.CREF) && continue
@@ -593,10 +593,10 @@ function expandRecordFieldArrays!(variables::IR.VariableSet)::Nothing
       push!(out, v)
     elseif !isempty(v.cref.parts[end].subscripts)
       push!(out, v)
-      local array = IR.withoutLastSubscripts(v.cref)
+      local array::IR.ComponentRef = IR.withoutLastSubscripts(v.cref)
       (IR.isKnown(v) && all(d -> d isa IR.DIM_SIZE, array.parts[end].ty.dimensions)) || continue
       local (_, _, elements) = get!(groups, legacyName(array), (array, v, Dict{Vector{Int}, IR.Expression}()))
-      local index = IR.literalIndices(v.cref.parts[end].subscripts)
+      local index::Union{Nothing, Vector{Int}} = IR.literalIndices(v.cref.parts[end].subscripts)
       (index === nothing || v.binding === nothing) || (elements[index] = v.binding)
     else
       append!(out, recordFieldArrayElements(v))
@@ -662,7 +662,7 @@ function recordFieldArrayElements(v::IR.Variable)::Vector{IR.Variable}
   local out = IR.isKnown(v) ? IR.Variable[v] : IR.Variable[]
   for i in CartesianIndices(Tuple(d.size for d in ty.dimensions))
     local index = collect(Tuple(i))
-    local cref = IR.ComponentRef(IR.CrefPart[v.cref.parts[1:end-1];
+    local cref::IR.ComponentRef = IR.ComponentRef(IR.CrefPart[v.cref.parts[1:end-1];
                                              IR.CrefPart(last.name, IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index], ty)])
     local binding = v.binding === nothing ? nothing : bindingElement(v.binding, index)
     push!(out, IR.Variable(cref, ty.elementType, v.kind, binding, v.attributes, v.direction, v.isProtected, v.connector,

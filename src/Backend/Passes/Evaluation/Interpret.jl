@@ -225,8 +225,8 @@ function crefValue(e::IR.CREF, run::Interpretation)::Union{Nothing, FlatValue}
     #= a slice or a whole dimension (`x[2:3]`, `A[:, 1]`) of the last part: the selection of the whole =#
     local last = e.cref.parts[end]
     (isempty(last.subscripts) || any(p -> !isempty(p.subscripts), e.cref.parts[1:end - 1])) && return nothing
-    local whole = IR.CREF(IR.withoutLastSubscripts(e.cref), last.ty)
-    local v = crefValue(whole, run)
+    local array::IR.CREF = IR.CREF(IR.withoutLastSubscripts(e.cref), last.ty)
+    local v = crefValue(array, run)
     return v === nothing ? nothing : selectValue(v, last.subscripts, run)
   end
   local x = get(run.scalars, Symbol(name), nothing)
@@ -861,7 +861,7 @@ An assignment to a slice or a whole dimension of an array variable's last part (
 function assignSelection!(cref::IR.ComponentRef, v::FlatValue, run::Interpretation)::Symbol
   local last = cref.parts[end]
   (isempty(last.subscripts) || any(p -> !isempty(p.subscripts), cref.parts[1:end - 1])) && return :fail
-  local base = resolvedName(IR.withoutLastSubscripts(cref), run)
+  local base::Union{Nothing, String} = resolvedName(IR.withoutLastSubscripts(cref), run)
   base === nothing && return :fail
   local A = toArray(prefixValue(run.scalars, base))
   local sel = selections(last.subscripts, run)

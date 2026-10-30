@@ -55,7 +55,7 @@ whole array, or by a subscript that is no literal; by `arrayBase`).
 """
 function equationVariableNames(e::Exp, ht::HT, elements::Dict{Symbol, Vector{String}})::OrderedSet{String}
   local names = OrderedSet{String}()
-  local seen = Set{Tuple{SimCref, Bool}}()
+  local seen::Set{Tuple{SimCref, Bool}} = Set{Tuple{SimCref, Bool}}()
   for read in crefReads!(Tuple{SimCref, Bool}[], e)
     read in seen && continue
     push!(seen, read)
@@ -91,7 +91,7 @@ function freshMatching(simCode::SIM_CODE)::Tuple{Vector{Int}, Dict{String, Int},
   end
   local n = length(numberOf)
   length(residuals) > n && return (Int[], numberOf, nameOf)
-  local elements = elementsByBase(simCode)
+  local elements::Dict{Symbol, Vector{String}} = elementsByBase(simCode)
   local rows = OrderedDict{Int, Vector{Int}}()
   for (i, eq) in enumerate(residuals)
     rows[i] = sort(unique(Int[numberOf[r] for r in equationVariableNames(eq.exp, ht, elements) if haskey(numberOf, r)]))
@@ -123,7 +123,7 @@ function essentialEquations(simCode::SIM_CODE, matchOrder::Vector{Int}, nameOf::
   local ht = simCode.stringToSimVarHT
   local solvedBy = Dict{String, Int}()
   #= the residuals solving an array's element variables, by the array (`arrayBase`) =#
-  local solvedByBase = Dict{Symbol, Vector{Int}}()
+  local solvedByBase::Dict{Symbol, Vector{Int}} = Dict{Symbol, Vector{Int}}()
   for (k, i) in enumerate(matchOrder)
     (i > 0 && haskey(nameOf, k)) || continue
     local name = nameOf[k]
@@ -235,7 +235,7 @@ function eliminateOutputOnlyVariables(simCode::SIM_CODE, options::EliminationOpt
   isempty(matchOrder) && return simCode
   local ht = simCode.stringToSimVarHT
   local residuals = simCode.residualEquations
-  local elements = elementsByBase(simCode)
+  local elements::Dict{Symbol, Vector{String}} = elementsByBase(simCode)
   local reads = OrderedSet{String}[equationVariableNames(eq.exp, ht, elements) for eq in residuals]
   local essential = essentialEquations(simCode, matchOrder, nameOf, reads)
   length(essential) == length(residuals) && return simCode

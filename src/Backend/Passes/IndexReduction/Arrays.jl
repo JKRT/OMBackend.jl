@@ -155,7 +155,7 @@ already (a record field array of a parameter, `expandRecordFieldArrays`).
 function elements(variables::IR.VariableSet)::Elements
   local E = Elements(Dict{Symbol, Vector{Symbol}}(), Dict{Symbol, Vector{Int}}(), Dict{Symbol, Tuple{Symbol, Vector{Int}}}(),
                      Dict{Symbol, IR.ComponentRef}())
-  local derived = Tuple{IR.Variable, IR.CrefPart, Symbol}[]
+  local derived::Vector{Tuple{IR.Variable, IR.CrefPart, Symbol}} = Tuple{IR.Variable, IR.CrefPart, Symbol}[]
   #= the arrays of rolled components first (their elements may be another array's, kept beside them: rollComponents!) =#
   local rolledFirst::Vector{IR.Variable} = IR.Variable[v for v in variables if v.cref.parts[1].ty isa IR.T_COMPONENTS]
   append!(rolledFirst, IR.Variable[v for v in variables if !(v.cref.parts[1].ty isa IR.T_COMPONENTS)])
@@ -198,7 +198,7 @@ function addDerivedArrays!(E::Elements, derived::Vector{Tuple{IR.Variable, IR.Cr
   while !isempty(derived)
     local ready = findfirst(d -> haskey(E.elements, d[3]), derived)
     ready === nothing && throw(NotHandled("the arrays $(join((d[1].name for d in derived), ", ")), made of arrays not known"))
-    local (v, operator, of) = popat!(derived, ready)
+    local (v::IR.Variable, operator::IR.CrefPart, of::Symbol) = popat!(derived, ready)
     addDerivedElements!(E, v, operator, of)
   end
   return nothing
@@ -212,7 +212,7 @@ made of), a new `Elements`; `E` not changed. NotHandled for an added array that 
 """
 function extendedElements(E::Elements, added::Vector{IR.Variable}, variables::IR.VariableSet)::Elements
   local out = Elements(copy(E.elements), copy(E.sizes), copy(E.array), copy(E.crefs))
-  local derived = Tuple{IR.Variable, IR.CrefPart, Symbol}[]
+  local derived::Vector{Tuple{IR.Variable, IR.CrefPart, Symbol}} = Tuple{IR.Variable, IR.CrefPart, Symbol}[]
   for v in added
     v.ty isa IR.T_ARRAY || continue
     local from = derivedFrom(v, variables)
@@ -339,7 +339,7 @@ end
 subscript in turn; `cos({a, b})[2]` is `cos(b)`, an element-wise built-in); subscripted where it is not.
 """
 function pickElement(e::IR.Expression, subscripts::Vector{IR.Subscript}, ty::IR.ModelicaType, E::Elements)::IR.Expression
-  local index = IR.literalIndices(subscripts)
+  local index::Union{Nothing, Vector{Int}} = IR.literalIndices(subscripts)
   if e isa IR.ARRAY_CONSTRUCTOR && index !== nothing
     local body = constructorElement(e, index[1])
     if body !== nothing

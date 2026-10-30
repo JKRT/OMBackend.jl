@@ -389,7 +389,7 @@ function lowerAsserts(names::Names, ht::OrderedDict{String, Tuple{Int, SIMVAR}},
       push!(initial, INITIAL_ALGORITHM(Statement[ASSERT(a.condition, a.message, a.level, a.source)], false))
     end
   end
-  local inline = e -> inlineParameters(e, ht, names; keepTunable = true, keepCalls = true)
+  local inline::Function = (e::Exp) -> inlineParameters(e, ht, names; keepTunable = true, keepCalls = true)
   out = ASSERT_EQUATION[ASSERT_EQUATION(inline(a.condition), inline(a.message), a.level, a.source) for a in out]
   return (out, initial)
 end
@@ -431,7 +431,7 @@ function inlineParameters(e::Exp, ht::OrderedDict{String, Tuple{Int, SIMVAR}}, n
     end
     return something(scalarizedArrayParameter(x, ht), Some(x))
   end
-  local visitElements = x -> x isa ASUB ? something(elementsBySubscript(x, ht, names), Some(x)) : visit(x)
+  local visitElements::Function = (x::Exp) -> x isa ASUB ? something(elementsBySubscript(x, ht, names), Some(x)) : visit(x)
   local current = e
   for _ in 1:100
     local next = mapExp(visitElements, current)

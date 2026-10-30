@@ -202,7 +202,7 @@ when-equation, an initial algorithm, an assert) and those a reinit() sets: the s
 dynamics.
 """
 function derivedStateCrefs(simCode::SIM_CODE)::OrderedSet{SimCref}
-  local derived = OrderedSet{SimCref}()
+  local derived::OrderedSet{SimCref} = OrderedSet{SimCref}()
   local visit = e::Exp -> foreachExp(e) do x
     x isa DER && push!(derived, x.cref)
     (isBuiltin(x, :der) && first(x.args) isa EXP_CREF) && push!(derived, first(x.args).cref)

@@ -285,7 +285,7 @@ function familyParts(f::SetFamily, k::Int, s::Structure, E::Elements, variables:
   local leaves = IR.Expression[]
   foreach(start -> append!(leaves, block(start)), starts)
   local aStart = nestedArray(vcat(sizes, n - 1, n), IR.T_INTEGER(), leaves)
-  local A = IR.Variable(stateSetCref(k, :A, IR.Subscript[], aType), aType, IR.DISCRETE(), nothing,
+  local A::IR.Variable = IR.Variable(stateSetCref(k, :A, IR.Subscript[], aType), aType, IR.DISCRETE(), nothing,
                         IR.VariableAttributes(aStart, IR.BOOLEAN(true), nothing, nothing, nothing, nothing, nothing, nothing, nothing),
                         IR.NO_DIRECTION, true, IR.NOT_CONNECTOR, IR.NO_SOURCE, :indexReduction)
   push!(new, A)
@@ -306,11 +306,11 @@ function familyParts(f::SetFamily, k::Int, s::Structure, E::Elements, variables:
       push!(guesses, (v === nothing || v.attributes.start === nothing) ? IR.REAL(0.0) : arrayReferences(v.attributes.start, E, variables))
     end
     local derivativeCref::IR.ComponentRef = IR.derivativeCref(cref)
-    local x = IR.Variable(cref, stateType, IR.STATE(1, derivativeCref.name, true), nothing,
+    local x::IR.Variable = IR.Variable(cref, stateType, IR.STATE(1, derivativeCref.name, true), nothing,
                           IR.VariableAttributes(nestedArray(vcat(sizes, n - 1), IR.T_REAL(), guesses), nothing, nothing, nothing,
                                                 nothing, nothing, nothing, nothing, nothing),
                           IR.NO_DIRECTION, true, IR.NOT_CONNECTOR, IR.NO_SOURCE, :indexReduction)
-    local derivative = IR.Variable(derivativeCref, stateType, IR.STATE_DER(name), nothing,
+    local derivative::IR.Variable = IR.Variable(derivativeCref, stateType, IR.STATE_DER(name), nothing,
                                    IR.NO_ATTRIBUTES, IR.NO_DIRECTION, true, IR.NOT_CONNECTOR, IR.NO_SOURCE, :indexReduction)
     push!(new, x, derivative)
     push!(states, x)
@@ -330,7 +330,7 @@ function familyParts(f::SetFamily, k::Int, s::Structure, E::Elements, variables:
     local statements = IR.Statement[IR.ASSIGNMENT(aRef(j, c), IR.INTEGER(c == selects(d, j) ? 1 : 0), IR.NO_SOURCE)
                                     for j in 1:n-1 for c in 1:n]
     for (level, x) in zip(f.levels, states), j in 1:n-1
-      local state = IR.withLastSubscripts(x.cref, vcat(at, literal(j)))
+      local state::IR.ComponentRef = IR.withLastSubscripts(x.cref, vcat(at, literal(j)))
       push!(statements, IR.REINIT(state, elementOf(level.variables[selects(d, j)]), IR.NO_SOURCE))
     end
     push!(branches, IR.WhenBranch(IR.Expression[trigger], false, false, statements))

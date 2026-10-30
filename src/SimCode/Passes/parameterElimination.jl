@@ -494,7 +494,7 @@ function foldedObservations(simCode::SIM_CODE, dropped::Vector{String}, valueOf:
   local folded = Set{String}(simCode.foldedVariables)
   local names = String[n for n in dropped if n in folded]
   local ht = simCode.stringToSimVarHT
-  local equations = RESIDUAL_EQUATION[RESIDUAL_EQUATION(BINARY(EXP_CREF(SimCref(Symbol(n), Int[], last(ht[n]).cref), last(ht[n]).elementType), OP_SUB, valueOf(n)),
+  local equations::Vector{RESIDUAL_EQUATION} = RESIDUAL_EQUATION[RESIDUAL_EQUATION(BINARY(EXP_CREF(SimCref(Symbol(n), Int[], last(ht[n]).cref), last(ht[n]).elementType), OP_SUB, valueOf(n)),
                                                         NO_SOURCE, EQ_ATTR_DEFAULT) for n in names]
   return (names, equations)
 end

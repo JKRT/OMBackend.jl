@@ -149,7 +149,7 @@ reference: `\$DER.` before its name); its index.
 """
 function addDerivative!(s::Structure, v::Int)::Int
   s.derivative[v] == 0 || return s.derivative[v]
-  local d = addVariable!(s, IR.derivativeCref(s.crefs[v]))
+  local d::Int = addVariable!(s, IR.derivativeCref(s.crefs[v]))
   s.derivative[v] = d
   s.antiderivative[d] = v
   return d

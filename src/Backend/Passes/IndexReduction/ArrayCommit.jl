@@ -90,7 +90,7 @@ function arrayElementRef(name::Symbol, E::Elements, variables::IR.VariableSet)::
     local v = get(variables, name, nothing)
     return v === nothing ? IR.ComponentRef(name, IR.T_REAL()) : v.cref
   end
-  local (array, index) = element
+  local (array::Symbol, index::Vector{Int}) = element
   local arrayVariable::Union{Nothing, IR.Variable} = get(variables, array, nothing)
   (arrayVariable !== nothing && IR.isDerivativeCref(arrayVariable.cref)) &&
     return IR.withLastSubscripts(arrayVariable.cref, IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index])
@@ -417,14 +417,14 @@ function stateLinks(s::Structure, dummies::Set{Int}, E::Elements, derivatives::D
                        Symbol[array], Int[]))
     local derivative = get(derivatives, array, nothing)
     derivative === nothing && throw(NotHandled("the states of the array $(array), their derivatives not one array"))
-    local link = newVariable(IR.stateDerivativeCref(variables[array].cref), variables[array].ty)
+    local link::IR.Variable = newVariable(IR.stateDerivativeCref(variables[array].cref), variables[array].ty)
     push!(links, link)
     push!(variables, link)
     push!(equations, linkEquation(link, variables[derivative], E.sizes[array]))
   end
   for x in scalars
     local derivative = variables[s.variables[s.derivative[s.index[x]]]]
-    local link = newVariable(IR.stateDerivativeCref(variables[x].cref), IR.T_REAL())
+    local link::IR.Variable = newVariable(IR.stateDerivativeCref(variables[x].cref), IR.T_REAL())
     push!(links, link)
     push!(variables, link)
     push!(equations, IR.SCALAR_EQUATION(IR.CREF(link.cref, IR.T_REAL()), IR.CREF(derivative.cref, IR.T_REAL()), IR.T_REAL(),
