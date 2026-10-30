@@ -1671,23 +1671,52 @@ end
 """
     referenceProblems(model) -> Vector{Symbol}
 
-The references of `model` (its variables', and those its equations read) a part of which carries structure in its
-name: a `.` or `[` outside a quoted identifier (`'a.b'`). A reference is its parts and its flat name is derived from
-them (`flatName`), so no part may hide others or subscripts; the passes then never take a name apart.
+The references of `model` (its variables', those its equations read, an algorithm's outputs, a `reinit`'s state, a
+recompilation's components) a part of which carries structure in its name: a `.` or `[` outside a quoted identifier
+(`'a.b'`). A reference is its parts and its flat name is derived from them (`flatName`), so no part may hide others or
+subscripts; the passes then never take a name apart.
 """
 function referenceProblems(model::Model)::Vector{Symbol}
   local out::Vector{Symbol} = Symbol[]
-  local check = (c::ComponentRef) -> begin
-    for p in c.parts
-      local name::String = String(p.name)
-      (startswith(name, '\'') && endswith(name, '\'')) && continue
-      (occursin('.', name) || occursin('[', name)) && (c.name in out || push!(out, c.name); break)
-    end
-    nothing
-  end
-  foreach(v::Variable -> check(v.cref), model.variables)
+  local refs::Vector{ComponentRef} = ComponentRef[v.cref for v in model.variables]
   for p in Iterators.flatten((model.continuous, model.clocked)), eq in Iterators.flatten((p.equations, p.initialEquations))
-    foreachExp(x::Expression -> (x isa CREF && check(x.cref); nothing), eq)
+    foreachExp(x::Expression -> (x isa CREF && push!(refs, x.cref); nothing), eq)
+    eq isa ALGORITHM && (append!(refs, eq.outputs); statementReferences!(refs, eq.statements))
+    eq isa WHEN_EQUATION && foreach(b::WhenBranch -> statementReferences!(refs, b.body), eq.branches)
+  end
+  for c in refs
+    (structureInName(c) && !(c.name in out)) && push!(out, c.name)
+  end
+  return out
+end
+
+"Whether a part of `c` carries structure in its name: a `.` or `[` outside a quoted identifier (`referenceProblems`)."
+function structureInName(c::ComponentRef)::Bool
+  for p in c.parts
+    local name::String = String(p.name)
+    (startswith(name, '\'') && endswith(name, '\'')) && continue
+    (occursin('.', name) || occursin('[', name)) && return true
+  end
+  return false
+end
+
+"The references the statements `body` hold outside their expressions (a `reinit`'s state, a recompilation's components), nested bodies' too, pushed onto `out`."
+function statementReferences!(out::Vector{ComponentRef}, body::Vector{Statement})::Vector{ComponentRef}
+  for s in body
+    if s isa REINIT
+      push!(out, s.state)
+    elseif s isa RECOMPILATION
+      push!(out, s.component)
+    elseif s isa AGENTIC_RECOMPILATION
+      append!(out, s.components)
+    elseif s isa IF_STATEMENT
+      foreach(b::StatementBranch -> statementReferences!(out, b.body), s.branches)
+      statementReferences!(out, s.elseBody)
+    elseif s isa WHEN_STATEMENT
+      foreach(b::WhenBranch -> statementReferences!(out, b.body), s.branches)
+    elseif s isa Union{FOR_STATEMENT, WHILE_STATEMENT}
+      statementReferences!(out, s.body)
+    end
   end
   return out
 end

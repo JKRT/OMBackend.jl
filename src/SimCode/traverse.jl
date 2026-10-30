@@ -202,6 +202,31 @@ function elementRead(c::SimCref, index::Vector{Int})::SimCref
   return SimCref(c.sym, Int[c.subs; index], ref)
 end
 
+"""
+    statementExps!(out, body) -> Vector{Exp}
+
+The expressions of the statements `body`: their conditions, sides and values, a `reinit`'s state as a reference, a
+loop's range; nested bodies' too; pushed onto `out`.
+"""
+statementExps!(out::Vector{Exp}, body::Vector{Statement})::Vector{Exp} = (foreach(s::Statement -> statementExps!(out, s), body); out)
+statementExps!(out::Vector{Exp}, s::ASSIGN)::Vector{Exp} = push!(out, s.left, s.right)
+statementExps!(out::Vector{Exp}, s::REINIT)::Vector{Exp} = push!(out, EXP_CREF(s.stateVar, TYPE_REAL()), s.value)
+statementExps!(out::Vector{Exp}, s::NORETCALL)::Vector{Exp} = push!(out, s.exp)
+statementExps!(out::Vector{Exp}, s::ASSERT)::Vector{Exp} = push!(out, s.condition, s.message, s.level)
+statementExps!(out::Vector{Exp}, s::TERMINATE)::Vector{Exp} = push!(out, s.message)
+function statementExps!(out::Vector{Exp}, s::Union{IF, WHEN})::Vector{Exp}
+  for b in s.branches
+    push!(out, b.condition)
+    statementExps!(out, b.body)
+  end
+  s isa IF && statementExps!(out, s.elseBody)
+  return out
+end
+statementExps!(out::Vector{Exp}, s::FOR)::Vector{Exp} = (push!(out, s.iterator.range); statementExps!(out, s.body))
+statementExps!(out::Vector{Exp}, s::WHILE)::Vector{Exp} = (push!(out, s.condition); statementExps!(out, s.body))
+statementExps!(out::Vector{Exp}, s::RECOMPILATION)::Vector{Exp} = push!(out, EXP_CREF(s.componentToChange, TYPE_REAL()), s.newValue)
+statementExps!(out::Vector{Exp}, ::Statement)::Vector{Exp} = out
+
 "A reference's name: its symbol, with its Integer subscripts (`A[1][2]`)."
 crefName(c::SimCref)::String = isempty(c.subs) ? String(c.sym) : string(c.sym, join(("[$(i)]" for i in c.subs)))
 
