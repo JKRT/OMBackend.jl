@@ -217,13 +217,13 @@ end
 
 The reference to the element of the array variable `v` by `subscripts` (literals or expressions), on the parts
 whose types are arrays (`c[i].T` of the field `c.T` of a record array); of a derivative array on its last part
-(`IR.derivativeElement`: `\$DER.c.T[i]`).
+(`IR.withLastSubscripts`: `\$DER.c.T[i]`).
 """
 function distributedCref(v::IR.Variable, subscripts::Vector{IR.Subscript})::IR.ComponentRef
   if IR.isDerivativeCref(v.cref)
     local n::Int = length(IR.dimensions(v.ty))
     n == length(subscripts) || throw(NotHandled("the array $(v.name), its reference of $(n) dimensions, subscripted by $(length(subscripts))"))
-    return IR.derivativeElement(v.cref, subscripts)
+    return IR.withLastSubscripts(v.cref, subscripts)
   end
   local parts = IR.CrefPart[]
   local k = 0
@@ -289,7 +289,7 @@ function familyParts(f::SetFamily, k::Int, s::Structure, E::Elements, variables:
                         IR.VariableAttributes(aStart, IR.BOOLEAN(true), nothing, nothing, nothing, nothing, nothing, nothing, nothing),
                         IR.NO_DIRECTION, true, IR.NOT_CONNECTOR, IR.NO_SOURCE, :indexReduction)
   push!(new, A)
-  local aRef = (j::Int, c::Int) -> IR.CREF(withLastSubscripts(A.cref, vcat(at, literal(j, c))), IR.T_INTEGER())
+  local aRef = (j::Int, c::Int) -> IR.CREF(IR.withLastSubscripts(A.cref, vcat(at, literal(j, c))), IR.T_INTEGER())
   local elementOf = (array::Symbol) -> IR.CREF(distributedCref(variables[array], at), IR.T_REAL())
   local selection = (j::Int, arrays::Vector{Symbol}) -> foldl(plus, IR.Expression[times(aRef(j, c), elementOf(arrays[c])) for c in 1:n])
   local body = IR.Equation[]
@@ -305,16 +305,17 @@ function familyParts(f::SetFamily, k::Int, s::Structure, E::Elements, variables:
       local v = get(viewVariables, s.variables[s.antiderivative[candidates[selects(start, j)]]], nothing)
       push!(guesses, (v === nothing || v.attributes.start === nothing) ? IR.REAL(0.0) : arrayReferences(v.attributes.start, E, variables))
     end
-    local x = IR.Variable(cref, stateType, IR.STATE(1, IR.derivativeName(name), true), nothing,
+    local derivativeCref::IR.ComponentRef = IR.derivativeCref(cref)
+    local x = IR.Variable(cref, stateType, IR.STATE(1, derivativeCref.name, true), nothing,
                           IR.VariableAttributes(nestedArray(vcat(sizes, n - 1), IR.T_REAL(), guesses), nothing, nothing, nothing,
                                                 nothing, nothing, nothing, nothing, nothing),
                           IR.NO_DIRECTION, true, IR.NOT_CONNECTOR, IR.NO_SOURCE, :indexReduction)
-    local derivative = IR.Variable(IR.derivativeCref(x.cref), stateType, IR.STATE_DER(name), nothing,
+    local derivative = IR.Variable(derivativeCref, stateType, IR.STATE_DER(name), nothing,
                                    IR.NO_ATTRIBUTES, IR.NO_DIRECTION, true, IR.NOT_CONNECTOR, IR.NO_SOURCE, :indexReduction)
     push!(new, x, derivative)
     push!(states, x)
     for j in 1:n-1
-      local ref = (v::IR.Variable) -> IR.CREF(withLastSubscripts(v.cref, vcat(at, literal(j))), IR.T_REAL())
+      local ref = (v::IR.Variable) -> IR.CREF(IR.withLastSubscripts(v.cref, vcat(at, literal(j))), IR.T_REAL())
       push!(body, IR.SCALAR_EQUATION(ref(x), selection(j, level.variables), IR.T_REAL(), IR.NO_SOURCE, IR.DEFAULT_ATTRIBUTES))
       push!(body, IR.SCALAR_EQUATION(ref(derivative), selection(j, level.derivatives), IR.T_REAL(), IR.NO_SOURCE, IR.DEFAULT_ATTRIBUTES))
     end
@@ -329,7 +330,7 @@ function familyParts(f::SetFamily, k::Int, s::Structure, E::Elements, variables:
     local statements = IR.Statement[IR.ASSIGNMENT(aRef(j, c), IR.INTEGER(c == selects(d, j) ? 1 : 0), IR.NO_SOURCE)
                                     for j in 1:n-1 for c in 1:n]
     for (level, x) in zip(f.levels, states), j in 1:n-1
-      local state = withLastSubscripts(x.cref, vcat(at, literal(j)))
+      local state = IR.withLastSubscripts(x.cref, vcat(at, literal(j)))
       push!(statements, IR.REINIT(state, elementOf(level.variables[selects(d, j)]), IR.NO_SOURCE))
     end
     push!(branches, IR.WhenBranch(IR.Expression[trigger], false, false, statements))

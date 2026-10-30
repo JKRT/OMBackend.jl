@@ -129,10 +129,8 @@ function rowMajor(sizes::Vector{Int})::Vector{Vector{Int}}
   end
 end
 
-"The flat name of `cref` without its subscripts (`c[2].p.T` and `c.p.T[2]` are `c.p.T`; a slice's part keeps its inner ones, `T_SLICE`)."
-unsubscriptedName(cref::IR.ComponentRef)::Symbol =
-  (length(cref.parts) == 1 && !(cref.parts[1].ty isa IR.T_SLICE)) ? cref.parts[1].name :
-    IR.ComponentRef(IR.CrefPart[IR.CrefPart(p.name, IR.Subscript[], p.ty) for p in cref.parts]).name
+"The flat name of `cref` without its subscripts (`c[2].p.T` and `c.p.T[2]` are `c.p.T`; a slice's part keeps its inner ones, `T_SLICE`): the name of the variable it reads."
+unsubscriptedName(cref::IR.ComponentRef)::Symbol = IR.hasSubscripts(cref) ? IR.withoutSubscripts(cref).name : cref.name
 
 "The subscripts of all parts of `cref`, in order (`c[2].v[3]`: 2, 3): those of the element of an array variable it names."
 allSubscripts(cref::IR.ComponentRef)::Vector{IR.Subscript} = IR.Subscript[s for p in cref.parts for s in p.subscripts]
@@ -219,15 +217,15 @@ function crefsOverlap(a::IR.ComponentRef, b::IR.ComponentRef)::Bool
 end
 
 "The references `e` reads, those inside `pre()` (values before the event) left out."
-function crefsReadOutsidePre(e::IR.Expression)::Vector{IR.ComponentRef}
-  local out::Vector{IR.ComponentRef} = IR.ComponentRef[]
-  local visit
-  visit = x -> begin
-    IR.isBuiltinCall(x, :pre) && return
-    x isa IR.CREF && push!(out, x.cref)
-    foreach(visit, IR.children(x))
+crefsReadOutsidePre(e::IR.Expression)::Vector{IR.ComponentRef} = crefsReadOutsidePre!(IR.ComponentRef[], e)
+
+"The references `e` reads outside `pre()`, pushed onto `out`."
+function crefsReadOutsidePre!(out::Vector{IR.ComponentRef}, e::IR.Expression)::Vector{IR.ComponentRef}
+  IR.isBuiltinCall(e, :pre) && return out
+  e isa IR.CREF && push!(out, e.cref)
+  for c::IR.Expression in IR.children(e)
+    crefsReadOutsidePre!(out, c)
   end
-  visit(e)
   return out
 end
 
@@ -271,8 +269,9 @@ function legacyName(cref::IR.ComponentRef)::String
   for (i, p) in enumerate(cref.parts)
     i > 1 && print(io, '_')
     #= a part of rolled components by a literal index: the member (`cylinder3`), as `flatName` =#
-    if p.ty isa IR.T_COMPONENTS && length(p.subscripts) == 1 && p.subscripts[1] isa IR.INDEX && (p.subscripts[1]::IR.INDEX).exp isa IR.INTEGER
-      print(io, p.ty.members[((p.subscripts[1]::IR.INDEX).exp::IR.INTEGER).value])
+    local member::Union{Nothing, Symbol} = IR.memberName(p)
+    if member !== nothing
+      print(io, member)
       continue
     end
     print(io, p.name)

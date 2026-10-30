@@ -275,7 +275,7 @@ function simCrefExp(names::Names, cref::IR.ComponentRef, ty::IR.ModelicaType)::E
     selected === nothing || return selected
   end
   local last = cref.parts[end]
-  local baseCref = IR.ComponentRef(IR.CrefPart[cref.parts[1:end-1]..., IR.CrefPart(last.name, IR.Subscript[], last.ty)])
+  local baseCref::IR.ComponentRef = IR.withoutLastSubscripts(cref)
   local base = simName(names, baseCref)
   if !(base in names.known)
     local field = recordFieldExp(names, cref)
@@ -287,11 +287,10 @@ function simCrefExp(names::Names, cref::IR.ComponentRef, ty::IR.ModelicaType)::E
   #= a scalar subscripted by ones is the scalar: the frontend's equations of expandable
      connectors' scalar signals (`bus2.y1[1] = two.bus.y1[1]`, Buildings' Templates) =#
   (base in names.scalars && all(p -> isempty(p.subscripts), @view cref.parts[1:end-1]) &&
-   all(s -> s isa IR.INDEX && s.exp isa IR.INTEGER && s.exp.value == 1, last.subscripts)) &&
+   all(s -> IR.literalIndex(s) == 1, last.subscripts)) &&
     return EXP_CREF(SimCref(Symbol(base), Int[], baseCref), simType(ty))
-  if all(s -> s isa IR.INDEX && s.exp isa IR.INTEGER, last.subscripts)
-    return EXP_CREF(SimCref(Symbol(base), Int[s.exp.value for s in last.subscripts], cref), simType(ty))
-  end
+  local index::Union{Nothing, Vector{Int}} = IR.literalIndices(last.subscripts)
+  index === nothing || return EXP_CREF(SimCref(Symbol(base), index, cref), simType(ty))
   all(s -> s isa IR.INDEX && s.exp isa Union{IR.INTEGER, IR.ENUM_LITERAL}, last.subscripts) &&
     return EXP_CREF(SimCref(Symbol(full), Int[], cref), simType(ty))
   return ASUB(EXP_CREF(SimCref(Symbol(base), Int[], baseCref), simType(last.ty)), Exp[subscriptExp(names, s) for s in last.subscripts])
@@ -350,9 +349,13 @@ function variablesBySubscript(names::Names, cref::IR.ComponentRef, ty::IR.Modeli
   local withIndex = i -> IR.ComponentRef(IR.CrefPart[q == p ?
     IR.CrefPart(part.name, IR.Subscript[j == k ? IR.INDEX(IR.INTEGER(i)) : s for (j, s) in enumerate(part.subscripts)], part.ty) :
     part for (q, part) in enumerate(cref.parts)])
-  local elements = Exp[]
-  while simName(names, withIndex(length(elements) + 1)) in names.known
-    push!(elements, EXP_CREF(SimCref(Symbol(simName(names, withIndex(length(elements) + 1))), Int[], withIndex(length(elements) + 1)), simType(ty)))
+  local elementTy::SType = simType(ty)
+  local elements::Vector{Exp} = Exp[]
+  while true
+    local ref::IR.ComponentRef = withIndex(length(elements) + 1)
+    local key::String = simName(names, ref)
+    key in names.known || break
+    push!(elements, EXP_CREF(SimCref(Symbol(key), Int[], ref), elementTy))
   end
   isempty(elements) && return nothing
   return ASUB(ARRAY_EXP(TYPE_ARRAY(simType(ty), Int[length(elements)]), true, elements), Exp[simExp(names, index)])

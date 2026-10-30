@@ -346,7 +346,7 @@ end
     @test _IRM.operand(d) == c && _IRM.operand(c) === nothing && !_IRM.isDerivativeCref(c)
     @test _IRM.derivativeCref(d).name === Symbol("\$DER.\$DER.c.T") && _IRM.operand(_IRM.derivativeCref(d)) == d
     @test _IRM.stateDerivativeCref(c).name === Symbol("\$STATEDER.c.T") && _IRM.stateDerivativeCref(c).parts[1].ty isa _IRM.T_STATEDER
-    local element::_IRM.ComponentRef = _IRM.derivativeElement(d, _IRM.Subscript[_IRM.INDEX(_IRM.INTEGER(2))])
+    local element::_IRM.ComponentRef = _IRM.withLastSubscripts(d, _IRM.Subscript[_IRM.INDEX(_IRM.INTEGER(2))])
     @test element.name === Symbol("\$DER.c.T[2]") && _IRM.variableName(element, n::Symbol -> n === d.name) === d.name
     #= every derivative variable and every reference to one by its parts: scalar states, state sets, the array form
        (its derivative arrays, the links' arrays, scalarized), rolled components =#

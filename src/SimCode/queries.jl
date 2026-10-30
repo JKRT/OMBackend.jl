@@ -130,7 +130,7 @@ function fieldCref(ref::IR.ComponentRef, f::AbstractString)::IR.ComponentRef
     local i::Union{Nothing, Int} = findfirst(fl::IR.Field -> fl.name === name, record.fields)
     i === nothing || (ty = record.fields[i].ty)
   end
-  return IR.ComponentRef(IR.CrefPart[ref.parts; IR.CrefPart(name, IR.Subscript[], ty)])
+  return IR.withField(ref, name, ty)
 end
 
 "The expressions of an equation (its sides; a residual's expression)."
@@ -169,13 +169,7 @@ The name of the array the reference `ref` is an element of, as the scalarized mo
 its first part with subscripts, without them (`x` of `x[1,2]`, `c` of `c[2].T`); a rolled component's member by its
 literal index (`cylinder3`) is a name there, not a subscript; `ref`'s own name where it has none.
 """
-function arrayBase(ref::IR.ComponentRef)::Symbol
-  for (k, p) in enumerate(ref.parts)
-    (isempty(p.subscripts) || isMemberPart(p)) && continue
-    return IR.ComponentRef(IR.CrefPart[ref.parts[1:k - 1]; IR.CrefPart(p.name, IR.Subscript[], p.ty)]).name
-  end
-  return ref.name
-end
+arrayBase(ref::IR.ComponentRef)::Symbol = IR.upToFirstSubscripted(ref).name
 
 "Whether the reference names an element of an array (`arrayBase` is not its own name)."
 isElementCref(ref::IR.ComponentRef)::Bool = arrayBase(ref) !== ref.name
@@ -187,9 +181,6 @@ isComplexPartCref(ref::IR.ComponentRef)::Bool =
 "Whether the variable `name` of `ht` is an element of an array (by its reference, `isElementCref`)."
 isElementVariable(ht::HT, name::String)::Bool = (local sv = last(ht[name]); sv.cref !== nothing && isElementCref(sv.cref))
 
-"Whether `p` is a rolled component's member by its literal index (`T_COMPONENTS`): named as the member."
-isMemberPart(p::IR.CrefPart)::Bool =
-  p.ty isa IR.T_COMPONENTS && length(p.subscripts) == 1 && p.subscripts[1] isa IR.INDEX && (p.subscripts[1]::IR.INDEX).exp isa IR.INTEGER
 
 """
     elementIndex(ref, array) -> Union{Nothing, Vector{Int}}
@@ -202,12 +193,7 @@ function elementIndex(ref::IR.ComponentRef, array::IR.ComponentRef)::Union{Nothi
   (length(ref.parts) == n && isempty(array.parts[n].subscripts) && ref.parts[n].name === array.parts[n].name &&
    !isempty(ref.parts[n].subscripts)) || return nothing
   (n == 1 || IR.ComponentRef(ref.parts[1:n - 1]) == IR.ComponentRef(array.parts[1:n - 1])) || return nothing
-  local index::Vector{Int} = Int[]
-  for s in ref.parts[n].subscripts
-    (s isa IR.INDEX && (s::IR.INDEX).exp isa IR.INTEGER) || return nothing
-    push!(index, ((s::IR.INDEX).exp::IR.INTEGER).value)
-  end
-  return index
+  return IR.literalIndices(ref.parts[n].subscripts)
 end
 
 """

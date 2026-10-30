@@ -189,7 +189,7 @@ elements of the array `of` it is the derivative of (`\$DER.x[2]`), which `E` has
 function addDerivedElements!(E::Elements, v::IR.Variable, operator::IR.CrefPart, of::Symbol)::Nothing
   local sizes = knownSizes(v.ty, "the array $(v.name)")
   sizes == E.sizes[of] || throw(NotHandled("the array $(v.name) of other dimensions than $(of)'s"))
-  addElements!(E, v, sizes, IR.ComponentRef[IR.ComponentRef(IR.CrefPart[operator; E.crefs[e].parts]) for e in E.elements[of]])
+  addElements!(E, v, sizes, IR.ComponentRef[IR.withOperator(operator, E.crefs[e]) for e in E.elements[of]])
   return nothing
 end
 
@@ -296,7 +296,7 @@ A reference in `e` to an array that the scalarized model has as elements only, b
 function danglingReference(e::IR.Expression, E::Elements)::Union{Nothing, Symbol}
   local found = Ref{Union{Nothing, Symbol}}(nothing)
   IR.foreachExp(e) do x
-    (found[] === nothing && x isa IR.CREF && IR.hasSubscripts(x.cref) && literalIndices(allSubscripts(x.cref)) === nothing &&
+    (found[] === nothing && x isa IR.CREF && IR.hasSubscripts(x.cref) && IR.literalIndices(allSubscripts(x.cref)) === nothing &&
      haskey(E.sizes, unsubscriptedName(x.cref))) && (found[] = x.cref.name)
     nothing
   end
@@ -339,7 +339,7 @@ end
 subscript in turn; `cos({a, b})[2]` is `cos(b)`, an element-wise built-in); subscripted where it is not.
 """
 function pickElement(e::IR.Expression, subscripts::Vector{IR.Subscript}, ty::IR.ModelicaType, E::Elements)::IR.Expression
-  local index = literalIndices(subscripts)
+  local index = IR.literalIndices(subscripts)
   if e isa IR.ARRAY_CONSTRUCTOR && index !== nothing
     local body = constructorElement(e, index[1])
     if body !== nothing
@@ -368,12 +368,12 @@ subscripts are literals (`pickElement`).
 function scalarExpression(e::IR.Expression, values::Dict{Symbol, Int}, E::Elements)::IR.Expression
   #= an element of an array literal (a table of pivots, a binding) picked before its other elements are mapped =#
   local pruned = IR.mapExpTopDown(withIterators(e, values)) do x
-    (x isa IR.SUBSCRIPTED && x.exp isa IR.ARRAY && literalIndices(x.subscripts) !== nothing) || return (x, true)
+    (x isa IR.SUBSCRIPTED && x.exp isa IR.ARRAY && IR.literalIndices(x.subscripts) !== nothing) || return (x, true)
     return (selectElement(x.exp, x.subscripts, x.ty), true)
   end
   return IR.mapExp(pruned) do x
     x isa IR.CREF && return elementReference(x, E)
-    (x isa IR.SUBSCRIPTED && literalIndices(x.subscripts) !== nothing) && return pickElement(x.exp, x.subscripts, x.ty, E)
+    (x isa IR.SUBSCRIPTED && IR.literalIndices(x.subscripts) !== nothing) && return pickElement(x.exp, x.subscripts, x.ty, E)
     (x isa IR.BINARY && x.op == IR.SCALAR_PRODUCT) && return expandedScalarProduct(x, E)
     return x
   end

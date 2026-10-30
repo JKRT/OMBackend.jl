@@ -103,7 +103,7 @@ end
 
 "Whether a reference has a subscript that is no Integer literal (an enumeration's or Boolean's literal)."
 nonIntegerSubscripted(ref::IR.ComponentRef)::Bool =
-  any(p::IR.CrefPart -> any(s::IR.Subscript -> !(s isa IR.INDEX && (s::IR.INDEX).exp isa IR.INTEGER), p.subscripts), ref.parts)
+  any(p::IR.CrefPart -> any(s::IR.Subscript -> IR.literalIndex(s) === nothing, p.subscripts), ref.parts)
 
 """
     dynamicallyIndexedElements!(names, simCode, dynamic)

@@ -23,7 +23,7 @@ import OMBackend
        on its last part =#
     local element = IRp.ComponentRef(IRp.CrefPart[IRp.CrefPart(G.name, IRp.Subscript[IRp.INDEX(IRp.INTEGER(2))], G.ty); slice.parts[2:end]])
     @test element.name === Symbol("b.f.T[2,1]") && P.unsubscriptedName(element) === slice.name
-    @test IRp.derivativeElement(IRp.derivativeCref(slice), IRp.Subscript[IRp.INDEX(IRp.INTEGER(2))]).name === Symbol("\$DER.a|b.f.T[2,1][2]")
+    @test IRp.withLastSubscripts(IRp.derivativeCref(slice), IRp.Subscript[IRp.INDEX(IRp.INTEGER(2))]).name === Symbol("\$DER.a|b.f.T[2,1][2]")
   end
 
   @testset "references overlap by their parts" begin

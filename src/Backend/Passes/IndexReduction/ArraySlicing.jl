@@ -229,10 +229,10 @@ function slicedCref(cref::IR.ComponentRef, isVariable::Function)::Union{Nothing,
   local last::IR.CrefPart = cref.parts[end]
   for j in 0:length(last.subscripts) - 1
     local textual::Vector{IR.Subscript} = last.subscripts[j + 1:end]
-    all(s::IR.Subscript -> s isa IR.INDEX && (s::IR.INDEX).exp isa IR.INTEGER, textual) || continue
-    local inner::Vector{Int} = Int[((s::IR.INDEX).exp::IR.INTEGER).value for s in textual]
-    local candidate::IR.ComponentRef = IR.ComponentRef(IR.CrefPart[cref.parts[1:end - 1]..., IR.CrefPart(last.name, last.subscripts[1:j], IR.T_SLICE(inner, last.ty))])
-    isVariable(IR.hasSubscripts(candidate) ? unsubscriptedName(candidate) : candidate.name) && return candidate
+    local inner::Union{Nothing, Vector{Int}} = IR.literalIndices(textual)
+    inner === nothing && continue
+    local candidate::IR.ComponentRef = IR.ComponentRef(IR.CrefPart[cref.parts[1:end - 1]; IR.CrefPart(last.name, last.subscripts[1:j], IR.T_SLICE(inner, last.ty))])
+    isVariable(unsubscriptedName(candidate)) && return candidate
   end
   return nothing
 end
@@ -281,7 +281,7 @@ function slicedEquation(eq::IR.Equation, family::Dict{Symbol, Vector{Int}},
     reads = true
     local subscripts::Vector{IR.Subscript} = allSubscripts(x.cref)
     for s in subscripts[min(2, end + 1):end]
-      (s isa IR.INDEX && (s::IR.INDEX).exp isa IR.INTEGER) && continue
+      IR.literalIndex(s) !== nothing && continue
       IR.foreachExp(y::IR.Expression -> ((y isa IR.CREF && length(y.cref.parts) == 1 && !IR.hasSubscripts(y.cref)) && push!(iterators, y.cref.name); nothing),
                     (s::IR.INDEX).exp)
     end
@@ -323,7 +323,7 @@ subscripts follow); NotHandled for another (a whole array, an inner subscript no
 """
 function slicedReference(x::IR.Expression, family::Dict{Symbol, Vector{Int}})::IR.Expression
   #= the array literal of slices a part became, at literal subscripts (an unrolled `R.T[2, \$i1]`): the element =#
-  (x isa IR.SUBSCRIPTED && x.exp isa IR.ARRAY && literalIndices(x.subscripts) !== nothing) &&
+  (x isa IR.SUBSCRIPTED && x.exp isa IR.ARRAY && IR.literalIndices(x.subscripts) !== nothing) &&
     return foldTree(selectElement(x.exp, x.subscripts, x.ty))
   x isa IR.CREF || return x
   local name::Symbol = IR.hasSubscripts(x.cref) ? unsubscriptedName(x.cref) : x.cref.name
@@ -336,7 +336,7 @@ function slicedReference(x::IR.Expression, family::Dict{Symbol, Vector{Int}})::I
   local sliceRef::Function = (t::Vector{Int}) -> begin
     local last::IR.CrefPart = x.cref.parts[end]
     local slice::IR.CrefPart = IR.CrefPart(last.name, IR.Subscript[], IR.T_SLICE(t, last.ty))
-    #= a derivative's slice (one of one part too) subscripted on its last part (`IR.derivativeElement`), another's on
+    #= a derivative's slice (one of one part too) subscripted on its last part (`IR.withLastSubscripts`), another's on
        its first (the instance) =#
     local cref::IR.ComponentRef = (IR.isDerivativeCref(x.cref) || length(x.cref.parts) == 1) ?
       IR.ComponentRef(IR.CrefPart[x.cref.parts[1:end - 1]; IR.CrefPart(slice.name, IR.Subscript[instance], slice.ty)]) :
@@ -344,11 +344,8 @@ function slicedReference(x::IR.Expression, family::Dict{Symbol, Vector{Int}})::I
     IR.CREF(cref, element)
   end
   if length(subscripts) == 1 + length(sizes)
-    local t::Vector{Int} = Int[]
-    for s in subscripts[2:end]
-      (s isa IR.INDEX && (s::IR.INDEX).exp isa IR.INTEGER) || throw(NotHandled("the split array $(name) by an inner subscript not literal"))
-      push!(t, ((s::IR.INDEX).exp::IR.INTEGER).value)
-    end
+    local t::Union{Nothing, Vector{Int}} = IR.literalIndices(subscripts[2:end])
+    t === nothing && throw(NotHandled("the split array $(name) by an inner subscript not literal"))
     return sliceRef(t)
   end
   length(subscripts) == 1 || throw(NotHandled("the split array $(name) partly subscripted"))

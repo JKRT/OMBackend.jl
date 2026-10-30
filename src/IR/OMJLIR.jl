@@ -50,7 +50,7 @@ Conventions:
 - A variable's name is its flat Modelica name (`:x`, `Symbol("a.b")`,
   `Symbol("r[2].v")` for an element of a scalarized array of records). A component reference
   is that name and the subscripts selecting elements of an array variable (`x[i]`).
-- The derivative of a state `x` is a variable of its own, `\$DER.x` (`derivativeName`), of
+- The derivative of a state `x` is a variable of its own, `\$DER.x` (`derivativeCref`), of
   kind `STATE_DER`; `der(x)` in an equation is a reference to it. A state and its derivative
   name each other (`STATE.derivative`, `STATE_DER.state`). With the derivatives as unknowns
   and the states as knowns, a partition's structure (adjacency, matching, strong components)
@@ -264,7 +264,7 @@ end
 The type of the first part of a derivative variable's reference, `\$DER` (`derivativeCref`): the variable is the
 derivative of the reference of the parts after it (`operand`). The parts are joined as any (`flatName`), so the name
 is `\$DER.` before the operand's (`\$DER.x`, `\$DER.c[2].T`); a reference into a derivative array has its subscripts
-on its last part (`derivativeElement`: `\$DER.c.T[i]` of `der(c[i].T)`).
+on its last part (`withLastSubscripts`: `\$DER.c.T[i]` of `der(c[i].T)`).
 """
 struct T_DER <: ModelicaType end
 
@@ -356,7 +356,8 @@ variable `x` is the variable subscripted (`variableName`).
 
 Two references are equal when their names are: the parts are for the passes that rewrite
 subscripts (an algorithm's loop over a scalarized array reads `x[i]`, then `x[2]`).
-`ComponentRef(name)` is a reference of one part, for the names the backend makes (`\$DER.x`).
+`ComponentRef(name)` is a reference of one part (a name without structure: an auxiliary variable the backend makes);
+a reference with structure is built from its parts (`derivativeCref`, `withField`, `appendSubscripts`).
 """
 struct ComponentRef <: Node
   parts::Vector{CrefPart}
@@ -380,7 +381,7 @@ hasSubscripts(c::ComponentRef)::Bool = any(p -> !isempty(p.subscripts), c.parts)
 function variableName(c::ComponentRef, isVariable::F)::Symbol where {F}
   isVariable(c.name) && return c.name
   isempty(c.parts[end].subscripts) && return c.name
-  return flatName(CrefPart[c.parts[1:end - 1]..., CrefPart(c.parts[end].name, Subscript[], c.parts[end].ty)])
+  return withoutLastSubscripts(c).name
 end
 
 "Subscript by an index expression: `x[i]`."
@@ -1116,15 +1117,11 @@ isDiscrete(v::Variable)::Bool = v.kind isa DISCRETE || v.kind isa CLOCKED_STATE
 "A variable whose value is not computed from the equations: a parameter or a constant."
 isKnown(v::Variable)::Bool = v.kind isa PARAMETER || v.kind isa CONSTANT
 
-"The name of the derivative variable of the state `state`: `\$DER.state`."
-derivativeName(state::Symbol)::Symbol = Symbol("\$DER.", state)
-
 "The reference of the derivative variable of the variable `c` names: a part `\$DER` (T_DER) before `c`'s parts."
-derivativeCref(c::ComponentRef)::ComponentRef = ComponentRef(CrefPart[CrefPart(Symbol("\$DER"), Subscript[], T_DER()); c.parts])
+derivativeCref(c::ComponentRef)::ComponentRef = withOperator(CrefPart(Symbol("\$DER"), Subscript[], T_DER()), c)
 
 "The reference of a selected state's own derivative (index reduction's link): a part `\$STATEDER` (T_STATEDER) before the state's parts."
-stateDerivativeCref(c::ComponentRef)::ComponentRef =
-  ComponentRef(CrefPart[CrefPart(Symbol("\$STATEDER"), Subscript[], T_STATEDER()); c.parts])
+stateDerivativeCref(c::ComponentRef)::ComponentRef = withOperator(CrefPart(Symbol("\$STATEDER"), Subscript[], T_STATEDER()), c)
 
 "Whether `c` is a derivative's reference (`\$DER.x`, `\$STATEDER.x`): its first part of type T_DER or T_STATEDER."
 isDerivativeCref(c::ComponentRef)::Bool = c.parts[1].ty isa Union{T_DER, T_STATEDER}
@@ -1132,14 +1129,89 @@ isDerivativeCref(c::ComponentRef)::Bool = c.parts[1].ty isa Union{T_DER, T_STATE
 "The reference a derivative's reference is of (`x` of `\$DER.x`, `\$DER.x` of `\$DER.\$DER.x`); `nothing` for another."
 operand(c::ComponentRef)::Union{Nothing, ComponentRef} = isDerivativeCref(c) ? ComponentRef(c.parts[2:end]) : nothing
 
-"""
-    derivativeElement(d, subscripts) -> ComponentRef
+#= ==================================================================================== =#
+#= References built from references                                                     =#
+#= ==================================================================================== =#
 
-The element at `subscripts` of the derivative array `d` (`derivativeCref` of an array's reference): the subscripts on
-its last part, as every reference into a derivative array (`\$DER.c.T[i]` of `der(c[i].T)`).
+"The operator part `op` (`\$DER`, `\$STATEDER`) before the parts of `c`."
+withOperator(op::CrefPart, c::ComponentRef)::ComponentRef = ComponentRef(CrefPart[op; c.parts])
+
+"The position of the first part of `c` after its derivative parts (2 of `\$DER.x`, 3 of `\$DER.\$DER.x`, 1 of `x`)."
+function operandStart(c::ComponentRef)::Int
+  local k::Int = 1
+  while k < length(c.parts) && c.parts[k].ty isa Union{T_DER, T_STATEDER}
+    k += 1
+  end
+  return k
+end
+
+"`base` under the derivative parts of `like` (`\$DER.b` of `\$DER.a` and `b`; `base` itself if `like` has none)."
+withOperatorsOf(like::ComponentRef, base::ComponentRef)::ComponentRef =
+  ComponentRef(CrefPart[like.parts[1:operandStart(like) - 1]; base.parts])
+
 """
-derivativeElement(d::ComponentRef, subscripts::Vector{Subscript})::ComponentRef =
-  ComponentRef(CrefPart[d.parts[1:end - 1]; CrefPart(d.parts[end].name, subscripts, d.parts[end].ty)])
+`c` with the subscripts of its last part replaced by `subscripts` (`x[2]` of `x[1]`): an element of an array variable
+or of a derivative array (`\$DER.c.T[i]` of `der(c[i].T)`: the subscripts on its last part).
+"""
+withLastSubscripts(c::ComponentRef, subscripts::Vector{Subscript})::ComponentRef =
+  ComponentRef(CrefPart[c.parts[1:end - 1]; CrefPart(c.parts[end].name, subscripts, c.parts[end].ty)])
+
+"`c` with `subscripts` after its last part's own (`x[1]` of `x`, `x[1,2]` of `x[1]`)."
+appendSubscripts(c::ComponentRef, subscripts::Vector{Subscript})::ComponentRef =
+  withLastSubscripts(c, Subscript[c.parts[end].subscripts; subscripts])
+
+"`c` without its last part's subscripts (`a[1].x` of `a[1].x[2]`)."
+withoutLastSubscripts(c::ComponentRef)::ComponentRef = withLastSubscripts(c, Subscript[])
+
+"`c` without the subscripts of its parts (`a.x` of `a[1].x[2]`; a slice's part keeps its inner ones, `T_SLICE`)."
+withoutSubscripts(c::ComponentRef)::ComponentRef = ComponentRef(CrefPart[CrefPart(p.name, Subscript[], p.ty) for p in c.parts])
+
+"The field `name`, of type `ty`, of the record reference `c` (`r.f`)."
+withField(c::ComponentRef, name::Symbol, ty::ModelicaType)::ComponentRef = ComponentRef(CrefPart[c.parts; CrefPart(name, Subscript[], ty)])
+
+"""
+    upToFirstSubscripted(c) -> ComponentRef
+
+`c` up to its first part with subscripts, without them (`x` of `x[1,2]`, `c` of `c[2].T`): the array an element is of,
+as the scalarized model names its elements. A rolled component's member by its literal index (`memberName`) is a
+name, not a subscript. `c` itself where no part has subscripts.
+"""
+function upToFirstSubscripted(c::ComponentRef)::ComponentRef
+  for (k::Int, p::CrefPart) in enumerate(c.parts)
+    (isempty(p.subscripts) || memberName(p) !== nothing) && continue
+    return ComponentRef(CrefPart[c.parts[1:k - 1]; CrefPart(p.name, Subscript[], p.ty)])
+  end
+  return c
+end
+
+"The value of a literal Integer subscript (`x[2]`: 2); `nothing` for another."
+function literalIndex(s::Subscript)::Union{Nothing, Int}
+  s isa INDEX || return nothing
+  local e::Expression = s.exp
+  return e isa INTEGER ? e.value : nothing
+end
+
+"The literal Integer indices of `subscripts` (`literalIndex`); `nothing` if one is not."
+function literalIndices(subscripts::Vector{Subscript})::Union{Nothing, Vector{Int}}
+  local out::Vector{Int} = Vector{Int}(undef, length(subscripts))
+  for (k::Int, s::Subscript) in enumerate(subscripts)
+    local i::Union{Nothing, Int} = literalIndex(s)
+    i === nothing && return nothing
+    out[k] = i
+  end
+  return out
+end
+
+"""
+The member a rolled component's part names by its literal index (`cylinder3` of the part `cylinder1|...|cylinder6`
+of type `T_COMPONENTS` subscripted `[3]`); `nothing` for another part.
+"""
+function memberName(p::CrefPart)::Union{Nothing, Symbol}
+  local t::ModelicaType = p.ty
+  (t isa T_COMPONENTS && length(p.subscripts) == 1) || return nothing
+  local k::Union{Nothing, Int} = literalIndex(p.subscripts[1])
+  return k === nothing ? nothing : t.members[k]
+end
 
 "The derivative variable of the state `state` in `set`; `nothing` before it is introduced."
 function derivativeOf(set::VariableSet, state::Symbol)::Union{Nothing, Variable}
@@ -1402,11 +1474,14 @@ end
 "The element type of an array type; a scalar type itself."
 elementType(ty::T_ARRAY)::ModelicaType = ty.elementType
 elementType(ty::T_COMPONENTS)::ModelicaType = T_CLASS(ty.cls)
+elementType(ty::T_SLICE)::ModelicaType = elementType(ty.of)
 elementType(ty::ModelicaType)::ModelicaType = ty
 
 "The dimensions of an array type; none for a scalar type."
 dimensions(ty::T_ARRAY)::Vector{Dimension} = ty.dimensions
 dimensions(ty::T_COMPONENTS)::Vector{Dimension} = Dimension[DIM_SIZE(length(ty.members))]
+"A slice's: the dimensions of the array it is of without the inner ones its subscripts fix (`T_SLICE`)."
+dimensions(ty::T_SLICE)::Vector{Dimension} = dimensions(ty.of)[1:end - length(ty.inner)]
 dimensions(::ModelicaType)::Vector{Dimension} = Dimension[]
 
 isArray(ty::ModelicaType)::Bool = ty isa T_ARRAY
@@ -1698,8 +1773,9 @@ function flatName(parts::Vector{CrefPart})::Symbol
   local io = IOBuffer()
   for (i, p) in enumerate(parts)
     i > 1 && print(io, '.')
-    if p.ty isa T_COMPONENTS && length(p.subscripts) == 1 && p.subscripts[1] isa INDEX && (p.subscripts[1]::INDEX).exp isa INTEGER
-      print(io, p.ty.members[((p.subscripts[1]::INDEX).exp::INTEGER).value])
+    local member::Union{Nothing, Symbol} = memberName(p)
+    if member !== nothing
+      print(io, member)
       continue
     end
     print(io, p.name)

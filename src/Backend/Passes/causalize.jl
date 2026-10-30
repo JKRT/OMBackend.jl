@@ -198,12 +198,7 @@ The name of the array the previous backend took an element to be of: its name up
 first subscript, of an element whose last part has subscripts (`x[2]` of `x`, `a.x[2]` of
 `a.x`, `a[1].x[2]` of `a`); the reference's own name otherwise.
 """
-function elementBase(cref::IR.ComponentRef)::Symbol
-  isempty(IR.subscripts(cref)) && return cref.name
-  local k = findfirst(p -> !isempty(p.subscripts), cref.parts)
-  local parts = IR.CrefPart[cref.parts[1:k-1]..., IR.CrefPart(cref.parts[k].name, IR.Subscript[], cref.parts[k].ty)]
-  return IR.ComponentRef(parts).name
-end
+elementBase(cref::IR.ComponentRef)::Symbol = isempty(IR.subscripts(cref)) ? cref.name : IR.upToFirstSubscripted(cref).name
 
 """
     addAssignedNames!(names, body, candidates; nested)
@@ -385,7 +380,7 @@ function runtimeIndexChoice(e::IR.Expression, iterators::Set{Symbol})::IR.Expres
   (ty isa IR.T_ARRAY && length(ty.dimensions) == 1 && ty.dimensions[1] isa IR.DIM_SIZE) || return e
   local n = ty.dimensions[1].size
   n > 0 || return e
-  local element = k -> IR.CREF(IR.ComponentRef(IR.CrefPart[e.cref.parts[1:end-1]...,
+  local element = k -> IR.CREF(IR.ComponentRef(IR.CrefPart[e.cref.parts[1:end-1];
                                                            IR.CrefPart(last.name, IR.Subscript[IR.INDEX(IR.INTEGER(k))], ty)]),
                                ty.elementType)
   local choice::IR.Expression = element(n)
@@ -422,7 +417,7 @@ function resolveBindingReferences!(variables::IR.VariableSet)::Nothing
     local changed = false
     for v in variables
       v.binding isa IR.CREF || continue
-      local target = legacyName(withoutLastSubscripts(v.binding.cref))
+      local target = legacyName(IR.withoutLastSubscripts(v.binding.cref))
       isTunableParameter(target) && continue
       local b::Union{Nothing, IR.Expression} = get(bindings, target, nothing)
       (b === nothing || b isa IR.CREF) && continue
@@ -439,8 +434,6 @@ function resolveBindingReferences!(variables::IR.VariableSet)::Nothing
   return nothing
 end
 
-withoutLastSubscripts(cref::IR.ComponentRef)::IR.ComponentRef =
-  IR.ComponentRef(IR.CrefPart[cref.parts[1:end-1]..., IR.CrefPart(cref.parts[end].name, IR.Subscript[], cref.parts[end].ty)])
 
 #= ==================================================================================== =#
 #= If-expressions                                                                       =#
@@ -600,10 +593,10 @@ function expandRecordFieldArrays!(variables::IR.VariableSet)::Nothing
       push!(out, v)
     elseif !isempty(v.cref.parts[end].subscripts)
       push!(out, v)
-      local array = withoutLastSubscripts(v.cref)
+      local array = IR.withoutLastSubscripts(v.cref)
       (IR.isKnown(v) && all(d -> d isa IR.DIM_SIZE, array.parts[end].ty.dimensions)) || continue
       local (_, _, elements) = get!(groups, legacyName(array), (array, v, Dict{Vector{Int}, IR.Expression}()))
-      local index = literalIndices(v.cref.parts[end].subscripts)
+      local index = IR.literalIndices(v.cref.parts[end].subscripts)
       (index === nothing || v.binding === nothing) || (elements[index] = v.binding)
     else
       append!(out, recordFieldArrayElements(v))
@@ -629,11 +622,6 @@ derivative's (`IR.isDerivativeCref`: `\$DER.r.f` stays one variable).
 isRecordFieldArray(cref::IR.ComponentRef)::Bool =
   length(cref.parts) >= 2 && cref.parts[end].ty isa IR.T_ARRAY && cref.parts[end-1].ty isa IR.T_RECORD && !IR.isDerivativeCref(cref)
 
-"The literal Integer indices of `subscripts`; `nothing` if one is not."
-function literalIndices(subscripts::Vector{IR.Subscript})::Union{Nothing, Vector{Int}}
-  all(s -> s isa IR.INDEX && s.exp isa IR.INTEGER, subscripts) || return nothing
-  return Int[s.exp.value for s in subscripts]
-end
 
 """
     assembledBinding(sizes, elements, name)
@@ -674,7 +662,7 @@ function recordFieldArrayElements(v::IR.Variable)::Vector{IR.Variable}
   local out = IR.isKnown(v) ? IR.Variable[v] : IR.Variable[]
   for i in CartesianIndices(Tuple(d.size for d in ty.dimensions))
     local index = collect(Tuple(i))
-    local cref = IR.ComponentRef(IR.CrefPart[v.cref.parts[1:end-1]...,
+    local cref = IR.ComponentRef(IR.CrefPart[v.cref.parts[1:end-1];
                                              IR.CrefPart(last.name, IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index], ty)])
     local binding = v.binding === nothing ? nothing : bindingElement(v.binding, index)
     push!(out, IR.Variable(cref, ty.elementType, v.kind, binding, v.attributes, v.direction, v.isProtected, v.connector,
@@ -826,9 +814,7 @@ function elementOf(e::IR.Expression, index::Vector{Int})::IR.Expression
   local subs = IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index]
   local ty = elementTypeOf(IR.typeOf(e), length(index))
   if e isa IR.CREF
-    local last = e.cref.parts[end]
-    local parts = IR.CrefPart[e.cref.parts[1:end-1]..., IR.CrefPart(last.name, vcat(last.subscripts, subs), last.ty)]
-    return IR.CREF(IR.ComponentRef(parts), ty)
+    return IR.CREF(IR.appendSubscripts(e.cref, subs), ty)
   end
   local recordTy = IR.typeOf(e)
   (recordTy isa IR.T_RECORD && length(index) == 1 && index[1] <= length(recordTy.fields)) && return fieldByIndex(e, index[1])

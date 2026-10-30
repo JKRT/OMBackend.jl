@@ -485,14 +485,13 @@ function elementsBySubscript(e::ASUB, ht::OrderedDict{String, Tuple{Int, SIMVAR}
   (e.exp isa EXP_CREF && length(e.subs) == 1 && !(e.subs[1] isa ICONST)) || return nothing
   (haskey(ht, crefName(e.exp.cref)) || e.exp.cref.ref === nothing) && return nothing
   local array::IR.ComponentRef = e.exp.cref.ref
-  local last::IR.CrefPart = array.parts[end]
-  local elementRef = (k::Int) -> IR.ComponentRef(IR.CrefPart[array.parts[1:end - 1]; IR.CrefPart(last.name,
-                                                  IR.Subscript[last.subscripts; IR.INDEX(IR.INTEGER(k))], last.ty)])
-  local elementTy = e.exp.ty isa TYPE_ARRAY ? e.exp.ty.elementType : e.exp.ty
-  local elements = Exp[]
-  while haskey(ht, simName(names, elementRef(length(elements) + 1)))
-    local ref::IR.ComponentRef = elementRef(length(elements) + 1)
-    push!(elements, EXP_CREF(SimCref(Symbol(simName(names, ref)), Int[], ref), elementTy))
+  local elementTy::SType = e.exp.ty isa TYPE_ARRAY ? e.exp.ty.elementType : e.exp.ty
+  local elements::Vector{Exp} = Exp[]
+  while true
+    local ref::IR.ComponentRef = IR.appendSubscripts(array, IR.Subscript[IR.INDEX(IR.INTEGER(length(elements) + 1))])
+    local key::String = simName(names, ref)
+    haskey(ht, key) || break
+    push!(elements, EXP_CREF(SimCref(Symbol(key), Int[], ref), elementTy))
   end
   isempty(elements) && return nothing
   return ASUB(ARRAY_EXP(TYPE_ARRAY(elementTy, Int[length(elements)]), true, elements), e.subs)

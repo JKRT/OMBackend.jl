@@ -103,7 +103,7 @@ it), the flat name of the parts after the member without an element's literal su
 of `cylinder2.b1.R.T[1,2]`), and those subscripts; `nothing` for a reference of no instance.
 """
 function splitName(cref::IR.ComponentRef, memberOf::Dict{String, Tuple{Int, Int}})::Union{Nothing, Tuple{String, Int, Int, String, Vector{Int}}}
-  local k::Int = operandStart(cref)
+  local k::Int = IR.operandStart(cref)
   k < length(cref.parts) || return nothing
   local member::IR.CrefPart = cref.parts[k]
   isempty(member.subscripts) || return nothing
@@ -112,25 +112,13 @@ function splitName(cref::IR.ComponentRef, memberOf::Dict{String, Tuple{Int, Int}
   local prefix::String = join(string(p.name, '.') for p in cref.parts[1:k - 1])
   local rest::Vector{IR.CrefPart} = cref.parts[k + 1:end]
   local last::IR.CrefPart = rest[end]
-  (isempty(last.subscripts) || !all(s::IR.Subscript -> s isa IR.INDEX && (s::IR.INDEX).exp isa IR.INTEGER, last.subscripts)) &&
-    return (prefix, at[1], at[2], String(IR.flatName(rest)), Int[])
-  local index::Vector{Int} = Int[((s::IR.INDEX).exp::IR.INTEGER).value for s in last.subscripts]
+  local index::Union{Nothing, Vector{Int}} = isempty(last.subscripts) ? nothing : IR.literalIndices(last.subscripts)
+  index === nothing && return (prefix, at[1], at[2], String(IR.flatName(rest)), Int[])
   rest[end] = IR.CrefPart(last.name, IR.Subscript[], last.ty)
   return (prefix, at[1], at[2], String(IR.flatName(rest)), index)
 end
 
-"The position of the first part of a reference after its derivative parts (`IR.isDerivativeCref`: 2 of `\$DER.x`)."
-function operandStart(cref::IR.ComponentRef)::Int
-  local k::Int = 1
-  while k < length(cref.parts) && cref.parts[k].ty isa Union{IR.T_DER, IR.T_STATEDER}
-    k += 1
-  end
-  return k
-end
 
-"The reference without the subscripts of its parts."
-unsubscriptedCref(cref::IR.ComponentRef)::IR.ComponentRef =
-  IR.ComponentRef(IR.CrefPart[IR.CrefPart(p.name, IR.Subscript[], p.ty) for p in cref.parts])
 
 """
     RolledVariable
@@ -284,9 +272,9 @@ function auxiliaryVariables(model::IR.Model, partition::IR.Partition, g::Compone
     local free::Vector{Symbol} = Symbol[]
     IR.foreachExp(eq) do x::IR.Expression
       x isa IR.CREF || return nothing
-      local parts::Union{Nothing, Tuple{String, Int, Int, String, Vector{Int}}} = splitName(unsubscriptedCref(x.cref), memberOf)
+      local parts::Union{Nothing, Tuple{String, Int, Int, String, Vector{Int}}} = splitName(IR.withoutSubscripts(x.cref), memberOf)
       parts === nothing || push!(instances, parts[3])
-      local name::Symbol = variableNameOf(x.cref)
+      local name::Symbol = unsubscriptedName(x.cref)
       candidate(name) && push!(free, name)
       nothing
     end
@@ -308,14 +296,12 @@ function auxiliaryVariables(model::IR.Model, partition::IR.Partition, g::Compone
   return Vector{Symbol}[Symbol[roles[k][role] for k in 1:n] for role in sort!(collect(keys(roles[1])))]
 end
 
-"The name of the variable a reference reads (its own, or without its subscripts)."
-variableNameOf(cref::IR.ComponentRef)::Symbol = IR.hasSubscripts(cref) ? unsubscriptedName(cref) : cref.name
 
 "`e` for an auxiliary's role: the auxiliary `x` as `§`, an instance's references by its suffix only."
 function roleExpression(e::IR.Expression, x::Symbol, memberOf::Dict{String, Tuple{Int, Int}})::IR.Expression
   return IR.mapExp(e) do y::IR.Expression
     y isa IR.CREF || return y
-    variableNameOf(y.cref) === x && return IR.CREF(IR.ComponentRef(Symbol("§")), y.ty)
+    unsubscriptedName(y.cref) === x && return IR.CREF(IR.ComponentRef(Symbol("§")), y.ty)
     splitName(y.cref, memberOf) === nothing && return y
     return IR.CREF(memberRelative(y.cref), y.ty)
   end
@@ -349,7 +335,7 @@ function rolledVariable(r::RolledVariable, g::ComponentGroup, groups::Vector{Com
   else
     local base::Union{Nothing, IR.ComponentRef} = get(names.base, (1, r.suffix), nothing)
     base === nothing && throw(NotHandled("the variable $(r.prefix)$(r.suffix) without its base"))
-    IR.ComponentRef(IR.CrefPart[first.cref.parts[1:operandStart(first.cref) - 1]; base.parts])
+    IR.withOperatorsOf(first.cref, base)
   end
   isempty(r.prefix) && (names.base[(1, r.suffix)] = cref)
   local literal::Function = (gi::Int, k::Int) -> IR.INTEGER(k)
@@ -423,7 +409,7 @@ function rolledName(name::Symbol, crefOf::Dict{Symbol, IR.ComponentRef}, memberO
   local parts::Union{Nothing, Tuple{String, Int, Int, String, Vector{Int}}} = cref === nothing ? nothing : splitName(cref, memberOf)
   local base::Union{Nothing, IR.ComponentRef} = parts === nothing ? nothing : get(names.base, (parts[2], parts[4]), nothing)
   base === nothing && throw(NotHandled("the variable $(name), of no rolled array"))
-  return IR.ComponentRef(IR.CrefPart[cref.parts[1:operandStart(cref) - 1]; base.parts]).name
+  return IR.withOperatorsOf(cref, base).name
 end
 
 """
@@ -458,7 +444,7 @@ end
 A reference to an instance's variable, record or component as a reference to the rolled arrays, the instance's
 subscript `index(group, instance)` (a literal, or the iterator of a rolled equation): a reference whose first part
 is a member its group's part subscripted; a derivative's (`\$DER.cylinder2.x[2]`) the rolled derivative's, by the
-instance's subscript, the element's and its own on its last part (`IR.derivativeElement`); an auxiliary's its array's
+instance's subscript, the element's and its own on its last part (`IR.withLastSubscripts`); an auxiliary's its array's
 element. `nothing` for another.
 """
 function rolledReference(cref::IR.ComponentRef, groups::Vector{ComponentGroup}, memberOf::Dict{String, Tuple{Int, Int}},
@@ -470,13 +456,13 @@ function rolledReference(cref::IR.ComponentRef, groups::Vector{ComponentGroup}, 
     return IR.ComponentRef(IR.CrefPart[IR.CrefPart(g.part.name, IR.Subscript[IR.INDEX(index(at[1], at[2]))], g.part.ty); cref.parts[2:end]])
   end
   if IR.isDerivativeCref(cref)
-    local parts::Union{Nothing, Tuple{String, Int, Int, String, Vector{Int}}} = splitName(withoutLastSubscripts(cref), memberOf)
+    local parts::Union{Nothing, Tuple{String, Int, Int, String, Vector{Int}}} = splitName(IR.withoutLastSubscripts(cref), memberOf)
     parts === nothing && return nothing
     local base::Union{Nothing, IR.ComponentRef} = get(names.base, (parts[2], parts[4]), nothing)
     base === nothing && return nothing
     local subscripts::Vector{IR.Subscript} = IR.Subscript[IR.INDEX(index(parts[2], parts[3])); IR.Subscript[IR.INDEX(IR.INTEGER(i)) for i in parts[5]];
                                                           cref.parts[end].subscripts]
-    return IR.derivativeElement(IR.ComponentRef(IR.CrefPart[cref.parts[1:operandStart(cref) - 1]; base.parts]), subscripts)
+    return IR.withLastSubscripts(IR.withOperatorsOf(cref, base), subscripts)
   end
   length(cref.parts) == 1 || return nothing
   local aux::Union{Nothing, Tuple{Int, Int, IR.CrefPart}} = get(names.auxiliary, first.name, nothing)
@@ -507,7 +493,7 @@ function rolledExpression(e::IR.Expression, groups::Vector{ComponentGroup}, memb
 end
 
 "Whether a reference reads a rolled array: its first part after its derivative parts a group's (`T_COMPONENTS`)."
-isRolledReference(cref::IR.ComponentRef)::Bool = cref.parts[operandStart(cref)].ty isa IR.T_COMPONENTS
+isRolledReference(cref::IR.ComponentRef)::Bool = cref.parts[IR.operandStart(cref)].ty isa IR.T_COMPONENTS
 
 "A variable with its binding and attributes reading the rolled arrays (`rewrite`)."
 function withRolledReferences(v::IR.Variable, rewrite::Function)::IR.Variable
@@ -533,7 +519,7 @@ function instancesOf(eq::IR.Equation, memberOf::Dict{String, Tuple{Int, Int}}, n
     if at !== nothing
       push!(out, at[2])
     elseif IR.isDerivativeCref(x.cref)
-      local parts::Union{Nothing, Tuple{String, Int, Int, String, Vector{Int}}} = splitName(withoutLastSubscripts(x.cref), memberOf)
+      local parts::Union{Nothing, Tuple{String, Int, Int, String, Vector{Int}}} = splitName(IR.withoutLastSubscripts(x.cref), memberOf)
       parts === nothing || push!(out, parts[3])
     elseif length(x.cref.parts) == 1
       local aux::Union{Nothing, Tuple{Int, Int, IR.CrefPart}} = get(names.auxiliary, first.name, nothing)
@@ -671,13 +657,13 @@ The flat name of a reference with its instance's member (the first part after it
 (`§.b.x` of `cylinder2.b.x`) after its equality's shape (`[n]`), to order a class's part alike in every instance.
 """
 function relativeName(shape::String, cref::IR.ComponentRef, memberOf::Dict{String, Tuple{Int, Int}})::String
-  haskey(memberOf, String(cref.parts[operandStart(cref)].name)) || return shape * String(cref.name)
+  haskey(memberOf, String(cref.parts[IR.operandStart(cref)].name)) || return shape * String(cref.name)
   return shape * String(memberRelative(cref).name)
 end
 
 "A reference with its member (the first part after its derivative parts) as `§` (`\$DER.§.b.x` of `\$DER.cylinder2.b.x`)."
 function memberRelative(cref::IR.ComponentRef)::IR.ComponentRef
-  local k::Int = operandStart(cref)
+  local k::Int = IR.operandStart(cref)
   local parts::Vector{IR.CrefPart} = copy(cref.parts)
   parts[k] = IR.CrefPart(Symbol("§"), parts[k].subscripts, parts[k].ty)
   return IR.ComponentRef(parts)
@@ -707,7 +693,7 @@ function equalityPair(eq::IR.Equation)::Union{Nothing, Tuple{IR.CREF, IR.CREF, S
         !any(p::IR.CrefPart -> !isempty(p.subscripts), x.cref.parts[1:end - 1])
     end
     (byIterator(body.lhs) && byIterator(body.rhs)) || return nothing
-    local whole::Function = (x::IR.CREF) -> IR.CREF(withoutLastSubscripts(x.cref), x.ty)
+    local whole::Function = (x::IR.CREF) -> IR.CREF(IR.withoutLastSubscripts(x.cref), x.ty)
     return (whole(body.lhs), whole(body.rhs), "[$(last(range))]")
   end
   return nothing
@@ -715,11 +701,8 @@ end
 
 "Whether every subscript of the reference is a literal index."
 literalSubscripts(cref::IR.ComponentRef)::Bool =
-  all(p::IR.CrefPart -> all(s::IR.Subscript -> s isa IR.INDEX && (s::IR.INDEX).exp isa IR.INTEGER, p.subscripts), cref.parts)
+  all(p::IR.CrefPart -> all(s::IR.Subscript -> IR.literalIndex(s) !== nothing, p.subscripts), cref.parts)
 
-"The reference without its last part's subscripts."
-withoutLastSubscripts(cref::IR.ComponentRef)::IR.ComponentRef =
-  IR.ComponentRef(IR.CrefPart[cref.parts[1:end - 1]..., IR.CrefPart(cref.parts[end].name, IR.Subscript[], cref.parts[end].ty)])
 
 """
     equalityEquation(a, b, like) -> IR.Equation

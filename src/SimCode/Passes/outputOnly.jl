@@ -154,7 +154,9 @@ function essentialEquations(simCode::SIM_CODE, matchOrder::Vector{Int}, nameOf::
     for n in reads[i]
       haskey(solvedBy, n) && !(solvedBy[n] in essential) && push!(queue, solvedBy[n])
       local ref::Union{Nothing, IR.ComponentRef} = get(simCode.references, n, nothing)
-      for j in (ref === nothing ? Int[] : get(solvedByBase, ref.name, Int[]))
+      local solving::Union{Nothing, Vector{Int}} = ref === nothing ? nothing : get(solvedByBase, ref.name, nothing)
+      solving === nothing && continue
+      for j in solving
         j in essential || push!(queue, j)
       end
     end

@@ -148,12 +148,12 @@ function wholeDerivative(e::IR.CREF, seeds::Seeds{<:ArrayVariables})::IR.Express
     if array === nothing
       local sizes::Vector{Int} = knownSizes(e.ty, "a part of the array $(unsubscriptedName(e.cref))")
       local subscripts::Vector{IR.Subscript} = allSubscripts(e.cref)
-      if all(x::IR.Subscript -> x isa IR.INDEX && (x::IR.INDEX).exp isa IR.INTEGER, subscripts)
-        local given::Vector{Int} = Int[((x::IR.INDEX).exp::IR.INTEGER).value for x in subscripts]
-        return elementsDerivative(unsubscriptedCref(e.cref), [given; sizes], given, IR.elementType(e.ty), seeds)
+      local given::Union{Nothing, Vector{Int}} = IR.literalIndices(subscripts)
+      if given !== nothing
+        return elementsDerivative(IR.withoutSubscripts(e.cref), [given; sizes], given, IR.elementType(e.ty), seeds)
       end
       local probe::IR.ComponentRef = withIteratorsAsOne(e.cref)
-      local probeElement::Symbol = withLastSubscripts(probe, IR.Subscript[IR.subscripts(probe); IR.Subscript[IR.INDEX(IR.INTEGER(1)) for _ in sizes]]).name
+      local probeElement::Symbol = IR.withLastSubscripts(probe, IR.Subscript[IR.subscripts(probe); IR.Subscript[IR.INDEX(IR.INTEGER(1)) for _ in sizes]]).name
       seeds.variable(probeElement) === nothing ||
         throw(NotHandled("the derivative of a part of an array ($(e.cref.name)) whose elements are variables of their own"))
       local zeros::Union{Nothing, IR.Expression} = zeroOf(e)
@@ -162,7 +162,7 @@ function wholeDerivative(e::IR.CREF, seeds::Seeds{<:ArrayVariables})::IR.Express
     end
     (array isa IR.CREF && array.ty isa IR.T_ARRAY && !IR.hasSubscripts(array.cref) && IR.isDerivativeCref(array.cref)) ||
       throw(NotHandled("the derivative of a part of an array ($(e.cref.name)), its array's derivative $(IR.toString(array))"))
-    return IR.CREF(IR.derivativeElement(array.cref, allSubscripts(e.cref)), e.ty)
+    return IR.CREF(IR.withLastSubscripts(array.cref, allSubscripts(e.cref)), e.ty)
   end
   local d = seeds.variable(e.cref.name)
   return d === nothing ? wholeDerivative(e.cref, e.ty, seeds) : d
@@ -170,7 +170,7 @@ end
 
 "A reference with every subscript that is not a literal index as 1 (a probe element of a part of an array)."
 withIteratorsAsOne(cref::IR.ComponentRef)::IR.ComponentRef =
-  IR.ComponentRef(IR.CrefPart[IR.CrefPart(p.name, IR.Subscript[(x isa IR.INDEX && (x::IR.INDEX).exp isa IR.INTEGER) ? x : IR.INDEX(IR.INTEGER(1))
+  IR.ComponentRef(IR.CrefPart[IR.CrefPart(p.name, IR.Subscript[IR.literalIndex(x) !== nothing ? x : IR.INDEX(IR.INTEGER(1))
                                                          for x in p.subscripts], p.ty) for p in cref.parts])
 
 """
@@ -178,7 +178,7 @@ withIteratorsAsOne(cref::IR.ComponentRef)::IR.ComponentRef =
 
 The derivative of an element of an array whose derivative the seeds (`ArrayVariables`) give as a whole: that
 element of the derivative array (`\$DER.x[i]`, `\$DER.c.T[i]`, the subscripts of all parts on its last part,
-`IR.derivativeElement`); of a
+`IR.withLastSubscripts`); of a
 slice's element the slice's; of an element of an array that is no variable, its elements' derivatives at the
 subscripts; 0 for another reference, and with other seeds (the variable has no derivative).
 """
@@ -196,13 +196,13 @@ function arrayElementDerivative(e::IR.CREF, seeds::Seeds{<:ArrayVariables})::IR.
     local last::IR.CrefPart = e.cref.parts[end]
     if last.ty isa IR.T_ARRAY && length(IR.dimensions(last.ty)) == length(last.subscripts) &&
        all(p::IR.CrefPart -> isempty(p.subscripts), e.cref.parts[1:end - 1]) && all(x::IR.Subscript -> x isa IR.INDEX, last.subscripts)
-      return foldTree(selectElement(wholeDerivative(unsubscriptedCref(e.cref), last.ty, seeds), last.subscripts, e.ty))
+      return foldTree(selectElement(wholeDerivative(IR.withoutSubscripts(e.cref), last.ty, seeds), last.subscripts, e.ty))
     end
     return ZERO
   end
   (array isa IR.CREF && array.ty isa IR.T_ARRAY && !IR.hasSubscripts(array.cref) && IR.isDerivativeCref(array.cref)) ||
     throw(NotHandled("the derivative of the element $(e.cref.name), its array's derivative $(IR.toString(array))"))
-  return IR.CREF(IR.derivativeElement(array.cref, allSubscripts(e.cref)), e.ty)
+  return IR.CREF(IR.withLastSubscripts(array.cref, allSubscripts(e.cref)), e.ty)
 end
 
 """
@@ -214,7 +214,7 @@ references, by their flat names).
 """
 function wholeDerivative(cref::IR.ComponentRef, ty::IR.ModelicaType, seeds::Seeds)::IR.Expression
   if ty isa IR.T_RECORD
-    return IR.RECORD(IR.Expression[wholeDerivative(IR.ComponentRef(IR.CrefPart[cref.parts; IR.CrefPart(f.name, IR.Subscript[], f.ty)]), f.ty, seeds)
+    return IR.RECORD(IR.Expression[wholeDerivative(IR.withField(cref, f.name, f.ty), f.ty, seeds)
                                    for f in ty.fields], ty)
   elseif ty isa IR.T_ARRAY
     local sizes = Int[]
@@ -233,7 +233,7 @@ end
 "The derivative of the elements of the array `cref` (of `sizes`) under the subscripts `index` so far, on its last part: an array literal of them, nested by dimension."
 function elementsDerivative(cref::IR.ComponentRef, sizes::Vector{Int}, index::Vector{Int}, element::IR.ModelicaType, seeds::Seeds)::IR.Expression
   if length(index) == length(sizes)
-    return wholeDerivative(withLastSubscripts(cref, IR.Subscript[IR.subscripts(cref); IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index]]),
+    return wholeDerivative(IR.withLastSubscripts(cref, IR.Subscript[IR.subscripts(cref); IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index]]),
                            element, seeds)
   end
   local rest = sizes[length(index) + 1:end]
@@ -368,7 +368,7 @@ function derivativeOf(e::IR.RECORD_ELEMENT, seeds::Seeds)::IR.Expression
     return IR.RECORD_ELEMENT(functionDerivative(inner, seeds), e.index, e.field, e.ty)
   end
   inner isa IR.CREF &&
-    return differentiate(IR.CREF(IR.ComponentRef(IR.CrefPart[inner.cref.parts; IR.CrefPart(e.field, IR.Subscript[], e.ty)]), e.ty), seeds)
+    return differentiate(IR.CREF(IR.withField(inner.cref, e.field, e.ty), e.ty), seeds)
   throw(NotHandled("the derivative of a field of a $(nameof(typeof(inner)))"))
 end
 

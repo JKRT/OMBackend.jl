@@ -187,8 +187,6 @@ function plannedKind(s::Structure, dummies::Set{Int}, v::Int)::Union{Nothing, IR
   return nothing
 end
 
-"The name of the variable holding a selected state's derivative (`linkStateDerivative!`; its reference `IR.stateDerivativeCref`): `\$STATEDER.x`."
-stateDerivativeName(state::Symbol)::Symbol = Symbol("\$STATEDER.", state)
 
 """
     dynamicSet!(model, partition, s, set, k)
@@ -247,13 +245,13 @@ function dynamicSetParts(model::IR.Model, s::Structure, set::DynamicSet, k::Int)
     local x = IR.ComponentRef[setStateCref(k, l, j) for j in 1:n-1]
     push!(levels, (V, x))
     for j in 1:n-1
-      local derivative = IR.derivativeName(x[j].name)
+      local derivative::IR.ComponentRef = IR.derivativeCref(x[j])
       local var = get(model.variables, V[index(start, j)], nothing)
       local guess = var === nothing ? nothing : var.attributes.start
-      local state::IR.Variable = IR.Variable(x[j], IR.T_REAL(), IR.STATE(1, derivative, true), nothing,
+      local state::IR.Variable = IR.Variable(x[j], IR.T_REAL(), IR.STATE(1, derivative.name, true), nothing,
                                              IR.VariableAttributes(guess, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing),
                                              IR.NO_DIRECTION, true, IR.NOT_CONNECTOR, IR.NO_SOURCE, :indexReduction)
-      local stateDerivative::IR.Variable = IR.Variable(IR.derivativeCref(state.cref), IR.T_REAL(), IR.STATE_DER(x[j].name), nothing,
+      local stateDerivative::IR.Variable = IR.Variable(derivative, IR.T_REAL(), IR.STATE_DER(x[j].name), nothing,
                                                        IR.NO_ATTRIBUTES, IR.NO_DIRECTION, true, IR.NOT_CONNECTOR, IR.NO_SOURCE,
                                                        :indexReduction)
       push!(variables, state)
@@ -306,8 +304,9 @@ derivatives `xˍt` the same way). A `derivative` that is a state itself (a secon
 stays one: `der(x) = \$DER.x` is then the order reduction.
 """
 function linkStateDerivative!(model::IR.Model, partition::IR.Partition, state::Symbol, derivative::Symbol)::Nothing
-  local link = stateDerivativeName(state)
-  push!(model.variables, IR.Variable(IR.stateDerivativeCref(model.variables[state].cref), IR.T_REAL(), IR.STATE_DER(state), nothing,
+  local linkCref::IR.ComponentRef = IR.stateDerivativeCref(model.variables[state].cref)
+  local link::Symbol = linkCref.name
+  push!(model.variables, IR.Variable(linkCref, IR.T_REAL(), IR.STATE_DER(state), nothing,
                                      IR.NO_ATTRIBUTES, IR.NO_DIRECTION, false, IR.NOT_CONNECTOR, IR.NO_SOURCE, :indexReduction))
   model.variables[state].kind = IR.STATE(1, link, true)
   model.variables[derivative].kind isa IR.STATE || (model.variables[derivative].kind = IR.ALGEBRAIC_DER(state))

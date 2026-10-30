@@ -198,8 +198,7 @@ followed by `index`, its IR reference the array's subscripted on its last part (
 """
 function elementRead(c::SimCref, index::Vector{Int})::SimCref
   local ref::Union{Nothing, IR.ComponentRef} = c.ref === nothing ? nothing :
-    IR.ComponentRef(IR.CrefPart[c.ref.parts[1:end - 1]; IR.CrefPart(c.ref.parts[end].name,
-      IR.Subscript[c.ref.parts[end].subscripts; IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index]], c.ref.parts[end].ty)])
+    IR.appendSubscripts(c.ref, IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index])
   return SimCref(c.sym, Int[c.subs; index], ref)
 end
 

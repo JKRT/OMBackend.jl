@@ -69,7 +69,7 @@ function plannedKinds(s::Structure, dummies::Set{Int})::Dict{Symbol, IR.Variable
   end
   for v in selectedStates(s, dummies)
     local (state, derivative) = (s.variables[v], s.variables[s.derivative[v]])
-    local link = stateDerivativeName(state)
+    local link::Symbol = IR.stateDerivativeCref(s.crefs[v]).name
     kinds[state] = IR.STATE(1, link, true)
     kinds[link] = IR.STATE_DER(state)
     get(kinds, derivative, nothing) isa IR.STATE || (kinds[derivative] = IR.ALGEBRAIC_DER(state))
@@ -81,7 +81,7 @@ end
     arrayElementRef(name, E, variables) -> ComponentRef
 
 The element variable `name` of the element view as a reference into its array in the arrays-kept model
-(`x[2]`, `c[2].T`; `\$DER.x[2]` as the element 2 of the derivative array `\$DER.x`, `IR.derivativeElement`); a scalar
+(`x[2]`, `c[2].T`; `\$DER.x[2]` as the element 2 of the derivative array `\$DER.x`, `IR.withLastSubscripts`); a scalar
 variable by its own reference.
 """
 function arrayElementRef(name::Symbol, E::Elements, variables::IR.VariableSet)::IR.ComponentRef
@@ -93,7 +93,7 @@ function arrayElementRef(name::Symbol, E::Elements, variables::IR.VariableSet)::
   local (array, index) = element
   local arrayVariable::Union{Nothing, IR.Variable} = get(variables, array, nothing)
   (arrayVariable !== nothing && IR.isDerivativeCref(arrayVariable.cref)) &&
-    return IR.derivativeElement(arrayVariable.cref, IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index])
+    return IR.withLastSubscripts(arrayVariable.cref, IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index])
   local cref = E.crefs[name]
   IR.hasSubscripts(cref) && return cref
   #= another backend-made array of one part, its elements named by flat names: the element of its one part =#
@@ -205,15 +205,17 @@ function newArrays(names::Vector{Symbol}, s::Structure, E::Elements, model::IR.M
       end
     end
     for (array, derived) in sort!(collect(byArray); by = first)
-      local expected = Symbol[IR.derivativeName(e) for e in elementsOf[array]]
-      if Set(derived) != Set(expected)
-        isempty(partial) && (firstPartial = "the derivatives of $(length(derived)) of the $(length(expected)) elements of the array $(array)")
+      #= each element's derivative among those derived (the structure's antiderivative of each), in the elements' order =#
+      local derivativeOf::Dict{Symbol, Symbol} = Dict{Symbol, Symbol}(s.variables[s.antiderivative[s.index[d]]] => d for d in derived)
+      if length(derived) != length(elementsOf[array]) || !all(e::Symbol -> haskey(derivativeOf, e), elementsOf[array])
+        isempty(partial) && (firstPartial = "the derivatives of $(length(derived)) of the $(length(elementsOf[array])) elements of the array $(array)")
         push!(partial, get(rootOf, array, array))
         continue
       end
-      local name = IR.derivativeName(array)
-      haskey(model.variables, name) && throw(NotHandled("a derivative array $(name) that exists"))
+      local expected::Vector{Symbol} = Symbol[derivativeOf[e] for e in elementsOf[array]]
       local cref::IR.ComponentRef = IR.derivativeCref(haskey(crefOf, array) ? crefOf[array] : model.variables[array].cref)
+      local name::Symbol = cref.name
+      haskey(model.variables, name) && throw(NotHandled("a derivative array $(name) that exists"))
       crefOf[name] = cref
       push!(out, IR.Variable(cref, IR.T_ARRAY(IR.T_REAL(), dimensionsOf[array]), IR.ALGEBRAIC(), nothing, IR.NO_ATTRIBUTES,
                              IR.NO_DIRECTION, false, IR.NOT_CONNECTOR, IR.NO_SOURCE, :indexReduction))

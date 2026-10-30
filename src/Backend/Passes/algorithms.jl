@@ -316,9 +316,6 @@ indexOf(d::IR.Dimension, k::Int)::IR.Expression = d isa IR.DIM_ENUM ? IR.dimensi
 
 isLiteralIndex(s::IR.Subscript)::Bool = s isa IR.INDEX && (s.exp isa IR.INTEGER || s.exp isa IR.ENUM_LITERAL)
 
-"`cref` with the subscripts of its last part replaced by `subs`."
-withLastSubscripts(cref::IR.ComponentRef, subs::Vector{IR.Subscript})::IR.ComponentRef =
-  IR.ComponentRef(IR.CrefPart[cref.parts[1:end - 1]..., IR.CrefPart(cref.parts[end].name, subs, cref.parts[end].ty)])
 
 """
 The subscripts of the last part of `cref` padded with whole dimensions to the dimensions of
@@ -349,7 +346,7 @@ function scalarTargets(lhs::IR.CREF)::Vector{Tuple{IR.CREF, Union{Nothing, IR.Ex
   local visit
   visit = (pos, newSubs, guard, rhsIndices) -> begin
     if pos > length(dims)
-      push!(out, (IR.CREF(withLastSubscripts(lhs.cref, newSubs), elementTy), guard, copy(rhsIndices)))
+      push!(out, (IR.CREF(IR.withLastSubscripts(lhs.cref, newSubs), elementTy), guard, copy(rhsIndices)))
       return true
     end
     local n = IR.dimensionSize(dims[pos])
@@ -403,7 +400,7 @@ function scalarizedCref(e::IR.CREF, rhsIndices::Vector{Int}, fallback::IR.Expres
   local visit
   visit = (pos, rhsPos, newSubs, guard) -> begin
     if pos > length(dims)
-      push!(candidates, (guard, IR.CREF(withLastSubscripts(e.cref, newSubs), elementTy)))
+      push!(candidates, (guard, IR.CREF(IR.withLastSubscripts(e.cref, newSubs), elementTy)))
       return
     end
     local sub = subs[pos]
@@ -800,7 +797,7 @@ function residualsOfAssignment!(out::Vector{IR.Equation}, s::IR.ASSIGNMENT, cons
   end
   local elementTy = IR.elementType(ty)
   for k in 1:n
-    local cref = withLastSubscripts(lhs.cref, IR.Subscript[IR.subscripts(lhs.cref)..., IR.INDEX(IR.INTEGER(k))])
+    local cref = IR.withLastSubscripts(lhs.cref, IR.Subscript[IR.subscripts(lhs.cref)..., IR.INDEX(IR.INTEGER(k))])
     (cref.name in constrained.names || cref.name in whenLifted) && continue
     local rhsK = IR.SUBSCRIPTED(s.rhs, IR.Subscript[IR.INDEX(IR.INTEGER(k))], elementTy)
     push!(out, IR.SCALAR_EQUATION(IR.CREF(cref, elementTy), rhsK, elementTy, s.source, DYNAMIC))
@@ -974,7 +971,7 @@ MSL Spice3's semiconductor resistor: a read in between is `init(rp, lp)[4]`).
 """
 function assignFields!(run::AlgorithmRun, cref::IR.ComponentRef, value::IR.Expression, ty::IR.T_RECORD)::Nothing
   for (k, field) in enumerate(ty.fields)
-    local fieldCref::IR.ComponentRef = IR.ComponentRef(IR.CrefPart[cref.parts; IR.CrefPart(field.name, IR.Subscript[], field.ty)])
+    local fieldCref::IR.ComponentRef = IR.withField(cref, field.name, field.ty)
     local fieldName::Symbol = fieldCref.name
     local fieldValue = fieldByIndex(value, k)
     fieldName in run.assigned && (run.values[fieldName] = fieldValue)
