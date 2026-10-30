@@ -124,7 +124,7 @@ with the operands given whole or by part (the frontend splits a Complex input in
 function complexParts(e::Exp)::Union{Nothing, Tuple{Exp, Exp}}
   if e isa EXP_CREF
     e.ty isa TYPE_COMPLEX || return nothing
-    return partVariables(something(e.cref.ref))
+    return partVariables(irRef(e.cref))
   end
   (e isa CALL && isComplexOperation(e)) || return nothing
   local (op, args, n) = (operatorName(e.name), e.args, length(e.args))

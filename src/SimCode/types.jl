@@ -152,10 +152,11 @@ end
 
 A reference to a simulation variable: its key (`body_frame_a_r_0`, `x[2]`), for an element of an
 array variable kept as an array the integer subscripts, and the IR reference it was lowered from
-(`ref`: the variable's, an element's with its subscripts, a record's field's), from which the key is
-derived and by whose parts every structural question is answered (the array an element is of, a
-record's field). Equal by key and subscripts: a single `===` on the symbol compares names. `ref` is
-`nothing` only for a function's flattened local the code generators make, and in tests.
+(`ref`: the variable's, an element's with its subscripts, a record's field's), by whose parts every
+structural question is answered (the array an element is of, a record's field). The key is derived
+from it (`derivedKey`), except a collision's renamed key (`collidingNames`) and a state's derivative's
+`der(x)`, until both go (step 9b). Equal by key and subscripts: a single `===` on the symbol compares
+names. `ref` is `nothing` only for a function's flattened local the code generators make, and in tests.
 """
 struct SimCref
   sym::Symbol
@@ -165,6 +166,10 @@ end
 
 "A reference by its key alone, without its IR reference: tests, the code generators' function locals."
 SimCref(sym::Symbol) = SimCref(sym, Int[], nothing)
+
+"The IR reference of `c`; an error naming its key if it has none (a code generator's function local)."
+irRef(c::SimCref)::IR.ComponentRef =
+  c.ref === nothing ? error("SimCode reference $(c.sym) has no IR reference") : c.ref
 
 Base.:(==)(a::SimCref, b::SimCref)::Bool = a.sym === b.sym && a.subs == b.subs
 Base.isequal(a::SimCref, b::SimCref)::Bool = a == b
@@ -908,9 +913,16 @@ end
 "The key of the variable the IR reference `ref` names; `nothing` for one that names none."
 keyOf(sc::SIM_CODE, ref::IR.ComponentRef)::Union{Nothing, String} = get(sc.keyByReference, ref.name, nothing)
 
-"The keys by the IR references' names of `references`."
-referenceKeys(references::Dict{String, IR.ComponentRef})::Dict{Symbol, String} =
-  Dict{Symbol, String}(ref.name => key for (key, ref) in references)
+"The keys by the IR references' names of `references`; an error naming both keys if two variables have one reference."
+function referenceKeys(references::Dict{String, IR.ComponentRef})::Dict{Symbol, String}
+  local keys::Dict{Symbol, String} = Dict{Symbol, String}()
+  for (key::String, ref::IR.ComponentRef) in references
+    local other::Union{Nothing, String} = get(keys, ref.name, nothing)
+    other === nothing || error("SimCode variables $(join(sort([other, key]), " and ")) have one IR reference, $(ref.name)")
+    keys[ref.name] = key
+  end
+  return keys
+end
 
 """
     update(simCode; fields...)

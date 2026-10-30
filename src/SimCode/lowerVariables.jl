@@ -138,7 +138,8 @@ function createIndices(simVars::Vector{SIMVAR})::OrderedDict{String, Tuple{Int, 
       stateCounter += 1
       local state = withIndex(v, stateCounter)
       ht[v.name] = (stateCounter, state)
-      ht["der($(v.name))"] = (stateCounter, withIndex(v, stateCounter, STATE_DERIVATIVE(v.name)))
+      ht["der($(v.name))"] = (stateCounter, withCref(withIndex(v, stateCounter, STATE_DERIVATIVE(v.name)),
+                                                     v.cref === nothing ? nothing : IR.derivativeCref(v.cref)))
     elseif k isa Union{PARAMETER, DATA_STRUCTURE}
       parameterCounter += 1
       ht[v.name] = (parameterCounter, v)

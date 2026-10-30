@@ -116,13 +116,13 @@ function lowerSystem(model::IR.Model, variables::IR.VariableSet, partition::IR.P
   local simVars = SIMVAR[SIMVAR(simName(names, v.cref), nothing, simVarKind(v, names), simVarAttributes(v, names),
                                 simType(IR.elementType(v.ty)), simKind(v.kind, variables, names), v.origin, v.cref) for v in vars]
   local ht = createIndices(simVars)
-  #= a state's derivative by the IR derivative variable's reference =#
+  #= a state's derivative by the IR derivative variable's reference (`createIndices` builds `$DER.x`'s) =#
   for v in vars
     (v.kind isa IR.STATE && v.kind.derivative !== nothing && haskey(variables, v.kind.derivative)) || continue
     local key::String = "der($(simName(names, v.cref)))"
     haskey(ht, key) || continue
     local (i::Int, d::SIMVAR) = ht[key]
-    ht[key] = (i, SIMVAR(d.name, d.index, d.varKind, d.attributes, d.elementType, d.irKind, d.irOrigin, variables[v.kind.derivative].cref))
+    ht[key] = (i, withCref(d, variables[v.kind.derivative].cref))
   end
   local references::Dict{String, IR.ComponentRef} =
     Dict{String, IR.ComponentRef}(k => sv.cref for (k, (_, sv)) in ht if sv.cref !== nothing)

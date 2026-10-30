@@ -100,18 +100,15 @@ The simulation name of `cref`: its flat name with every `.` as `_` (of an enumer
 literal's subscript: `x[Logic_'U'(1)]`), a quoted name as it is; or its new name.
 """
 function simName(names::Names, cref::IR.ComponentRef)::String
-  local r = isempty(names.renamed) || IR.hasSubscripts(cref) ? nothing : get(names.renamed, cref.name, nothing)
-  r === nothing || return r
-  local flat = legacyName(cref)
-  (startswith(flat, '\'') && endswith(flat, '\'')) && return flat
-  return replace(flat, '.' => '_')
+  local r::Union{Nothing, String} = isempty(names.renamed) || IR.hasSubscripts(cref) ? nothing : get(names.renamed, cref.name, nothing)
+  return r === nothing ? derivedKey(cref) : r
 end
 
 """
     derivedKey(ref) -> String
 
-The key a reference's variable has (`simName` without the renamed collisions): its legacy name with
-every `.` as `_`, a quoted name as it is; derived from the reference, as every key is.
+The key of a reference's variable not renamed by `collidingNames` (`simName`): its legacy name with
+every `.` as `_`, a quoted name as it is.
 """
 function derivedKey(ref::IR.ComponentRef)::String
   local flat::String = legacyName(ref)

@@ -1497,7 +1497,7 @@ The target of field `f` of a record target of a tuple assignment: the field's va
 function _recordFieldTarget(target::SC.Exp, f::String)::SC.Exp
   target isa SC.WILD && return target
   target isa SC.EXP_CREF || unsupported("this record target of a tuple assignment in a when", target)
-  local field::SC.IR.ComponentRef = SC.fieldCref(something(target.cref.ref), f)
+  local field::SC.IR.ComponentRef = SC.fieldCref(SC.irRef(target.cref), f)
   return SC.EXP_CREF(SC.SimCref(Symbol(SC.derivedKey(field)), Int[], field), SC.TYPE_REAL())
 end
 

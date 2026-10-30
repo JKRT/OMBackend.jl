@@ -63,6 +63,12 @@ withKind(v::SIMVAR, k::SimVarType)::SIMVAR = SIMVAR(v.name, v.index, k, v.attrib
 "A variable with the index `index` (and the category `k`)."
 withIndex(v::SIMVAR, index::Int, k::SimVarType = v.varKind)::SIMVAR =
   SIMVAR(v.name, index, k, v.attributes, v.elementType, v.irKind, v.irOrigin, v.cref)
+"A variable with the IR reference `cref`."
+withCref(v::SIMVAR, cref::Union{Nothing, IR.ComponentRef})::SIMVAR =
+  SIMVAR(v.name, v.index, v.varKind, v.attributes, v.elementType, v.irKind, v.irOrigin, cref)
+"A variable with the attributes `a`."
+withAttributes(v::SIMVAR, a::SimVarAttributes)::SIMVAR =
+  SIMVAR(v.name, v.index, v.varKind, a, v.elementType, v.irKind, v.irOrigin, v.cref)
 
 hasStructuralTransitions(sc::SIM_CODE)::Bool = !isempty(sc.structuralTransitions)
 hasSubModels(sc::SIM_CODE)::Bool = !isempty(sc.subModels)
@@ -110,9 +116,22 @@ function complexFieldNames!(names::OrderedSet{String}, equations::AbstractVector
   return names
 end
 
-"The reference of the field `f` of the record reference `ref` (`r.f`)."
-fieldCref(ref::IR.ComponentRef, f::AbstractString)::IR.ComponentRef =
-  IR.ComponentRef(IR.CrefPart[ref.parts; IR.CrefPart(Symbol(f), IR.Subscript[], IR.T_UNKNOWN())])
+"""
+The reference of the field `f` of the record reference `ref` (`r.f`), its part of the field's type
+in the record type (of a subscripted part the element's, as `recordFieldExp`); `T_UNKNOWN` if the
+record type is not known.
+"""
+function fieldCref(ref::IR.ComponentRef, f::AbstractString)::IR.ComponentRef
+  local name::Symbol = Symbol(f)
+  local last::IR.CrefPart = ref.parts[end]
+  local record::IR.ModelicaType = isempty(last.subscripts) ? last.ty : IR.elementType(last.ty)
+  local ty::IR.ModelicaType = IR.T_UNKNOWN()
+  if record isa IR.T_RECORD
+    local i::Union{Nothing, Int} = findfirst(fl::IR.Field -> fl.name === name, record.fields)
+    i === nothing || (ty = record.fields[i].ty)
+  end
+  return IR.ComponentRef(IR.CrefPart[ref.parts; IR.CrefPart(name, IR.Subscript[], ty)])
+end
 
 "The expressions of an equation (its sides; a residual's expression)."
 equationExps(eq::RESIDUAL_EQUATION)::Vector{Exp} = Exp[eq.exp]
