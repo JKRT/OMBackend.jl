@@ -540,6 +540,17 @@ _irEquationOf(eqs::Vector{_IRM.Equation}, name::Symbol)::_IRM.SCALAR_EQUATION =
     @test m.variables[Symbol("a|b|c.phi1")].cref.parts[1].ty == _IRM.T_COMPONENTS(Symbol("IndexReduction.RigidPair"), [:a, :b, :c])
     @test Set{Symbol}(v.name for v in _IRd.scalarizeArrays(m).model.variables) == unrolledNames
     @test count(eq -> eq isa _IRM.FOR_EQUATION, m.continuous[1].equations) == 5
+    #= an if-expression's auxiliary per instance (ifEq_tmp<k>: one part, no derivative by the kinds) rolled into one
+       array; the rolled derivatives one part each, read as rolled arrays by their recorded names =#
+    m = _irArrayUnreduced("SeparateDampedPairs")
+    @test _IRd.rollComponents!(m) == 1
+    local auxiliary::_IRM.Variable = only(filter(v -> v.origin === :liftIfExpressions, collect(m.variables)))
+    @test auxiliary.cref.parts[1].ty isa _IRM.T_COMPONENTS && auxiliary.ty == _IRM.T_ARRAY(_IRM.T_REAL(), _IRM.Dimension[_IRM.DIM_SIZE(3)])
+    @test length(m.variables[Symbol("\$DER.a|b|c.w1")].cref.parts) == 1
+    local rolled::_IRd.RolledNames = _IRd.RolledNames(Dict{Tuple{Int, String}, Symbol}(), Set{Symbol}([Symbol("\$DER.a|b|c.w1")]),
+                                                      Dict{Symbol, Tuple{Int, Int, _IRM.CrefPart}}())
+    @test _IRd.isRolledReference(m.variables[Symbol("\$DER.a|b|c.w1")].cref, rolled)
+    @test !_IRd.isRolledReference(_IRM.ComponentRef(Symbol("\$DER.x|y")), rolled)
     #= the derivative unknowns solved in array form (solvedInArrays): each for-equation's body once, its iterator kept;
        the model with its arrays not changed (the scalarized path's) =#
     m = _irArrayUnreduced("InertiaArray")
@@ -579,6 +590,12 @@ _irEquationOf(eqs::Vector{_IRM.Equation}, name::Symbol)::_IRM.SCALAR_EQUATION =
       @test _irArraySimulate("EachStartArray", ["phi1[1]", "phi1[3]", "phi2[2]"], 1.0; kept = true) ≈ fill(0.6, 3)
       @test OMBackend.canonicalName("IndexReduction.EachStartArray") in OMBackend.ARRAY_REDUCED_MODELS
       @test OMBackend.canonicalName("IndexReduction.EachStartArray") in OMBackend.ARRAY_ODE_MODELS
+      #= rolled components with their auxiliaries: the results of the scalarized model =#
+      local damped::Vector{String} = ["a.phi1", "b.w1", "c.w1", "c.damping"]
+      local dampedScalarized::Vector{Float64} = _irArraySimulate("SeparateDampedPairs", damped, 3.0; kept = false)
+      @test isapprox(_irArraySimulate("SeparateDampedPairs", damped, 3.0; kept = true), dampedScalarized; atol = 1e-8, rtol = 1e-8)
+      @test dampedScalarized[4] > 0.01
+      @test OMBackend.canonicalName("IndexReduction.SeparateDampedPairs") in OMBackend.ARRAY_REDUCED_MODELS
       #= a derivative array solved from different bodies: solvedInArrays splits it in place, so the array code solves
          a copy and the scalarized fallback (a dynamic state set) reads the reduced model as reduced =#
       let (fm, functions) = _irArrayFlat("PendulumsFirstForceLaw")

@@ -58,9 +58,10 @@ struct ComponentGroup
   part::IR.CrefPart
 end
 
-"The rolled variables' names by the instance's part (`\$DER.` and the base's suffix), and the auxiliaries' parts."
+"The rolled variables' names by the instance's part (`\$DER.` and the base's suffix), the rolled derivatives' (one part each), and the auxiliaries' parts."
 struct RolledNames
   base::Dict{Tuple{Int, String}, Symbol}
+  derivatives::Set{Symbol}
   auxiliary::Dict{Symbol, Tuple{Int, Int, IR.CrefPart}}
 end
 
@@ -193,7 +194,7 @@ function rollGroup!(model::IR.Model, g::ComponentGroup)::Bool
   end
   #= auxiliaries (an if-expression's `ifEq_tmp<k>`): read only by the equations of one instance =#
   local auxiliaries::Vector{Vector{Symbol}} = auxiliaryVariables(model, partition, g, memberOf, owned)
-  local names::RolledNames = RolledNames(Dict{Tuple{Int, String}, Symbol}(), Dict{Symbol, Tuple{Int, Int, IR.CrefPart}}())
+  local names::RolledNames = RolledNames(Dict{Tuple{Int, String}, Symbol}(), Set{Symbol}(), Dict{Symbol, Tuple{Int, Int, IR.CrefPart}}())
   local newVariables::Vector{IR.Variable} = IR.Variable[]
   #= the rolled variables: the bases first (a derivative's array is named after its base's) =#
   for key in sort(keyOrder; by = k::Tuple{String, String} -> (length(k[1]), k[1]))
@@ -241,7 +242,7 @@ end
 """
     auxiliaryVariables(model, partition, g, memberOf, owned) -> Vector{Vector{Symbol}}
 
-The variables the passes made outside any component (`ifEq_tmp<k>`, not parameters) that only the equations of one instance read, matched
+The variables the passes made outside any component (`ifEq_tmp<k>`: of one part, no derivative by the kinds; not parameters) that only the equations of one instance read, matched
 across the instances: one list per role (instance by instance), the role the normalized equation that defines it
 (the first that reads it). NotHandled where the instances' roles differ.
 """
@@ -250,9 +251,11 @@ function auxiliaryVariables(model::IR.Model, partition::IR.Partition, g::Compone
   local n::Int = length(g.members)
   local readers::Dict{Symbol, Set{Int}} = Dict{Symbol, Set{Int}}()
   local firstReader::Dict{Symbol, IR.Equation} = Dict{Symbol, IR.Equation}()
+  local antiderivative::Dict{Symbol, Symbol} = antiderivatives(model.variables)
   local candidate::Function = (x::Symbol) -> begin
     local v::Union{Nothing, IR.Variable} = get(model.variables, x, nothing)
-    v !== nothing && v.origin !== :model && !occursin('.', String(x)) && !(x in owned) && !(v.kind isa Union{IR.PARAMETER, IR.CONSTANT})
+    v !== nothing && v.origin !== :model && length(v.cref.parts) == 1 && !haskey(antiderivative, x) && !(x in owned) &&
+      !(v.kind isa Union{IR.PARAMETER, IR.CONSTANT})
   end
   for eq in Iterators.flatten((partition.equations, partition.initialEquations))
     local instances::Set{Int} = Set{Int}()
@@ -327,7 +330,7 @@ function rolledVariable(r::RolledVariable, g::ComponentGroup, groups::Vector{Com
     base === nothing && throw(NotHandled("the variable $(r.prefix)$(r.suffix) without its base"))
     IR.ComponentRef(Symbol(r.prefix, base), ty)
   end
-  isempty(r.prefix) && (names.base[(1, r.suffix)] = cref.name)
+  isempty(r.prefix) ? (names.base[(1, r.suffix)] = cref.name) : push!(names.derivatives, cref.name)
   local literal::Function = (gi::Int, k::Int) -> IR.INTEGER(k)
   local rewrite::Function = (e::IR.Expression) -> rolledExpression(e, groups, memberOf, names, literal)
   local attribute::Function = (field::Symbol) -> rolledAttribute(r, n, innerSizes, (v::IR.Variable) -> getfield(v.attributes, field), rewrite)
@@ -468,7 +471,7 @@ function rolledExpression(e::IR.Expression, groups::Vector{ComponentGroup}, memb
     if x isa IR.CREF
       local r::Union{Nothing, IR.ComponentRef} = rolledReference(x.cref, groups, memberOf, names, index)
       return r === nothing ? x : IR.CREF(r, x.ty)
-    elseif x isa IR.SUBSCRIPTED && x.exp isa IR.CREF && IR.typeOf(x.exp) isa IR.T_ARRAY && isRolledReference(x.exp.cref) &&
+    elseif x isa IR.SUBSCRIPTED && x.exp isa IR.CREF && IR.typeOf(x.exp) isa IR.T_ARRAY && isRolledReference(x.exp.cref, names) &&
            all(s::IR.Subscript -> s isa IR.INDEX, x.subscripts)
       local parts::Vector{IR.CrefPart} = copy(x.exp.cref.parts)
       parts[end] = IR.CrefPart(parts[end].name, IR.Subscript[parts[end].subscripts; x.subscripts], parts[end].ty)
@@ -478,9 +481,9 @@ function rolledExpression(e::IR.Expression, groups::Vector{ComponentGroup}, memb
   end
 end
 
-"Whether a reference reads a rolled array (its first part the group's, or a rolled derivative's one part)."
-isRolledReference(cref::IR.ComponentRef)::Bool =
-  cref.parts[1].ty isa IR.T_COMPONENTS || (length(cref.parts) == 1 && startswith(String(cref.parts[1].name), "\$") && occursin('|', String(cref.parts[1].name)))
+"Whether a reference reads a rolled array (its first part the group's, or a rolled derivative's one part: `names.derivatives`)."
+isRolledReference(cref::IR.ComponentRef, names::RolledNames)::Bool =
+  cref.parts[1].ty isa IR.T_COMPONENTS || (length(cref.parts) == 1 && cref.parts[1].name in names.derivatives)
 
 "A variable with its binding and attributes reading the rolled arrays (`rewrite`)."
 function withRolledReferences(v::IR.Variable, rewrite::Function)::IR.Variable
