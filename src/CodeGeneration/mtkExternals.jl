@@ -2369,7 +2369,13 @@ function _initializationVarStrs(initEqs; reads::Bool = false)::OrderedSet{String
   return out
 end
 
-"Seed guesses for reduced unknowns, matched by name (`variableName`); overrides only absent or default-0.0 entries."
+"""
+    mergeSoftGuesses(reducedSystem, pairs; force = false)
+
+Seed guesses for reduced unknowns: `pairs` of a variable's name (SimCode's, a String or a Symbol: the if-equations'
+relay guesses, the trusted t0 values, the propagated guesses) and its value, matched to the unknowns by name
+(`variableName`); overrides only absent or default-0.0 entries, every entry with `force`.
+"""
 function mergeSoftGuesses(reducedSystem, pairs::AbstractVector; force::Bool = false)
   isempty(pairs) && return reducedSystem
   local unkByStr = Dict{String, Any}()
@@ -2379,7 +2385,7 @@ function mergeSoftGuesses(reducedSystem, pairs::AbstractVector; force::Bool = fa
   local gs = Dict{Any, Any}(ModelingToolkit.guesses(reducedSystem))
   local changed = false
   for p in pairs
-    local nm::Union{Nothing, String} = variableName(first(p))
+    local nm::String = String(first(p)::Union{Symbol, AbstractString})
     haskey(unkByStr, nm) || continue
     local cur = nothing
     for (k, v) in gs
@@ -2713,7 +2719,8 @@ function splitInitialValues(reducedSystem, finalInitialValues::AbstractVector,
       _progress || break
     end
     if !isempty(_resolved)
-      reducedSystem = mergeSoftGuesses(reducedSystem, Pair{Any, Any}[k => v for (k, v) in _resolved])
+      reducedSystem = mergeSoftGuesses(reducedSystem, Pair{Any, Any}[variableName(k) => v for (k, v) in _resolved
+                                                                    if variableName(k) !== nothing])
       @info "[MTK GEN: init] PROPAGATED $(length(_resolved)) init guesses: " *
             join([string(variableName(k), "=", round(v; digits=4)) for (k, v) in _resolved], ", ")
     else
