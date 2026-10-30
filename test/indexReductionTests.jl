@@ -95,6 +95,16 @@ _irEquationOf(eqs::Vector{_IRM.Equation}, name::Symbol)::_IRM.SCALAR_EQUATION =
     local (fm1, functions1) = _irFlat("Index1")
     local index1 = OMBackend.omjlirModel(fm1; functionList = functions1)
     @test index1.variables[:x].kind isa _IRM.STATE
+    #= derivative variables by their kinds, not their names: x, its derivative v (a state, second order), v's a =#
+    local real = (name::Symbol, kind::_IRM.VariableKind) ->
+      _IRM.Variable(name, _IRM.T_REAL(), kind, nothing, _IRM.NO_ATTRIBUTES, _IRM.NO_DIRECTION, false, _IRM.NOT_CONNECTOR,
+                    _IRM.NO_SOURCE, :model)
+    local chain = _IRM.VariableSet(_IRM.Variable[real(:x, _IRM.STATE(2, :v, true)), real(:v, _IRM.STATE(1, :a, true)),
+                                                 real(:a, _IRM.STATE_DER(:v)), real(:y, _IRM.ALGEBRAIC())])
+    local antiderivative::Dict{Symbol, Symbol} = _IRd.antiderivatives(chain)
+    @test antiderivative == Dict(:v => :x, :a => :v)
+    @test _IRd.baseVariable(antiderivative, :a) === :x && _IRd.baseVariable(antiderivative, :y) === :y
+    @test _IRd.derivativeChain(chain, :x) == [:v, :a] && isempty(_IRd.derivativeChain(chain, :y))
   end
 
   @testset "the choice of states" begin
