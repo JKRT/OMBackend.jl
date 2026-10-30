@@ -399,8 +399,10 @@ function _solveMixedSystem!(c::DiscreteCluster, integrator, pre, relPre, reinit)
     push!(tried, _memberValues(c, integrator))
     _write!(c, integrator, values)
     changed = true
-    #= Uncoupled: the event iteration solves once after the sweep. =#
-    c.coupled && (_resolveAlgebraics!(integrator, reinit) || return changed)
+    #= Uncoupled: the event iteration solves once after the sweep. A failed solve puts the return code back
+       (`_staleResolve!`): the sweep goes on, and an InitialFailure left here made every later solve of the instant
+       fail. =#
+    c.coupled && (_staleResolve!(integrator, reinit) || return changed)
     local before = copy(c.rel)
     _update!(c, integrator)
     flipped .|= before .!= c.rel
