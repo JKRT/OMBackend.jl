@@ -52,13 +52,7 @@ function simKind(k::IR.VariableKind, variables::IR.VariableSet, names::Names)::I
     v.kind isa IR.STATE_DER && return Symbol("der(", simName(names, variables[v.kind.state].cref), ")")
     return Symbol(simName(names, v.cref))
   end
-  k isa IR.STATE && return IR.STATE(k.index, k.derivative === nothing ? nothing : sim(k.derivative), k.natural)
-  k isa IR.STATE_DER && return IR.STATE_DER(sim(k.state))
-  k isa IR.ALGEBRAIC_DER && return IR.ALGEBRAIC_DER(sim(k.state))
-  k isa IR.DUMMY_DER && return IR.DUMMY_DER(sim(k.dummyState))
-  k isa IR.DUMMY_STATE && return IR.DUMMY_STATE(sim(k.dummyDerivative))
-  k isa IR.CLOCKED_STATE && return IR.CLOCKED_STATE(sim(k.previous), k.isStartFixed)
-  return k
+  return IR.mapKindNames(sim, k)
 end
 
 """

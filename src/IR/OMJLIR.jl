@@ -1216,6 +1216,21 @@ function memberName(p::CrefPart)::Union{Nothing, Symbol}
   return k === nothing ? nothing : t.members[k]
 end
 
+"""
+    mapKindNames(f, kind) -> VariableKind
+
+`kind` with each variable it names (a state's derivative, a derivative's state, a dummy's counterpart, a clocked
+state's previous value) as `f` of it; a kind that names none as it is. The passes that split, roll or lower variables
+rename what their kinds name by it.
+"""
+mapKindNames(f::F, k::STATE) where {F} = STATE(k.index, k.derivative === nothing ? nothing : f(k.derivative), k.natural)::VariableKind
+mapKindNames(f::F, k::STATE_DER) where {F} = STATE_DER(f(k.state))::VariableKind
+mapKindNames(f::F, k::ALGEBRAIC_DER) where {F} = ALGEBRAIC_DER(f(k.state))::VariableKind
+mapKindNames(f::F, k::DUMMY_DER) where {F} = DUMMY_DER(f(k.dummyState))::VariableKind
+mapKindNames(f::F, k::DUMMY_STATE) where {F} = DUMMY_STATE(f(k.dummyDerivative))::VariableKind
+mapKindNames(f::F, k::CLOCKED_STATE) where {F} = CLOCKED_STATE(f(k.previous), k.isStartFixed)::VariableKind
+mapKindNames(::F, k::VariableKind) where {F} = k
+
 "The derivative variable of the state `state` in `set`; `nothing` before it is introduced."
 function derivativeOf(set::VariableSet, state::Symbol)::Union{Nothing, Variable}
   local k = set[state].kind

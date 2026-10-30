@@ -416,11 +416,8 @@ end
 "The kind of the rolled variable: the instances'; the variable it names (a state's derivative, a derivative's state) the rolled one."
 function rolledKind(kind::IR.VariableKind, crefOf::Dict{Symbol, IR.ComponentRef}, memberOf::Dict{Symbol, Tuple{Int, Int}},
                     names::RolledNames)::IR.VariableKind
-  kind isa IR.STATE && kind.derivative !== nothing && return IR.STATE(kind.index, rolledName(kind.derivative, crefOf, memberOf, names), kind.natural)
-  kind isa IR.STATE_DER && return IR.STATE_DER(rolledName(kind.state, crefOf, memberOf, names))
-  kind isa IR.ALGEBRAIC_DER && return IR.ALGEBRAIC_DER(rolledName(kind.state, crefOf, memberOf, names))
   kind isa Union{IR.DUMMY_DER, IR.DUMMY_STATE, IR.CLOCKED_STATE} && throw(NotHandled("an instance's variable of kind $(nameof(typeof(kind)))"))
-  return kind
+  return IR.mapKindNames((x::Symbol) -> rolledName(x, crefOf, memberOf, names), kind)
 end
 
 "The rolled variable an instance's variable `name` (its reference by `crefOf`) is an element of (a base's, a derivative's, an auxiliary's); NotHandled for another."

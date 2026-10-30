@@ -256,12 +256,9 @@ end
 "The kind of a slice: the array's, the variable it names (a state's derivative, a derivative's state) that one's slice."
 function slicedKind(kind::IR.VariableKind, family::Dict{Symbol, Vector{Int}}, t::Vector{Int}, sliceOf::Function)::IR.VariableKind
   local named::Function = (x::Symbol) -> haskey(family, x) ? sliceOf(x, t) : throw(NotHandled("a slice whose kind names $(x), not split with it"))
-  kind isa IR.STATE && kind.derivative !== nothing && return IR.STATE(kind.index, named(kind.derivative), kind.natural)
-  kind isa IR.STATE_DER && return IR.STATE_DER(named(kind.state))
-  kind isa IR.ALGEBRAIC_DER && return IR.ALGEBRAIC_DER(named(kind.state))
-  kind isa IR.DUMMY_DER && return IR.DUMMY_DER(named(kind.dummyState))
-  kind isa IR.DUMMY_STATE && return IR.DUMMY_STATE(named(kind.dummyDerivative))
-  return kind
+  #= a clocked state's previous value is not split with it =#
+  kind isa IR.CLOCKED_STATE && return kind
+  return IR.mapKindNames(named, kind)
 end
 
 """
