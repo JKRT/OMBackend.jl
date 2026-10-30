@@ -432,6 +432,9 @@ import .ExampleModels
   #= ── 20w. The initialization's parameters and pins by the variables' names ── =#
   include("initializationNamesTests.jl")
 
+  #= ── 20w2. What the generated model's variables are (SimCodeKind, IfConditionParameter) ── =#
+  include("kindMetadataTests.jl")
+
   #= ── 21. The backend reads the frontend's flat model only ──────── =#
   @testset "No DAE in the backend" begin
     #= The frontend's DAE, the previous backend's BDAE and its SimulationCode are gone: the
