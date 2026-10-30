@@ -181,35 +181,36 @@ isRecordType(ty::SType)::Bool = ty isa TYPE_COMPLEX && ty.isRecord
 "A reference of a record type."
 isRecordReference(e::Exp)::Bool = e isa EXP_CREF && isRecordType(e.ty)
 
-"The references of a record reference's fields, `r_f` (an array field the array of its elements)."
+"The references of a record reference's fields, `r_f` (`fieldCref`; an array field the array of its elements)."
 function fieldReferences(e::EXP_CREF, ht::HT)::Vector{Exp}
-  local base = crefName(e.cref)
-  return Exp[fieldArgument(string(base, "_", n), t, ht) for (n, t) in zip(e.ty.fieldNames, e.ty.fieldTypes)]
+  local record::IR.ComponentRef = something(e.cref.ref)
+  return Exp[fieldArgument(fieldCref(record, n), t, ht) for (n, t) in zip(e.ty.fieldNames, e.ty.fieldTypes)]
 end
 
 """
-    fieldArgument(name, ty, ht)
+    fieldArgument(field, ty, ht)
 
-A record field `name` as an argument: a scalar field's reference; an array field of one or
-two known dimensions as the array (of rows) of its elements' references; another the whole
-reference.
+A record field (its reference `field`) as an argument: a scalar field's reference; an array field
+of one or two known dimensions as the array (of rows) of its elements' references; another the
+whole reference.
 """
-function fieldArgument(name::String, ty::SType, ht::HT)::Exp
+function fieldArgument(field::IR.ComponentRef, ty::SType, ht::HT)::Exp
   if ty isa TYPE_ARRAY && all(d -> d >= 0, ty.dims) && length(ty.dims) in (1, 2)
     if length(ty.dims) == 1
-      return ARRAY_EXP(ty, true, Exp[EXP_CREF(elementCref(name, [i], ht), ty.elementType) for i in 1:ty.dims[1]])
+      return ARRAY_EXP(ty, true, Exp[EXP_CREF(elementCref(field, [i], ht), ty.elementType) for i in 1:ty.dims[1]])
     end
     local rowTy = TYPE_ARRAY(ty.elementType, Int[ty.dims[2]])
-    return ARRAY_EXP(ty, false, Exp[ARRAY_EXP(rowTy, true, Exp[EXP_CREF(elementCref(name, [i, j], ht), ty.elementType)
+    return ARRAY_EXP(ty, false, Exp[ARRAY_EXP(rowTy, true, Exp[EXP_CREF(elementCref(field, [i, j], ht), ty.elementType)
                                                                 for j in 1:ty.dims[2]]) for i in 1:ty.dims[1]])
   end
-  return EXP_CREF(SimCref(Symbol(name)), ty)
+  return EXP_CREF(SimCref(Symbol(derivedKey(field)), Int[], field), ty)
 end
 
-"The reference of the element `index` of the array `name`: a variable's name, else the array's with the subscripts."
-function elementCref(name::String, index::Vector{Int}, ht::HT)::SimCref
-  local full = string(name, join(("[$(i)]" for i in index)))
-  return haskey(ht, full) ? SimCref(Symbol(full)) : SimCref(Symbol(name), index)
+"The reference of the element `index` of the array reference `array`: its variable's, else the array's with the subscripts (`elementRead`)."
+function elementCref(array::IR.ComponentRef, index::Vector{Int}, ht::HT)::SimCref
+  local read::SimCref = elementRead(SimCref(Symbol(derivedKey(array)), Int[], array), index)
+  local key::String = derivedKey(something(read.ref))
+  return haskey(ht, key) ? SimCref(Symbol(key), Int[], read.ref) : read
 end
 
 "An if-expression between record references or record-valued calls."
@@ -260,8 +261,8 @@ function splitRecordArrayArgument(arg::Exp, ht::HT)::Union{Nothing, Vector{Exp}}
   local elements = if arg isa ARRAY_EXP
     arg.elements
   elseif arg isa EXP_CREF && arg.ty isa TYPE_ARRAY && isRecordType(arg.ty.elementType) && length(arg.ty.dims) == 1 &&
-         arg.ty.dims[1] >= 0 && !occursin('[', crefName(arg.cref))
-    Exp[EXP_CREF(SimCref(arg.cref.sym, [i]), arg.ty.elementType) for i in 1:arg.ty.dims[1]]
+         arg.ty.dims[1] >= 0 && isempty(arg.cref.subs) && arg.cref.ref !== nothing && !isElementCref(arg.cref.ref)
+    Exp[EXP_CREF(elementRead(arg.cref, [i]), arg.ty.elementType) for i in 1:arg.ty.dims[1]]
   else
     return nothing
   end
@@ -278,7 +279,7 @@ end
 
 "Field `k` (`name`) of a record element of an array argument: a reference's field's name, a record value's element, a call's field by TSUB."
 function recordElementField(e::Exp, k::Int, name::String, ty::SType, ht::HT)::Exp
-  e isa EXP_CREF && return EXP_CREF(SimCref(Symbol(crefName(e.cref), "_", name)), ty)
+  e isa EXP_CREF && return (local field = fieldCref(something(e.cref.ref), name); EXP_CREF(SimCref(Symbol(derivedKey(field)), Int[], field), ty))
   e isa RECORD && return expandRecordArguments(e.exps[k], ht)
   return TSUB(expandRecordArguments(e, ht), k, ty)
 end

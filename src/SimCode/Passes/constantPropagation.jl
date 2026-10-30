@@ -95,9 +95,10 @@ function propagateConstants(simCode::SIM_CODE)::SIM_CODE
   (hasStructuralTransitions(simCode) || hasSubModels(simCode)) && return simCode
   local ht = simCode.stringToSimVarHT
   local excluded = Set{String}(Iterators.flatten((simCode.sharedVariables, simCode.irreducibleVariables)))
-  local wholeArrays = Set{String}()
-  for eq in simCode.residualEquations, n in crefNames!(OrderedSet{String}(), eq.exp)
-    occursin('[', n) || push!(wholeArrays, n)
+  #= the arrays read whole (a reference that is no element, `arrayBase` its own name): their elements stay variables =#
+  local wholeArrays = Set{Symbol}()
+  for eq in simCode.residualEquations, (c, _) in crefReads!(Tuple{SimCref, Bool}[], eq.exp)
+    (c.ref !== nothing && isempty(c.subs) && !isElementCref(c.ref)) && push!(wholeArrays, c.ref.name)
   end
   local replacements = Replacements()
   local eliminatedBy = OrderedDict{Int, String}()
@@ -117,8 +118,8 @@ function propagateConstants(simCode::SIM_CODE)::SIM_CODE
       end
       local (_, unknown, parameter, negated) = c
       unknown in excluded && continue
-      local bracket = findfirst('[', unknown)
-      (bracket !== nothing && unknown[1:prevind(unknown, bracket)] in wholeArrays) && continue
+      local unknownRef::Union{Nothing, IR.ComponentRef} = get(simCode.references, unknown, nothing)
+      (unknownRef !== nothing && isElementCref(unknownRef) && arrayBase(unknownRef) in wholeArrays) && continue
       haskey(replacements, unknown) && continue
       replacements[unknown] = Replacement(parameter, negated, true)
       eliminatedBy[i] = unknown

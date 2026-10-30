@@ -107,6 +107,18 @@ function simName(names::Names, cref::IR.ComponentRef)::String
   return replace(flat, '.' => '_')
 end
 
+"""
+    derivedKey(ref) -> String
+
+The key a reference's variable has (`simName` without the renamed collisions): its legacy name with
+every `.` as `_`, a quoted name as it is; derived from the reference, as every key is.
+"""
+function derivedKey(ref::IR.ComponentRef)::String
+  local flat::String = legacyName(ref)
+  (startswith(flat, '\'') && endswith(flat, '\'')) && return flat
+  return replace(flat, '.' => '_')
+end
+
 "The name of the function, record or class `name` in the simulation code: its parts joined by `_`."
 codeName(name::Symbol)::Symbol = Symbol(replace(String(name), '.' => '_'))
 
@@ -257,34 +269,35 @@ by its flat name.
 """
 function simCrefExp(names::Names, cref::IR.ComponentRef, ty::IR.ModelicaType)::Exp
   local state = get(names.stateOf, cref.name, nothing)
-  state === nothing || return DER(SimCref(Symbol(simName(names, state))))
+  state === nothing || return DER(SimCref(Symbol(simName(names, state)), Int[], state))
   local full = simName(names, cref)
-  full in names.known && return EXP_CREF(SimCref(Symbol(full)), simType(ty))
+  full in names.known && return EXP_CREF(SimCref(Symbol(full), Int[], cref), simType(ty))
   if any(p -> any(s -> !(s isa IR.INDEX && s.exp isa Union{IR.INTEGER, IR.ENUM_LITERAL}), p.subscripts),
          @view cref.parts[1:end-1])
     local selected = variablesBySubscript(names, cref, ty)
     selected === nothing || return selected
   end
   local last = cref.parts[end]
-  local base = simName(names, IR.ComponentRef(IR.CrefPart[cref.parts[1:end-1]..., IR.CrefPart(last.name, IR.Subscript[], last.ty)]))
+  local baseCref = IR.ComponentRef(IR.CrefPart[cref.parts[1:end-1]..., IR.CrefPart(last.name, IR.Subscript[], last.ty)])
+  local base = simName(names, baseCref)
   if !(base in names.known)
     local field = recordFieldExp(names, cref)
     field === nothing || return field
   end
   if isempty(last.subscripts) && !(base in names.known)
-    return something(variablesBySubscript(names, cref, ty), Some(EXP_CREF(SimCref(Symbol(full)), simType(ty))))
+    return something(variablesBySubscript(names, cref, ty), Some(EXP_CREF(SimCref(Symbol(full), Int[], cref), simType(ty))))
   end
   #= a scalar subscripted by ones is the scalar: the frontend's equations of expandable
      connectors' scalar signals (`bus2.y1[1] = two.bus.y1[1]`, Buildings' Templates) =#
   (base in names.scalars && all(p -> isempty(p.subscripts), @view cref.parts[1:end-1]) &&
    all(s -> s isa IR.INDEX && s.exp isa IR.INTEGER && s.exp.value == 1, last.subscripts)) &&
-    return EXP_CREF(SimCref(Symbol(base)), simType(ty))
+    return EXP_CREF(SimCref(Symbol(base), Int[], baseCref), simType(ty))
   if all(s -> s isa IR.INDEX && s.exp isa IR.INTEGER, last.subscripts)
-    return EXP_CREF(SimCref(Symbol(base), Int[s.exp.value for s in last.subscripts]), simType(ty))
+    return EXP_CREF(SimCref(Symbol(base), Int[s.exp.value for s in last.subscripts], cref), simType(ty))
   end
   all(s -> s isa IR.INDEX && s.exp isa Union{IR.INTEGER, IR.ENUM_LITERAL}, last.subscripts) &&
-    return EXP_CREF(SimCref(Symbol(full)), simType(ty))
-  return ASUB(EXP_CREF(SimCref(Symbol(base)), simType(last.ty)), Exp[subscriptExp(names, s) for s in last.subscripts])
+    return EXP_CREF(SimCref(Symbol(full), Int[], cref), simType(ty))
+  return ASUB(EXP_CREF(SimCref(Symbol(base), Int[], baseCref), simType(last.ty)), Exp[subscriptExp(names, s) for s in last.subscripts])
 end
 
 """
@@ -302,9 +315,10 @@ function recordFieldExp(names::Names, cref::IR.ComponentRef)::Union{Nothing, Exp
     local prefix = cref.parts[k]
     local ty = isempty(prefix.subscripts) ? prefix.ty : IR.elementType(prefix.ty)
     ty isa IR.T_RECORD || continue
-    local name = simName(names, IR.ComponentRef(cref.parts[1:k]))
+    local recordCref = IR.ComponentRef(cref.parts[1:k])
+    local name = simName(names, recordCref)
     name in names.scalars || continue
-    local exp = EXP_CREF(SimCref(Symbol(name)), simType(ty))
+    local exp = EXP_CREF(SimCref(Symbol(name), Int[], recordCref), simType(ty))
     for p in @view cref.parts[k + 1:end]
       ty isa IR.T_RECORD || return nothing
       local i = findfirst(f -> f.name === p.name, ty.fields)
@@ -322,7 +336,7 @@ function recordFieldExp(names::Names, cref::IR.ComponentRef)::Union{Nothing, Exp
 end
 
 "The SimCref of a reference (a variable's name)."
-simCref(names::Names, cref::IR.ComponentRef)::SimCref = SimCref(Symbol(simName(names, cref)))
+simCref(names::Names, cref::IR.ComponentRef)::SimCref = SimCref(Symbol(simName(names, cref)), Int[], cref)
 
 """
     variablesBySubscript(names, cref, ty)
@@ -341,7 +355,7 @@ function variablesBySubscript(names::Names, cref::IR.ComponentRef, ty::IR.Modeli
     part for (q, part) in enumerate(cref.parts)])
   local elements = Exp[]
   while simName(names, withIndex(length(elements) + 1)) in names.known
-    push!(elements, EXP_CREF(SimCref(Symbol(simName(names, withIndex(length(elements) + 1)))), simType(ty)))
+    push!(elements, EXP_CREF(SimCref(Symbol(simName(names, withIndex(length(elements) + 1))), Int[], withIndex(length(elements) + 1)), simType(ty)))
   end
   isempty(elements) && return nothing
   return ASUB(ARRAY_EXP(TYPE_ARRAY(simType(ty), Int[length(elements)]), true, elements), Exp[simExp(names, index)])

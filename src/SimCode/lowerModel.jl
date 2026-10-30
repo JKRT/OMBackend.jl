@@ -114,8 +114,18 @@ function lowerSystem(model::IR.Model, variables::IR.VariableSet, partition::IR.P
   local vars = IR.Variable[v for v in variables if !(v.kind isa IR.STATE_DER)]
   local names = systemNames(vars, model.name)
   local simVars = SIMVAR[SIMVAR(simName(names, v.cref), nothing, simVarKind(v, names), simVarAttributes(v, names),
-                                simType(IR.elementType(v.ty)), simKind(v.kind, variables, names), v.origin) for v in vars]
+                                simType(IR.elementType(v.ty)), simKind(v.kind, variables, names), v.origin, v.cref) for v in vars]
   local ht = createIndices(simVars)
+  #= a state's derivative by the IR derivative variable's reference =#
+  for v in vars
+    (v.kind isa IR.STATE && v.kind.derivative !== nothing && haskey(variables, v.kind.derivative)) || continue
+    local key::String = "der($(simName(names, v.cref)))"
+    haskey(ht, key) || continue
+    local (i::Int, d::SIMVAR) = ht[key]
+    ht[key] = (i, SIMVAR(d.name, d.index, d.varKind, d.attributes, d.elementType, d.irKind, d.irOrigin, variables[v.kind.derivative].cref))
+  end
+  local references::Dict{String, IR.ComponentRef} =
+    Dict{String, IR.ComponentRef}(k => sv.cref for (k, (_, sv)) in ht if sv.cref !== nothing)
   local eqs = classifyEquations(partition.equations)
   local initialAlgorithms = INITIAL_ALGORITHM[INITIAL_ALGORITHM(simStatements(names, w.branches[1].body), w.kind === IR.INITIAL_SECTION)
                                               for w in eqs.initialWhens]
@@ -125,7 +135,7 @@ function lowerSystem(model::IR.Model, variables::IR.VariableSet, partition::IR.P
   local residuals = RESIDUAL_EQUATION[residual(names, eq) for eq in eqs.residuals]
   local (asserts, initialAssertAlgorithms) = lowerAsserts(names, ht, eqs.asserts, partition.initialEquations)
   append!(initialAlgorithms, initialAssertAlgorithms)
-  initialAlgorithms = INITIAL_ALGORITHM[INITIAL_ALGORITHM(mapStatements(e -> inlineParameters(e, ht), a.statements), a.section)
+  initialAlgorithms = INITIAL_ALGORITHM[INITIAL_ALGORITHM(mapStatements(e -> inlineParameters(e, ht, names), a.statements), a.section)
                                         for a in initialAlgorithms]
   local whenEquations = WHEN_EQUATION[lowerWhen(names, w) for w in runtimeWhens]
   local irreducibles = irreducibleVariables(names, eqs.ifs, whenEquations, vars, ht)
@@ -139,7 +149,7 @@ function lowerSystem(model::IR.Model, variables::IR.VariableSet, partition::IR.P
                   String(codeName(Symbol(something(model.initialMode, model.name)))), model.frontendModel, irreducibles,
                   functions, any(f -> f isa EXTERNAL_MODELICA_FUNCTION, functions),
                   RESIDUAL_EQUATION[], String[], AliasEntry[], nothing, initialAlgorithms, asserts, String[],
-                  any(v -> v.kind isa Union{IR.DUMMY_STATE, IR.DUMMY_DER}, vars))
+                  any(v -> v.kind isa Union{IR.DUMMY_STATE, IR.DUMMY_DER}, vars), references, referenceKeys(references))
 end
 
 """
@@ -378,7 +388,7 @@ function lowerAsserts(names::Names, ht::OrderedDict{String, Tuple{Int, SIMVAR}},
       push!(initial, INITIAL_ALGORITHM(Statement[ASSERT(a.condition, a.message, a.level, a.source)], false))
     end
   end
-  local inline = e -> inlineParameters(e, ht; keepTunable = true, keepCalls = true)
+  local inline = e -> inlineParameters(e, ht, names; keepTunable = true, keepCalls = true)
   out = ASSERT_EQUATION[ASSERT_EQUATION(inline(a.condition), inline(a.message), a.level, a.source) for a in out]
   return (out, initial)
 end
@@ -389,7 +399,7 @@ simAssert(names::Names, a::IR.ASSERT_EQUATION)::ASSERT_EQUATION =
 isNoReturnCall(e::IR.Expression)::Bool = e isa IR.CALL && e.ty isa IR.T_NORETCALL
 
 """
-    inlineParameters(e, ht; keepTunable)
+    inlineParameters(e, ht, names; keepTunable)
 
 `e` with the parameters replaced by their bindings, to a fixed point (a parameter bound to
 another): the initial algorithms run when the generated module is loaded, the asserts read
@@ -400,7 +410,7 @@ algorithm (it would keep its compiled value), a reference with `keepTunable`. Wi
 once: inlined, a time-varying assert's crossing called it at every evaluation (Buildings'
 weather data, `getTimeSpanTMY3(filNam, "tab1")` reading the weather file, 40 ms a call).
 """
-function inlineParameters(e::Exp, ht::OrderedDict{String, Tuple{Int, SIMVAR}}; keepTunable::Bool = false,
+function inlineParameters(e::Exp, ht::OrderedDict{String, Tuple{Int, SIMVAR}}, names::Names; keepTunable::Bool = false,
                           keepCalls::Bool = false)::Exp
   local visit = x -> begin
     local name = x isa EXP_CREF ? crefName(x.cref) : nothing
@@ -418,9 +428,9 @@ function inlineParameters(e::Exp, ht::OrderedDict{String, Tuple{Int, SIMVAR}}; k
       (bind === nothing || (keepCalls && anyExp(y -> y isa CALL && y.kind !== CALL_BUILTIN, bind))) && return x
       return bind
     end
-    return something(scalarizedArrayParameter(name, ht), Some(x))
+    return something(scalarizedArrayParameter(x, ht), Some(x))
   end
-  local visitElements = x -> x isa ASUB ? something(elementsBySubscript(x, ht), Some(x)) : visit(x)
+  local visitElements = x -> x isa ASUB ? something(elementsBySubscript(x, ht, names), Some(x)) : visit(x)
   local current = e
   for _ in 1:100
     local next = mapExp(visitElements, current)
@@ -431,19 +441,22 @@ function inlineParameters(e::Exp, ht::OrderedDict{String, Tuple{Int, SIMVAR}}; k
 end
 
 """
-    scalarizedArrayParameter(name, ht)
+    scalarizedArrayParameter(x, ht)
 
-The array value of an array parameter `name` known by its elements' parameters (`A[1][2]`,
-1 or 2 dimensions) with bindings, a missing element 0.0; `nothing` if there are none.
+The array value of an array parameter `x` known by its elements' parameters (`A[1][2]`: by
+their references, `elementIndex`; 1 or 2 dimensions) with bindings, a missing element 0.0;
+`nothing` if there are none.
 """
-function scalarizedArrayParameter(name::String, ht::OrderedDict{String, Tuple{Int, SIMVAR}})::Union{Nothing, Exp}
-  haskey(ht, name) && return nothing
+function scalarizedArrayParameter(x::EXP_CREF, ht::OrderedDict{String, Tuple{Int, SIMVAR}})::Union{Nothing, Exp}
+  (haskey(ht, crefName(x.cref)) || x.cref.ref === nothing || !isempty(x.cref.subs)) && return nothing
+  local array::IR.ComponentRef = x.cref.ref
   local entries = Tuple{Vector{Int}, Exp}[]
-  for (key, (_, sv)) in ht
-    local parsed = parseElementName(key)
-    (parsed === nothing || parsed[1] != name) && continue
+  for (_, (_, sv)) in ht
+    sv.cref === nothing && continue
+    local index::Union{Nothing, Vector{Int}} = elementIndex(sv.cref, array)
+    index === nothing && continue
     (sv.varKind isa PARAMETER && sv.varKind.bindExp !== nothing) || continue
-    push!(entries, (parsed[2], sv.varKind.bindExp))
+    push!(entries, (index, sv.varKind.bindExp))
   end
   isempty(entries) && return nothing
   local element = idx -> (local k = findfirst(x -> x[1] == idx, entries); k === nothing ? RCONST(0.0) : entries[k][2])
@@ -461,41 +474,28 @@ function scalarizedArrayParameter(name::String, ht::OrderedDict{String, Tuple{In
 end
 
 """
-    elementsBySubscript(e, ht)
+    elementsBySubscript(e, ht, names)
 
 An array that is not a variable read by a subscript that is not a literal (a loop's iterator:
-the plotters' `legend[i]`), its elements 1, 2, ... variables: the array of the elements'
-references, subscripted; `nothing` for another expression.
+the plotters' `legend[i]`), its elements 1, 2, ... variables (their references: the array's
+subscripted on its last part, their keys by `simName`): the array of the elements' references,
+subscripted; `nothing` for another expression.
 """
-function elementsBySubscript(e::ASUB, ht::OrderedDict{String, Tuple{Int, SIMVAR}})::Union{Nothing, Exp}
+function elementsBySubscript(e::ASUB, ht::OrderedDict{String, Tuple{Int, SIMVAR}}, names::Names)::Union{Nothing, Exp}
   (e.exp isa EXP_CREF && length(e.subs) == 1 && !(e.subs[1] isa ICONST)) || return nothing
-  local base = crefName(e.exp.cref)
-  haskey(ht, base) && return nothing
+  (haskey(ht, crefName(e.exp.cref)) || e.exp.cref.ref === nothing) && return nothing
+  local array::IR.ComponentRef = e.exp.cref.ref
+  local last::IR.CrefPart = array.parts[end]
+  local elementRef = (k::Int) -> IR.ComponentRef(IR.CrefPart[array.parts[1:end - 1]; IR.CrefPart(last.name,
+                                                  IR.Subscript[last.subscripts; IR.INDEX(IR.INTEGER(k))], last.ty)])
   local elementTy = e.exp.ty isa TYPE_ARRAY ? e.exp.ty.elementType : e.exp.ty
   local elements = Exp[]
-  while haskey(ht, string(base, "[", length(elements) + 1, "]"))
-    push!(elements, EXP_CREF(SimCref(Symbol(base, "[", length(elements) + 1, "]")), elementTy))
+  while haskey(ht, simName(names, elementRef(length(elements) + 1)))
+    local ref::IR.ComponentRef = elementRef(length(elements) + 1)
+    push!(elements, EXP_CREF(SimCref(Symbol(simName(names, ref)), Int[], ref), elementTy))
   end
   isempty(elements) && return nothing
   return ASUB(ARRAY_EXP(TYPE_ARRAY(elementTy, Int[length(elements)]), true, elements), e.subs)
-end
-
-"An element's name `A[1][2]` as `(\"A\", [1, 2])`; `nothing` for another name."
-function parseElementName(key::String)::Union{Nothing, Tuple{String, Vector{Int}}}
-  local open = findfirst('[', key)
-  open === nothing && return nothing
-  local indices = Int[]
-  local rest = key[open:end]
-  while !isempty(rest)
-    rest[1] == '[' || return nothing
-    local close = findfirst(']', rest)
-    close === nothing && return nothing
-    local i = tryparse(Int, rest[2:close-1])
-    i === nothing && return nothing
-    push!(indices, i)
-    rest = rest[close+1:end]
-  end
-  return (key[1:open-1], indices)
 end
 
 #= ==================================================================================== =#

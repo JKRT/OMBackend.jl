@@ -89,7 +89,7 @@ function foldExplicitOnce(simCode::SIM_CODE, kept::OrderedSet{String})::Union{No
     local d = explicitDefinition(eq.exp, ht)
     d === nothing && continue
     local (name, x) = d
-    (occursin('[', name) || occursin(']', name) || name in kept || name in aliases) && continue
+    (isElementVariable(ht, name) || name in kept || name in aliases) && continue
     local v = last(ht[name])
     (v.varKind isa ALG_VARIABLE && !hasFixedStart(v)) || continue
     anyExp(y -> y isa DER || (y isa CALL && y.name === :der), x) && continue
@@ -187,7 +187,7 @@ function reciprocalOrientation(e::Exp, ht::HT, uses::Dict{String, Int}, excluded
   local (xn, yn) = (crefName(x.cref), crefName(y.cref))
   xn == yn && return nothing
   for n in (xn, yn)
-    (haskey(ht, n) && !occursin('[', n)) || return nothing
+    (haskey(ht, n) && !isElementVariable(ht, n)) || return nothing
     local v = last(ht[n])
     (v.varKind isa ALG_VARIABLE && !hasFixedStart(v)) || return nothing
   end

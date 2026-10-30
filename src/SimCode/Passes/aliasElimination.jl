@@ -261,7 +261,7 @@ function eliminateAliasVariables(simCode::SIM_CODE)::SIM_CODE
   for (name, attributes) in mergedAttributes
     haskey(newHT, name) || continue
     local (index, v) = newHT[name]
-    attributes == v.attributes || (newHT[name] = (index, SIMVAR(v.name, v.index, v.varKind, attributes, v.elementType, v.irKind, v.irOrigin)))
+    attributes == v.attributes || (newHT[name] = (index, SIMVAR(v.name, v.index, v.varKind, attributes, v.elementType, v.irKind, v.irOrigin, v.cref)))
   end
   local (observedVariables, observedEquations) = observationPairs(eliminated, pairs, removed, residuals, replacements, refs)
   local aliasMap = withAliases(simCode.aliasMap, filter(e -> !(e.eliminatedName in stillRead), entries))
@@ -515,8 +515,8 @@ function eliminateRHSEquivalentEquations(simCode::SIM_CODE)::SIM_CODE
     for (j, (v, i, negated)) in enumerate(members)
       local name = crefName(v.cref)
       (j == best || name == repName || name in shared || name in claimed || name in representatives) && continue
-      (endswith(name, "_re") || endswith(name, "_im")) && continue
       local sv = last(ht[name])
+      (sv.cref !== nothing && isComplexPartCref(sv.cref)) && continue
       isStateSelectAlways(sv) && continue
       (name in irreducible && !(representative.varKind isa STATE && sv.varKind isa STATE)) && continue
       local n = xor(negated, repNegated)
@@ -537,7 +537,7 @@ function eliminateRHSEquivalentEquations(simCode::SIM_CODE)::SIM_CODE
   for (name, attributes) in mergedAttributes
     haskey(newHT, name) || continue
     local (index, v) = newHT[name]
-    attributes == v.attributes || (newHT[name] = (index, SIMVAR(v.name, v.index, v.varKind, attributes, v.elementType, v.irKind, v.irOrigin)))
+    attributes == v.attributes || (newHT[name] = (index, SIMVAR(v.name, v.index, v.varKind, attributes, v.elementType, v.irKind, v.irOrigin, v.cref)))
   end
   local eliminatedSet = Set{String}(eliminated)
   return update(simCode;

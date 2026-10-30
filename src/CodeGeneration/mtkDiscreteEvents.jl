@@ -1492,12 +1492,13 @@ end
 
 """
 The target of field `f` of a record target of a tuple assignment: the field's variable
-(`r_f`), or an omitted output's.
+(`r_f`: the field's reference, `SimCode.fieldCref`, its key derived from it), or an omitted output's.
 """
 function _recordFieldTarget(target::SC.Exp, f::String)::SC.Exp
   target isa SC.WILD && return target
   target isa SC.EXP_CREF || unsupported("this record target of a tuple assignment in a when", target)
-  return SC.EXP_CREF(SC.SimCref(SC.crefName(target.cref) * COMPONENT_SEPARATOR * f), SC.TYPE_REAL())
+  local field::SC.IR.ComponentRef = SC.fieldCref(something(target.cref.ref), f)
+  return SC.EXP_CREF(SC.SimCref(Symbol(SC.derivedKey(field)), Int[], field), SC.TYPE_REAL())
 end
 
 """

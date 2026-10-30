@@ -359,7 +359,7 @@ function updateInitialConditions!(simCode::OMBackend.SimCode.SIM_CODE, integrato
       SC.withAttributes(SC.NO_ATTRIBUTES; start = SC.RCONST(other), fixed = SC.BCONST(true))
     end
     ht[name] = (idx, SC.SIMVAR(simVar.name, simVar.index, simVar.varKind, attributes, simVar.elementType, simVar.irKind,
-                               simVar.irOrigin))
+                               simVar.irOrigin, simVar.cref))
   end
   return nothing
 end

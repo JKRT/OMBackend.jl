@@ -822,7 +822,7 @@ end
 The element `subs` of the field array `name`.
 """
 function _fieldElement(name::Symbol, subs::Vector{Any}, ty::SC.SType)::SC.Exp
-  all(s -> s isa Int, subs) && return SC.EXP_CREF(SC.SimCref(name, Int[s for s in subs]), ty)
+  all(s -> s isa Int, subs) && return SC.EXP_CREF(SC.SimCref(name, Int[s for s in subs], nothing), ty)
   return SC.ASUB(SC.EXP_CREF(SC.SimCref(name), SC.TYPE_ARRAY(ty, fill(-1, length(subs)))),
                  SC.Exp[s isa Int ? SC.ICONST(s) : s for s in subs])
 end

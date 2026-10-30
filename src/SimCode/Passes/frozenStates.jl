@@ -186,12 +186,12 @@ function eventAndComplexNames(simCode::SIM_CODE)::OrderedSet{String}
   local ht = simCode.stringToSimVarHT
   local names = ifEquationNames!(OrderedSet{String}(), simCode.ifEquations)
   foreach(w -> whenCrefNames!(names, w.whenEquation), simCode.whenEquations)
-  complexFieldNames!(names, simCode.residualEquations, ht)
-  complexFieldNames!(names, simCode.initialEquations, ht)
+  complexFieldNames!(names, simCode.residualEquations, simCode)
+  complexFieldNames!(names, simCode.initialEquations, simCode)
   for ifEq in simCode.ifEquations, b in ifEq.branches
-    complexFieldNames!(names, b.residualEquations, ht)
+    complexFieldNames!(names, b.residualEquations, simCode)
   end
-  complexFieldNames!(names, simCode.eliminatedEquations, ht)
+  complexFieldNames!(names, simCode.eliminatedEquations, simCode)
   return names
 end
 

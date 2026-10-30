@@ -142,10 +142,11 @@ mapStatements(f::F, body::Vector{Statement}) where {F} = Statement[mapStatement(
 
 The names of the variables `e` reads, in order: a reference's name (with its subscripts,
 `x[1]` of an array element), a derivative's state's, a `pre(x)`'s variable;
-an array read by literal subscripts also as its element (`R_T[1][2]`), by a subscript that
-reads a variable as `R_T[?]` (`DYNAMIC_SUBSCRIPT_MARK`).
+an array read by literal subscripts also as its element (`R_T[1][2]`: `crefName` of its
+`elementRead`). An array read by a subscript that reads a variable is the array's read only; with
+`dynamic`, that array (its `arrayBase`) recorded there.
 """
-function crefNames!(names::OrderedSet{String}, e::Exp)::OrderedSet{String}
+function crefNames!(names::OrderedSet{String}, e::Exp; dynamic::Union{Nothing, Set{Symbol}} = nothing)::OrderedSet{String}
   if e isa EXP_CREF
     push!(names, crefName(e.cref))
   elseif e isa DER
@@ -153,24 +154,60 @@ function crefNames!(names::OrderedSet{String}, e::Exp)::OrderedSet{String}
   elseif e isa PRE
     push!(names, crefName(e.cref))
   elseif e isa ASUB && e.exp isa EXP_CREF
-    local base = crefName(e.exp.cref)
     if all(s -> s isa ICONST, e.subs)
-      push!(names, string(base, join(("[$(s.value)]" for s in e.subs))))
-    elseif any(s -> anyExp(x -> x isa Union{EXP_CREF, DER, PRE}, s), e.subs)
-      push!(names, string(base, DYNAMIC_SUBSCRIPT_MARK))
+      push!(names, crefName(e.exp.cref, Int[s.value for s in e.subs]))
+    elseif dynamic !== nothing && e.exp.cref.ref !== nothing && any(s -> anyExp(x -> x isa Union{EXP_CREF, DER, PRE}, s), e.subs)
+      push!(dynamic, arrayBase(e.exp.cref.ref))
     end
   end
   for c in children(e)
-    crefNames!(names, c)
+    crefNames!(names, c; dynamic)
   end
   return names
 end
 
-"The name an array read with a subscript that reads a variable is known by (no element is named)."
-const DYNAMIC_SUBSCRIPT_MARK = "[?]"
+"""
+    crefReads!(reads, e) -> Vector{Tuple{SimCref, Bool}}
+
+The references `e` reads, in order, each with whether it is read by a subscript that reads a
+variable (`true`): a reference, a derivative's state, a `pre(x)`'s variable; an array read by
+literal subscripts as its element (`elementRead`); by a subscript that reads a variable, the
+array (`true`), whose element no subscript names.
+"""
+function crefReads!(reads::Vector{Tuple{SimCref, Bool}}, e::Exp)::Vector{Tuple{SimCref, Bool}}
+  if e isa Union{EXP_CREF, DER, PRE}
+    push!(reads, (e.cref, false))
+  elseif e isa ASUB && e.exp isa EXP_CREF
+    if all(s -> s isa ICONST, e.subs)
+      push!(reads, (elementRead(e.exp.cref, Int[s.value for s in e.subs]), false))
+    elseif any(s -> anyExp(x -> x isa Union{EXP_CREF, DER, PRE}, s), e.subs)
+      push!(reads, (e.exp.cref, true))
+    end
+  end
+  for c in children(e)
+    crefReads!(reads, c)
+  end
+  return reads
+end
+
+"""
+    elementRead(c, index) -> SimCref
+
+The element `index` (literal subscripts) of the array reference `c`: its key and subscripts
+followed by `index`, its IR reference the array's subscripted on its last part (`x[1,2]` of `x`).
+"""
+function elementRead(c::SimCref, index::Vector{Int})::SimCref
+  local ref::Union{Nothing, IR.ComponentRef} = c.ref === nothing ? nothing :
+    IR.ComponentRef(IR.CrefPart[c.ref.parts[1:end - 1]; IR.CrefPart(c.ref.parts[end].name,
+      IR.Subscript[c.ref.parts[end].subscripts; IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index]], c.ref.parts[end].ty)])
+  return SimCref(c.sym, Int[c.subs; index], ref)
+end
 
 "A reference's name: its symbol, with its Integer subscripts (`A[1][2]`)."
 crefName(c::SimCref)::String = isempty(c.subs) ? String(c.sym) : string(c.sym, join(("[$(i)]" for i in c.subs)))
+
+"The name of the element `index` of the array reference `c` (`crefName` of `elementRead`), without making its reference."
+crefName(c::SimCref, index::Vector{Int})::String = string(crefName(c), join(("[$(i)]" for i in index)))
 
 #= ==================================================================================== =#
 #= Traversals with an accumulator (the passes')                                         =#

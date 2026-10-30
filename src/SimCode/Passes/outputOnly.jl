@@ -35,12 +35,11 @@
 
 #= Elimination of the variables that only feed outputs (eliminateNonDynamic). =#
 
-"The elements of the array variables by their names without subscripts (`x` => `x[1]`, `x[2]`)."
-function elementsByBase(ht::HT)::Dict{String, Vector{String}}
-  local index = Dict{String, Vector{String}}()
-  for name in keys(ht)
-    local i = findfirst('[', name)
-    i === nothing || push!(get!(index, name[1:prevind(name, i)], String[]), name)
+"The element variables of the arrays by the arrays (their references' `arrayBase`: `x` => `x[1]`, `x[2]`)."
+function elementsByBase(ht::HT)::Dict{Symbol, Vector{String}}
+  local index = Dict{Symbol, Vector{String}}()
+  for (name, (_, sv)) in ht
+    (sv.cref !== nothing && isElementCref(sv.cref)) && push!(get!(index, arrayBase(sv.cref), String[]), name)
   end
   return index
 end
@@ -48,21 +47,26 @@ end
 """
     equationVariableNames(e, ht, elements)
 
-The variables of the table a residual reads: a name of the table; for another name, its
-array's name (one with subscripts), and every element of the array it names (a read of the
-whole array, or by a subscript that is no literal).
+The variables of the table a residual reads (`crefReads!`): a name of the table; for another
+read, its array's variable (an element's by literal subscripts, or a read by a subscript that is
+no literal: the reference's key), and every element variable of the array it reads (a read of the
+whole array, or by a subscript that is no literal; by `arrayBase`).
 """
-function equationVariableNames(e::Exp, ht::HT, elements::Dict{String, Vector{String}})::OrderedSet{String}
+function equationVariableNames(e::Exp, ht::HT, elements::Dict{Symbol, Vector{String}})::OrderedSet{String}
   local names = OrderedSet{String}()
-  for name in crefNames!(OrderedSet{String}(), e)
-    if haskey(ht, name)
+  local seen = Set{Tuple{SimCref, Bool}}()
+  for read in crefReads!(Tuple{SimCref, Bool}[], e)
+    read in seen && continue
+    push!(seen, read)
+    local (c::SimCref, dynamic::Bool) = read
+    local name::String = crefName(c)
+    if !dynamic && haskey(ht, name)
       push!(names, name)
       continue
     end
-    local i = findfirst('[', name)
-    local base = i === nothing ? name : name[1:prevind(name, i)]
-    (base != name && haskey(ht, base)) && push!(names, base)
-    union!(names, get(elements, haskey(elements, name) ? name : base, String[]))
+    local base::String = String(c.sym)
+    ((dynamic || !isempty(c.subs)) && haskey(ht, base)) && push!(names, base)
+    c.ref === nothing || union!(names, get(elements, arrayBase(c.ref), String[]))
   end
   return names
 end
@@ -117,13 +121,14 @@ function essentialEquations(simCode::SIM_CODE, matchOrder::Vector{Int}, nameOf::
                             reads::Vector{OrderedSet{String}})::OrderedSet{Int}
   local ht = simCode.stringToSimVarHT
   local solvedBy = Dict{String, Int}()
-  local solvedByBase = Dict{String, Vector{Int}}()
+  #= the residuals solving an array's element variables, by the array (`arrayBase`) =#
+  local solvedByBase = Dict{Symbol, Vector{Int}}()
   for (k, i) in enumerate(matchOrder)
     (i > 0 && haskey(nameOf, k)) || continue
     local name = nameOf[k]
     solvedBy[name] = i
-    local b = findfirst('[', name)
-    b === nothing || push!(get!(solvedByBase, name[1:prevind(name, b)], Int[]), i)
+    local ref::Union{Nothing, IR.ComponentRef} = get(simCode.references, name, nothing)
+    (ref !== nothing && isElementCref(ref)) && push!(get!(solvedByBase, arrayBase(ref), Int[]), i)
   end
   local seeds = OrderedSet{Int}()
   local seed! = n -> haskey(solvedBy, n) && push!(seeds, solvedBy[n])
@@ -148,7 +153,8 @@ function essentialEquations(simCode::SIM_CODE, matchOrder::Vector{Int}, nameOf::
     1 <= i <= length(reads) || continue
     for n in reads[i]
       haskey(solvedBy, n) && !(solvedBy[n] in essential) && push!(queue, solvedBy[n])
-      for j in get(solvedByBase, n, Int[])
+      local ref::Union{Nothing, IR.ComponentRef} = get(simCode.references, n, nothing)
+      for j in (ref === nothing ? Int[] : get(solvedByBase, ref.name, Int[]))
         j in essential || push!(queue, j)
       end
     end
@@ -251,21 +257,22 @@ function eliminateOutputOnlyVariables(simCode::SIM_CODE, options::EliminationOpt
   local whenReads = OrderedSet{String}()
   foreach(w -> whenCrefNames!(whenReads, w.whenEquation), simCode.whenEquations)
   local complexParts = OrderedSet{String}()
-  complexFieldNames!(complexParts, residuals, ht)
-  complexFieldNames!(complexParts, simCode.initialEquations, ht)
+  complexFieldNames!(complexParts, residuals, simCode)
+  complexFieldNames!(complexParts, simCode.initialEquations, simCode)
   for ifEq in simCode.ifEquations, b in ifEq.branches
-    complexFieldNames!(complexParts, b.residualEquations, ht)
+    complexFieldNames!(complexParts, b.residualEquations, simCode)
   end
-  complexFieldNames!(complexParts, simCode.eliminatedEquations, ht)
+  complexFieldNames!(complexParts, simCode.eliminatedEquations, simCode)
   local initialReads = OrderedSet{String}()
   for eq in simCode.initialEquations
     eq isa ARRAY_EQUATION && continue
     foreach(e -> crefNames!(initialReads, e), equationExps(eq))
   end
+  #= a variable read, or the variable of its array (`arrayBase` of its reference, `keyByReference`) =#
   local stillRead = name::String -> begin
-    local b = findfirst('[', name)
-    local base = b === nothing ? name : name[1:prevind(name, b)]
-    any(n -> any(i -> !(i in removed), get(readBy, n, OrderedSet{Int}())), base == name ? (name,) : (name, base)) ||
+    local ref::Union{Nothing, IR.ComponentRef} = get(simCode.references, name, nothing)
+    local base::Union{Nothing, String} = (ref === nothing || !isElementCref(ref)) ? nothing : get(simCode.keyByReference, arrayBase(ref), nothing)
+    any(n -> any(i -> !(i in removed), get(readBy, n, OrderedSet{Int}())), base === nothing ? (name,) : (name, base)) ||
       name in whenReads || name in initialReads || name in complexParts
   end
   local candidates = OrderedSet{String}(first(p) for p in pairs)

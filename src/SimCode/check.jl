@@ -190,7 +190,8 @@ function checkReferenceResolution(simCode::SIM_CODE)::Vector{CheckViolation}
   local out = CheckViolation[]
   local ht = simCode.stringToSimVarHT
   local known = union(OrderedSet{String}(keys(ht)), OrderedSet{String}(simCode.eliminatedVariables), BUILTIN_NAMES)
-  local bases = Set{String}(baseName(k) for k in keys(ht))
+  #= the arrays whose elements are variables (`arrayBase` of their references) =#
+  local bases = Set{Symbol}(arrayBase(sv.cref) for (_, (_, sv)) in ht if sv.cref !== nothing)
   for (i, eq) in enumerate(simCode.residualEquations)
     local bound = Set{String}()
     foreachExp(e -> e isa REDUCTION && foreach(it -> push!(bound, String(it.name)), e.iterators), eq.exp)
@@ -201,7 +202,7 @@ function checkReferenceResolution(simCode::SIM_CODE)::Vector{CheckViolation}
       e isa Union{EXP_CREF, DER, PRE} || return
       local nm = crefName(e.cref)
       (nm in known || nm in bound) && return
-      (e isa EXP_CREF && e in subscripted && nm in bases) && return
+      (e isa EXP_CREF && e in subscripted && e.cref.ref !== nothing && arrayBase(e.cref.ref) in bases) && return
       push!(missing, nm)
     end
     foreach(nm -> push!(out, CheckViolation(:cref_resolution, :error, "residualEquations[$i]",
@@ -215,6 +216,26 @@ checkCanonicalNames(simCode::SIM_CODE)::Vector{CheckViolation} =
   CheckViolation[CheckViolation(:canonical_cref_names, :error, name, "stringToSimVarHT key is not canonical")
                  for name in keys(simCode.stringToSimVarHT) if occursin('.', name)]
 
+"""
+The references of the simulation code: every variable has its IR reference (`SIMVAR.cref`, in
+`references`), and every reference the residual equations read has one (`SimCref.ref`): the
+structure of every name, so that no pass takes a name apart.
+"""
+function checkReferences(simCode::SIM_CODE)::Vector{CheckViolation}
+  local out = CheckViolation[]
+  for (key, (_, sv)) in simCode.stringToSimVarHT
+    (sv.cref === nothing || !haskey(simCode.references, key)) &&
+      push!(out, CheckViolation(:references, :error, key, "variable without its IR reference"))
+  end
+  for (i, eq) in enumerate(simCode.residualEquations)
+    foreachExp(eq.exp) do e
+      (e isa Union{EXP_CREF, DER, PRE} && e.cref.ref === nothing) &&
+        push!(out, CheckViolation(:references, :error, "residualEquations[$i]", "reference `$(crefName(e.cref))` without its IR reference"))
+    end
+  end
+  return out
+end
+
 "The rules `check` runs, in order."
 const CHECK_RULES = Function[checkBalanced, checkAliasConsistency, checkEliminatedVariablesPruned, checkDeadStates,
-                             checkReferenceResolution, checkCanonicalNames]
+                             checkReferenceResolution, checkCanonicalNames, checkReferences]

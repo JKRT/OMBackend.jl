@@ -157,20 +157,23 @@ end
 #= ==================================================================================== =#
 
 """
-    SimCref(sym, subs = Int[])
+    SimCref(sym, subs, ref)
 
-A reference to a simulation variable: its flat name (`body_frame_a_r_0`, `x[2]`) and, for an
-element of an array variable kept as an array, the integer subscripts. A single `===` on the
-symbol compares names.
+A reference to a simulation variable: its key (`body_frame_a_r_0`, `x[2]`), for an element of an
+array variable kept as an array the integer subscripts, and the IR reference it was lowered from
+(`ref`: the variable's, an element's with its subscripts, a record's field's), from which the key is
+derived and by whose parts every structural question is answered (the array an element is of, a
+record's field). Equal by key and subscripts: a single `===` on the symbol compares names. `ref` is
+`nothing` only for a function's flattened local the code generators make, and in tests.
 """
 struct SimCref
   sym::Symbol
   subs::Vector{Int}
+  ref::Union{Nothing, IR.ComponentRef}
 end
 
-SimCref(sym::Symbol) = SimCref(sym, Int[])
-SimCref(name::AbstractString) = SimCref(Symbol(name), Int[])
-SimCref(name::AbstractString, subs::Vector{Int}) = SimCref(Symbol(name), subs)
+"A reference by its key alone, without its IR reference: tests, the code generators' function locals."
+SimCref(sym::Symbol) = SimCref(sym, Int[], nothing)
 
 Base.:(==)(a::SimCref, b::SimCref)::Bool = a.sym === b.sym && a.subs == b.subs
 Base.isequal(a::SimCref, b::SimCref)::Bool = a == b
@@ -682,15 +685,17 @@ const NO_ATTRIBUTES = SimVarAttributes(nothing, nothing, nothing, nothing, nothi
                                        nothing, nothing, false)
 
 """
-    SIMVAR(name, index, varKind, attributes, elementType, irKind = nothing, irOrigin = nothing)
+    SIMVAR(name, index, varKind, attributes, elementType, irKind = nothing, irOrigin = nothing, cref = nothing)
 
 A simulation variable: its name, index (1-based, per category; `nothing` before indexing),
 category, attributes, the type of its scalars (of an array variable, of its elements):
 what the code generators read to declare an Integer, Boolean or enumeration variable, and
 its kind in OMJLIR (`IR.VariableKind`: a state, a state's derivative as an algebraic
 unknown, index reduction's dummy derivative or dummy state, ...), the variables it names
-by their simulation names (`simKind`), and its origin there (`:model` for one of the flat
-model, else the pass that introduced it); `nothing` for a variable that is not the IR's.
+by their simulation names (`simKind`), its origin there (`:model` for one of the flat
+model, else the pass that introduced it) and its reference there (`cref`: its parts, from which its
+name is derived; a state's derivative the IR derivative variable's); `nothing` for a variable that is
+not the IR's.
 """
 struct SIMVAR <: Node
   name::String
@@ -700,10 +705,11 @@ struct SIMVAR <: Node
   elementType::SType
   irKind::Union{Nothing, IR.VariableKind}
   irOrigin::Union{Nothing, Symbol}
+  cref::Union{Nothing, IR.ComponentRef}
 end
 
 SIMVAR(name::String, index::Union{Nothing, Int}, varKind::SimVarType, attributes::SimVarAttributes, elementType::SType) =
-  SIMVAR(name, index, varKind, attributes, elementType, nothing, nothing)
+  SIMVAR(name, index, varKind, attributes, elementType, nothing, nothing, nothing)
 
 #= ==================================================================================== =#
 #= Functions and initial algorithms                                                     =#
@@ -902,7 +908,18 @@ struct SIM_CODE
   foldedVariables::Vector{String}
   "OMBackend reduced the model's index (Passes.IndexReduction, OMBACKEND_INDEX_REDUCTION): MTK only tears."
   indexReduced::Bool
+  "Every variable's IR reference by its key, the eliminated ones' too (a state's derivative the IR derivative variable's): the structure of a name."
+  references::Dict{String, IR.ComponentRef}
+  "The keys by the IR references' names (`references` inverted): the variable a reference names (`keyOf`)."
+  keyByReference::Dict{Symbol, String}
 end
+
+"The key of the variable the IR reference `ref` names; `nothing` for one that names none."
+keyOf(sc::SIM_CODE, ref::IR.ComponentRef)::Union{Nothing, String} = get(sc.keyByReference, ref.name, nothing)
+
+"The keys by the IR references' names of `references`."
+referenceKeys(references::Dict{String, IR.ComponentRef})::Dict{Symbol, String} =
+  Dict{Symbol, String}(ref.name => key for (key, ref) in references)
 
 """
     update(simCode; fields...)
