@@ -271,7 +271,7 @@ function eliminateOutputOnlyVariables(simCode::SIM_CODE, options::EliminationOpt
     eq isa ARRAY_EQUATION && continue
     foreach(e -> crefNames!(initialReads, e), equationExps(eq))
   end
-  #= a variable read, or the variable of its array (`arrayBase` of its reference, `keyByReference`) =#
+  #= a variable read, or the variable of its array (`elementArray`, `keyByReference`) =#
   local stillRead = name::String -> begin
     local array::Union{Nothing, Symbol} = elementArray(simCode, name)
     local base::Union{Nothing, String} = array === nothing ? nothing : get(simCode.keyByReference, array, nothing)

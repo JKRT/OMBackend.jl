@@ -933,13 +933,13 @@ keyOf(sc::SIM_CODE, ref::IR.ComponentRef)::Union{Nothing, String} = get(sc.keyBy
 
 "The keys by the IR references' names of `references`; an error naming both keys if two variables have one reference."
 function referenceKeys(references::Dict{String, IR.ComponentRef})::Dict{Symbol, String}
-  local keys::Dict{Symbol, String} = Dict{Symbol, String}()
+  local byReference::Dict{Symbol, String} = Dict{Symbol, String}()
   for (key::String, ref::IR.ComponentRef) in references
-    local other::Union{Nothing, String} = get(keys, ref.name, nothing)
+    local other::Union{Nothing, String} = get(byReference, ref.name, nothing)
     other === nothing || error("SimCode variables $(join(sort([other, key]), " and ")) have one IR reference, $(ref.name)")
-    keys[ref.name] = key
+    byReference[ref.name] = key
   end
-  return keys
+  return byReference
 end
 
 """

@@ -432,7 +432,6 @@ function resolveBindingReferences!(variables::IR.VariableSet)::Nothing
   return nothing
 end
 
-
 #= ==================================================================================== =#
 #= If-expressions                                                                       =#
 #= ==================================================================================== =#
@@ -619,7 +618,6 @@ derivative's (`IR.isDerivativeCref`: `\$DER.r.f` stays one variable).
 """
 isRecordFieldArray(cref::IR.ComponentRef)::Bool =
   length(cref.parts) >= 2 && cref.parts[end].ty isa IR.T_ARRAY && cref.parts[end-1].ty isa IR.T_RECORD && !IR.isDerivativeCref(cref)
-
 
 """
     assembledBinding(sizes, elements, name)

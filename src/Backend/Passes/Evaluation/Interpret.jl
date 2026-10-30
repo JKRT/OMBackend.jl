@@ -226,8 +226,8 @@ function crefValue(e::IR.CREF, run::Interpretation)::Union{Nothing, FlatValue}
     local last = e.cref.parts[end]
     (isempty(last.subscripts) || any(p -> !isempty(p.subscripts), e.cref.parts[1:end - 1])) && return nothing
     local array::IR.CREF = IR.CREF(IR.withoutLastSubscripts(e.cref), last.ty)
-    local v = crefValue(array, run)
-    return v === nothing ? nothing : selectValue(v, last.subscripts, run)
+    local arrayValue::Union{Nothing, FlatValue} = crefValue(array, run)
+    return arrayValue === nothing ? nothing : selectValue(arrayValue, last.subscripts, run)
   end
   local x = get(run.scalars, Symbol(name), nothing)
   x === nothing || return scalarValue(x)

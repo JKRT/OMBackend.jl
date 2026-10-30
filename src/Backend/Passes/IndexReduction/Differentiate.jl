@@ -135,7 +135,7 @@ function derivativeOf(e::IR.CREF, seeds::Seeds)::IR.Expression
   return d === nothing ? arrayElementDerivative(e, seeds) : d
 end
 
-"The derivative of a whole array or record reference (`wholeDerivative` by its name); with arrays kept (`ArrayVariables`) an array variable's derivative array where the seeds give one, of a part of one that part."
+"The derivative of a whole array or record reference (`wholeDerivative` by its reference); with arrays kept (`ArrayVariables`) an array variable's derivative array where the seeds give one, of a part of one that part."
 wholeDerivative(e::IR.CREF, seeds::Seeds)::IR.Expression = wholeDerivative(e.cref, e.ty, seeds)
 function wholeDerivative(e::IR.CREF, seeds::Seeds{<:ArrayVariables})::IR.Expression
   e.ty isa IR.T_ARRAY || return wholeDerivative(e.cref, e.ty, seeds)

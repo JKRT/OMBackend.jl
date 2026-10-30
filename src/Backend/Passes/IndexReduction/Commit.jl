@@ -187,7 +187,6 @@ function plannedKind(s::Structure, dummies::Set{Int}, v::Int)::Union{Nothing, IR
   return nothing
 end
 
-
 """
     dynamicSet!(model, partition, s, set, k)
 
@@ -222,9 +221,9 @@ function dynamicSetParts(model::IR.Model, s::Structure, set::DynamicSet, k::Int)
   local n = length(set.candidates)
   #= a variable of the model or the structure by its own reference (a matrix element as SimCode names it, a derivative
      `IR.derivativeCref`), a new one by its name =#
-  local realRef = name::Symbol -> IR.CREF(haskey(model.variables, name) ? model.variables[name].cref :
+  local realRef::Function = (name::Symbol) -> IR.CREF(haskey(model.variables, name) ? model.variables[name].cref :
                                           haskey(s.index, name) ? s.crefs[s.index[name]] : IR.ComponentRef(name, IR.T_REAL()), IR.T_REAL())
-  local integerRef = cref::IR.ComponentRef -> IR.CREF(cref, IR.T_INTEGER())
+  local integerRef::Function = (cref::IR.ComponentRef) -> IR.CREF(cref, IR.T_INTEGER())
   local A::Matrix{IR.ComponentRef} = IR.ComponentRef[stateSetCref(k, :A, IR.Subscript[IR.INDEX(IR.INTEGER(j)), IR.INDEX(IR.INTEGER(i))], IR.T_INTEGER())
                             for j in 1:n-1, i in 1:n]
   #= the candidate the j-th state selects where candidate d is the dummy =#

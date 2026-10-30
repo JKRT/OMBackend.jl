@@ -95,8 +95,8 @@ are variables, those): the code generation flattens a record reference into its 
 """
 function complexFieldNames!(names::OrderedSet{String}, equations::AbstractVector{<:Equation}, simCode::SIM_CODE)::OrderedSet{String}
   local ht::HT = simCode.stringToSimVarHT
-  local fieldKey = (x::EXP_CREF, f::String) -> x.cref.ref === nothing ? nothing : keyOf(simCode, fieldCref(x.cref.ref, f))
-  local visit = x -> begin
+  local fieldKey::Function = (x::EXP_CREF, f::String) -> x.cref.ref === nothing ? nothing : keyOf(simCode, fieldCref(x.cref.ref, f))
+  local visit::Function = (x::Exp) -> begin
     x isa EXP_CREF || return
     if x.ty isa TYPE_COMPLEX
       for f in x.ty.fieldNames
@@ -169,8 +169,6 @@ isElementCref(ref::IR.ComponentRef)::Bool = arrayBase(ref) !== ref.name
 isComplexPartCref(ref::IR.ComponentRef)::Bool =
   length(ref.parts) >= 2 && ref.parts[end].name in (:re, :im) && IR.elementType(ref.parts[end - 1].ty) isa IR.T_RECORD
 
-
-
 """
     elementIndex(ref, array) -> Union{Nothing, Vector{Int}}
 
@@ -194,7 +192,7 @@ dynamics.
 """
 function derivedStateCrefs(simCode::SIM_CODE)::OrderedSet{SimCref}
   local derived::OrderedSet{SimCref} = OrderedSet{SimCref}()
-  local visit = e::Exp -> foreachExp(e) do x
+  local visit::Function = (e::Exp) -> foreachExp(e) do x::Exp
     x isa DER && push!(derived, x.cref)
     (isBuiltin(x, :der) && first(x.args) isa EXP_CREF) && push!(derived, first(x.args).cref)
   end

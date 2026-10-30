@@ -190,7 +190,7 @@ function checkReferenceResolution(simCode::SIM_CODE)::Vector{CheckViolation}
   local out = CheckViolation[]
   local ht = simCode.stringToSimVarHT
   local known = union(OrderedSet{String}(keys(ht)), OrderedSet{String}(simCode.eliminatedVariables), BUILTIN_NAMES)
-  #= the arrays whose elements are variables (`arrayBase` of their references) =#
+  #= every variable's array (`elementArray`), or its own name for one that is no element: a subscripted read's array is one of them =#
   local bases::Set{Symbol} = Set{Symbol}(something(elementArray(simCode, k), sv.cref.name) for (k, (_, sv)) in ht if sv.cref !== nothing)
   for (i, eq) in enumerate(simCode.residualEquations)
     local bound = Set{String}()
@@ -231,7 +231,7 @@ function checkReferences(simCode::SIM_CODE)::Vector{CheckViolation}
   for (key, ref) in simCode.references
     IR.structureInName(ref) && push!(out, CheckViolation(:references, :error, key, "IR reference $(ref.name) with structure in a part's name"))
   end
-  local read = (where::String, e::Exp) -> foreachExp(e) do x
+  local read::Function = (where::String, e::Exp) -> foreachExp(e) do x::Exp
     (x isa Union{EXP_CREF, DER, PRE} && x.cref.ref === nothing) &&
       push!(out, CheckViolation(:references, :error, where, "reference `$(crefName(x.cref))` without its IR reference"))
   end

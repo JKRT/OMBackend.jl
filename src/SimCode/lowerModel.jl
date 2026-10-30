@@ -115,15 +115,7 @@ function lowerSystem(model::IR.Model, variables::IR.VariableSet, partition::IR.P
   local names = systemNames(vars, model.name)
   local simVars = SIMVAR[SIMVAR(simName(names, v.cref), nothing, simVarKind(v, names), simVarAttributes(v, names),
                                 simType(IR.elementType(v.ty)), simKind(v.kind, variables, names), v.origin, v.cref) for v in vars]
-  local ht = createIndices(simVars)
-  #= a state's derivative by the IR derivative variable's reference (`createIndices` builds `$DER.x`'s) =#
-  for v in vars
-    (v.kind isa IR.STATE && v.kind.derivative !== nothing && haskey(variables, v.kind.derivative)) || continue
-    local key::String = "der($(simName(names, v.cref)))"
-    haskey(ht, key) || continue
-    local (i::Int, d::SIMVAR) = ht[key]
-    ht[key] = (i, withCref(d, variables[v.kind.derivative].cref))
-  end
+  local ht = createIndices(simVars, derivativeReferences(vars, variables, names))
   local references::Dict{String, IR.ComponentRef} =
     Dict{String, IR.ComponentRef}(k => sv.cref for (k, (_, sv)) in ht if sv.cref !== nothing)
   local eqs = classifyEquations(partition.equations)
@@ -151,6 +143,22 @@ function lowerSystem(model::IR.Model, variables::IR.VariableSet, partition::IR.P
                   RESIDUAL_EQUATION[], String[], AliasEntry[], nothing, initialAlgorithms, asserts, String[],
                   any(v -> v.kind isa Union{IR.DUMMY_STATE, IR.DUMMY_DER}, vars), references, referenceKeys(references),
                   elementArrays(references))
+end
+
+"""
+    derivativeReferences(vars, variables, names) -> Dict{String, IR.ComponentRef}
+
+Each state's derivative's reference by the state's key (`createIndices`' `der(x)` entries): the IR derivative variable
+its kind names (`\$DER.x`, or index reduction's `\$STATEDER.x`), else `IR.derivativeCref` of the state's.
+"""
+function derivativeReferences(vars::Vector{IR.Variable}, variables::IR.VariableSet, names::Names)::Dict{String, IR.ComponentRef}
+  local out::Dict{String, IR.ComponentRef} = Dict{String, IR.ComponentRef}()
+  for v in vars
+    v.kind isa IR.STATE || continue
+    local d::Union{Nothing, Symbol} = v.kind.derivative
+    out[simName(names, v.cref)] = (d !== nothing && haskey(variables, d)) ? variables[d].cref : IR.derivativeCref(v.cref)
+  end
+  return out
 end
 
 """

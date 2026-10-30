@@ -135,7 +135,7 @@ observation unbound).
 function filterAliasObservations(simCode::SIM_CODE)::SIM_CODE
   isempty(simCode.aliasMap) && return simCode
   local ht = simCode.stringToSimVarHT
-  local isElement = (name::String) -> elementArray(simCode, name) !== nothing
+  local isElement::Function = (name::String) -> elementArray(simCode, name) !== nothing
   local keep = if simCode.observedFilter === nothing
     e::AliasEntry -> !isElement(e.eliminatedName) && haskey(ht, e.representativeName)
   else

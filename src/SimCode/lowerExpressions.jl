@@ -345,13 +345,13 @@ function variablesBySubscript(names::Names, cref::IR.ComponentRef, ty::IR.Modeli
   length(positions) == 1 || return nothing
   local (p, k) = only(positions)
   local index = cref.parts[p].subscripts[k].exp
-  local withIndex = i -> IR.ComponentRef(IR.CrefPart[q == p ?
+  local elementRef::Function = (i::Int) -> IR.ComponentRef(IR.CrefPart[q == p ?
     IR.CrefPart(part.name, IR.Subscript[j == k ? IR.INDEX(IR.INTEGER(i)) : s for (j, s) in enumerate(part.subscripts)], part.ty) :
     part for (q, part) in enumerate(cref.parts)])
   local elementTy::SType = simType(ty)
   local elements::Vector{Exp} = Exp[]
   while true
-    local ref::IR.ComponentRef = withIndex(length(elements) + 1)
+    local ref::IR.ComponentRef = elementRef(length(elements) + 1)
     local key::String = simName(names, ref)
     key in names.known || break
     push!(elements, EXP_CREF(SimCref(Symbol(key), Int[], ref), elementTy))

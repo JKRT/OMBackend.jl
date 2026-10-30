@@ -118,16 +118,17 @@ function simVarAttributes(v::IR.Variable, names::Names)::SimVarAttributes
 end
 
 """
-    createIndices(simVars)
+    createIndices(simVars, derivativeRefs = Dict())
 
 The table of the simulation variables by name, each with its index (1-based, per category):
-the states from 1, each followed by its derivative `der(x)` (the state's index); the
+the states from 1, each followed by its derivative `der(x)` (the state's index; its reference
+`derivativeRefs[x]`, `lowerSystem`'s `derivativeReferences`); the
 parameters and the module-level bindings from 1, in the variables' order with the states; then
 the array parameters; the discrete variables (and the Strings) after the states; the algebraic
 and array variables after the discretes, the algebraic ones with their sort index (after the
 states) for the structural analysis.
 """
-function createIndices(simVars::Vector{SIMVAR})::OrderedDict{String, Tuple{Int, SIMVAR}}
+function createIndices(simVars::Vector{SIMVAR}, derivativeRefs::Dict{String, IR.ComponentRef} = Dict{String, IR.ComponentRef}())::OrderedDict{String, Tuple{Int, SIMVAR}}
   local ht = OrderedDict{String, Tuple{Int, SIMVAR}}()
   local (stateCounter, parameterCounter) = (0, 0)
   local discretes = SIMVAR[]
@@ -138,8 +139,7 @@ function createIndices(simVars::Vector{SIMVAR})::OrderedDict{String, Tuple{Int, 
       stateCounter += 1
       local state = withIndex(v, stateCounter)
       ht[v.name] = (stateCounter, state)
-      ht["der($(v.name))"] = (stateCounter, withCref(withIndex(v, stateCounter, STATE_DERIVATIVE(v.name)),
-                                                     v.cref === nothing ? nothing : IR.derivativeCref(v.cref)))
+      ht["der($(v.name))"] = (stateCounter, withCref(withIndex(v, stateCounter, STATE_DERIVATIVE(v.name)), get(derivativeRefs, v.name, nothing)))
     elseif k isa Union{PARAMETER, DATA_STRUCTURE}
       parameterCounter += 1
       ht[v.name] = (parameterCounter, v)

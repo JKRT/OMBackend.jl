@@ -312,7 +312,6 @@ function auxiliaryVariables(model::IR.Model, partition::IR.Partition, g::Compone
   return Vector{Symbol}[Symbol[roles[k][role] for k in 1:n] for role in sort!(collect(keys(roles[1])))]
 end
 
-
 "`e` for an auxiliary's role: the auxiliary `x` as `§`, an instance's references by its suffix only."
 function roleExpression(e::IR.Expression, x::Symbol, memberOf::Dict{Symbol, Tuple{Int, Int}})::IR.Expression
   return IR.mapExp(e) do y::IR.Expression
@@ -721,7 +720,6 @@ end
 "Whether every subscript of the reference is a literal index."
 literalSubscripts(cref::IR.ComponentRef)::Bool =
   all(p::IR.CrefPart -> all(s::IR.Subscript -> IR.literalIndex(s) !== nothing, p.subscripts), cref.parts)
-
 
 """
     equalityEquation(a, b, like) -> IR.Equation

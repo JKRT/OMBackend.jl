@@ -130,7 +130,7 @@ flip-flop's inputs, left them at 0, an invalid logic value).
 function constrainedBy(equations::Vector{IR.Equation})::Constrained
   local names::Set{Symbol} = Set{Symbol}()
   local arrays::Set{Symbol} = Set{Symbol}()
-  local add = e -> foreach(IR.crefsOf(e)) do c::IR.ComponentRef
+  local add::Function = (e::IR.Expression) -> foreach(IR.crefsOf(e)) do c::IR.ComponentRef
     push!(names, c.name)
     for (k, p) in enumerate(c.parts)
       isempty(p.subscripts) || push!(arrays, IR.ComponentRef(IR.CrefPart[c.parts[1:k - 1]; IR.CrefPart(p.name, IR.Subscript[], p.ty)]).name)
@@ -313,8 +313,6 @@ The subscript of the `k`-th index of a dimension: an enumeration's literal (the 
 variables' names carry them), else the integer.
 """
 indexOf(d::IR.Dimension, k::Int)::IR.Expression = d isa IR.DIM_ENUM ? IR.dimensionIndex(d, k) : IR.INTEGER(k)
-
-
 
 """
 The subscripts of the last part of `cref` padded with whole dimensions to the dimensions of

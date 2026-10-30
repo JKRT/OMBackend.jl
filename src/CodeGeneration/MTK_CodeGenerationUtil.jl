@@ -594,7 +594,7 @@ function _wholeArrayExpr(e::SC.EXP_CREF, simCode::SC.SIM_CODE)::Expr
     return aliasExpr
   end
   length(ty.dims) <= 2 || OMBackend.unsupported("an array of more than two dimensions without variables", name)
-  local element = idx::Vector{Int} -> expToJuliaExpMTK(SC.EXP_CREF(SC.SimCref(Symbol(name), idx, nothing), ty.elementType), simCode)
+  local element::Function = (idx::Vector{Int}) -> expToJuliaExpMTK(SC.EXP_CREF(SC.SimCref(Symbol(name), idx, nothing), ty.elementType), simCode)
   length(ty.dims) == 1 && return Expr(:vect, (element([i]) for i in 1:ty.dims[1])...)
   return Expr(:vcat, (Expr(:row, (element([i, j]) for j in 1:ty.dims[2])...) for i in 1:ty.dims[1])...)
 end
