@@ -39,7 +39,7 @@
 module CodeGenerationUtil
 
 import DataStructures
-using DataStructures: OrderedSet
+using DataStructures: OrderedDict, OrderedSet
 import MacroTools
 using ModelingToolkit
 using LinearAlgebra
@@ -674,10 +674,12 @@ end
 """
   Extract common hvcat subexpressions from a list of equation Exprs.
   Returns (modifiedEquations, preambleAssignments) where preamble contains
-  local variable assignments for deduplicated hvcat calls.
+  local variable assignments for deduplicated hvcat calls, in the order of their
+  first occurrences (a key is the call's text, the code generator's line numbers
+  in it: by the keys' hashes, an edit of the code generator reordered them).
 """
 function extractCommonHvcats(equations::Vector)
-  local allHvcats = Dict{String, Int}()
+  local allHvcats = OrderedDict{String, Int}()
   local hvcatExprs = Dict{String, Expr}()
   for eq in equations
     local found = Dict{String, Bool}()
@@ -700,7 +702,7 @@ function extractCommonHvcats(equations::Vector)
   return modifiedEqs, preamble
 end
 
-function _collectHvcats!(expr, counts::Dict{String,Int}, exprs::Dict{String,Expr}, found::Dict{String,Bool})
+function _collectHvcats!(expr, counts::OrderedDict{String,Int}, exprs::Dict{String,Expr}, found::Dict{String,Bool})
   if !(expr isa Expr)
     return
   end
