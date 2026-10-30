@@ -242,6 +242,19 @@ index reduction's link `\$STATEDER.x = \$DER.x`): the state is the reference of 
 """
 struct T_STATEDER <: ModelicaType end
 
+"""
+    T_SLICE(inner, of)
+
+The type of a part that names a slice of an array split along its inner dimensions (`IndexReduction.splitInner!`):
+the elements of the array `of` (the part's type before) at the inner subscripts `inner`. The part is named with them
+(`flatName`: `G.f.R.T[2,1]`, as its elements are, `cylinder3.f.R.T[2,1]`); its own subscripts follow them
+(`\$DER.G.f.R.T[2,1][\$c]`).
+"""
+struct T_SLICE <: ModelicaType
+  inner::Vector{Int}
+  of::ModelicaType
+end
+
 "The type of a call to a function with several outputs."
 struct T_TUPLE <: ModelicaType
   types::Vector{ModelicaType}
@@ -1546,6 +1559,30 @@ function crefsOf(e::Expression)::Vector{ComponentRef}
   return out
 end
 
+"""
+    referenceProblems(model) -> Vector{Symbol}
+
+The references of `model` (its variables', and those its equations read) a part of which carries structure in its
+name: a `.` or `[` outside a quoted identifier (`'a.b'`). A reference is its parts and its flat name is derived from
+them (`flatName`), so no part may hide others or subscripts; the passes then never take a name apart.
+"""
+function referenceProblems(model::Model)::Vector{Symbol}
+  local out::Vector{Symbol} = Symbol[]
+  local check = (c::ComponentRef) -> begin
+    for p in c.parts
+      local name::String = String(p.name)
+      (startswith(name, '\'') && endswith(name, '\'')) && continue
+      (occursin('.', name) || occursin('[', name)) && (c.name in out || push!(out, c.name); break)
+    end
+    nothing
+  end
+  foreach(v::Variable -> check(v.cref), model.variables)
+  for p in Iterators.flatten((model.continuous, model.clocked)), eq in Iterators.flatten((p.equations, p.initialEquations))
+    foreachExp(x::Expression -> (x isa CREF && check(x.cref); nothing), eq)
+  end
+  return out
+end
+
 "Whether `e` is a call of the built-in `name` (`:der`, `:pre`, ...)."
 isBuiltinCall(e::Expression, name::Symbol)::Bool =
   e isa CALL && e.name === name && e.attributes.builtin
@@ -1596,6 +1633,7 @@ _print(io::IO, t::Union{T_EXTERNAL_OBJECT, T_CLASS}) = print(io, t.name)
 _print(io::IO, t::T_COMPONENTS) = print(io, t.cls, "[", length(t.members), "]")
 _print(io::IO, ::T_DER) = print(io, "der")
 _print(io::IO, ::T_STATEDER) = print(io, "stateDer")
+_print(io::IO, t::T_SLICE) = (_print(io, t.of); print(io, "[", join(t.inner, ","), "]"))
 _print(io::IO, t::T_TUPLE) = (print(io, "("); _printJoined(io, t.types); print(io, ")"))
 _print(io::IO, t::T_FUNCTION) = print(io, "function ", t.name)
 _print(io::IO, ::T_NORETCALL) = print(io, "()")
@@ -1619,10 +1657,10 @@ _print(io::IO, p::CrefPart) = print(io, flatName(CrefPart[p]))
 The flat name of a reference's parts: the names joined by `.`, each with its subscripts in
 brackets separated by `,`; a literal index as its value (`2`, `true`, `E.one`), another
 expression as written. A part of rolled components (`T_COMPONENTS`) subscripted by a literal
-index is named as that member (`cylinder3`).
+index is named as that member (`cylinder3`); a slice's part (`T_SLICE`) with its inner subscripts first (`T[2,1]`).
 """
 function flatName(parts::Vector{CrefPart})::Symbol
-  length(parts) == 1 && isempty(parts[1].subscripts) && return parts[1].name
+  length(parts) == 1 && isempty(parts[1].subscripts) && !(parts[1].ty isa T_SLICE) && return parts[1].name
   local io = IOBuffer()
   for (i, p) in enumerate(parts)
     i > 1 && print(io, '.')
@@ -1631,6 +1669,7 @@ function flatName(parts::Vector{CrefPart})::Symbol
       continue
     end
     print(io, p.name)
+    p.ty isa T_SLICE && print(io, '[', join((p.ty::T_SLICE).inner, ','), ']')
     isempty(p.subscripts) && continue
     print(io, '[')
     for (j, sub) in enumerate(p.subscripts)

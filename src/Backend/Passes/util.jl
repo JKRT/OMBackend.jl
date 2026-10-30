@@ -129,9 +129,9 @@ function rowMajor(sizes::Vector{Int})::Vector{Vector{Int}}
   end
 end
 
-"The flat name of `cref` without its subscripts (`c[2].p.T` and `c.p.T[2]` are `c.p.T`)."
+"The flat name of `cref` without its subscripts (`c[2].p.T` and `c.p.T[2]` are `c.p.T`; a slice's part keeps its inner ones, `T_SLICE`)."
 unsubscriptedName(cref::IR.ComponentRef)::Symbol =
-  length(cref.parts) == 1 ? cref.parts[1].name :
+  (length(cref.parts) == 1 && !(cref.parts[1].ty isa IR.T_SLICE)) ? cref.parts[1].name :
     IR.ComponentRef(IR.CrefPart[IR.CrefPart(p.name, IR.Subscript[], p.ty) for p in cref.parts]).name
 
 "The subscripts of all parts of `cref`, in order (`c[2].v[3]`: 2, 3): those of the element of an array variable it names."
@@ -203,30 +203,36 @@ function rangeValues(range::IR.Expression)::Union{Nothing, Vector{Int}}
 end
 
 """
-    namesOverlap(a, b)
+    crefsOverlap(a, b)
 
-Whether the names `a` and `b` name the same variable or one a part of the other (`buf` and
-`buf[2]`, `r` and `r.x`).
+Whether the references `a` and `b` name the same variable or one a part of the other (`buf` and
+`buf[2]`, `r` and `r.x`), by their parts: the shorter's are the longer's first ones, its last part
+not subscripted or subscripted as the longer's.
 """
-function namesOverlap(a::Symbol, b::Symbol)::Bool
-  local (sa, sb) = (String(a), String(b))
-  local (short, long) = length(sa) <= length(sb) ? (sa, sb) : (sb, sa)
-  startswith(long, short) || return false
-  return length(long) == length(short) || long[nextind(long, lastindex(short))] in ('[', '.')
+function crefsOverlap(a::IR.ComponentRef, b::IR.ComponentRef)::Bool
+  local (short::IR.ComponentRef, long::IR.ComponentRef) = length(a.parts) <= length(b.parts) ? (a, b) : (b, a)
+  local n::Int = length(short.parts)
+  (n == 1 || IR.ComponentRef(short.parts[1:n - 1]) == IR.ComponentRef(long.parts[1:n - 1])) || return false
+  local (s::IR.CrefPart, l::IR.CrefPart) = (short.parts[n], long.parts[n])
+  s.name === l.name || return false
+  return isempty(s.subscripts) || IR.flatName(IR.CrefPart[s]) === IR.flatName(IR.CrefPart[l])
 end
 
-"The names of the variables `e` reads, those inside `pre()` (values before the event) left out."
-function namesReadOutsidePre(e::IR.Expression)::Vector{Symbol}
-  local out = Symbol[]
+"The references `e` reads, those inside `pre()` (values before the event) left out."
+function crefsReadOutsidePre(e::IR.Expression)::Vector{IR.ComponentRef}
+  local out::Vector{IR.ComponentRef} = IR.ComponentRef[]
   local visit
   visit = x -> begin
     IR.isBuiltinCall(x, :pre) && return
-    x isa IR.CREF && push!(out, x.cref.name)
+    x isa IR.CREF && push!(out, x.cref)
     foreach(visit, IR.children(x))
   end
   visit(e)
   return out
 end
+
+"The names of the variables `e` reads, those inside `pre()` (values before the event) left out."
+namesReadOutsidePre(e::IR.Expression)::Vector{Symbol} = Symbol[c.name for c in crefsReadOutsidePre(e)]
 
 "The relations in `e`, each once (structurally), in a bottom-up order."
 function relationsIn(e::IR.Expression)::Vector{IR.RELATION}
@@ -269,9 +275,9 @@ function legacyName(cref::IR.ComponentRef)::String
       print(io, p.ty.members[((p.subscripts[1]::IR.INDEX).exp::IR.INTEGER).value])
       continue
     end
-    #= a slice's literal subscripts in its name (`T[1,2]`, splitInner!) each in brackets of its own, as subscripts are =#
-    local name::String = String(p.name)
-    print(io, occursin('[', name) ? replace(name, r"\[([0-9]+(?:,[0-9]+)+)\]" => (m::AbstractString) -> "[" * join(split(m[2:end - 1], ','), "][") * "]") : name)
+    print(io, p.name)
+    #= a slice's inner subscripts (`T[1,2]`, `T_SLICE`, splitInner!) each in brackets of its own, as subscripts are =#
+    p.ty isa IR.T_SLICE && foreach(k::Int -> print(io, '[', k, ']'), (p.ty::IR.T_SLICE).inner)
     for sub in p.subscripts
       print(io, '[')
       printLegacySubscript(io, sub)

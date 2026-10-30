@@ -195,7 +195,7 @@ stateDerivativeName(state::Symbol)::Symbol = Symbol("\$STATEDER.", state)
 
 The dynamic state set `set` as the `k`-th state set of the model (`\$STATESETk`, OpenModelica's
 form): its candidates are dummy derivatives (commit!), their variables `V` dummy states; the
-set's states `\$STATESETk.x[j]`, one less than the candidates, select from them by the discrete
+set's states `\$STATESETk.x[j]` (`setStateCref`), one less than the candidates, select from them by the discrete
 matrix `\$STATESETk.A[j,i]` (0 or 1, the start values' choice first): `x[j] = sum(A[j,i] * V[i])`,
 `der(x[j]) = sum(A[j,i] * der(V[i]))`, linear in `V` whatever the selection. Each linked level
 (`set.linked`, the velocities of a pendulum's positions) selects by the same matrix, its states
@@ -226,8 +226,9 @@ function dynamicSetParts(model::IR.Model, s::Structure, set::DynamicSet, k::Int)
      `IR.derivativeCref`), a new one by its name =#
   local realRef = name::Symbol -> IR.CREF(haskey(model.variables, name) ? model.variables[name].cref :
                                           haskey(s.index, name) ? s.crefs[s.index[name]] : IR.ComponentRef(name, IR.T_REAL()), IR.T_REAL())
-  local integerRef = name::Symbol -> IR.CREF(IR.ComponentRef(name, IR.T_INTEGER()), IR.T_INTEGER())
-  local A = Symbol[Symbol("\$STATESET$(k).A[$(j),$(i)]") for j in 1:n-1, i in 1:n]
+  local integerRef = cref::IR.ComponentRef -> IR.CREF(cref, IR.T_INTEGER())
+  local A = IR.ComponentRef[stateSetCref(k, :A, IR.Subscript[IR.INDEX(IR.INTEGER(j)), IR.INDEX(IR.INTEGER(i))], IR.T_INTEGER())
+                            for j in 1:n-1, i in 1:n]
   #= the candidate the j-th state selects where candidate d is the dummy =#
   local index = (d::Int, j::Int) -> j < d ? j : j + 1
   local start = findfirst(==(only(set.chosen)), set.candidates)
@@ -239,25 +240,25 @@ function dynamicSetParts(model::IR.Model, s::Structure, set::DynamicSet, k::Int)
   end
   local selection = (j::Int, names::Vector{Symbol}) -> foldl(plus, IR.Expression[times(integerRef(A[j, i]), realRef(names[i])) for i in 1:n])
   #= each level: its variables V and their states x =#
-  local levels = Tuple{Vector{Symbol}, Vector{Symbol}}[]
+  local levels = Tuple{Vector{Symbol}, Vector{IR.ComponentRef}}[]
   for (l, candidates) in enumerate(vcat([set.candidates], set.linked))
     local V = Symbol[s.variables[s.antiderivative[c]] for c in candidates]
     local D = Symbol[s.variables[c] for c in candidates]
-    local x = Symbol[setStateName(k, l, j) for j in 1:n-1]
+    local x = IR.ComponentRef[setStateCref(k, l, j) for j in 1:n-1]
     push!(levels, (V, x))
     for j in 1:n-1
-      local derivative = IR.derivativeName(x[j])
+      local derivative = IR.derivativeName(x[j].name)
       local var = get(model.variables, V[index(start, j)], nothing)
       local guess = var === nothing ? nothing : var.attributes.start
       local state::IR.Variable = IR.Variable(x[j], IR.T_REAL(), IR.STATE(1, derivative, true), nothing,
                                              IR.VariableAttributes(guess, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing),
                                              IR.NO_DIRECTION, true, IR.NOT_CONNECTOR, IR.NO_SOURCE, :indexReduction)
-      local stateDerivative::IR.Variable = IR.Variable(IR.derivativeCref(state.cref), IR.T_REAL(), IR.STATE_DER(x[j]), nothing,
+      local stateDerivative::IR.Variable = IR.Variable(IR.derivativeCref(state.cref), IR.T_REAL(), IR.STATE_DER(x[j].name), nothing,
                                                        IR.NO_ATTRIBUTES, IR.NO_DIRECTION, true, IR.NOT_CONNECTOR, IR.NO_SOURCE,
                                                        :indexReduction)
       push!(variables, state)
       push!(variables, stateDerivative)
-      push!(equations, IR.SCALAR_EQUATION(realRef(x[j]), selection(j, V), IR.T_REAL(), IR.NO_SOURCE, IR.DEFAULT_ATTRIBUTES))
+      push!(equations, IR.SCALAR_EQUATION(IR.CREF(state.cref, IR.T_REAL()), selection(j, V), IR.T_REAL(), IR.NO_SOURCE, IR.DEFAULT_ATTRIBUTES))
       push!(equations, IR.SCALAR_EQUATION(IR.CREF(stateDerivative.cref, IR.T_REAL()), selection(j, D), IR.T_REAL(), IR.NO_SOURCE,
                                           IR.DEFAULT_ATTRIBUTES))
     end
@@ -272,7 +273,7 @@ function dynamicSetParts(model::IR.Model, s::Structure, set::DynamicSet, k::Int)
     local body = IR.Statement[IR.ASSIGNMENT(integerRef(A[j, i]), IR.INTEGER(i == index(d, j) ? 1 : 0), IR.NO_SOURCE)
                               for j in 1:n-1 for i in 1:n]
     for (V, x) in levels, j in 1:n-1
-      push!(body, IR.REINIT(IR.ComponentRef(x[j], IR.T_REAL()), realRef(V[index(d, j)]), IR.NO_SOURCE))
+      push!(body, IR.REINIT(x[j], realRef(V[index(d, j)]), IR.NO_SOURCE))
     end
     push!(branches, IR.WhenBranch(IR.Expression[trigger], false, false, body))
   end
@@ -280,8 +281,18 @@ function dynamicSetParts(model::IR.Model, s::Structure, set::DynamicSet, k::Int)
   return (variables, equations)
 end
 
+"""
+    stateSetCref(k, name, subscripts, ty) -> ComponentRef
+
+The reference of a variable of the `k`-th dynamic state set: the set's part (`\$STATESETk`) before its own (`x`, `A`) with
+`subscripts` (`\$STATESET1.x[2]`, `\$STATESET1.A[1,2]`).
+"""
+stateSetCref(k::Int, name::Symbol, subscripts::Vector{IR.Subscript}, ty::IR.ModelicaType)::IR.ComponentRef =
+  IR.ComponentRef(IR.CrefPart[IR.CrefPart(Symbol("\$STATESET", k), IR.Subscript[], IR.T_CLASS(:StateSet)), IR.CrefPart(name, subscripts, ty)])
+
 "The `j`-th state of the `l`-th level of the `k`-th dynamic state set: `\$STATESETk.x[j]`, `\$STATESETk.dx[j]` (its derivative level), ..."
-setStateName(k::Int, l::Int, j::Int)::Symbol = Symbol("\$STATESET$(k).", "d"^(l - 1), "x[$(j)]")
+setStateCref(k::Int, l::Int, j::Int)::IR.ComponentRef =
+  stateSetCref(k, Symbol("d"^(l - 1), "x"), IR.Subscript[IR.INDEX(IR.INTEGER(j))], IR.T_REAL())
 
 """
     linkStateDerivative!(model, partition, state, derivative)

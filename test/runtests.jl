@@ -365,6 +365,9 @@ import .ExampleModels
   #= ── 20b. OMBackend's index reduction step by step ──────────────── =#
   include("indexReductionTests.jl")
 
+  #= ── 20b'. References by their parts (slices, the algorithm lifter) ─ =#
+  include("referencePartsTests.jl")
+
   #= ── 20c. Zero flow and zero speed (semiLinear chains, noEvent) ─── =#
   include("zeroFlowTests.jl")
 

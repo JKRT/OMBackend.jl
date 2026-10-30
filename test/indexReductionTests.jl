@@ -354,19 +354,24 @@ end
     local rigid::_IRM.Model = OMBackend.omjlirModel(fm; functionList = functions)
     @test _IRM.operand(rigid.variables[Symbol("\$DER.phi1")].cref) == rigid.variables[:phi1].cref
     @test rigid.variables[Symbol("\$STATEDER.phi1")].cref.parts[1].ty isa _IRM.T_STATEDER
-    @test isempty(_irDerivativeRefViolations(rigid))
+    @test isempty(_irDerivativeRefViolations(rigid)) && isempty(_IRM.referenceProblems(rigid))
     withenv("OMBACKEND_DYNAMIC_STATE_SETS" => "true") do
       local (fs, fsFunctions) = _irFlat("PendulumCartesian")
       local sets::_IRM.Model = OMBackend.omjlirModel(fs; functionList = fsFunctions)
       @test _IRM.isDerivativeCref(sets.variables[Symbol("\$DER.\$STATESET1.x[1]")].cref)
-      @test isempty(_irDerivativeRefViolations(sets))
+      #= a state set's variables: the set's part before their own, subscripted (`\$STATESET1.x[1]`, not one part) =#
+      local x1::_IRM.ComponentRef = sets.variables[Symbol("\$STATESET1.x[1]")].cref
+      @test length(x1.parts) == 2 && x1.parts[2].name === :x && length(x1.parts[2].subscripts) == 1
+      @test length(sets.variables[Symbol("\$STATESET1.A[1,1]")].cref.parts[2].subscripts) == 2
+      @test isempty(_irDerivativeRefViolations(sets)) && isempty(_IRM.referenceProblems(sets))
     end
     for name in ("InertiaArray", "SeparateDampedPairs")
       local arrays::_IRM.Model = _irArrayUnreduced(name)
       name == "SeparateDampedPairs" && _IRd.rollComponents!(arrays)
       @test _IRd.reduceIndexArrays!(arrays)
-      @test isempty(_irDerivativeRefViolations(arrays))
-      @test isempty(_irDerivativeRefViolations(_IRd.scalarizeArrays(arrays).model))
+      @test isempty(_irDerivativeRefViolations(arrays)) && isempty(_IRM.referenceProblems(arrays))
+      local scalarized::_IRM.Model = _IRd.scalarizeArrays(arrays).model
+      @test isempty(_irDerivativeRefViolations(scalarized)) && isempty(_IRM.referenceProblems(scalarized))
     end
   end
 

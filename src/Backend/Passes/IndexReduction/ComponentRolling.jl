@@ -316,9 +316,8 @@ function roleExpression(e::IR.Expression, x::Symbol, memberOf::Dict{String, Tupl
   return IR.mapExp(e) do y::IR.Expression
     y isa IR.CREF || return y
     variableNameOf(y.cref) === x && return IR.CREF(IR.ComponentRef(Symbol("§")), y.ty)
-    local parts::Union{Nothing, Tuple{String, Int, Int, String, Vector{Int}}} = splitName(y.cref, memberOf)
-    parts === nothing && return y
-    return IR.CREF(IR.ComponentRef(Symbol(parts[1], "§.", parts[4], isempty(parts[5]) ? "" : "[" * join(parts[5], ",") * "]")), y.ty)
+    splitName(y.cref, memberOf) === nothing && return y
+    return IR.CREF(memberRelative(y.cref), y.ty)
   end
 end
 
@@ -672,12 +671,16 @@ The flat name of a reference with its instance's member (the first part after it
 (`§.b.x` of `cylinder2.b.x`) after its equality's shape (`[n]`), to order a class's part alike in every instance.
 """
 function relativeName(shape::String, cref::IR.ComponentRef, memberOf::Dict{String, Tuple{Int, Int}})::String
+  haskey(memberOf, String(cref.parts[operandStart(cref)].name)) || return shape * String(cref.name)
+  return shape * String(memberRelative(cref).name)
+end
+
+"A reference with its member (the first part after its derivative parts) as `§` (`\$DER.§.b.x` of `\$DER.cylinder2.b.x`)."
+function memberRelative(cref::IR.ComponentRef)::IR.ComponentRef
   local k::Int = operandStart(cref)
-  local member::IR.CrefPart = cref.parts[k]
-  haskey(memberOf, String(member.name)) || return shape * String(cref.name)
   local parts::Vector{IR.CrefPart} = copy(cref.parts)
-  parts[k] = IR.CrefPart(Symbol("§"), member.subscripts, member.ty)
-  return shape * String(IR.flatName(parts))
+  parts[k] = IR.CrefPart(Symbol("§"), parts[k].subscripts, parts[k].ty)
+  return IR.ComponentRef(parts)
 end
 
 """
