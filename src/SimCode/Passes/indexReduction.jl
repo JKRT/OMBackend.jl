@@ -116,25 +116,11 @@ function unlinkUnreadStateDerivatives(simCode::SIM_CODE)::SIM_CODE
   end
   isempty(links) && return simCode
   local reads = Dict{String, Int}()
-  local visit = e::Exp -> foreachExp(x -> (x isa Union{EXP_CREF, PRE} && (reads[crefName(x.cref)] = get(reads, crefName(x.cref), 0) + 1)), e)
-  local visitStatement = s::Statement -> mapStatementExps(e -> (visit(e); e), s)
-  foreach(((i, eq),) -> haskey(links, i) || visit(eq.exp), enumerate(simCode.residualEquations))
-  foreach(eq -> visit(eq.exp), simCode.eliminatedEquations)
-  foreach(eq -> foreach(visit, equationExps(eq)), simCode.initialEquations)
-  for ifEq in simCode.ifEquations, b in ifEq.branches
-    visit(b.condition)
-    foreach(eq -> visit(eq.exp), b.residualEquations)
+  local visit::Function = (e::Exp) -> foreachExp(x::Exp -> (x isa Union{EXP_CREF, PRE} && (reads[crefName(x.cref)] = get(reads, crefName(x.cref), 0) + 1)), e)
+  #= every equation's reads but the links' own =#
+  foreachEquationExp(simCode; eliminated = true) do place::Tuple{Symbol, Int}, e::Exp
+    (place[1] === :residualEquations && haskey(links, place[2])) || visit(e)
   end
-  for w in simCode.whenEquations
-    local stmts = w.whenEquation
-    while stmts !== nothing
-      visit(stmts.condition)
-      foreach(visitStatement, stmts.body)
-      stmts = stmts.elsewhenPart
-    end
-  end
-  foreach(a -> foreach(visitStatement, a.statements), simCode.initialAlgorithms)
-  foreach(a -> (visit(a.condition); visit(a.message)), simCode.asserts)
   foreach(e -> (reads[e.representativeName] = get(reads, e.representativeName, 0) + 1), simCode.aliasMap)
   local unread = Set{Int}(i for (i, d) in links if get(reads, d, 0) == 0)
   isempty(unread) && return simCode

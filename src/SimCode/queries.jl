@@ -196,27 +196,8 @@ function derivedStateCrefs(simCode::SIM_CODE)::OrderedSet{SimCref}
     x isa DER && push!(derived, x.cref)
     (isBuiltin(x, :der) && first(x.args) isa EXP_CREF) && push!(derived, first(x.args).cref)
   end
-  local visitStatement = s::Statement -> begin
-    s isa REINIT && push!(derived, s.stateVar)
-    mapStatementExps(e -> (visit(e); e), s)
-  end
-  foreach(eq -> visit(eq.exp), simCode.residualEquations)
-  foreach(eq -> visit(eq.exp), simCode.eliminatedEquations)
-  foreach(eq -> foreach(visit, equationExps(eq)), simCode.initialEquations)
-  for ifEq in simCode.ifEquations, b in ifEq.branches
-    visit(b.condition)
-    foreach(eq -> visit(eq.exp), b.residualEquations)
-  end
-  for w in simCode.whenEquations
-    local stmts = w.whenEquation
-    while stmts !== nothing
-      visit(stmts.condition)
-      foreach(visitStatement, stmts.body)
-      stmts = stmts.elsewhenPart
-    end
-  end
-  foreach(a -> foreach(visitStatement, a.statements), simCode.initialAlgorithms)
-  foreach(a -> (visit(a.condition); visit(a.message)), simCode.asserts)
+  foreachEquationExp((_::Tuple{Symbol, Int}, e::Exp) -> visit(e), simCode; eliminated = true,
+                     statement = (_::Tuple{Symbol, Int}, s::Statement) -> (s isa REINIT && push!(derived, s.stateVar); nothing))
   return derived
 end
 
@@ -241,25 +222,13 @@ The references of statements: their expressions' (an assert's level too), a rein
 of the nested statements.
 """
 function statementCrefNames!(names::OrderedSet{String}, body::Vector{Statement}; dynamic::Union{Nothing, Set{Symbol}} = nothing)::OrderedSet{String}
-  for s in body
-    statementCrefNames!(names, s; dynamic)
-  end
+  foreachStatementExp((e::Exp) -> crefNames!(names, e; dynamic), body,
+                      (s::Statement) -> (s isa REINIT && push!(names, crefName(s.stateVar)); nothing))
   return names
 end
 
-statementCrefNames!(names::OrderedSet{String}, s::ASSIGN; dynamic::Union{Nothing, Set{Symbol}} = nothing) = (crefNames!(names, s.left; dynamic); crefNames!(names, s.right; dynamic))
-statementCrefNames!(names::OrderedSet{String}, s::REINIT; dynamic::Union{Nothing, Set{Symbol}} = nothing) = (push!(names, crefName(s.stateVar)); crefNames!(names, s.value; dynamic))
-statementCrefNames!(names::OrderedSet{String}, s::NORETCALL; dynamic::Union{Nothing, Set{Symbol}} = nothing) = crefNames!(names, s.exp; dynamic)
-statementCrefNames!(names::OrderedSet{String}, s::ASSERT; dynamic::Union{Nothing, Set{Symbol}} = nothing) =
-  (crefNames!(names, s.condition; dynamic); crefNames!(names, s.message; dynamic); crefNames!(names, s.level; dynamic))
-statementCrefNames!(names::OrderedSet{String}, s::TERMINATE; dynamic::Union{Nothing, Set{Symbol}} = nothing) = crefNames!(names, s.message; dynamic)
-statementCrefNames!(names::OrderedSet{String}, s::Union{IF, WHEN}; dynamic::Union{Nothing, Set{Symbol}} = nothing) =
-  (foreach(b -> (crefNames!(names, b.condition; dynamic); statementCrefNames!(names, b.body; dynamic)), s.branches);
-   s isa IF && statementCrefNames!(names, s.elseBody; dynamic); names)
-statementCrefNames!(names::OrderedSet{String}, s::FOR; dynamic::Union{Nothing, Set{Symbol}} = nothing) = (crefNames!(names, s.iterator.range; dynamic); statementCrefNames!(names, s.body; dynamic))
-statementCrefNames!(names::OrderedSet{String}, s::WHILE; dynamic::Union{Nothing, Set{Symbol}} = nothing) = (crefNames!(names, s.condition; dynamic); statementCrefNames!(names, s.body; dynamic))
-statementCrefNames!(names::OrderedSet{String}, s::RECOMPILATION; dynamic::Union{Nothing, Set{Symbol}} = nothing) = crefNames!(names, s.newValue; dynamic)
-statementCrefNames!(names::OrderedSet{String}, ::Statement; dynamic::Union{Nothing, Set{Symbol}} = nothing) = names
+statementCrefNames!(names::OrderedSet{String}, s::Statement; dynamic::Union{Nothing, Set{Symbol}} = nothing)::OrderedSet{String} =
+  statementCrefNames!(names, Statement[s]; dynamic)
 
 #= ==================================================================================== =#
 #= The types of expressions                                                             =#

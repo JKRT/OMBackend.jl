@@ -231,26 +231,12 @@ function checkReferences(simCode::SIM_CODE)::Vector{CheckViolation}
   for (key, ref) in simCode.references
     IR.structureInName(ref) && push!(out, CheckViolation(:references, :error, key, "IR reference $(ref.name) with structure in a part's name"))
   end
-  local read::Function = (where::String, e::Exp) -> foreachExp(e) do x::Exp
-    (x isa Union{EXP_CREF, DER, PRE} && x.cref.ref === nothing) &&
-      push!(out, CheckViolation(:references, :error, where, "reference `$(crefName(x.cref))` without its IR reference"))
+  local missing::Function = (place::Tuple{Symbol, Int}, c::SimCref) -> c.ref === nothing &&
+    push!(out, CheckViolation(:references, :error, "$(place[1])[$(place[2])]", "reference `$(crefName(c))` without its IR reference"))
+  foreachEquationExp(simCode; statement = (place::Tuple{Symbol, Int}, s::Statement) ->
+                       foreach(c::SimCref -> missing(place, c), statementTargets!(SimCref[], s))) do place::Tuple{Symbol, Int}, e::Exp
+    foreachExp(x::Exp -> (x isa Union{EXP_CREF, DER, PRE} && missing(place, x.cref); nothing), e)
   end
-  foreach(((i, eq),) -> read("residualEquations[$i]", eq.exp), enumerate(simCode.residualEquations))
-  foreach(((i, eq),) -> foreach(e -> read("initialEquations[$i]", e), equationExps(eq)), enumerate(simCode.initialEquations))
-  for (i, ifEq) in enumerate(simCode.ifEquations), b in ifEq.branches
-    read("ifEquations[$i]", b.condition)
-    foreach(eq -> read("ifEquations[$i]", eq.exp), b.residualEquations)
-  end
-  for (i, w) in enumerate(simCode.whenEquations)
-    local stmts::Union{Nothing, WHEN_STMTS} = w.whenEquation
-    while stmts !== nothing
-      read("whenEquations[$i]", stmts.condition)
-      foreach(e -> read("whenEquations[$i]", e), statementExps!(Exp[], stmts.body))
-      stmts = stmts.elsewhenPart
-    end
-  end
-  foreach(((i, a),) -> (read("asserts[$i]", a.condition); read("asserts[$i]", a.message)), enumerate(simCode.asserts))
-  foreach(((i, a),) -> foreach(e -> read("initialAlgorithms[$i]", e), statementExps!(Exp[], a.statements)), enumerate(simCode.initialAlgorithms))
   return out
 end
 

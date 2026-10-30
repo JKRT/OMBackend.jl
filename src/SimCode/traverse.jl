@@ -175,11 +175,15 @@ function foreachRead(f::F, e::Exp)::Nothing where {F}
       f(e.exp.cref, nothing, true)
     end
   end
-  for c in children(e)
-    foreachRead(f, c)
-  end
+  traverseFields(e, _VisitReads(f), nothing)
   return nothing
 end
+
+"`foreachRead` of `f` as a traversal's `recur`."
+struct _VisitReads{F}
+  f::F
+end
+(v::_VisitReads)(x::Exp, a::Nothing) = (foreachRead(v.f, x); (x, a))
 
 """
     Read(cref, dynamic)
@@ -187,13 +191,10 @@ end
 A reference an expression reads (`crefReads!`): a variable's, an array element's by literal subscripts (`elementRead`),
 or, `dynamic`, an array read by a subscript that reads a variable, whose element no subscript names.
 """
-struct Read
+struct Read <: Node
   cref::SimCref
   dynamic::Bool
 end
-Base.:(==)(a::Read, b::Read)::Bool = a.cref == b.cref && a.dynamic == b.dynamic
-Base.isequal(a::Read, b::Read)::Bool = a == b
-Base.hash(r::Read, h::UInt)::UInt = hash(r.dynamic, hash(r.cref, h))
 
 """
     crefReads!(reads, e) -> Vector{Read}
@@ -228,29 +229,69 @@ function elementRead(c::SimCref, index::Vector{Int})::SimCref
 end
 
 """
-    statementExps!(out, body) -> Vector{Exp}
+    foreachStatementExp(f, body, statement = noStatement)
 
-The expressions of the statements `body`: their conditions, sides and values, a `reinit`'s state as a reference, a
-loop's range; nested bodies' too; pushed onto `out`.
+`f(e)` for each expression of the statements `body`, nested statements' too, in field order (a branch's condition
+before its body, a loop's range before its body); `statement(s)` on each statement before its expressions. The
+targets of `reinit` and of OM.jl's structural changes are references, not expressions (`statementTargets!`).
 """
-statementExps!(out::Vector{Exp}, body::Vector{Statement})::Vector{Exp} = (foreach(s::Statement -> statementExps!(out, s), body); out)
-statementExps!(out::Vector{Exp}, s::ASSIGN)::Vector{Exp} = push!(out, s.left, s.right)
-statementExps!(out::Vector{Exp}, s::REINIT)::Vector{Exp} = push!(out, EXP_CREF(s.stateVar, TYPE_REAL()), s.value)
-statementExps!(out::Vector{Exp}, s::NORETCALL)::Vector{Exp} = push!(out, s.exp)
-statementExps!(out::Vector{Exp}, s::ASSERT)::Vector{Exp} = push!(out, s.condition, s.message, s.level)
-statementExps!(out::Vector{Exp}, s::TERMINATE)::Vector{Exp} = push!(out, s.message)
-function statementExps!(out::Vector{Exp}, s::Union{IF, WHEN})::Vector{Exp}
-  for b in s.branches
-    push!(out, b.condition)
-    statementExps!(out, b.body)
-  end
-  s isa IF && statementExps!(out, s.elseBody)
-  return out
+function foreachStatementExp(f::F, body::Vector{Statement}, statement::G = noStatement)::Nothing where {F, G}
+  local visit::_StatementVisit{F, G} = _StatementVisit(f, statement)
+  foreach(s::Statement -> visit(s, nothing), body)
+  return nothing
 end
-statementExps!(out::Vector{Exp}, s::FOR)::Vector{Exp} = (push!(out, s.iterator.range); statementExps!(out, s.body))
-statementExps!(out::Vector{Exp}, s::WHILE)::Vector{Exp} = (push!(out, s.condition); statementExps!(out, s.body))
-statementExps!(out::Vector{Exp}, s::RECOMPILATION)::Vector{Exp} = push!(out, EXP_CREF(s.componentToChange, TYPE_REAL()), s.newValue)
-statementExps!(out::Vector{Exp}, ::Statement)::Vector{Exp} = out
+
+"No visit of a statement (`foreachStatementExp`'s default)."
+noStatement(::Statement)::Nothing = nothing
+
+"`foreachStatementExp` as a traversal's `recur`: an expression visited, a statement visited and traversed in turn."
+struct _StatementVisit{F, G}
+  f::F
+  statement::G
+end
+(v::_StatementVisit)(e::Exp, a::Nothing) = (v.f(e); (e, a))
+(v::_StatementVisit)(s::Statement, a::Nothing) = (v.statement(s); traverseFields(s, v, nothing); (s, a))
+
+"The references a statement holds outside its expressions, pushed onto `out`: a `reinit`'s state, OM.jl's structural changes' components."
+statementTargets!(out::Vector{SimCref}, s::REINIT)::Vector{SimCref} = push!(out, s.stateVar)
+statementTargets!(out::Vector{SimCref}, s::RECOMPILATION)::Vector{SimCref} = push!(out, s.componentToChange)
+statementTargets!(out::Vector{SimCref}, s::AGENTIC_RECOMPILATION)::Vector{SimCref} = append!(out, s.componentsToChange)
+statementTargets!(out::Vector{SimCref}, ::Statement)::Vector{SimCref} = out
+
+"""
+    foreachEquationExp(f, simCode; eliminated = false, statement = (place, s) -> nothing)
+
+`f(place, e)` for each expression of the simulation code's equations, `place` the equation's (`(:residualEquations, 3)`):
+the residual equations (with `eliminated` the eliminated ones too), the initial equations' sides, the if-equations'
+conditions and branches, the when-equations' conditions and statements (`foreachStatementExp`), the initial
+algorithms' statements, the asserts' conditions and messages; `statement(place, s)` on each statement before its
+expressions.
+"""
+function foreachEquationExp(f::F, simCode::SIM_CODE; eliminated::Bool = false, statement::G = noPlacedStatement)::Nothing where {F, G}
+  foreach(((i, eq),) -> f((:residualEquations, i), eq.exp), enumerate(simCode.residualEquations))
+  eliminated && foreach(((i, eq),) -> f((:eliminatedEquations, i), eq.exp), enumerate(simCode.eliminatedEquations))
+  foreach(((i, eq),) -> foreach(e::Exp -> f((:initialEquations, i), e), equationExps(eq)), enumerate(simCode.initialEquations))
+  for (i, ifEq) in enumerate(simCode.ifEquations), b in ifEq.branches
+    f((:ifEquations, i), b.condition)
+    foreach(eq -> f((:ifEquations, i), eq.exp), b.residualEquations)
+  end
+  for (i, w) in enumerate(simCode.whenEquations)
+    local stmts::Union{Nothing, WHEN_STMTS} = w.whenEquation
+    while stmts !== nothing
+      f((:whenEquations, i), stmts.condition)
+      foreachStatementExp(e::Exp -> f((:whenEquations, i), e), stmts.body, s::Statement -> statement((:whenEquations, i), s))
+      stmts = stmts.elsewhenPart
+    end
+  end
+  for (i, a) in enumerate(simCode.initialAlgorithms)
+    foreachStatementExp(e::Exp -> f((:initialAlgorithms, i), e), a.statements, s::Statement -> statement((:initialAlgorithms, i), s))
+  end
+  foreach(((i, a),) -> (f((:asserts, i), a.condition); f((:asserts, i), a.message)), enumerate(simCode.asserts))
+  return nothing
+end
+
+"No visit of a placed statement (`foreachEquationExp`'s default)."
+noPlacedStatement(::Tuple{Symbol, Int}, ::Statement)::Nothing = nothing
 
 "A reference's name: its symbol, with its Integer subscripts (`A[1][2]`)."
 crefName(c::SimCref)::String = isempty(c.subs) ? String(c.sym) : string(c.sym, join(("[$(i)]" for i in c.subs)))
