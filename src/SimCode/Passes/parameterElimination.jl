@@ -101,28 +101,19 @@ function assertNames!(names::OrderedSet{String}, asserts::Vector{ASSERT_EQUATION
   return names
 end
 
-"Whether a reference has a subscript that is no Integer literal (an enumeration's or Boolean's literal)."
-nonIntegerSubscripted(ref::IR.ComponentRef)::Bool =
-  any(p::IR.CrefPart -> any(s::IR.Subscript -> IR.literalIndex(s) === nothing, p.subscripts), ref.parts)
-
 """
     dynamicallyIndexedElements!(names, simCode, dynamic)
 
-Every element of an array of which there is a read by a subscript that is no Integer literal: `dynamic`, the arrays
-read by a subscript that reads a variable (`crefNames!`'s), and the arrays of the variables of `names` with an
-enumeration's or Boolean's literal subscript (by their references); none is named, the code generators look them up
-at run time (CDL's TimeTable `y[:] = val[idx, :]`).
+Every element of the arrays `dynamic`, those read by a subscript that reads a variable (`crefNames!`'s, `dynamicArrays!`):
+no element is named there, the code generators look it up at run time (CDL's TimeTable `y[:] = val[idx, :]`). A read
+by a literal subscript (an Integer's, an enumeration's, a Boolean's: `p[E_b(2)]`) names its element, which stays a
+variable or is folded like any other.
 """
 function dynamicallyIndexedElements!(names::OrderedSet{String}, simCode::SIM_CODE, dynamic::Set{Symbol})::OrderedSet{String}
-  local bases::Set{Symbol} = copy(dynamic)
-  for name in names
-    local ref::Union{Nothing, IR.ComponentRef} = get(simCode.references, name, nothing)
-    (ref !== nothing && nonIntegerSubscripted(ref)) && push!(bases, arrayBase(ref))
-  end
-  isempty(bases) && return names
+  isempty(dynamic) && return names
   for k::String in keys(simCode.stringToSimVarHT)
     local array::Union{Nothing, Symbol} = elementArray(simCode, k)
-    (array !== nothing && array in bases) && push!(names, k)
+    (array !== nothing && array in dynamic) && push!(names, k)
   end
   return names
 end
@@ -301,10 +292,10 @@ function eliminateConstantParameters(simCode::SIM_CODE)::SIM_CODE
   complexFieldNames!(kept, simCode.residualEquations, simCode)
   complexFieldNames!(kept, simCode.initialEquations, simCode)
   functionBodyNames!(kept, simCode.functions; dynamic)
-  local equationReads = OrderedSet{String}()
-  foreach(eq -> crefNames!(equationReads, eq.exp; dynamic), simCode.residualEquations)
+  #= the equations' dynamic reads: their arrays' elements stay variables (their other reads may be folded) =#
+  foreach(eq -> dynamicArrays!(dynamic, eq.exp), simCode.residualEquations)
   for ifEq in simCode.ifEquations, b in ifEq.branches
-    foreach(eq -> crefNames!(equationReads, eq.exp; dynamic), b.residualEquations)
+    foreach(eq -> dynamicArrays!(dynamic, eq.exp), b.residualEquations)
   end
   dynamicallyIndexedElements!(kept, simCode, dynamic)
   if !isempty(TUNABLE_PARAMETERS[])

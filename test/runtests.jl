@@ -429,6 +429,9 @@ import .ExampleModels
   include("exactZeroRelationTests.jl")
   include("whenBodyCallTests.jl")
 
+  #= ── Parameters read by literal and by variable subscripts ── =#
+  include("parameterEliminationTests.jl")
+
   #= ── 20v. The model cache within its memory limit ── =#
   include("cacheTests.jl")
 

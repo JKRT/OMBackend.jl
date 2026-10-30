@@ -190,6 +190,14 @@ function crefReads!(reads::Vector{Tuple{SimCref, Bool}}, e::Exp)::Vector{Tuple{S
   return reads
 end
 
+"The arrays `e` reads by a subscript that reads a variable (`crefReads!`'s flagged reads, by `arrayBase`), pushed onto `dynamic`."
+function dynamicArrays!(dynamic::Set{Symbol}, e::Exp)::Set{Symbol}
+  for (c::SimCref, isDynamic::Bool) in crefReads!(Tuple{SimCref, Bool}[], e)
+    (isDynamic && c.ref !== nothing) && push!(dynamic, arrayBase(c.ref))
+  end
+  return dynamic
+end
+
 """
     elementRead(c, index) -> SimCref
 
