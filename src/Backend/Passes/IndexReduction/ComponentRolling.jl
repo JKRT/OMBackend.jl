@@ -94,6 +94,18 @@ function componentGroups(variables::IR.VariableSet)::Vector{ComponentGroup}
   return groups
 end
 
+"The placeholder for an instance's member in a reference compared across the instances (`memberRelative`, an auxiliary's role)."
+const MEMBER_PLACEHOLDER = Symbol("§")
+
+"The subscript of the instance `k` of the group `gi` in a reference outside a rolled equation: its literal index."
+instanceLiteral(gi::Int, k::Int)::IR.Expression = IR.INTEGER(k)
+
+"""
+The share of the instances' equations rolled into for-equations below which a group is left as it is (`rollGroup!`):
+little to gain.
+"""
+const MIN_ROLLED_SHARE = 0.5
+
 """
     MemberReference
 
@@ -129,9 +141,6 @@ function memberReference(cref::IR.ComponentRef, memberOf::Dict{Symbol, Tuple{Int
   rest[end] = IR.CrefPart(last.name, IR.Subscript[], last.ty)
   return MemberReference(cref.parts[1:k - 1], at[1], at[2], IR.flatName(rest), index)
 end
-
-"The names of a member reference's derivative parts (`[\$DER]` of `\$DER.cylinder2.x`): with its rest, the key of the rolled variable it is of."
-operatorNames(m::MemberReference)::Vector{Symbol} = Symbol[p.name for p in m.operators]
 
 """
     RolledVariable
@@ -184,8 +193,8 @@ function rollGroup!(model::IR.Model, g::ComponentGroup)::Bool
   local n::Int = length(g.members)
   local partition::IR.Partition = model.continuous[1]
   #= the instances' variables, by their derivative parts' names and rest =#
-  local byKey::Dict{Tuple{Vector{Symbol}, Symbol}, RolledVariable} = Dict{Tuple{Vector{Symbol}, Symbol}, RolledVariable}()
-  local keyOrder::Vector{Tuple{Vector{Symbol}, Symbol}} = Tuple{Vector{Symbol}, Symbol}[]
+  local byKey::Dict{Tuple{Symbol, Symbol}, RolledVariable} = Dict{Tuple{Symbol, Symbol}, RolledVariable}()
+  local keyOrder::Vector{Tuple{Symbol, Symbol}} = Tuple{Symbol, Symbol}[]
   local owned::Set{Symbol} = Set{Symbol}()
   #= the variables' references (the instances' are replaced below) =#
   local crefOf::Dict{Symbol, IR.ComponentRef} = Dict{Symbol, IR.ComponentRef}(v.name => v.cref for v in model.variables)
@@ -194,7 +203,7 @@ function rollGroup!(model::IR.Model, g::ComponentGroup)::Bool
     m === nothing && continue
     (isempty(m.operators) && any(p::IR.CrefPart -> !isempty(p.subscripts), v.cref.parts[1:end - 1])) &&
       throw(NotHandled("the variable $(v.name), a component of its reference subscripted"))
-    local key::Tuple{Vector{Symbol}, Symbol} = (operatorNames(m), m.rest)
+    local key::Tuple{Symbol, Symbol} = (IR.flatName(m.operators), m.rest)
     haskey(byKey, key) || (push!(keyOrder, key); byKey[key] = RolledVariable(1, m.operators, m.rest, Union{Nothing, IR.Variable}[nothing for _ in 1:n],
                                                                                Dict{Vector{Int}, IR.Variable}[Dict{Vector{Int}, IR.Variable}() for _ in 1:n]))
     local r::RolledVariable = byKey[key]
@@ -221,7 +230,7 @@ function rollGroup!(model::IR.Model, g::ComponentGroup)::Bool
   local names::RolledNames = RolledNames(Dict{Tuple{Int, Symbol}, IR.ComponentRef}(), Dict{Symbol, Tuple{Int, Int, IR.CrefPart}}())
   local newVariables::Vector{IR.Variable} = IR.Variable[]
   #= the rolled variables: the bases first (a derivative's array is named after its base's) =#
-  for key in sort(keyOrder; by = k::Tuple{Vector{Symbol}, Symbol} -> (length(k[1]), k[1]))
+  for key in sort(keyOrder; by = k::Tuple{Symbol, Symbol} -> (length(byKey[k].operators), k[1]))
     push!(newVariables, rolledVariable(byKey[key], g, groups, memberOf, names, crefOf))
   end
   for (j, auxs) in enumerate(auxiliaries)
@@ -229,13 +238,12 @@ function rollGroup!(model::IR.Model, g::ComponentGroup)::Bool
   end
   #= the equations =#
   local rewrite::Function = (e::IR.Expression, index::Function) -> rolledExpression(e, groups, memberOf, names, index)
-  local literal::Function = (gi::Int, k::Int) -> IR.INTEGER(k)
   local iterator::Symbol = Symbol("\$c")
   local equations::Vector{IR.Equation} = rolledEquations(partition.equations, groups, memberOf, names, n, iterator; aliases = true)
   local initial::Vector{IR.Equation} = rolledEquations(partition.initialEquations, groups, memberOf, names, n, iterator; aliases = false)
   local rolledCount::Int = count(eq::IR.Equation -> eq isa IR.FOR_EQUATION && eq.iterator.name === iterator, equations)
   #= little to gain: left as it is =#
-  rolledCount * n * 2 >= count(eq::IR.Equation -> !isempty(instancesOf(eq, memberOf, names)), partition.equations) || return false
+  rolledCount * n >= MIN_ROLLED_SHARE * count(eq::IR.Equation -> !isempty(instancesOf(eq, memberOf, names)), partition.equations) || return false
   #= the variables: the instances' replaced by the rolled ones, in the place of the first instance's first =#
   local out::Vector{IR.Variable} = IR.Variable[]
   local placed::Bool = false
@@ -247,7 +255,7 @@ function rollGroup!(model::IR.Model, g::ComponentGroup)::Bool
       continue
     end
     #= bindings and attributes of the other variables may read the instances' =#
-    push!(out, withRolledReferences(v, (e::IR.Expression) -> rewrite(e, literal)))
+    push!(out, withRolledReferences(v, (e::IR.Expression) -> rewrite(e, instanceLiteral)))
   end
   empty!(model.variables)
   foreach(v::IR.Variable -> push!(model.variables, v), out)
@@ -312,11 +320,11 @@ function auxiliaryVariables(model::IR.Model, partition::IR.Partition, g::Compone
   return Vector{Symbol}[Symbol[roles[k][role] for k in 1:n] for role in sort!(collect(keys(roles[1])))]
 end
 
-"`e` for an auxiliary's role: the auxiliary `x` as `§`, an instance's references by its suffix only."
+"`e` for an auxiliary's role: the auxiliary `x` as `§` (`MEMBER_PLACEHOLDER`), an instance's references with their member as it (`memberRelative`)."
 function roleExpression(e::IR.Expression, x::Symbol, memberOf::Dict{Symbol, Tuple{Int, Int}})::IR.Expression
   return IR.mapExp(e) do y::IR.Expression
     y isa IR.CREF || return y
-    unsubscriptedName(y.cref) === x && return IR.CREF(IR.ComponentRef(Symbol("§")), y.ty)
+    unsubscriptedName(y.cref) === x && return IR.CREF(IR.ComponentRef(MEMBER_PLACEHOLDER), y.ty)
     memberReference(y.cref, memberOf) === nothing && return y
     return IR.CREF(memberRelative(y.cref), y.ty)
   end
@@ -325,8 +333,8 @@ end
 """
     rolledVariable(r, g, groups, memberOf, names, crefOf) -> IR.Variable
 
-The array over the instances of the variables `r`: of a base (no prefix) its reference the group's part and the
-suffix's parts (an element variable's last part the array of its elements), of a derivative the instances' derivative
+The array over the instances of the variables `r`: of a base (no derivative parts) its reference the group's part and
+the parts after the member (an element variable's last part the array of its elements), of a derivative the instances' derivative
 parts before its base's rolled reference (`\$DER.a|b|c.x`); its kind the instances' (all alike, the variables it names
 by `crefOf`), its binding and attributes the instances' (`rolledAttribute`). A base's reference recorded in `names`.
 """
@@ -344,7 +352,7 @@ function rolledVariable(r::RolledVariable, g::ComponentGroup, groups::Vector{Com
   all(x::IR.Variable -> typeof(x.kind) == typeof(first.kind) && x.ty == first.ty, everyOne) ||
     throw(NotHandled("the variable $(variableLabel(r)): its instances of other kinds or types"))
   local cref::IR.ComponentRef = if isempty(r.operators)
-    local tail::Vector{IR.CrefPart} = IR.CrefPart[first.cref.parts[2:end]...]
+    local tail::Vector{IR.CrefPart} = first.cref.parts[2:end]
     whole || (tail[end] = IR.CrefPart(tail[end].name, IR.Subscript[], IR.T_ARRAY(elementTy, IR.Dimension[IR.DIM_SIZE(d) for d in innerSizes])))
     IR.ComponentRef(IR.CrefPart[g.part; tail])
   else
@@ -353,8 +361,7 @@ function rolledVariable(r::RolledVariable, g::ComponentGroup, groups::Vector{Com
     IR.withOperatorsOf(first.cref, base)
   end
   isempty(r.operators) && (names.base[(1, r.rest)] = cref)
-  local literal::Function = (gi::Int, k::Int) -> IR.INTEGER(k)
-  local rewrite::Function = (e::IR.Expression) -> rolledExpression(e, groups, memberOf, names, literal)
+  local rewrite::Function = (e::IR.Expression) -> rolledExpression(e, groups, memberOf, names, instanceLiteral)
   local attribute::Function = (field::Symbol) -> rolledAttribute(r, n, innerSizes, (v::IR.Variable) -> getfield(v.attributes, field), rewrite)
   local a::IR.VariableAttributes = first.attributes
   local stateSelects::Vector{Union{Nothing, IR.StateSelect}} = Union{Nothing, IR.StateSelect}[x.attributes.stateSelect for x in everyOne]
@@ -521,26 +528,35 @@ end
 """
     instancesOf(eq, memberOf, names) -> Set{Int}
 
-The instances whose variables (records, components, derivatives, auxiliaries) the equation reads.
+The instances whose variables (records, components, derivatives, auxiliaries) the equation reads (`instanceOf`).
 """
 function instancesOf(eq::IR.Equation, memberOf::Dict{Symbol, Tuple{Int, Int}}, names::RolledNames)::Set{Int}
   local out::Set{Int} = Set{Int}()
   IR.foreachExp(eq) do x::IR.Expression
     x isa IR.CREF || return nothing
-    local first::IR.CrefPart = x.cref.parts[1]
-    local at::Union{Nothing, Tuple{Int, Int}} = (isempty(first.subscripts) && length(x.cref.parts) >= 2) ? get(memberOf, first.name, nothing) : nothing
-    if at !== nothing
-      push!(out, at[2])
-    elseif IR.isDerivativeCref(x.cref)
-      local m::Union{Nothing, MemberReference} = memberReference(IR.withoutLastSubscripts(x.cref), memberOf)
-      m === nothing || push!(out, m.instance)
-    elseif length(x.cref.parts) == 1
-      local aux::Union{Nothing, Tuple{Int, Int, IR.CrefPart}} = get(names.auxiliary, first.name, nothing)
-      aux === nothing || push!(out, aux[2])
-    end
+    local k::Int = instanceOf(x.cref, memberOf, names)
+    k == 0 || push!(out, k)
     nothing
   end
   return out
+end
+
+"""
+    instanceOf(cref, memberOf, names) -> Int
+
+The instance whose variable (record, component, derivative, auxiliary) the reference `cref` reads; 0 for another.
+"""
+function instanceOf(cref::IR.ComponentRef, memberOf::Dict{Symbol, Tuple{Int, Int}}, names::RolledNames)::Int
+  local first::IR.CrefPart = cref.parts[1]
+  local at::Union{Nothing, Tuple{Int, Int}} = (isempty(first.subscripts) && length(cref.parts) >= 2) ? get(memberOf, first.name, nothing) : nothing
+  at === nothing || return at[2]
+  if IR.isDerivativeCref(cref)
+    local m::Union{Nothing, MemberReference} = memberReference(IR.withoutLastSubscripts(cref), memberOf)
+    return m === nothing ? 0 : m.instance
+  end
+  length(cref.parts) == 1 || return 0
+  local aux::Union{Nothing, Tuple{Int, Int, IR.CrefPart}} = get(names.auxiliary, first.name, nothing)
+  return aux === nothing ? 0 : aux[2]
 end
 
 """
@@ -554,7 +570,6 @@ equations (the instance's literal subscript).
 """
 function rolledEquations(equations::Vector{IR.Equation}, groups::Vector{ComponentGroup}, memberOf::Dict{Symbol, Tuple{Int, Int}},
                          names::RolledNames, n::Int, iterator::Symbol; aliases::Bool)::Vector{IR.Equation}
-  local literal::Function = (gi::Int, k::Int) -> IR.INTEGER(k)
   local loop::Function = (gi::Int, k::Int) -> IR.CREF(IR.ComponentRef(iterator, IR.T_INTEGER()), IR.T_INTEGER())
   local rewrite::Function = (eq::IR.Equation, index::Function) ->
     IR.mapEquation!(e::IR.Expression -> rolledExpression(e, groups, memberOf, names, index), deepcopy(eq))
@@ -593,7 +608,7 @@ function rolledEquations(equations::Vector{IR.Equation}, groups::Vector{Componen
         continue
       end
     end
-    push!(out, rewrite(eq, literal))
+    push!(out, rewrite(eq, instanceLiteral))
   end
   return out
 end
@@ -634,9 +649,7 @@ function aliasClasses(equations::Vector{IR.Equation}, memberOf::Dict{Symbol, Tup
     #= the class's references by instance (0: the other components'), each part in the order of its names past the member =#
     local byInstance::Dict{Int, Vector{Tuple{Int, Symbol}}} = Dict{Int, Vector{Tuple{Int, Symbol}}}()
     for x in classes[root]
-      local k::Int = let s = instancesOf(IR.SCALAR_EQUATION(reference[x][1], reference[x][1], IR.T_REAL(), reference[x][2].source, reference[x][2].attributes), memberOf, names)
-        isempty(s) ? 0 : only(s)
-      end
+      local k::Int = instanceOf(reference[x][1].cref, memberOf, names)
       push!(get!(() -> Tuple{Int, Symbol}[], byInstance, k), x)
     end
     local chain::Function = (a::Tuple{Int, Symbol}, b::Tuple{Int, Symbol}) -> equalityEquation(reference[a][1], reference[b][1], reference[a][2])
@@ -664,7 +677,7 @@ function findRoot!(parent::Dict{K, K}, x::K)::K where {K}
   return root
 end
 
-"The order of an equality's references (`aliasClasses`): by their flat names after their shape's (`[n]`), as before the keys were (shape, name)."
+"The order of an equality's references (`aliasClasses`): by their flat names after their shape's (`[n]`), the order the equations were emitted in before the keys were (shape, name), kept as the output depends on it (an order by the keys would reorder the equalities)."
 classOrder(key::Tuple{Int, Symbol})::String = string(key[1] == 0 ? "" : "[$(key[1])]", key[2])
 
 """
@@ -683,7 +696,7 @@ end
 function memberRelative(cref::IR.ComponentRef)::IR.ComponentRef
   local k::Int = IR.operandStart(cref)
   local parts::Vector{IR.CrefPart} = copy(cref.parts)
-  parts[k] = IR.CrefPart(Symbol("§"), parts[k].subscripts, parts[k].ty)
+  parts[k] = IR.CrefPart(MEMBER_PLACEHOLDER, parts[k].subscripts, parts[k].ty)
   return IR.ComponentRef(parts)
 end
 
