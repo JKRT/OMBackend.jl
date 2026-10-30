@@ -314,7 +314,6 @@ variables' names carry them), else the integer.
 """
 indexOf(d::IR.Dimension, k::Int)::IR.Expression = d isa IR.DIM_ENUM ? IR.dimensionIndex(d, k) : IR.INTEGER(k)
 
-isLiteralIndex(s::IR.Subscript)::Bool = s isa IR.INDEX && (s.exp isa IR.INTEGER || s.exp isa IR.ENUM_LITERAL)
 
 
 """
@@ -356,7 +355,7 @@ function scalarTargets(lhs::IR.CREF)::Vector{Tuple{IR.CREF, Union{Nothing, IR.Ex
       for k in 1:n
         visit(pos + 1, IR.Subscript[newSubs..., IR.INDEX(indexOf(dims[pos], k))], guard, Int[rhsIndices..., k]) || return false
       end
-    elseif isLiteralIndex(sub)
+    elseif IR.isLiteralSubscript(sub)
       visit(pos + 1, IR.Subscript[newSubs..., sub], guard, rhsIndices) || return false
     elseif sub isa IR.INDEX
       n === nothing && return false
@@ -407,7 +406,7 @@ function scalarizedCref(e::IR.CREF, rhsIndices::Vector{Int}, fallback::IR.Expres
     if sub isa IR.WHOLE
       rhsPos <= length(rhsIndices) || return
       visit(pos + 1, rhsPos + 1, IR.Subscript[newSubs..., IR.INDEX(indexOf(dims[pos], rhsIndices[rhsPos]))], guard)
-    elseif isLiteralIndex(sub)
+    elseif IR.isLiteralSubscript(sub)
       visit(pos + 1, rhsPos, IR.Subscript[newSubs..., sub], guard)
     elseif sub isa IR.INDEX
       local n = IR.dimensionSize(dims[pos])
@@ -797,7 +796,7 @@ function residualsOfAssignment!(out::Vector{IR.Equation}, s::IR.ASSIGNMENT, cons
   end
   local elementTy = IR.elementType(ty)
   for k in 1:n
-    local cref::IR.ComponentRef = IR.withLastSubscripts(lhs.cref, IR.Subscript[IR.subscripts(lhs.cref)..., IR.INDEX(IR.INTEGER(k))])
+    local cref::IR.ComponentRef = IR.appendSubscripts(lhs.cref, IR.Subscript[IR.INDEX(IR.INTEGER(k))])
     (cref.name in constrained.names || cref.name in whenLifted) && continue
     local rhsK = IR.SUBSCRIPTED(s.rhs, IR.Subscript[IR.INDEX(IR.INTEGER(k))], elementTy)
     push!(out, IR.SCALAR_EQUATION(IR.CREF(cref, elementTy), rhsK, elementTy, s.source, DYNAMIC))
@@ -882,7 +881,7 @@ function algorithmValue(e::IR.Expression, run::AlgorithmRun)::IR.Expression
     name in run.wholes && unsupported("a read of a whole array or record that an algorithm section assigns part by part", x)
     #= x[j]: one of the elements the section assigns, chosen by the index (its array by its parts, `elementBase`) =#
     local base::Symbol = elementBase(cref)
-    if base !== name && base in run.wholes && any(s -> !isLiteralIndex(s), IR.subscripts(cref))
+    if base !== name && base in run.wholes && any(s -> !IR.isLiteralSubscript(s), IR.subscripts(cref))
       local elements = scalarizedCref(IR.CREF(cref, x.ty), Int[], x)
       elements isa IR.IF_EXPRESSION || unsupported("this read of an array an algorithm section assigns", x)
       return (elementValues(elements, x, run), false)

@@ -287,10 +287,7 @@ end
 function subscripted(e::IR.Expression, subscripts::Vector{IR.Subscript}, ty::IR.ModelicaType)::IR.Expression
   e isa IR.ARRAY && return selectElement(e, subscripts, ty)
   if e isa IR.CREF && all(sub -> IR.literalIndex(sub) !== nothing, subscripts)
-    local parts = copy(e.cref.parts)
-    local last = parts[end]
-    parts[end] = IR.CrefPart(last.name, vcat(last.subscripts, subscripts), ty)
-    return IR.CREF(IR.ComponentRef(parts), ty)
+    return IR.CREF(IR.appendSubscripts(e.cref, subscripts), ty)
   end
   return IR.SUBSCRIPTED(e, subscripts, ty)
 end

@@ -287,9 +287,10 @@ function auxiliaryVariables(model::IR.Model, partition::IR.Partition, g::Compone
     local free::Vector{Symbol} = Symbol[]
     IR.foreachExp(eq) do x::IR.Expression
       x isa IR.CREF || return nothing
-      local m::Union{Nothing, MemberReference} = memberReference(IR.withoutSubscripts(x.cref), memberOf)
+      local whole::IR.ComponentRef = IR.hasSubscripts(x.cref) ? IR.withoutSubscripts(x.cref) : x.cref
+      local m::Union{Nothing, MemberReference} = memberReference(whole, memberOf)
       m === nothing || push!(instances, m.instance)
-      local name::Symbol = unsubscriptedName(x.cref)
+      local name::Symbol = whole.name
       candidate(name) && push!(free, name)
       nothing
     end
@@ -499,9 +500,7 @@ function rolledExpression(e::IR.Expression, groups::Vector{ComponentGroup}, memb
       return r === nothing ? x : IR.CREF(r, x.ty)
     elseif x isa IR.SUBSCRIPTED && x.exp isa IR.CREF && IR.typeOf(x.exp) isa IR.T_ARRAY && isRolledReference(x.exp.cref) &&
            all(s::IR.Subscript -> s isa IR.INDEX, x.subscripts)
-      local parts::Vector{IR.CrefPart} = copy(x.exp.cref.parts)
-      parts[end] = IR.CrefPart(parts[end].name, IR.Subscript[parts[end].subscripts; x.subscripts], parts[end].ty)
-      return IR.CREF(IR.ComponentRef(parts), x.ty)
+      return IR.CREF(IR.appendSubscripts(x.exp.cref, x.subscripts), x.ty)
     end
     return x
   end
@@ -735,11 +734,7 @@ function equalityEquation(a::IR.CREF, b::IR.CREF, like::IR.Equation)::IR.Equatio
   local f::IR.FOR_EQUATION = like::IR.FOR_EQUATION
   local body::IR.SCALAR_EQUATION = f.body[1]::IR.SCALAR_EQUATION
   local i::IR.Expression = IR.CREF(IR.ComponentRef(f.iterator.name, IR.T_INTEGER()), IR.T_INTEGER())
-  local element::Function = (x::IR.CREF) -> begin
-    local parts::Vector{IR.CrefPart} = copy(x.cref.parts)
-    parts[end] = IR.CrefPart(parts[end].name, IR.Subscript[IR.INDEX(i)], parts[end].ty)
-    IR.CREF(IR.ComponentRef(parts), body.ty)
-  end
+  local element::Function = (x::IR.CREF) -> IR.CREF(IR.withLastSubscripts(x.cref, IR.Subscript[IR.INDEX(i)]), body.ty)
   return IR.FOR_EQUATION(f.iterator, IR.Equation[IR.SCALAR_EQUATION(element(a), element(b), body.ty, body.source, body.attributes)],
                          f.source, f.attributes)
 end

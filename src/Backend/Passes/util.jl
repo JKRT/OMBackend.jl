@@ -130,7 +130,9 @@ function rowMajor(sizes::Vector{Int})::Vector{Vector{Int}}
 end
 
 "The flat name of `cref` without its subscripts (`c[2].p.T` and `c.p.T[2]` are `c.p.T`; a slice's part keeps its inner ones, `T_SLICE`): the name of the variable it reads."
-unsubscriptedName(cref::IR.ComponentRef)::Symbol = IR.hasSubscripts(cref) ? IR.withoutSubscripts(cref).name : cref.name
+unsubscriptedName(cref::IR.ComponentRef)::Symbol =
+  !IR.hasSubscripts(cref) ? cref.name :
+    (length(cref.parts) == 1 && !(cref.parts[1].ty isa IR.T_SLICE)) ? cref.parts[1].name : IR.withoutSubscripts(cref).name
 
 "The subscripts of all parts of `cref`, in order (`c[2].v[3]`: 2, 3): those of the element of an array variable it names."
 allSubscripts(cref::IR.ComponentRef)::Vector{IR.Subscript} = IR.Subscript[s for p in cref.parts for s in p.subscripts]

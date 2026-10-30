@@ -1191,6 +1191,9 @@ function literalIndex(s::Subscript)::Union{Nothing, Int}
   return e isa INTEGER ? e.value : nothing
 end
 
+"Whether `s` is a literal index: an Integer's or an enumeration literal (`x[2]`, `x[E.b]`; `literalIndex` for its Integer value)."
+isLiteralSubscript(s::Subscript)::Bool = s isa INDEX && s.exp isa Union{INTEGER, ENUM_LITERAL}
+
 "The literal Integer indices of `subscripts` (`literalIndex`); `nothing` if one is not."
 function literalIndices(subscripts::Vector{Subscript})::Union{Nothing, Vector{Int}}
   local out::Vector{Int} = Vector{Int}(undef, length(subscripts))

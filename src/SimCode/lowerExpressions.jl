@@ -269,8 +269,7 @@ function simCrefExp(names::Names, cref::IR.ComponentRef, ty::IR.ModelicaType)::E
   state === nothing || return DER(SimCref(Symbol(simName(names, state)), Int[], state))
   local full = simName(names, cref)
   full in names.known && return EXP_CREF(SimCref(Symbol(full), Int[], cref), simType(ty))
-  if any(p -> any(s -> !(s isa IR.INDEX && s.exp isa Union{IR.INTEGER, IR.ENUM_LITERAL}), p.subscripts),
-         @view cref.parts[1:end-1])
+  if any(p::IR.CrefPart -> !all(IR.isLiteralSubscript, p.subscripts), @view cref.parts[1:end-1])
     local selected = variablesBySubscript(names, cref, ty)
     selected === nothing || return selected
   end
@@ -291,7 +290,7 @@ function simCrefExp(names::Names, cref::IR.ComponentRef, ty::IR.ModelicaType)::E
     return EXP_CREF(SimCref(Symbol(base), Int[], baseCref), simType(ty))
   local index::Union{Nothing, Vector{Int}} = IR.literalIndices(last.subscripts)
   index === nothing || return EXP_CREF(SimCref(Symbol(base), index, cref), simType(ty))
-  all(s -> s isa IR.INDEX && s.exp isa Union{IR.INTEGER, IR.ENUM_LITERAL}, last.subscripts) &&
+  all(IR.isLiteralSubscript, last.subscripts) &&
     return EXP_CREF(SimCref(Symbol(full), Int[], cref), simType(ty))
   return ASUB(EXP_CREF(SimCref(Symbol(base), Int[], baseCref), simType(last.ty)), Exp[subscriptExp(names, s) for s in last.subscripts])
 end
@@ -342,7 +341,7 @@ part), its elements 1, 2, ... variables; `nothing` for another.
 """
 function variablesBySubscript(names::Names, cref::IR.ComponentRef, ty::IR.ModelicaType)::Union{Nothing, Exp}
   local positions = Tuple{Int, Int}[(p, k) for (p, part) in enumerate(cref.parts) for (k, s) in enumerate(part.subscripts)
-                                    if s isa IR.INDEX && !(s.exp isa Union{IR.INTEGER, IR.ENUM_LITERAL})]
+                                    if s isa IR.INDEX && !IR.isLiteralSubscript(s)]
   length(positions) == 1 || return nothing
   local (p, k) = only(positions)
   local index = cref.parts[p].subscripts[k].exp

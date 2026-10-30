@@ -153,7 +153,7 @@ function wholeDerivative(e::IR.CREF, seeds::Seeds{<:ArrayVariables})::IR.Express
         return elementsDerivative(IR.withoutSubscripts(e.cref), [given; sizes], given, IR.elementType(e.ty), seeds)
       end
       local probe::IR.ComponentRef = withIteratorsAsOne(e.cref)
-      local probeElement::Symbol = IR.withLastSubscripts(probe, IR.Subscript[IR.subscripts(probe); IR.Subscript[IR.INDEX(IR.INTEGER(1)) for _ in sizes]]).name
+      local probeElement::Symbol = IR.appendSubscripts(probe, IR.Subscript[IR.INDEX(IR.INTEGER(1)) for _ in sizes]).name
       seeds.variable(probeElement) === nothing ||
         throw(NotHandled("the derivative of a part of an array ($(e.cref.name)) whose elements are variables of their own"))
       local zeros::Union{Nothing, IR.Expression} = zeroOf(e)
@@ -233,7 +233,7 @@ end
 "The derivative of the elements of the array `cref` (of `sizes`) under the subscripts `index` so far, on its last part: an array literal of them, nested by dimension."
 function elementsDerivative(cref::IR.ComponentRef, sizes::Vector{Int}, index::Vector{Int}, element::IR.ModelicaType, seeds::Seeds)::IR.Expression
   if length(index) == length(sizes)
-    return wholeDerivative(IR.withLastSubscripts(cref, IR.Subscript[IR.subscripts(cref); IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index]]),
+    return wholeDerivative(IR.appendSubscripts(cref, IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index]),
                            element, seeds)
   end
   local rest = sizes[length(index) + 1:end]

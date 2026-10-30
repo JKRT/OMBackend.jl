@@ -450,7 +450,7 @@ function subscriptedReference(e::IR.Expression)::IR.Expression
   if IR.isDerivativeCref(cref)
     length(e.subscripts) <= length(IR.dimensions((e.exp::IR.CREF).ty)) || return e
     any(s::IR.Subscript -> !(s isa IR.INDEX), cref.parts[end].subscripts) && return e
-    return IR.CREF(IR.withLastSubscripts(cref, IR.Subscript[cref.parts[end].subscripts; e.subscripts]), e.ty)
+    return IR.CREF(IR.appendSubscripts(cref, e.subscripts), e.ty)
   end
   local parts::Vector{IR.CrefPart} = copy((e.exp::IR.CREF).cref.parts)
   local next::Int = 1

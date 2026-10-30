@@ -380,9 +380,7 @@ function runtimeIndexChoice(e::IR.Expression, iterators::Set{Symbol})::IR.Expres
   (ty isa IR.T_ARRAY && length(ty.dimensions) == 1 && ty.dimensions[1] isa IR.DIM_SIZE) || return e
   local n = ty.dimensions[1].size
   n > 0 || return e
-  local element::Function = k -> IR.CREF(IR.ComponentRef(IR.CrefPart[e.cref.parts[1:end-1];
-                                                           IR.CrefPart(last.name, IR.Subscript[IR.INDEX(IR.INTEGER(k))], ty)]),
-                               ty.elementType)
+  local element::Function = (k::Int) -> IR.CREF(IR.withLastSubscripts(e.cref, IR.Subscript[IR.INDEX(IR.INTEGER(k))]), ty.elementType)
   local choice::IR.Expression = element(n)
   for k in n-1:-1:1
     choice = IR.IF_EXPRESSION(IR.RELATION(index, IR.EQUAL, IR.INTEGER(k), 0), element(k), choice, ty.elementType)
@@ -662,8 +660,7 @@ function recordFieldArrayElements(v::IR.Variable)::Vector{IR.Variable}
   local out = IR.isKnown(v) ? IR.Variable[v] : IR.Variable[]
   for i in CartesianIndices(Tuple(d.size for d in ty.dimensions))
     local index = collect(Tuple(i))
-    local cref::IR.ComponentRef = IR.ComponentRef(IR.CrefPart[v.cref.parts[1:end-1];
-                                             IR.CrefPart(last.name, IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index], ty)])
+    local cref::IR.ComponentRef = IR.withLastSubscripts(v.cref, IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index])
     local binding = v.binding === nothing ? nothing : bindingElement(v.binding, index)
     push!(out, IR.Variable(cref, ty.elementType, v.kind, binding, v.attributes, v.direction, v.isProtected, v.connector,
                            v.source, :expandRecordFieldArrays))
