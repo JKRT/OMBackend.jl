@@ -1426,9 +1426,9 @@ end
 """
 The literal values of the if-equation relations at an initial state:
 `eval!(pv, u, t)` writes 1.0/0.0 into their ifCond parameters and returns
-whether one changed. From the codegen's entries (ifCond, observed names,
-crossing functions, observed -> Bool); an entry whose ifCond is not a
-parameter is left out, and when the crossing functions cannot be observed
+whether one changed. From the codegen's entries (the ifCond parameter's name,
+a Symbol; observed names, crossing functions, observed -> Bool); an entry whose
+ifCond is not a parameter is left out, and when the crossing functions cannot be observed
 there are none. Nothing when none remain.
 """
 function _initialRelationLiterals(reducedSystem, params, entries)
@@ -1437,7 +1437,7 @@ function _initialRelationLiterals(reducedSystem, params, entries)
   local kept = Any[]
   local zcs = Any[]
   for (sym, names, fns, lit) in entries
-    local k::Int = get(paramIdx, variableName(sym), 0)
+    local k::Int = get(paramIdx, String(sym::Symbol), 0)
     k == 0 && continue
     push!(kept, (k, names, length(zcs) + 1, length(fns), lit))
     append!(zcs, fns)
