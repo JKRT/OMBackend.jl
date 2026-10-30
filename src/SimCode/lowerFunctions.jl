@@ -80,7 +80,7 @@ end
 "The names a function's references are known by: its variables' (and `time`, `pi`, `e`)."
 function functionNames(fn::IR.ModelicaFunction)::Names
   local known = Set{String}(["time", "pi", "e"])
-  foreach(v -> push!(known, String(v.name)), Iterators.flatten((fn.inputs, fn.outputs, fn.locals)))
+  foreach(v -> push!(known, derivedKey(v.cref)), Iterators.flatten((fn.inputs, fn.outputs, fn.locals)))
   return Names(false, known, Dict{Symbol, IR.ComponentRef}(), Set{String}())
 end
 
@@ -91,8 +91,8 @@ function simFunctionVariable(names::Names, v::IR.FunctionVariable)::FunctionVari
                       d isa IR.DIM_BOOLEAN ? unsupported("a Boolean array dimension of a function variable", v.name) :
                       ICONST(something(IR.dimensionSize(d), 0)))
   end
-  return FunctionVariable(String(v.name), simType(v.ty), dimensions, v.binding === nothing ? nothing : simExp(names, v.binding),
-                          Pair{String, Exp}[String(n) => simExp(names, e) for (n, e) in v.fieldBindings], IR.ComponentRef(v.name, v.ty))
+  return FunctionVariable(derivedKey(v.cref), simType(v.ty), dimensions, v.binding === nothing ? nothing : simExp(names, v.binding),
+                          Pair{String, Exp}[String(n) => simExp(names, e) for (n, e) in v.fieldBindings], v.cref)
 end
 
 "`s` without `smooth(p, e)` (as `e`, its own smooth() kept), in an assignment, a call, a condition, a range, a loop's body (the previous backend's)."
@@ -117,10 +117,12 @@ withoutSmooth(e::Exp)::Exp =
 """
     flattenRecordParameters(f)
 
-`f` with its record inputs and outputs as their fields (`r` as `r_a`, `r_b`; an array of
-records `u` as one array per field, `u_re`, `u_im`, of its dimensions and the field's), and
+`f` with its record inputs and outputs as their fields (`r` as `r.a`, `r.b`; an array of
+records `u` as one array per field, `u.re`, `u.im`, of its dimensions and the field's), and
 its local arrays of records with scalar fields read and written by field (`o[1].re` as
-`o_re[1]`: the code generation declares one array per field). Its statements follow: a field
+`o.re[1]`: the code generation declares one array per field). A field's variable and
+references keep the record's and the field's parts; its identifier (`r_a`, `o_re`) is derived
+(`derivedKey`). Its statements follow: a field
 read by its flat name, a record argument as its fields, a record assignment field by field
 (of a call's result by indexing it once), a tuple's record target as its fields. A record
 constructor without statements gets an assignment of each output field from the input of its
@@ -143,7 +145,7 @@ function flattenRecordParameters(fn::IR.ModelicaFunction)::FlattenedFunction
     local flatInputs = Set{Symbol}(v.name for v in inputs)
     for o in fn.outputs, (field, ty) in get(fields, o.name, Tuple{Symbol, IR.ModelicaType}[])
       field in flatInputs || continue
-      push!(body, IR.ASSIGNMENT(IR.CREF(IR.ComponentRef(Symbol(o.name, "_", field), ty), ty),
+      push!(body, IR.ASSIGNMENT(IR.CREF(IR.withField(o.cref, field, ty), ty),
                                 IR.CREF(IR.ComponentRef(field, ty), ty), IR.NO_SOURCE))
     end
   end
@@ -158,7 +160,7 @@ recordTypeOf(ty::IR.ModelicaType)::Union{Nothing, IR.T_RECORD} =
 """
     flattenRecordVariable(v, fields; output, inputNames)
 
-A record variable as its fields' variables (`r_a`, ...; of a record array of its dimensions
+A record variable as its fields' variables (`r.a`, ...; of a record array of its dimensions
 and the field's), its fields recorded in `fields`; another variable with its dimensions and
 binding flattened. An output field starts at its value of the record's binding (a record
 value's or a constructor call's element, else the field of the value), else at its field
@@ -174,7 +176,7 @@ function flattenRecordVariable(v::IR.FunctionVariable, fields::RecordFields; out
     local fieldDims = IR.dimensions(field.ty)
     local ty = isempty(recordDims) ? field.ty : IR.T_ARRAY(IR.elementType(field.ty), vcat(recordDims, fieldDims))
     local binding = output ? outputFieldBinding(v, k, field, fields) : nothing
-    push!(out, IR.FunctionVariable(Symbol(v.name, "_", field.name), ty, binding, Pair{Symbol, IR.Expression}[]))
+    push!(out, IR.FunctionVariable(IR.withField(v.cref, field.name, ty), ty, binding, Pair{Symbol, IR.Expression}[]))
   end
   fields[v.name] = Tuple{Symbol, IR.ModelicaType}[(f.name, f.ty) for f in rec.fields]
   return out
@@ -217,9 +219,9 @@ end
 """
     flattenedExpression(e, fields)
 
-`e` with the flattened records' fields read by their flat names (`u[k].re` as `u_re[k]`: the
-element's subscripts first, then the field's), the size of a record array as its first
-field's (`size(u, 1)` as `size(u_re, 1)`), and the record arguments of calls as their fields
+`e` with the flattened records' fields read as their variables (`u[k].re` as `u.re[k]`: the
+element's subscripts on the field's part, first, then the field's), the size of a record array as its
+first field's (`size(u, 1)` as `size(u.re, 1)`), and the record arguments of calls as their fields
 (`expandedArguments`). In a function without flattened records only a call with a
 record-valued argument is changed (the callee takes the record's fields).
 """
@@ -231,16 +233,12 @@ end
 function flattenRecordReferences(e::IR.Expression, fields::RecordFields)::IR.Expression
   local x = a -> flattenRecordReferences(a, fields)
   if e isa IR.CREF && length(e.cref.parts) >= 2 && haskey(fields, e.cref.parts[1].name)
-    local (first, last) = (e.cref.parts[1], e.cref.parts[end])
-    local name = Symbol(join((String(p.name) for p in e.cref.parts), "_"))
-    local cref = IR.ComponentRef(IR.CrefPart[IR.CrefPart(name, vcat(first.subscripts, last.subscripts), last.ty)])
-    return IR.mapChildren(x, IR.CREF(cref, e.ty))
+    return IR.mapChildren(x, IR.CREF(fieldElementCref(e.cref), e.ty))
   elseif e isa IR.SIZE && e.exp isa IR.CREF && length(e.exp.cref.parts) == 1 && haskey(fields, e.exp.cref.name)
     local fs = fields[e.exp.cref.name]
     if !isempty(fs) && (e.dimension !== nothing || !(fs[1][2] isa IR.T_ARRAY))
       local (field, ty) = fs[1]
-      local part = e.exp.cref.parts[1]
-      local cref = IR.ComponentRef(IR.CrefPart[IR.CrefPart(Symbol(part.name, "_", field), part.subscripts, ty)])
+      local cref = fieldOfElement(e.exp.cref.parts[1], field, ty)
       return IR.mapChildren(x, IR.SIZE(IR.CREF(cref, ty), e.dimension))
     end
   elseif e isa IR.CALL
@@ -282,8 +280,28 @@ spreadsAsArgument(e::IR.Expression)::Bool =
 function recordFieldReferences(e::IR.Expression, fields::RecordFields)::Union{Nothing, Vector{IR.Expression}}
   (e isa IR.CREF && length(e.cref.parts) == 1 && haskey(fields, e.cref.parts[1].name)) || return nothing
   local part = e.cref.parts[1]
-  return IR.Expression[IR.CREF(IR.ComponentRef(IR.CrefPart[IR.CrefPart(Symbol(part.name, "_", f), part.subscripts, t)]), t)
-                       for (f, t) in fields[part.name]]
+  return IR.Expression[IR.CREF(fieldOfElement(part, f, t), t) for (f, t) in fields[part.name]]
+end
+
+"""
+    fieldOfElement(record, field, ty)
+
+The field `field` (of type `ty`) of the record reference of the one part `record`, as its flattened variable reads it: an
+element of a record array's subscripts on the field's part (`u[k]`'s `re` as `u.re[k]`).
+"""
+fieldOfElement(record::IR.CrefPart, field::Symbol, ty::IR.ModelicaType)::IR.ComponentRef =
+  IR.ComponentRef(IR.CrefPart[IR.CrefPart(record.name, IR.Subscript[], record.ty), IR.CrefPart(field, record.subscripts, ty)])
+
+"""
+    fieldElementCref(cref)
+
+A reference of a flattened record's field (`r.a`, `u[k].re`, `u[k].x[2]`) as its variable reads it: the record part's
+subscripts after the field's (`u.re[k]`, `u.x[k,2]`), the parts between kept.
+"""
+function fieldElementCref(cref::IR.ComponentRef)::IR.ComponentRef
+  local (first::IR.CrefPart, last::IR.CrefPart) = (cref.parts[1], cref.parts[end])
+  return IR.ComponentRef(IR.CrefPart[IR.CrefPart(first.name, IR.Subscript[], first.ty); cref.parts[2:end - 1];
+                                     IR.CrefPart(last.name, vcat(first.subscripts, last.subscripts), last.ty)])
 end
 
 "The field types of a record-valued call (of an array of records, one array per field); `nothing` for another expression."
@@ -330,7 +348,7 @@ function flattenedStatement(s::IR.ASSIGNMENT, fields::RecordFields)::Vector{IR.S
   (lhsPart === nothing || !haskey(fields, lhsPart.name)) && return IR.Statement[IR.ASSIGNMENT(x(s.lhs), x(s.rhs), s.source)]
   local fs = fields[lhsPart.name]
   isempty(lhsPart.subscripts) || return recordElementAssignment(s, lhsPart, fs, fields)
-  local fieldLhs = (f, t) -> IR.CREF(IR.ComponentRef(Symbol(lhsPart.name, "_", f), t), t)
+  local fieldLhs = (f, t) -> IR.CREF(IR.withField(s.lhs.cref, f, t), t)
   local rhsFields = recordFieldReferences(s.rhs, fields)
   rhsFields === nothing ||
     return IR.Statement[IR.ASSIGNMENT(fieldLhs(f, t), rhsFields[k], s.source) for (k, (f, t)) in enumerate(fs)]
@@ -388,7 +406,8 @@ reading `v[i]` (a swap of fields) sees the old element.
 function recordElementAssignment(s::IR.ASSIGNMENT, lhs::IR.CrefPart, fs::Vector{Tuple{Symbol, IR.ModelicaType}},
                                  fields::RecordFields)::Vector{IR.Statement}
   local tmp = Symbol("__omjl_", lhs.name)
-  local tmpField = (f, t) -> IR.CREF(IR.ComponentRef(Symbol(tmp, "_", f), t), t)
+  local tmpRecord::IR.ComponentRef = IR.ComponentRef(tmp, IR.typeOf(s.lhs))
+  local tmpField = (f, t) -> IR.CREF(IR.withField(tmpRecord, f, t), t)
   local out = IR.Statement[]
   local rhsFields = recordFieldReferences(s.rhs, fields)
   if rhsFields !== nothing
@@ -404,7 +423,7 @@ function recordElementAssignment(s::IR.ASSIGNMENT, lhs::IR.CrefPart, fs::Vector{
     push!(out, IR.ASSIGNMENT(IR.CREF(IR.ComponentRef(tmp, ty), ty), flattenedExpression(s.rhs, fields), s.source))
   end
   for (f, t) in fs
-    local target = IR.CREF(IR.ComponentRef(IR.CrefPart[IR.CrefPart(Symbol(lhs.name, "_", f), lhs.subscripts, t)]), t)
+    local target = IR.CREF(fieldOfElement(lhs, f, t), t)
     push!(out, IR.ASSIGNMENT(target, tmpField(f, t), s.source))
   end
   return out

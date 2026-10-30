@@ -658,15 +658,15 @@ end
 """
     flattenRecordCallArg(arg, simCode)
 
-The fields of a record argument of a call, as their flattened variables (`<name>_<field>`);
-empty for another argument. A connector-typed Complex reference
+The fields of a record argument of a call, as their flattened variables (`identifierOf` the fields'
+references: `<name>_<field>`); empty for another argument. A connector-typed Complex reference
 (`Modelica.ComplexBlocks.Interfaces.ComplexInput u`) the same, if one of its fields is a
 variable.
 """
 function flattenRecordCallArg(arg::SC.Exp, simCode::SC.SIM_CODE)::Vector{Symbol}
   (arg isa SC.EXP_CREF && arg.ty isa SC.TYPE_COMPLEX) || return Symbol[]
-  local baseName = SC.crefName(arg.cref)
-  local flat = Symbol[Symbol(baseName * COMPONENT_SEPARATOR * f) for f in arg.ty.fieldNames]
+  local record::SC.IR.ComponentRef = SC.irRef(arg.cref)
+  local flat = Symbol[Symbol(SC.identifierOf(simCode, SC.fieldCref(record, f))) for f in arg.ty.fieldNames]
   arg.ty.isRecord && return flat
   return any(s -> haskey(simCode.stringToSimVarHT, String(s)), flat) ? flat : Symbol[]
 end

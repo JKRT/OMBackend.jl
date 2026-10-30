@@ -1082,11 +1082,11 @@ function _recordArrayElementCallArgs(arg::SC.Exp, simCode::SC.SIM_CODE)::Vector{
   end
   (elemTy isa SC.TYPE_COMPLEX && elemTy.isRecord) || return Any[]
   (nDims == 0 || length(arg.subs) == nDims) || return Any[]
-  local base = SC.crefName(arg.exp.cref)
-  occursin('[', base) && return Any[]
+  local array::Union{Nothing, SC.IR.ComponentRef} = arg.exp.cref.ref
+  (array === nothing || !isempty(arg.exp.cref.subs) || SC.IR.upToFirstSubscripted(array) !== array) && return Any[]
   any(s -> s isa Union{SC.RANGE, SC.ARRAY_EXP, SC.WHOLE_DIMENSION}, arg.subs) && return Any[]
   local idx = Any[expToJuliaExpMTK(s, simCode) for s in arg.subs]
-  return Any[Expr(:ref, Symbol(base * COMPONENT_SEPARATOR * f), idx...) for f in elemTy.fieldNames]
+  return Any[Expr(:ref, Symbol(SC.identifierOf(simCode, SC.fieldCref(array, f))), idx...) for f in elemTy.fieldNames]
 end
 
 """

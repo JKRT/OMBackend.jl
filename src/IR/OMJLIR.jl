@@ -1279,19 +1279,28 @@ end
 
 """
     FunctionVariable(name, ty, binding, fieldBindings)
+    FunctionVariable(cref, ty, binding, fieldBindings)
 
 An input, output or protected variable of a function: its name, its type (an array's
 dimensions may be expressions of the inputs, `size(u, 1)`), its binding (an input's or
 output's default, a protected variable's value), and for one of a record type the bindings
 of its fields as the instance has them (its modifiers, the record's defaults; one reading
-another field reads the variable's own: `w.a`).
+another field reads the variable's own: `w.a`); its reference, the name its flat name: a
+declared variable's of one part, a flattened record's field's the record's and the field's
+parts (`r.a`; an array of records' `u.re`, SimCode's lowerFunctions).
 """
 struct FunctionVariable <: Node
   name::Symbol
   ty::ModelicaType
   binding::Union{Nothing, Expression}
   fieldBindings::Vector{Pair{Symbol, Expression}}
+  cref::ComponentRef
 end
+
+FunctionVariable(name::Symbol, ty::ModelicaType, binding::Union{Nothing, Expression}, fieldBindings::Vector{Pair{Symbol, Expression}}) =
+  FunctionVariable(name, ty, binding, fieldBindings, ComponentRef(name, ty))
+FunctionVariable(cref::ComponentRef, ty::ModelicaType, binding::Union{Nothing, Expression}, fieldBindings::Vector{Pair{Symbol, Expression}}) =
+  FunctionVariable(cref.name, ty, binding, fieldBindings, cref)
 
 """
     FunctionDerivative(derivative, order, excludedInputs)
