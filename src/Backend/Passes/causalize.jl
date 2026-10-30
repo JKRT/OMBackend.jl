@@ -622,9 +622,12 @@ function expandRecordFieldArrays!(variables::IR.VariableSet)::Nothing
   return nothing
 end
 
-"Whether `cref` is an array field of a record: its last part of an array type, the one before of a record type."
+"""
+Whether `cref` is an array field of a record: its last part of an array type, the one before of a record type; not a
+derivative's (`IR.isDerivativeCref`: `\$DER.r.f` stays one variable).
+"""
 isRecordFieldArray(cref::IR.ComponentRef)::Bool =
-  length(cref.parts) >= 2 && cref.parts[end].ty isa IR.T_ARRAY && cref.parts[end-1].ty isa IR.T_RECORD
+  length(cref.parts) >= 2 && cref.parts[end].ty isa IR.T_ARRAY && cref.parts[end-1].ty isa IR.T_RECORD && !IR.isDerivativeCref(cref)
 
 "The literal Integer indices of `subscripts`; `nothing` if one is not."
 function literalIndices(subscripts::Vector{IR.Subscript})::Union{Nothing, Vector{Int}}

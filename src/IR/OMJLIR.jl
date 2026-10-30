@@ -224,6 +224,24 @@ struct T_COMPONENTS <: ModelicaType
   members::Vector{Symbol}
 end
 
+"""
+    T_DER()
+
+The type of the first part of a derivative variable's reference, `\$DER` (`derivativeCref`): the variable is the
+derivative of the reference of the parts after it (`operand`). The parts are joined as any (`flatName`), so the name
+is `\$DER.` before the operand's (`\$DER.x`, `\$DER.c[2].T`); a reference into a derivative array has its subscripts
+on its last part (`derivativeElement`: `\$DER.c.T[i]` of `der(c[i].T)`).
+"""
+struct T_DER <: ModelicaType end
+
+"""
+    T_STATEDER()
+
+The type of the first part of a selected state's own derivative reference, `\$STATEDER` (`stateDerivativeCref`;
+index reduction's link `\$STATEDER.x = \$DER.x`): the state is the reference of the parts after it (`operand`).
+"""
+struct T_STATEDER <: ModelicaType end
+
 "The type of a call to a function with several outputs."
 struct T_TUPLE <: ModelicaType
   types::Vector{ModelicaType}
@@ -1054,6 +1072,28 @@ isKnown(v::Variable)::Bool = v.kind isa PARAMETER || v.kind isa CONSTANT
 "The name of the derivative variable of the state `state`: `\$DER.state`."
 derivativeName(state::Symbol)::Symbol = Symbol("\$DER.", state)
 
+"The reference of the derivative variable of the variable `c` names: a part `\$DER` (T_DER) before `c`'s parts."
+derivativeCref(c::ComponentRef)::ComponentRef = ComponentRef(CrefPart[CrefPart(Symbol("\$DER"), Subscript[], T_DER()); c.parts])
+
+"The reference of a selected state's own derivative (index reduction's link): a part `\$STATEDER` (T_STATEDER) before the state's parts."
+stateDerivativeCref(c::ComponentRef)::ComponentRef =
+  ComponentRef(CrefPart[CrefPart(Symbol("\$STATEDER"), Subscript[], T_STATEDER()); c.parts])
+
+"Whether `c` is a derivative's reference (`\$DER.x`, `\$STATEDER.x`): its first part of type T_DER or T_STATEDER."
+isDerivativeCref(c::ComponentRef)::Bool = c.parts[1].ty isa Union{T_DER, T_STATEDER}
+
+"The reference a derivative's reference is of (`x` of `\$DER.x`, `\$DER.x` of `\$DER.\$DER.x`); `nothing` for another."
+operand(c::ComponentRef)::Union{Nothing, ComponentRef} = isDerivativeCref(c) ? ComponentRef(c.parts[2:end]) : nothing
+
+"""
+    derivativeElement(d, subscripts) -> ComponentRef
+
+The element at `subscripts` of the derivative array `d` (`derivativeCref` of an array's reference): the subscripts on
+its last part, as every reference into a derivative array (`\$DER.c.T[i]` of `der(c[i].T)`).
+"""
+derivativeElement(d::ComponentRef, subscripts::Vector{Subscript})::ComponentRef =
+  ComponentRef(CrefPart[d.parts[1:end - 1]; CrefPart(d.parts[end].name, subscripts, d.parts[end].ty)])
+
 "The derivative variable of the state `state` in `set`; `nothing` before it is introduced."
 function derivativeOf(set::VariableSet, state::Symbol)::Union{Nothing, Variable}
   local k = set[state].kind
@@ -1554,6 +1594,8 @@ _print(io::IO, f::Field) = (_print(io, f.ty); print(io, " ", f.name))
 _print(io::IO, t::T_RECORD) = print(io, t.name)
 _print(io::IO, t::Union{T_EXTERNAL_OBJECT, T_CLASS}) = print(io, t.name)
 _print(io::IO, t::T_COMPONENTS) = print(io, t.cls, "[", length(t.members), "]")
+_print(io::IO, ::T_DER) = print(io, "der")
+_print(io::IO, ::T_STATEDER) = print(io, "stateDer")
 _print(io::IO, t::T_TUPLE) = (print(io, "("); _printJoined(io, t.types); print(io, ")"))
 _print(io::IO, t::T_FUNCTION) = print(io, "function ", t.name)
 _print(io::IO, ::T_NORETCALL) = print(io, "()")

@@ -50,7 +50,7 @@ function familyBase(name::Symbol, variables::IR.VariableSet)::Symbol
   while true
     local v::Union{Nothing, IR.Variable} = get(variables, current, nothing)
     v === nothing && return current
-    local from::Union{Nothing, Tuple{String, Symbol}} = derivedFrom(v, variables)
+    local from::Union{Nothing, Tuple{IR.CrefPart, Symbol}} = derivedFrom(v, variables)
     from === nothing && return current
     current = from[2]
   end
@@ -226,7 +226,7 @@ end
 
 A reference to an element of an array split along its inner dimensions (`splitInner!`) as the reference to the
 slice's element: `G[\$c].f.R.T[2, 1]` (an inlined body's field) is `G[\$c].f.R.T[2,1]` (the last part's literal
-subscripts in its name), a derivative's one part likewise (`\$DER.G.f.R.T[\$c, 2, 1]` is `\$DER.G.f.R.T[2,1][\$c]`).
+subscripts in its name), a derivative's likewise (`\$DER.G.f.R.T[\$c, 2, 1]` is `\$DER.G.f.R.T[2,1][\$c]`, on its last part).
 `nothing` where no such slice is a variable (`isVariable` of its name).
 """
 function slicedCref(cref::IR.ComponentRef, isVariable::Function)::Union{Nothing, IR.ComponentRef}
@@ -339,7 +339,10 @@ function slicedReference(x::IR.Expression, family::Dict{Symbol, Tuple{Vector{Int
   local element::IR.ModelicaType = IR.elementType(x.ty)
   local sliceRef::Function = (t::Vector{Int}) -> begin
     local s::Symbol = sliceOf(name, t)
-    local cref::IR.ComponentRef = length(x.cref.parts) == 1 ? IR.ComponentRef(IR.CrefPart[IR.CrefPart(s, IR.Subscript[instance], x.cref.parts[1].ty)]) :
+    #= a derivative's slice subscripted on its last part (`IR.derivativeElement`), another's on its first (the instance) =#
+    local cref::IR.ComponentRef = IR.isDerivativeCref(x.cref) ?
+      IR.ComponentRef(IR.CrefPart[x.cref.parts[1:end - 1]; IR.CrefPart(Symbol(x.cref.parts[end].name, "[", join(t, ","), "]"), IR.Subscript[instance], element)]) :
+      length(x.cref.parts) == 1 ? IR.ComponentRef(IR.CrefPart[IR.CrefPart(s, IR.Subscript[instance], x.cref.parts[1].ty)]) :
       IR.ComponentRef(IR.CrefPart[IR.CrefPart(x.cref.parts[1].name, IR.Subscript[instance], x.cref.parts[1].ty), x.cref.parts[2:end - 1]...,
                                   IR.CrefPart(Symbol(x.cref.parts[end].name, "[", join(t, ","), "]"), IR.Subscript[], element)])
     IR.CREF(cref, element)

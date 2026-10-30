@@ -62,6 +62,25 @@ _irStates(name::String)::Vector{String} = sort(String.(_irExplain(name).states))
 _irEquationOf(eqs::Vector{_IRM.Equation}, name::Symbol)::_IRM.SCALAR_EQUATION =
   only(filter(eq -> eq isa _IRM.SCALAR_EQUATION && eq.lhs isa _IRM.CREF && eq.lhs.cref.name === name, eqs))
 
+"""
+The derivative variables of `model` (by the kinds, `antiderivatives`) and the references to them or their elements
+that do not have their derivative part first (`IR.isDerivativeCref`).
+"""
+function _irDerivativeRefViolations(model::_IRM.Model)::Vector{Symbol}
+  local anti::Dict{Symbol, Symbol} = _IRd.antiderivatives(model.variables)
+  local out::Vector{Symbol} = Symbol[v.name for v in model.variables if haskey(anti, v.name) && !_IRM.isDerivativeCref(v.cref)]
+  for p in model.continuous, eq in Iterators.flatten((p.equations, p.initialEquations))
+    _IRM.foreachExp(eq) do x::_IRM.Expression
+      x isa _IRM.CREF || return nothing
+      local name::Symbol = _IRM.hasSubscripts(x.cref) && !haskey(model.variables, x.cref.name) ?
+        OMBackend.Passes.unsubscriptedName(x.cref) : x.cref.name
+      (haskey(anti, name) && !_IRM.isDerivativeCref(x.cref)) && push!(out, x.cref.name)
+      nothing
+    end
+  end
+  return out
+end
+
 @testset "Index reduction" begin
   @testset "explain: outcome, differentiations, states" begin
     @test _irExplain("Index1").outcome === :index1
@@ -317,6 +336,40 @@ _irEquationOf(eqs::Vector{_IRM.Equation}, name::Symbol)::_IRM.SCALAR_EQUATION =
     @test irKind("\$DER_phi2") == _IRM.DUMMY_DER(:phi2)
   end
 
+  @testset "derivative references by their parts (IR.derivativeCref)" begin
+    #= a derivative's reference: its derivative part before the parts of the reference it is the derivative of, its
+       name the one it had as a name (`\$DER.` before the flat name); an element of a derivative array on its last part =#
+    local c::_IRM.ComponentRef = _IRM.ComponentRef(_IRM.CrefPart[_IRM.CrefPart(:c, _IRM.Subscript[], _IRM.T_CLASS(:C)),
+                                                                 _IRM.CrefPart(:T, _IRM.Subscript[], _IRM.T_ARRAY(_IRM.T_REAL(), _IRM.Dimension[_IRM.DIM_SIZE(3)]))])
+    local d::_IRM.ComponentRef = _IRM.derivativeCref(c)
+    @test d.name === Symbol("\$DER.c.T") && _IRM.isDerivativeCref(d) && d.parts[1].ty isa _IRM.T_DER
+    @test _IRM.operand(d) == c && _IRM.operand(c) === nothing && !_IRM.isDerivativeCref(c)
+    @test _IRM.derivativeCref(d).name === Symbol("\$DER.\$DER.c.T") && _IRM.operand(_IRM.derivativeCref(d)) == d
+    @test _IRM.stateDerivativeCref(c).name === Symbol("\$STATEDER.c.T") && _IRM.stateDerivativeCref(c).parts[1].ty isa _IRM.T_STATEDER
+    local element::_IRM.ComponentRef = _IRM.derivativeElement(d, _IRM.Subscript[_IRM.INDEX(_IRM.INTEGER(2))])
+    @test element.name === Symbol("\$DER.c.T[2]") && _IRM.variableName(element, n::Symbol -> n === d.name) === d.name
+    #= every derivative variable and every reference to one by its parts: scalar states, state sets, the array form
+       (its derivative arrays, the links' arrays, scalarized), rolled components =#
+    local (fm, functions) = _irFlat("RigidInertias")
+    local rigid::_IRM.Model = OMBackend.omjlirModel(fm; functionList = functions)
+    @test _IRM.operand(rigid.variables[Symbol("\$DER.phi1")].cref) == rigid.variables[:phi1].cref
+    @test rigid.variables[Symbol("\$STATEDER.phi1")].cref.parts[1].ty isa _IRM.T_STATEDER
+    @test isempty(_irDerivativeRefViolations(rigid))
+    withenv("OMBACKEND_DYNAMIC_STATE_SETS" => "true") do
+      local (fs, fsFunctions) = _irFlat("PendulumCartesian")
+      local sets::_IRM.Model = OMBackend.omjlirModel(fs; functionList = fsFunctions)
+      @test _IRM.isDerivativeCref(sets.variables[Symbol("\$DER.\$STATESET1.x[1]")].cref)
+      @test isempty(_irDerivativeRefViolations(sets))
+    end
+    for name in ("InertiaArray", "SeparateDampedPairs")
+      local arrays::_IRM.Model = _irArrayUnreduced(name)
+      name == "SeparateDampedPairs" && _IRd.rollComponents!(arrays)
+      @test _IRd.reduceIndexArrays!(arrays)
+      @test isempty(_irDerivativeRefViolations(arrays))
+      @test isempty(_irDerivativeRefViolations(_IRd.scalarizeArrays(arrays).model))
+    end
+  end
+
   @testset "derivative unknowns: a piecewise coefficient 0 in a branch is not solved through" begin
     #= MSL Media's smooth state transition (1 in one branch, 0 in the other) is not; R134a's rho_ph_der, one expression
        in the two-phase region and another outside, is (its volumes' der(p) jumped at the dew line otherwise) =#
@@ -541,16 +594,16 @@ _irEquationOf(eqs::Vector{_IRM.Equation}, name::Symbol)::_IRM.SCALAR_EQUATION =
     @test Set{Symbol}(v.name for v in _IRd.scalarizeArrays(m).model.variables) == unrolledNames
     @test count(eq -> eq isa _IRM.FOR_EQUATION, m.continuous[1].equations) == 5
     #= an if-expression's auxiliary per instance (ifEq_tmp<k>: one part, no derivative by the kinds) rolled into one
-       array; the rolled derivatives one part each, read as rolled arrays by their recorded names =#
+       array; a rolled derivative the derivative part before its base's rolled reference, read as a rolled array =#
     m = _irArrayUnreduced("SeparateDampedPairs")
     @test _IRd.rollComponents!(m) == 1
     local auxiliary::_IRM.Variable = only(filter(v -> v.origin === :liftIfExpressions, collect(m.variables)))
     @test auxiliary.cref.parts[1].ty isa _IRM.T_COMPONENTS && auxiliary.ty == _IRM.T_ARRAY(_IRM.T_REAL(), _IRM.Dimension[_IRM.DIM_SIZE(3)])
-    @test length(m.variables[Symbol("\$DER.a|b|c.w1")].cref.parts) == 1
-    local rolled::_IRd.RolledNames = _IRd.RolledNames(Dict{Tuple{Int, String}, Symbol}(), Set{Symbol}([Symbol("\$DER.a|b|c.w1")]),
-                                                      Dict{Symbol, Tuple{Int, Int, _IRM.CrefPart}}())
-    @test _IRd.isRolledReference(m.variables[Symbol("\$DER.a|b|c.w1")].cref, rolled)
-    @test !_IRd.isRolledReference(_IRM.ComponentRef(Symbol("\$DER.x|y")), rolled)
+    local rolledDerivative::_IRM.ComponentRef = m.variables[Symbol("\$DER.a|b|c.w1")].cref
+    @test rolledDerivative.parts[1].ty isa _IRM.T_DER && rolledDerivative.parts[2].ty isa _IRM.T_COMPONENTS
+    @test _IRM.operand(rolledDerivative) == m.variables[Symbol("a|b|c.w1")].cref
+    @test _IRd.isRolledReference(rolledDerivative)
+    @test !_IRd.isRolledReference(_IRM.derivativeCref(_IRM.ComponentRef(:x)))
     #= the derivative unknowns solved in array form (solvedInArrays): each for-equation's body once, its iterator kept;
        the model with its arrays not changed (the scalarized path's) =#
     m = _irArrayUnreduced("InertiaArray")

@@ -409,7 +409,7 @@ evaluate the coefficients (`derivativeEdges`). The unknowns so solved for, in or
 function solveDerivatives!(model::IR.Model, partition::IR.Partition;
                            known::Dict{Symbol, IR.Expression} = Dict{Symbol, IR.Expression}())::Vector{Symbol}
   local solution::Union{Nothing, DerivativeSolution} = derivativeSolution(model, partition; known)
-  return solution === nothing ? Symbol[] : substituteDerivatives!(partition, solution)
+  return solution === nothing ? Symbol[] : substituteDerivatives!(partition, solution, model.variables)
 end
 
 """
@@ -459,19 +459,19 @@ function derivativeSolution(model::IR.Model, partition::IR.Partition;
 end
 
 """
-    substituteDerivatives!(partition, solution) -> Vector{Symbol}
+    substituteDerivatives!(partition, solution, variables) -> Vector{Symbol}
 
-The solved derivatives of `solution` substituted into the partition: each one's equation `d = value`, its value in
-the other equations; the unknowns so solved for, in order.
+The solved derivatives of `solution` substituted into the partition: each one's equation `d = value` (`d` by its
+reference in `variables`), its value in the other equations; the unknowns so solved for, in order.
 """
-function substituteDerivatives!(partition::IR.Partition, solution::DerivativeSolution)::Vector{Symbol}
+function substituteDerivatives!(partition::IR.Partition, solution::DerivativeSolution, variables::IR.VariableSet)::Vector{Symbol}
   local resolved::Dict{Symbol, IR.Expression} = solution.resolved
   local definitions::Dict{Int, Symbol} = Dict{Int, Symbol}(solution.equationOf[d] => d for d in keys(resolved))
   local substitute = x -> (x isa IR.CREF && haskey(resolved, x.cref.name)) ? substitutable(x, resolved[x.cref.name]) : x
   for (i, eq) in enumerate(partition.equations)
     local d = get(definitions, i, nothing)
     partition.equations[i] = d === nothing ? IR.mapEquation!(substitute, eq) :
-      IR.SCALAR_EQUATION(IR.CREF(IR.ComponentRef(d, IR.T_REAL()), IR.T_REAL()), resolved[d], IR.T_REAL(), eq.source, eq.attributes)
+      IR.SCALAR_EQUATION(IR.CREF(variables[d].cref, IR.T_REAL()), resolved[d], IR.T_REAL(), eq.source, eq.attributes)
   end
   return sort(collect(keys(resolved)))
 end

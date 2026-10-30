@@ -161,10 +161,9 @@ function wholeDerivative(e::IR.CREF, seeds::Seeds{<:ArrayVariables})::IR.Express
       zeros === nothing && throw(NotHandled("the derivative of a part of an array ($(e.cref.name)) of a size not known"))
       return zeros
     end
-    (array isa IR.CREF && array.ty isa IR.T_ARRAY && !IR.hasSubscripts(array.cref) && length(array.cref.parts) == 1) ||
+    (array isa IR.CREF && array.ty isa IR.T_ARRAY && !IR.hasSubscripts(array.cref) && IR.isDerivativeCref(array.cref)) ||
       throw(NotHandled("the derivative of a part of an array ($(e.cref.name)), its array's derivative $(IR.toString(array))"))
-    local part::IR.CrefPart = array.cref.parts[1]
-    return IR.CREF(IR.ComponentRef(IR.CrefPart[IR.CrefPart(part.name, allSubscripts(e.cref), part.ty)]), e.ty)
+    return IR.CREF(IR.derivativeElement(array.cref, allSubscripts(e.cref)), e.ty)
   end
   local d = seeds.variable(e.cref.name)
   return d === nothing ? wholeDerivative(e.cref.name, e.ty, seeds) : d
@@ -179,7 +178,8 @@ withIteratorsAsOne(cref::IR.ComponentRef)::IR.ComponentRef =
     arrayElementDerivative(e, seeds) -> Expression
 
 The derivative of an element of an array whose derivative the seeds (`ArrayVariables`) give as a whole: that
-element of the derivative array (`\$DER.x[i]`, `\$DER.c.T[i]`, the subscripts of all parts on its one part); of a
+element of the derivative array (`\$DER.x[i]`, `\$DER.c.T[i]`, the subscripts of all parts on its last part,
+`IR.derivativeElement`); of a
 slice's element the slice's; of an element of an array that is no variable, its elements' derivatives at the
 subscripts; 0 for another reference, and with other seeds (the variable has no derivative).
 """
@@ -201,10 +201,9 @@ function arrayElementDerivative(e::IR.CREF, seeds::Seeds{<:ArrayVariables})::IR.
     end
     return ZERO
   end
-  (array isa IR.CREF && array.ty isa IR.T_ARRAY && !IR.hasSubscripts(array.cref) && length(array.cref.parts) == 1) ||
+  (array isa IR.CREF && array.ty isa IR.T_ARRAY && !IR.hasSubscripts(array.cref) && IR.isDerivativeCref(array.cref)) ||
     throw(NotHandled("the derivative of the element $(e.cref.name), its array's derivative $(IR.toString(array))"))
-  local part = array.cref.parts[1]
-  return IR.CREF(IR.ComponentRef(IR.CrefPart[IR.CrefPart(part.name, allSubscripts(e.cref), part.ty)]), e.ty)
+  return IR.CREF(IR.derivativeElement(array.cref, allSubscripts(e.cref)), e.ty)
 end
 
 """

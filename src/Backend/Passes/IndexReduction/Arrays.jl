@@ -107,22 +107,17 @@ function rowMajorIndex(index::Vector{Int}, sizes::Vector{Int})::Int
   return k + 1
 end
 
-"`\$DER.` and the variable a backend-made variable (`\$DER.x`, `\$STATEDER.x`) is made of."
-const DERIVED_NAME = r"^(\$[A-Z]+\.)(.+)$"
-
 """
-    derivedFrom(v, variables) -> Union{Nothing, Tuple{String, Symbol}}
+    derivedFrom(v, variables) -> Union{Nothing, Tuple{IR.CrefPart, Symbol}}
 
-Of a backend-made array of one part (`\$DER.c.T`), its prefix and the array it is made of (`\$DER.`, `c.T`);
-`nothing` for another variable.
+Of a derivative array (`\$DER.c.T`, `\$STATEDER.x`: `IR.isDerivativeCref`), its operator part and the array it is the
+derivative of (`\$DER`, `c.T`: `IR.operand`); `nothing` for another variable.
 """
-function derivedFrom(v::IR.Variable, variables::IR.VariableSet)::Union{Nothing, Tuple{String, Symbol}}
-  length(v.cref.parts) == 1 || return nothing
-  local m = match(DERIVED_NAME, String(v.name))
-  m === nothing && return nothing
-  local of = get(variables, Symbol(m.captures[2]), nothing)
+function derivedFrom(v::IR.Variable, variables::IR.VariableSet)::Union{Nothing, Tuple{IR.CrefPart, Symbol}}
+  IR.isDerivativeCref(v.cref) || return nothing
+  local of::Union{Nothing, IR.Variable} = get(variables, (IR.operand(v.cref)::IR.ComponentRef).name, nothing)
   (of !== nothing && of.ty isa IR.T_ARRAY) || return nothing
-  return (String(m.captures[1]), of.name)
+  return (v.cref.parts[1], of.name)
 end
 
 """
@@ -153,14 +148,14 @@ end
     elements(variables) -> Elements
 
 The element variables of the array variables of `variables`, by their scalarized names (`Elements`): a model
-array's by its reference (`modelElementCref`), a backend-made one's (`\$DER.x`) by its prefix and the elements of
-the array it is made of (`\$DER.x[2]`, of one part), after that array's. Not an array whose elements are variables
+array's by its reference (`modelElementCref`), a derivative array's (`\$DER.x`) by its operator part before the
+elements of the array it is the derivative of (`\$DER.x[2]`, `\$DER.c[2].T`), after that array's. Not an array whose elements are variables
 already (a record field array of a parameter, `expandRecordFieldArrays`).
 """
 function elements(variables::IR.VariableSet)::Elements
   local E = Elements(Dict{Symbol, Vector{Symbol}}(), Dict{Symbol, Vector{Int}}(), Dict{Symbol, Tuple{Symbol, Vector{Int}}}(),
                      Dict{Symbol, IR.ComponentRef}())
-  local derived = Tuple{IR.Variable, String, Symbol}[]
+  local derived = Tuple{IR.Variable, IR.CrefPart, Symbol}[]
   #= the arrays of rolled components first (their elements may be another array's, kept beside them: rollComponents!) =#
   local rolledFirst::Vector{IR.Variable} = IR.Variable[v for v in variables if v.cref.parts[1].ty isa IR.T_COMPONENTS]
   append!(rolledFirst, IR.Variable[v for v in variables if !(v.cref.parts[1].ty isa IR.T_COMPONENTS)])
@@ -186,26 +181,25 @@ function elements(variables::IR.VariableSet)::Elements
 end
 
 """
-    addDerivedElements!(E, v, prefix, of)
+    addDerivedElements!(E, v, operator, of)
 
-The elements of the backend-made array `v` (of one part, `\$DER.x`) into `E`: named by `prefix` and the elements of
-the array `of` it is made of (`\$DER.x[2]`), which `E` has.
+The elements of the derivative array `v` (`\$DER.x`) into `E`: the part `operator` before the references of the
+elements of the array `of` it is the derivative of (`\$DER.x[2]`), which `E` has.
 """
-function addDerivedElements!(E::Elements, v::IR.Variable, prefix::String, of::Symbol)::Nothing
+function addDerivedElements!(E::Elements, v::IR.Variable, operator::IR.CrefPart, of::Symbol)::Nothing
   local sizes = knownSizes(v.ty, "the array $(v.name)")
   sizes == E.sizes[of] || throw(NotHandled("the array $(v.name) of other dimensions than $(of)'s"))
-  local element = IR.elementType(v.ty)
-  addElements!(E, v, sizes, IR.ComponentRef[IR.ComponentRef(Symbol(prefix, e), element) for e in E.elements[of]])
+  addElements!(E, v, sizes, IR.ComponentRef[IR.ComponentRef(IR.CrefPart[operator; E.crefs[e].parts]) for e in E.elements[of]])
   return nothing
 end
 
-"The backend-made arrays `derived` (each with its prefix and the array it is made of) into `E`, each after the array it is made of (`\$DER.\$DER.x` after `\$DER.x`)."
-function addDerivedArrays!(E::Elements, derived::Vector{Tuple{IR.Variable, String, Symbol}})::Nothing
+"The derivative arrays `derived` (each with its operator part and the array it is the derivative of) into `E`, each after the array it is the derivative of (`\$DER.\$DER.x` after `\$DER.x`)."
+function addDerivedArrays!(E::Elements, derived::Vector{Tuple{IR.Variable, IR.CrefPart, Symbol}})::Nothing
   while !isempty(derived)
     local ready = findfirst(d -> haskey(E.elements, d[3]), derived)
     ready === nothing && throw(NotHandled("the arrays $(join((d[1].name for d in derived), ", ")), made of arrays not known"))
-    local (v, prefix, of) = popat!(derived, ready)
-    addDerivedElements!(E, v, prefix, of)
+    local (v, operator, of) = popat!(derived, ready)
+    addDerivedElements!(E, v, operator, of)
   end
   return nothing
 end
@@ -218,7 +212,7 @@ made of), a new `Elements`; `E` not changed. NotHandled for an added array that 
 """
 function extendedElements(E::Elements, added::Vector{IR.Variable}, variables::IR.VariableSet)::Elements
   local out = Elements(copy(E.elements), copy(E.sizes), copy(E.array), copy(E.crefs))
-  local derived = Tuple{IR.Variable, String, Symbol}[]
+  local derived = Tuple{IR.Variable, IR.CrefPart, Symbol}[]
   for v in added
     v.ty isa IR.T_ARRAY || continue
     local from = derivedFrom(v, variables)

@@ -79,7 +79,7 @@ function plan(model::IR.Model, partition::IR.Partition;
   #= the structure the code generators see: the known values substituted =#
   local folded = withKnownValues(model, partition; known)
   local functions = Dict{Symbol, IR.ModelicaFunction}(f.name => f for f in model.functions)
-  local derived = expandDerivatives!(folded.equations, continuousNames(model.variables, folded), functions)
+  local derived = expandDerivatives!(folded.equations, continuousNames(model.variables, folded), model.variables, functions)
   local s = Structure(model.variables, folded, model.functions; derived)
   local nRows = length(s.rows)
   nRows == unknownCount(s) ||
@@ -143,10 +143,10 @@ function commit!(model::IR.Model, partition::IR.Partition, plan::Plan)::Nothing
      the derivative 0 =#
   expandDerivatives!(partition.equations,
                      Set{Symbol}(n for n in continuousNames(model.variables, partition) if haskey(s.index, n) && s.derivative[s.index[n]] != 0),
-                     Dict{Symbol, IR.ModelicaFunction}(f.name => f for f in model.functions))
-  for name in s.variables
+                     model.variables, Dict{Symbol, IR.ModelicaFunction}(f.name => f for f in model.functions))
+  for (name, cref) in zip(s.variables, s.crefs)
     haskey(model.variables, name) && continue
-    push!(model.variables, IR.Variable(name, IR.T_REAL(), IR.ALGEBRAIC(), nothing, IR.NO_ATTRIBUTES, IR.NO_DIRECTION,
+    push!(model.variables, IR.Variable(cref, IR.T_REAL(), IR.ALGEBRAIC(), nothing, IR.NO_ATTRIBUTES, IR.NO_DIRECTION,
                                        false, IR.NOT_CONNECTOR, IR.NO_SOURCE, :indexReduction))
   end
   for v in eachindex(s.variables)
@@ -187,7 +187,7 @@ function plannedKind(s::Structure, dummies::Set{Int}, v::Int)::Union{Nothing, IR
   return nothing
 end
 
-"The variable holding a selected state's derivative (`linkStateDerivative!`): `\$STATEDER.x`."
+"The name of the variable holding a selected state's derivative (`linkStateDerivative!`; its reference `IR.stateDerivativeCref`): `\$STATEDER.x`."
 stateDerivativeName(state::Symbol)::Symbol = Symbol("\$STATEDER.", state)
 
 """
@@ -222,8 +222,10 @@ function dynamicSetParts(model::IR.Model, s::Structure, set::DynamicSet, k::Int)
   local variables = IR.Variable[]
   local equations = IR.Equation[]
   local n = length(set.candidates)
-  #= a variable of the model by its own reference (a matrix element as SimCode names it), a new one by its name =#
-  local realRef = name::Symbol -> IR.CREF(haskey(model.variables, name) ? model.variables[name].cref : IR.ComponentRef(name, IR.T_REAL()), IR.T_REAL())
+  #= a variable of the model or the structure by its own reference (a matrix element as SimCode names it, a derivative
+     `IR.derivativeCref`), a new one by its name =#
+  local realRef = name::Symbol -> IR.CREF(haskey(model.variables, name) ? model.variables[name].cref :
+                                          haskey(s.index, name) ? s.crefs[s.index[name]] : IR.ComponentRef(name, IR.T_REAL()), IR.T_REAL())
   local integerRef = name::Symbol -> IR.CREF(IR.ComponentRef(name, IR.T_INTEGER()), IR.T_INTEGER())
   local A = Symbol[Symbol("\$STATESET$(k).A[$(j),$(i)]") for j in 1:n-1, i in 1:n]
   #= the candidate the j-th state selects where candidate d is the dummy =#
@@ -244,16 +246,20 @@ function dynamicSetParts(model::IR.Model, s::Structure, set::DynamicSet, k::Int)
     local x = Symbol[setStateName(k, l, j) for j in 1:n-1]
     push!(levels, (V, x))
     for j in 1:n-1
-      local derivative = Symbol("\$DER.", x[j])
+      local derivative = IR.derivativeName(x[j])
       local var = get(model.variables, V[index(start, j)], nothing)
       local guess = var === nothing ? nothing : var.attributes.start
-      push!(variables, IR.Variable(x[j], IR.T_REAL(), IR.STATE(1, derivative, true), nothing,
-                                   IR.VariableAttributes(guess, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing),
-                                   IR.NO_DIRECTION, true, IR.NOT_CONNECTOR, IR.NO_SOURCE, :indexReduction))
-      push!(variables, IR.Variable(derivative, IR.T_REAL(), IR.STATE_DER(x[j]), nothing, IR.NO_ATTRIBUTES,
-                                   IR.NO_DIRECTION, true, IR.NOT_CONNECTOR, IR.NO_SOURCE, :indexReduction))
+      local state::IR.Variable = IR.Variable(x[j], IR.T_REAL(), IR.STATE(1, derivative, true), nothing,
+                                             IR.VariableAttributes(guess, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing),
+                                             IR.NO_DIRECTION, true, IR.NOT_CONNECTOR, IR.NO_SOURCE, :indexReduction)
+      local stateDerivative::IR.Variable = IR.Variable(IR.derivativeCref(state.cref), IR.T_REAL(), IR.STATE_DER(x[j]), nothing,
+                                                       IR.NO_ATTRIBUTES, IR.NO_DIRECTION, true, IR.NOT_CONNECTOR, IR.NO_SOURCE,
+                                                       :indexReduction)
+      push!(variables, state)
+      push!(variables, stateDerivative)
       push!(equations, IR.SCALAR_EQUATION(realRef(x[j]), selection(j, V), IR.T_REAL(), IR.NO_SOURCE, IR.DEFAULT_ATTRIBUTES))
-      push!(equations, IR.SCALAR_EQUATION(realRef(derivative), selection(j, D), IR.T_REAL(), IR.NO_SOURCE, IR.DEFAULT_ATTRIBUTES))
+      push!(equations, IR.SCALAR_EQUATION(IR.CREF(stateDerivative.cref, IR.T_REAL()), selection(j, D), IR.T_REAL(), IR.NO_SOURCE,
+                                          IR.DEFAULT_ATTRIBUTES))
     end
   end
   #= the dummy's pivot: each candidate's weighted by 1 - sum(A[:, i]), 1 for the candidate no state selects =#
@@ -290,8 +296,8 @@ stays one: `der(x) = \$DER.x` is then the order reduction.
 """
 function linkStateDerivative!(model::IR.Model, partition::IR.Partition, state::Symbol, derivative::Symbol)::Nothing
   local link = stateDerivativeName(state)
-  push!(model.variables, IR.Variable(link, IR.T_REAL(), IR.STATE_DER(state), nothing, IR.NO_ATTRIBUTES, IR.NO_DIRECTION,
-                                     false, IR.NOT_CONNECTOR, IR.NO_SOURCE, :indexReduction))
+  push!(model.variables, IR.Variable(IR.stateDerivativeCref(model.variables[state].cref), IR.T_REAL(), IR.STATE_DER(state), nothing,
+                                     IR.NO_ATTRIBUTES, IR.NO_DIRECTION, false, IR.NOT_CONNECTOR, IR.NO_SOURCE, :indexReduction))
   model.variables[state].kind = IR.STATE(1, link, true)
   model.variables[derivative].kind isa IR.STATE || (model.variables[derivative].kind = IR.ALGEBRAIC_DER(state))
   local ref = name -> IR.CREF(model.variables[name].cref, IR.T_REAL())

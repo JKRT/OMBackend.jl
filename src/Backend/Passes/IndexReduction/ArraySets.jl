@@ -216,9 +216,15 @@ end
     distributedCref(v, subscripts) -> ComponentRef
 
 The reference to the element of the array variable `v` by `subscripts` (literals or expressions), on the parts
-whose types are arrays (`c[i].T` of the field `c.T` of a record array; `\$DER.x[i]` of one part).
+whose types are arrays (`c[i].T` of the field `c.T` of a record array); of a derivative array on its last part
+(`IR.derivativeElement`: `\$DER.c.T[i]`).
 """
 function distributedCref(v::IR.Variable, subscripts::Vector{IR.Subscript})::IR.ComponentRef
+  if IR.isDerivativeCref(v.cref)
+    local n::Int = length(IR.dimensions(v.ty))
+    n == length(subscripts) || throw(NotHandled("the array $(v.name), its reference of $(n) dimensions, subscripted by $(length(subscripts))"))
+    return IR.derivativeElement(v.cref, subscripts)
+  end
   local parts = IR.CrefPart[]
   local k = 0
   for p in v.cref.parts
@@ -302,12 +308,13 @@ function familyParts(f::SetFamily, k::Int, s::Structure, E::Elements, variables:
                           IR.VariableAttributes(nestedArray(vcat(sizes, n - 1), IR.T_REAL(), guesses), nothing, nothing, nothing,
                                                 nothing, nothing, nothing, nothing, nothing),
                           IR.NO_DIRECTION, true, IR.NOT_CONNECTOR, IR.NO_SOURCE, :indexReduction)
-    local derivative = IR.Variable(IR.ComponentRef(IR.derivativeName(name), stateType), stateType, IR.STATE_DER(name), nothing,
+    local derivative = IR.Variable(IR.derivativeCref(x.cref), stateType, IR.STATE_DER(name), nothing,
                                    IR.NO_ATTRIBUTES, IR.NO_DIRECTION, true, IR.NOT_CONNECTOR, IR.NO_SOURCE, :indexReduction)
     push!(new, x, derivative)
     push!(states, x)
     for j in 1:n-1
-      local ref = (v::IR.Variable) -> IR.CREF(IR.ComponentRef(IR.CrefPart[IR.CrefPart(v.name, vcat(at, literal(j)), v.ty)]), IR.T_REAL())
+      local ref = (v::IR.Variable) -> IR.CREF(IR.ComponentRef(IR.CrefPart[v.cref.parts[1:end - 1];
+                                                                     IR.CrefPart(v.cref.parts[end].name, vcat(at, literal(j)), v.ty)]), IR.T_REAL())
       push!(body, IR.SCALAR_EQUATION(ref(x), selection(j, level.variables), IR.T_REAL(), IR.NO_SOURCE, IR.DEFAULT_ATTRIBUTES))
       push!(body, IR.SCALAR_EQUATION(ref(derivative), selection(j, level.derivatives), IR.T_REAL(), IR.NO_SOURCE, IR.DEFAULT_ATTRIBUTES))
     end
