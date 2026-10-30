@@ -2794,7 +2794,7 @@ function _tryToFloat64(val; resolvedParams::Union{Dict{String,Float64},Nothing}=
   end
   #= A start value reading time: the build's start time, 0 (u0 is built once;
      _startTimeGuard refuses another start time). It was 0.0 with a warning. =#
-  local timeVars::AbstractVector = filter(isIndependentVariable, freeVars)
+  local timeVars::Vector{Any} = Any[v for v in freeVars if isIndependentVariable(v)]
   if !isempty(timeVars)
     return _tryToFloat64(Symbolics.substitute(unwrapped, Dict{Any, Any}(v => 0.0 for v in timeVars));
                          resolvedParams = resolvedParams)
