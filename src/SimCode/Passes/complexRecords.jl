@@ -96,7 +96,7 @@ partVariables(record::IR.ComponentRef)::Tuple{Exp, Exp} =
   (partVariable(fieldCref(record, "re")), partVariable(fieldCref(record, "im")))
 
 "The variable of a Complex part (its reference `part`), its key derived from it."
-partVariable(part::IR.ComponentRef)::Exp = EXP_CREF(SimCref(Symbol(derivedKey(part)), Int[], part), TYPE_REAL())
+partVariable(part::IR.ComponentRef)::Exp = EXP_CREF(SimCref(Symbol(refKey(part)), Int[], part), TYPE_REAL())
 mul(a::Exp, b::Exp)::Exp = BINARY(a, OP_MUL, b)
 add(a::Exp, b::Exp)::Exp = BINARY(a, OP_ADD, b)
 sub(a::Exp, b::Exp)::Exp = BINARY(a, OP_SUB, b)

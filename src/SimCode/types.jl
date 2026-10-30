@@ -910,6 +910,12 @@ struct SIM_CODE
   keyByReference::Dict{Symbol, String}
   "The array each element variable is an element of, by its key (`arrayBase` of its reference, once at lowering; the eliminated ones' too): `elementArray`."
   arrayOf::Dict{String, Symbol}
+  """
+  Each variable's identifier in the generated code by its key (`codeIdentifiers`, once at lowering): what the code
+  generators and OM.jl's results know it by (`a_b[1][2]` of `a.b[1,2]`, `der(x)` of a state's derivative). The code
+  generators see the simulation code renamed to them (`codeView`); the passes match user-given names against them.
+  """
+  codeNames::Dict{String, String}
 end
 
 """
@@ -927,6 +933,9 @@ function elementArrays(references::Dict{String, IR.ComponentRef})::Dict{String, 
   end
   return out
 end
+
+"The identifier of the variable `key` in the generated code (`SIM_CODE.codeNames`); `key` itself for a name of no variable (`time`, an iterator)."
+codeName(sc::SIM_CODE, key::AbstractString)::String = get(sc.codeNames, key, key)
 
 "The key of the variable the IR reference `ref` names; `nothing` for one that names none."
 keyOf(sc::SIM_CODE, ref::IR.ComponentRef)::Union{Nothing, String} = get(sc.keyByReference, ref.name, nothing)

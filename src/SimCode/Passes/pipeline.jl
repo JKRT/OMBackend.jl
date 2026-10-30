@@ -140,7 +140,7 @@ function filterAliasObservations(simCode::SIM_CODE)::SIM_CODE
     e::AliasEntry -> !isElement(e.eliminatedName) && haskey(ht, e.representativeName)
   else
     local patterns = Regex[Regex(p) for p in simCode.observedFilter]
-    e::AliasEntry -> any(p -> occursin(p, e.eliminatedName), patterns)
+    e::AliasEntry -> any(p -> occursin(p, codeName(simCode, e.eliminatedName)), patterns)
   end
   return update(simCode; aliasMap = filter(keep, simCode.aliasMap))
 end

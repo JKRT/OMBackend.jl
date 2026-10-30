@@ -327,13 +327,19 @@ end
     local isLink = (eq::_IRM.Equation) -> eq isa _IRM.SCALAR_EQUATION && eq.attributes.derivativeLink
     @test _IRd.isDerivativeLink(_irEquationOf(eqs, Symbol("\$STATEDER.phi1")))
     @test count(isLink, eqs) == 2 && _irEquationOf(eqs, Symbol("\$STATEDER.w1")).attributes.derivativeLink
-    #= SimCode keeps the kinds, the variables they name by their simulation names (a state's derivative der(x)) =#
+    #= SimCode keeps the kinds, the variables keyed and named by their IR names; the code generators' view by their
+       identifiers (codeView: a state's derivative der(x)) =#
     local simCode = OMBackend.SimCode.lowerStructuralModes(model)
-    local irKind = name::String -> last(simCode.stringToSimVarHT[name]).irKind
-    @test irKind("phi1") == _IRM.STATE(1, Symbol("der(phi1)"), true)
-    @test irKind("\$DER_phi1") == _IRM.ALGEBRAIC_DER(:phi1)
-    @test irKind("phi2") == _IRM.DUMMY_STATE(Symbol("\$DER_phi2"))
-    @test irKind("\$DER_phi2") == _IRM.DUMMY_DER(:phi2)
+    local irKind = (sc::OMBackend.SimCode.SIM_CODE, name::String) -> last(sc.stringToSimVarHT[name]).irKind
+    @test irKind(simCode, "phi1") == _IRM.STATE(1, Symbol("\$STATEDER.phi1"), true)
+    @test irKind(simCode, "\$DER.phi1") == _IRM.ALGEBRAIC_DER(:phi1)
+    @test irKind(simCode, "phi2") == _IRM.DUMMY_STATE(Symbol("\$DER.phi2"))
+    @test irKind(simCode, "\$DER.phi2") == _IRM.DUMMY_DER(:phi2)
+    local view::OMBackend.SimCode.SIM_CODE = OMBackend.SimCode.codeView(simCode)
+    @test irKind(view, "phi1") == _IRM.STATE(1, Symbol("der(phi1)"), true)
+    @test irKind(view, "\$DER_phi1") == _IRM.ALGEBRAIC_DER(:phi1)
+    @test irKind(view, "phi2") == _IRM.DUMMY_STATE(Symbol("\$DER_phi2"))
+    @test irKind(view, "\$DER_phi2") == _IRM.DUMMY_DER(:phi2)
   end
 
   @testset "derivative references by their parts (IR.derivativeCref)" begin

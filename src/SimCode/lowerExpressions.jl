@@ -42,73 +42,37 @@
 """
     Names
 
-The simulation names of a model's references: a reference's flat name (`a.b[1,2]` is
-`a_b[1][2]`, `legacyName`), and for the references whose flat names collide (`a.b` and a
-variable `a_b`) a new one (`a_b_1`): the least qualified keeps the name. `known` are the
-names of the simulation variables (with `der(x)` of the states and the built-in `time`,
-`pi`, `e`): a reference to an element of an array known as a whole is the array's, subscripted.
-`stateOf` maps a derivative variable `\$DER.x` to its state `x`. `scalars` are the known names
-of variables that are not arrays.
+The keys of a lowering's references: of a model's variables their IR references' flat names
+(`a.b[1,2]`: the simulation code is keyed by the references, its identifiers in the generated code
+derived at the code generators' boundary, `codeIdentifiers`); of a function's locals their legacy
+names (`derivedKey`), the generated function's identifiers. `known` are the keys of the variables
+(with each state's derivative's and the built-in `time`, `pi`, `e`): a reference to an element of
+an array known as a whole is the array's, subscripted. `stateOf` maps a derivative variable `\$DER.x`
+to its state `x`. `scalars` are the known keys of variables that are not arrays.
 """
 struct Names
-  renamed::Dict{Symbol, String}
+  model::Bool
   known::Set{String}
   stateOf::Dict{Symbol, IR.ComponentRef}
   scalars::Set{String}
 end
 
 """
-    collidingNames(variables)
-
-The new names of the variables whose flat names collide, by the variables' names: of each
-group of references with one flat name, the least qualified (the first of those) keeps it, the
-others are `<name>_1`, `<name>_2`, ... (names not taken). A reference with subscripts is not
-renamed (with a warning).
-"""
-function collidingNames(variables::Vector{IR.Variable})::Dict{Symbol, String}
-  local byFlatName = OrderedDict{String, OrderedDict{Symbol, IR.ComponentRef}}()
-  for v in variables
-    push!(get!(OrderedDict{Symbol, IR.ComponentRef}, byFlatName, legacyName(v.cref)), v.name => v.cref)
-  end
-  local taken = Set{String}(keys(byFlatName))
-  local renamed = Dict{Symbol, String}()
-  for (flat, claimants) in byFlatName
-    length(claimants) < 2 && continue
-    local keep = argmin(n -> length(claimants[n].parts), collect(keys(claimants)))
-    for (name, cref) in claimants
-      name === keep && continue
-      if IR.hasSubscripts(cref)
-        @warn "The flat name $(flat) of the subscripted variable $(name) collides; left unresolved"
-        continue
-      end
-      local k = 1
-      while string(flat, "_", k) in taken
-        k += 1
-      end
-      local newName = string(flat, "_", k)
-      push!(taken, newName)
-      renamed[name] = newName
-    end
-  end
-  return renamed
-end
-
-"""
     simName(names, cref)
 
-The simulation name of `cref`: its flat name with every `.` as `_` (of an enumeration
-literal's subscript: `x[Logic_'U'(1)]`), a quoted name as it is; or its new name.
+The key of `cref` in the lowering `names`: a model variable's its flat name (`refKey`), a function
+local's its legacy name (`derivedKey`).
 """
-function simName(names::Names, cref::IR.ComponentRef)::String
-  local r::Union{Nothing, String} = isempty(names.renamed) || IR.hasSubscripts(cref) ? nothing : get(names.renamed, cref.name, nothing)
-  return r === nothing ? derivedKey(cref) : r
-end
+simName(names::Names, cref::IR.ComponentRef)::String = names.model ? refKey(cref) : derivedKey(cref)
+
+"The key of the model variable the IR reference `ref` names in the simulation code: its flat name."
+refKey(ref::IR.ComponentRef)::String = String(ref.name)
 
 """
     derivedKey(ref) -> String
 
-The key of a reference's variable not renamed by `collidingNames` (`simName`): its legacy name with
-every `.` as `_`, a quoted name as it is.
+The legacy name of a reference (BDAE's): its `legacyName` with every `.` as `_`, a quoted name as it
+is. A variable's identifier in the generated code (`codeIdentifiers`), a function local's key.
 """
 function derivedKey(ref::IR.ComponentRef)::String
   local flat::String = legacyName(ref)

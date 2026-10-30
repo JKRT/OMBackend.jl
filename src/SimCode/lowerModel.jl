@@ -142,7 +142,57 @@ function lowerSystem(model::IR.Model, variables::IR.VariableSet, partition::IR.P
                   functions, any(f -> f isa EXTERNAL_MODELICA_FUNCTION, functions),
                   RESIDUAL_EQUATION[], String[], AliasEntry[], nothing, initialAlgorithms, asserts, String[],
                   any(v -> v.kind isa Union{IR.DUMMY_STATE, IR.DUMMY_DER}, vars), references, referenceKeys(references),
-                  elementArrays(references))
+                  elementArrays(references), codeIdentifiers(String[simName(names, v.cref) for v in vars], references, ht, model.name))
+end
+
+"""
+    codeIdentifiers(order, references, ht, modelName) -> Dict{String, String}
+
+Each variable's identifier in the generated code by its key (`SIM_CODE.codeNames`), derived from its reference:
+its legacy name (`derivedKey`: `a_b[1][2]` of `a.b[1,2]`); a state's derivative `der(x)` of its state's; a variable
+named `t`, MTK's independent variable, `<model>V_t`. The legacy form is not one-to-one (`j2.v` and a variable `j2_v`,
+MSL's Fourbar1): of the variables of one legacy name the least qualified (the first, in `order`, the variables'
+order in the IR) keeps it, the others are `<name>_1`, `<name>_2`, ... (names not taken); a subscripted one cannot
+be renamed so, an error naming both. The simulation code's keys, the references' flat names, are unique.
+"""
+function codeIdentifiers(order::Vector{String}, references::Dict{String, IR.ComponentRef}, ht::HT, modelName::String)::Dict{String, String}
+  local out::Dict{String, String} = Dict{String, String}()
+  #= the variables by their legacy names, in the IR's order =#
+  local byLegacy::OrderedDict{String, Vector{String}} = OrderedDict{String, Vector{String}}()
+  for key::String in order
+    haskey(references, key) || continue
+    push!(get!(Vector{String}, byLegacy, derivedKey(references[key])), key)
+  end
+  local taken::Set{String} = Set{String}(keys(byLegacy))
+  for (legacy::String, keys::Vector{String}) in byLegacy
+    local keep::String = keys[argmin(Int[length(references[k].parts) for k in keys])]
+    for key in keys
+      if key == keep
+        out[key] = legacy
+        continue
+      end
+      IR.hasSubscripts(references[key]) &&
+        error("The variables $(keep) and $(key) have one identifier in the generated code, $(legacy), and $(key) is subscripted")
+      local k::Int = 1
+      while string(legacy, "_", k) in taken
+        k += 1
+      end
+      out[key] = string(legacy, "_", k)
+      push!(taken, out[key])
+    end
+  end
+  for (key::String, id::String) in out
+    if id == "t"
+      out[key] = string(codeName(Symbol(modelName)), "V_t")
+      @warn "Variable name t clash with builtin symbol in MTK. Variable renamed $(out[key])"
+    end
+  end
+  #= the states' derivatives, der(x) of their states' =#
+  for (key::String, entry::Tuple{Int, SIMVAR}) in ht
+    local v::SIMVAR = last(entry)
+    v.varKind isa STATE_DERIVATIVE && (out[key] = string("der(", out[v.varKind.varName], ")"))
+  end
+  return out
 end
 
 """
@@ -164,28 +214,21 @@ end
 """
     systemNames(vars, modelName)
 
-The simulation names of the variables `vars` (collisions renamed; a variable named `t`, MTK's
-independent variable, as `<model>V_t`) and the names known as variables: theirs, `der(x)` of
-the states, `time`, `pi`, `e`; those of the variables that are not arrays.
+The keys of the variables `vars` (`Names`: their references' flat names) and the keys known as
+variables: theirs, the states' derivatives' (their IR derivative variables'), `time`, `pi`, `e`;
+those of the variables that are not arrays.
 """
 function systemNames(vars::Vector{IR.Variable}, modelName::String)::Names
   local stateOf = Dict{Symbol, IR.ComponentRef}()
   for v in vars
     (v.kind isa IR.STATE && v.kind.derivative !== nothing) && (stateOf[v.kind.derivative] = v.cref)
   end
-  local renamed = collidingNames(vars)
+  local names::Names = Names(true, Set{String}(), stateOf, Set{String}())
   for v in vars
-    if legacyName(v.cref) == "t" && !haskey(renamed, v.name)
-      renamed[v.name] = string(codeName(Symbol(modelName)), "V_t")
-      @warn "Variable name t clash with builtin symbol in MTK. Variable renamed $(renamed[v.name])"
-    end
-  end
-  local names = Names(renamed, Set{String}(), stateOf, Set{String}())
-  for v in vars
-    local n = simName(names, v.cref)
+    local n::String = simName(names, v.cref)
     push!(names.known, n)
     v.ty isa IR.T_ARRAY || push!(names.scalars, n)
-    v.kind isa IR.STATE && push!(names.known, "der($(n))")
+    v.kind isa IR.STATE && push!(names.known, v.kind.derivative === nothing ? refKey(IR.derivativeCref(v.cref)) : String(v.kind.derivative))
   end
   push!(names.known, "time", "pi", "e")
   return names
@@ -424,9 +467,11 @@ function inlineParameters(e::Exp, ht::OrderedDict{String, Tuple{Int, SIMVAR}}, n
   local visit = x -> begin
     local name = x isa EXP_CREF ? crefName(x.cref) : nothing
     name === nothing && return x
-    if isTunableParameter(name)
+    #= the tunable parameters are the user's, by their identifiers (`codeIdentifiers`' legacy names) =#
+    local id::String = x.cref.ref === nothing ? name : derivedKey(x.cref.ref)
+    if isTunableParameter(id)
       keepTunable && return x
-      throw(ArgumentError("tunable parameter $(name) is read in an initial algorithm, which is evaluated " *
+      throw(ArgumentError("tunable parameter $(id) is read in an initial algorithm, which is evaluated " *
                           "when the model is compiled, so it would keep its compiled value; leave it out of " *
                           "withTunableParameters"))
     end

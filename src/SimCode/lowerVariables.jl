@@ -42,14 +42,13 @@ const HT = OrderedDict{String, Tuple{Int, SIMVAR}}
     simKind(k, variables, names) -> IR.VariableKind
 
 The OMJLIR kind `k` of a variable as the simulation code keeps it (`SIMVAR.irKind`): the variables it names (a
-state's derivative, a derivative's state, a dummy's counterpart, a clocked state's previous value) by their
-simulation names; a state's derivative variable, which the simulation code writes `der(x)`, as `der(x)`.
+state's derivative, a derivative's state, a dummy's counterpart, a clocked state's previous value) by their keys
+(of a model's variables their IR names; `codeView` renames them with the rest).
 """
 function simKind(k::IR.VariableKind, variables::IR.VariableSet, names::Names)::IR.VariableKind
   local sim::Function = (x::Symbol) -> begin
     local v::Union{Nothing, IR.Variable} = get(variables, x, nothing)
     v === nothing && return x
-    v.kind isa IR.STATE_DER && return Symbol("der(", simName(names, variables[v.kind.state].cref), ")")
     return Symbol(simName(names, v.cref))
   end
   return IR.mapKindNames(sim, k)
@@ -133,7 +132,10 @@ function createIndices(simVars::Vector{SIMVAR}, derivativeRefs::Dict{String, IR.
       stateCounter += 1
       local state = withIndex(v, stateCounter)
       ht[v.name] = (stateCounter, state)
-      ht["der($(v.name))"] = (stateCounter, withCref(withIndex(v, stateCounter, STATE_DERIVATIVE(v.name)), get(derivativeRefs, v.name, nothing)))
+      local derivative::Union{Nothing, IR.ComponentRef} = get(derivativeRefs, v.name, nothing)
+      #= keyed by the derivative's reference; without one (a test's variables) as `der(x)` =#
+      ht[derivative === nothing ? "der($(v.name))" : refKey(derivative)] =
+        (stateCounter, withCref(withIndex(v, stateCounter, STATE_DERIVATIVE(v.name)), derivative))
     elseif k isa Union{PARAMETER, DATA_STRUCTURE}
       parameterCounter += 1
       ht[v.name] = (parameterCounter, v)

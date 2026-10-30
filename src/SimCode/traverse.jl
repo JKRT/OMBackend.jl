@@ -151,7 +151,7 @@ function crefNames!(names::OrderedSet{String}, e::Exp; dynamic::Union{Nothing, S
     if isDynamic
       (dynamic !== nothing && c.ref !== nothing) && push!(dynamic, arrayBase(c.ref))
     else
-      push!(names, index === nothing ? crefName(c) : crefName(c, index))
+      push!(names, index === nothing ? crefName(c) : elementKey(c, index))
     end
   end
   return names
@@ -215,6 +215,23 @@ function dynamicArrays!(dynamic::Set{Symbol}, e::Exp)::Set{Symbol}
   end
   return dynamic
 end
+
+"""
+    elementKey(c, index) -> String
+
+The key of the element `index` (literal subscripts) of the array reference `c` in the simulation code: the flat name
+of its reference (`elementRead`: `A[1,2]` of `A`, `c[2].T` of `c` and `[2]`... as the IR names it); without a
+reference (a test's) its name `crefName(c, index)`.
+"""
+elementKey(c::SimCref, index::Vector{Int})::String = c.ref === nothing ? crefName(c, index) : refKey(irRef(elementRead(c, index)))
+
+"""
+    readKey(c) -> String
+
+The key of the variable the reference `c` reads: its symbol, an element of an array kept as an array (`c.subs`) its
+reference's flat name (`x[1,2]`); without a reference (a test's) its name `crefName(c)`.
+"""
+readKey(c::SimCref)::String = (isempty(c.subs) || c.ref === nothing) ? crefName(c) : refKey(c.ref)
 
 """
     elementRead(c, index) -> SimCref

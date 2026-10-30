@@ -127,6 +127,16 @@ end
 "A reference's key: its name, its literal subscripts as `[i,j]`."
 referenceKey(c::SimCref)::String = String(c.sym) * subscriptSuffix(c.subs)
 
+"""
+    fieldKey(c, k, f) -> String
+
+The key of the field `f` of the record reference `c` (key `k`) in an interpretation's environment: a model variable's
+its field's (`refKey(fieldCref)`: `p.b`, the simulation code's key), a function local's `k_f` (the generated
+function's flattened local).
+"""
+fieldKey(c::Union{Nothing, SimCref}, k::String, f::String)::String =
+  (c === nothing || c.ref === nothing) ? string(k, "_", f) : refKey(fieldCref(c.ref, f))
+
 #= ==================================================================================== =#
 #= Expressions                                                                          =#
 #= ==================================================================================== =#
@@ -243,7 +253,7 @@ function interpret(e::Exp, env::Dict{String, Any}, ctx::Interpretation)
       local fields = recordFields(e.exp.ty)
       fields === nothing && return get(env, k * subscriptSuffix(ix), UNKNOWN)
       #= a record's field read by position =#
-      return (length(ix) == 1 && 1 <= ix[1] <= length(fields)) ? get(env, k * "_" * fields[ix[1]], UNKNOWN) : UNKNOWN
+      return (length(ix) == 1 && 1 <= ix[1] <= length(fields)) ? get(env, fieldKey(e.exp.cref, k, fields[ix[1]]), UNKNOWN) : UNKNOWN
     elseif e.exp isa CALL && !(e.exp.ty isa TYPE_ARRAY)
       local r = callValue(e.exp, env, ctx)
       return (r isa AbstractVector && length(ix) == 1 && 1 <= ix[1] <= length(r)) ? r[ix[1]] : UNKNOWN
@@ -277,7 +287,7 @@ values, a record-valued function's outputs, an array as a vector, else the scala
 """
 function argumentValues!(out::Vector{Any}, e::Exp, env::Dict{String, Any}, ctx::Interpretation)::Vector{Any}
   if e isa EXP_CREF && recordFields(e.ty) !== nothing
-    recordFieldValues!(out, referenceKey(e.cref), e.ty::TYPE_COMPLEX, env)
+    recordFieldValues!(out, e.cref, referenceKey(e.cref), e.ty::TYPE_COMPLEX, env)
   elseif e isa EXP_CREF && e.ty isa TYPE_ARRAY
     local n = arrayLength(e.ty)
     n === nothing && throw(InterpretationBail())
@@ -302,11 +312,12 @@ function argumentValues!(out::Vector{Any}, e::Exp, env::Dict{String, Any}, ctx::
   return out
 end
 
-function recordFieldValues!(out::Vector{Any}, k::String, t::TYPE_COMPLEX, env::Dict{String, Any})::Vector{Any}
+function recordFieldValues!(out::Vector{Any}, c::Union{Nothing, SimCref}, k::String, t::TYPE_COMPLEX, env::Dict{String, Any})::Vector{Any}
   for (name, ft) in zip(t.fieldNames, t.fieldTypes)
-    local fk = k * "_" * name
+    local fk::String = fieldKey(c, k, name)
     if recordFields(ft) !== nothing
-      recordFieldValues!(out, fk, ft::TYPE_COMPLEX, env)
+      local field::Union{Nothing, SimCref} = (c === nothing || c.ref === nothing) ? nothing : SimCref(Symbol(fk), Int[], fieldCref(c.ref, name))
+      recordFieldValues!(out, field, fk, ft::TYPE_COMPLEX, env)
     else
       local n = arrayLength(ft)
       push!(out, n === nothing ? get(env, fk, UNKNOWN) : Any[get(env, fk * "[" * string(i) * "]", UNKNOWN) for i in 1:n])
@@ -376,10 +387,10 @@ function functionValues(f::MODELICA_FUNCTION, args::Vector{Any}, ctx::Interpreta
   return result
 end
 
-"`env` without the key `k` and its elements and record fields."
+"`env` without the key `k` and its elements and record fields (a function local's `k_f`, a model variable's `k.f`)."
 function forget!(env::Dict{String, Any}, k::String)::Dict{String, Any}
   for kk in collect(keys(env))
-    (kk == k || startswith(kk, k * "[") || startswith(kk, k * "_")) && delete!(env, kk)
+    (kk == k || startswith(kk, k * "[") || startswith(kk, k * "_") || startswith(kk, k * ".")) && delete!(env, kk)
   end
   return env
 end
@@ -395,7 +406,7 @@ function assignValue!(lhs::Exp, value, env::Dict{String, Any}, ctx::Interpretati
     if fields !== nothing
       #= a record: its fields from the value's (flattened, one level) =#
       if value isa AbstractVector && length(value) == length(fields) && !any(x -> x isa AbstractVector, value)
-        foreach(((f, x),) -> env[k * "_" * f] = x, zip(fields, value))
+        foreach(((f, x),) -> env[fieldKey(lhs.cref, k, f)] = x, zip(fields, value))
       end
     elseif lhs.ty isa TYPE_ARRAY
       value isa AbstractVector && foreach(((i, x),) -> env[k * "[" * string(i) * "]"] = x, enumerate(value))
@@ -419,7 +430,7 @@ end
 function recordValue(rhs::Exp, fields::Vector{String}, env::Dict{String, Any}, ctx::Interpretation)
   if rhs isa EXP_CREF
     local k = referenceKey(rhs.cref)
-    return Any[get(env, k * "_" * f, UNKNOWN) for f in fields]
+    return Any[get(env, fieldKey(rhs.cref, k, f), UNKNOWN) for f in fields]
   elseif rhs isa CALL
     return haskey(ctx.functions, String(rhs.name)) ? callValue(rhs, env, ctx) : Any[interpret(x, env, ctx) for x in rhs.args]
   elseif rhs isa RECORD

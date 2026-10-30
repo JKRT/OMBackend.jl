@@ -155,8 +155,10 @@ function requestedNames(simCode::SIM_CODE)::OrderedSet{String}
   local patterns = simCode.observedFilter
   (patterns === nothing || isempty(patterns)) && return names
   local regexes = Regex[Regex(p) for p in patterns]
+  #= the patterns are the user's, on the variables' identifiers (`codeName`: `a_b[1][2]`) =#
   for n in keys(simCode.stringToSimVarHT)
-    any(r -> occursin(r, n), regexes) && push!(names, n)
+    local id::String = codeName(simCode, n)
+    any(r -> occursin(r, id), regexes) && push!(names, n)
   end
   return names
 end
@@ -173,16 +175,18 @@ too); `nothing` for another expression.
 """
 function elementName(e::Exp)::Union{Nothing, String}
   e isa EXP_CREF && return crefName(e.cref)
-  e isa ASUB || return nothing
-  local base = elementName(e.exp)
-  base === nothing && return nothing
-  local parts = String[]
-  for s in e.subs
-    local i = s isa ICONST ? s.value : (s isa RCONST && isinteger(s.value)) ? Int(s.value) : nothing
-    i === nothing && return nothing
-    push!(parts, "[$(i)]")
+  local index::Vector{Int} = Int[]
+  while e isa ASUB
+    local outer::Vector{Int} = Int[]
+    for s in e.subs
+      local i::Union{Nothing, Int} = s isa ICONST ? s.value : (s isa RCONST && isinteger(s.value)) ? Int(s.value) : nothing
+      i === nothing && return nothing
+      push!(outer, i)
+    end
+    index = Int[outer; index]
+    e = e.exp
   end
-  return string(base, parts...)
+  return (e isa EXP_CREF && !isempty(index)) ? elementKey(e.cref, index) : nothing
 end
 
 "The value of a parameter of a literal value: a number, or an enumeration literal."
@@ -214,12 +218,12 @@ end
 `e` with the parameters of `values` replaced by their literals, top-down: a reference by the
 literal of its type, an array element by literal subscripts by a Real.
 """
-function substituteValues(e::Exp, values::Dict{String, ParameterValue})::Exp
+function substituteValues(e::Exp, values::OrderedDict{String, ParameterValue})::Exp
   isempty(values) && return e
   return first(traverseExpTopDown(e, valueVisitor, values))
 end
 
-function valueVisitor(e::Exp, values::Dict{String, ParameterValue})::Tuple{Exp, Bool, Dict{String, ParameterValue}}
+function valueVisitor(e::Exp, values::OrderedDict{String, ParameterValue})::Tuple{Exp, Bool, OrderedDict{String, ParameterValue}}
   if e isa EXP_CREF
     local v = get(values, crefName(e.cref), nothing)
     v === nothing || return (literalOf(v, e.ty), false, values)
@@ -234,17 +238,20 @@ end
 """
     arrayElementValues!(values, name, binding, simCode, kept)
 
-The values of the elements (`name[i]`, nested arrays `name[i][j]`) of an array parameter's
-binding that evaluate: to a number, or to an element evaluated already; not a kept one.
+The values of the elements (by their keys, `elementKey`: `A[i]`, nested arrays `A[i,j]`) of the
+array parameter `name`'s binding that evaluate: to a number, or to an element evaluated already;
+not a kept one.
 """
-function arrayElementValues!(values::Dict{String, ParameterValue}, name::String, binding::Exp, simCode::SIM_CODE,
-                             kept::OrderedSet{String})::Nothing
+function arrayElementValues!(values::OrderedDict{String, ParameterValue}, name::String, binding::Exp, simCode::SIM_CODE,
+                             kept::OrderedSet{String}, index::Vector{Int} = Int[])::Nothing
   binding isa ARRAY_EXP || return nothing
+  local array::SimCref = SimCref(Symbol(name), Int[], last(simCode.stringToSimVarHT[name]).cref)
   for (i, x) in enumerate(binding.elements)
-    local elementName_ = string(name, "[", i, "]")
+    local at::Vector{Int} = Int[index; i]
+    local elementName_::String = elementKey(array, at)
     elementName_ in kept && continue
     if x isa ARRAY_EXP
-      arrayElementValues!(values, elementName_, x, simCode, kept)
+      arrayElementValues!(values, name, x, simCode, kept, at)
       continue
     end
     local v = something(enumerationValue(x, simCode, OrderedSet{String}()), Some(tryEvalNumeric(x, simCode)))
@@ -301,9 +308,9 @@ function eliminateConstantParameters(simCode::SIM_CODE)::SIM_CODE
   dynamicallyIndexedElements!(kept, simCode, dynamic)
   if !isempty(TUNABLE_PARAMETERS[])
     union!(kept, TUNABLE_PARAMETERS[])
-    foreach(k -> isTunableParameter(k) && push!(kept, k), keys(ht))
+    foreach(k -> isTunableParameter(codeName(simCode, k)) && push!(kept, k), keys(ht))
   end
-  local values = Dict{String, ParameterValue}()
+  local values = OrderedDict{String, ParameterValue}()
   for (name, (_, v)) in ht
     (name in kept || !(v.varKind isa PARAMETER) || v.varKind.bindExp === nothing) && continue
     local x = v.elementType isa TYPE_ENUM ? enumerationValue(v.varKind.bindExp, simCode, OrderedSet{String}()) :
@@ -357,11 +364,11 @@ function eliminateConstantParameters(simCode::SIM_CODE)::SIM_CODE
 end
 
 "An initial residual or equation with the parameters of `values` replaced; another kept."
-initialWithValues(eq::RESIDUAL_EQUATION, values::Dict{String, ParameterValue})::Equation =
+initialWithValues(eq::RESIDUAL_EQUATION, values::OrderedDict{String, ParameterValue})::Equation =
   RESIDUAL_EQUATION(substituteValues(eq.exp, values), eq.source, eq.attr)
-initialWithValues(eq::EQUATION, values::Dict{String, ParameterValue})::Equation =
+initialWithValues(eq::EQUATION, values::OrderedDict{String, ParameterValue})::Equation =
   EQUATION(substituteValues(eq.lhs, values), substituteValues(eq.rhs, values), eq.source, eq.attr)
-initialWithValues(eq::Equation, ::Dict{String, ParameterValue})::Equation = eq
+initialWithValues(eq::Equation, ::OrderedDict{String, ParameterValue})::Equation = eq
 
 "A when-clause with `x` applied to its condition, to its statements' expressions, to its elsewhen arms'."
 function whenWithValues(w::WHEN_STMTS, x::F)::WHEN_STMTS where {F}
@@ -473,7 +480,7 @@ function eliminateDeadParameters(simCode::SIM_CODE)::SIM_CODE
   end
   dataStructureArrayElements!(read, simCode; dynamic)
   dynamicallyIndexedElements!(read, simCode, dynamic)
-  local dead = String[name for (name, (_, v)) in ht if v.varKind isa PARAMETER && !(name in read) && !isTunableParameter(name)]
+  local dead = String[name for (name, (_, v)) in ht if v.varKind isa PARAMETER && !(name in read) && !isTunableParameter(codeName(simCode, name))]
   isempty(dead) && return simCode
   @debug "[SIMCODE: $(simCode.name): eliminateDeadParameters] dropped $(length(dead)) unread parameters"
   local newHT = copy(ht)

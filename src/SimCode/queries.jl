@@ -58,6 +58,10 @@ withBinding(k::ARRAY, b::Union{Nothing, Exp})::SimVarType = ARRAY(k.dimensions, 
 withBinding(k::ARRAY_PARAMETER, b::Union{Nothing, Exp})::SimVarType = ARRAY_PARAMETER(k.dimensions, b)
 withBinding(k::SimVarType, ::Union{Nothing, Exp})::SimVarType = k
 
+"The keys of the states' derivative entries by the states' keys (`STATE_DERIVATIVE`, `createIndices`)."
+derivativeKeys(ht::HT)::Dict{String, String} =
+  Dict{String, String}(v.varKind.varName => k for (k, (_, v)) in ht if v.varKind isa STATE_DERIVATIVE)
+
 "A variable with another category."
 withKind(v::SIMVAR, k::SimVarType)::SIMVAR = SIMVAR(v.name, v.index, k, v.attributes, v.elementType, v.irKind, v.irOrigin, v.cref)
 "A variable with the index `index` (and the category `k`)."

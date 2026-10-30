@@ -60,7 +60,7 @@ function equationVariableNames(e::Exp, ht::HT, elements::Dict{Symbol, Vector{Str
     read in seen && continue
     push!(seen, read)
     local (c::SimCref, dynamic::Bool) = (read.cref, read.dynamic)
-    local name::String = crefName(c)
+    local name::String = readKey(c)
     if !dynamic && haskey(ht, name)
       push!(names, name)
       continue
@@ -173,7 +173,7 @@ end
 scalarReferenceName(e::EXP_CREF)::Union{Nothing, String} = crefName(e.cref)
 function scalarReferenceName(e::ASUB)::Union{Nothing, String}
   (e.exp isa EXP_CREF && all(s -> s isa ICONST, e.subs)) || return nothing
-  return string(crefName(e.exp.cref), join(("[$(s.value)]" for s in e.subs)))
+  return elementKey(e.exp.cref, Int[(s::ICONST).value for s in e.subs])
 end
 scalarReferenceName(::Exp)::Union{Nothing, String} = nothing
 
@@ -246,8 +246,10 @@ function eliminateOutputOnlyVariables(simCode::SIM_CODE, options::EliminationOpt
     (i in essential || !haskey(variableOf, i)) && continue
     local name = variableOf[i]
     (haskey(ht, name) && last(ht[name]).varKind isa Union{ALG_VARIABLE, ARRAY}) || continue
-    (options.reachability || any(p -> occursin(p, name), options.patterns)) || continue
-    any(p -> occursin(p, name), options.keepPatterns) && continue
+    #= the patterns are the user's, on the identifiers (`codeName`) =#
+    local id::String = codeName(simCode, name)
+    (options.reachability || any(p -> occursin(p, id), options.patterns)) || continue
+    any(p -> occursin(p, id), options.keepPatterns) && continue
     isLinearlySolvableFor(residuals[i].exp, name) || continue
     push!(removed, i)
     push!(pairs, (name, i))

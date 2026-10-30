@@ -425,7 +425,7 @@ function translate(fm::OMFrontend.Frontend.FlatModel;
         #= Direct DifferentialEquations.jl path: a subset of the MTK path's SimCode passes (not,
            e.g., the Complex lowering, the function evaluation, the folds, the initial values),
            no observed-equation work, the DE emitter. =#
-        local simCode = SimCode.deSimulationCode(model)
+        local simCode = SimCode.codeView(SimCode.deSimulationCode(model))
         (SimCode.hasStructuralTransitions(simCode) || SimCode.hasSubModels(simCode)) &&
           error("DEMode does not support structural transitions / VSS at this time. Re-run with mode = OMBackend.MTK_MODE.")
         _checkSimCodeBeforeCodegen(simCode, checkSimCode)
@@ -469,20 +469,17 @@ function knownValues(model::OMJLIR.Model)::Dict{Symbol, OMJLIR.Expression}
     _fallback(err, :knownValues)
     return out
   end
-  #= OMJLIR's names by SimCode's (dots as underscores); a name two variables would share is left out =#
-  local byName = Dict{String, Symbol}()
-  local shared = Set{String}()
+  #= OMJLIR's names by SimCode's keys (the references' flat names: the same) =#
+  local byName::Dict{String, Symbol} = Dict{String, Symbol}()
   for v in model.variables
-    v.kind isa Union{OMJLIR.ALGEBRAIC, OMJLIR.ALGEBRAIC_DER} || continue
-    local n = replace(String(v.name), "." => "_")
-    haskey(byName, n) ? push!(shared, n) : (byName[n] = v.name)
+    v.kind isa Union{OMJLIR.ALGEBRAIC, OMJLIR.ALGEBRAIC_DER} && (byName[String(v.name)] = v.name)
   end
   #= `v - c`: eliminated, or a residual a later pass would eliminate =#
   for eq in Iterators.flatten((sc.eliminatedEquations, sc.residualEquations))
     local e = eq.exp
     (e isa SimCode.BINARY && e.op === SimCode.OP_SUB && e.exp1 isa SimCode.EXP_CREF && e.exp2 isa SimCode.RCONST) || continue
-    local n = SimCode.crefName(e.exp1.cref)
-    (haskey(byName, n) && !(n in shared)) || continue
+    local n::String = SimCode.crefName(e.exp1.cref)
+    haskey(byName, n) || continue
     out[byName[n]] = OMJLIR.REAL(e.exp2.value)
   end
   return out
@@ -718,13 +715,14 @@ end
     mtkSimCode(model; eliminateNonDynamic = nothing, observedFilter = nothing) -> SimCode.SIM_CODE
 
 The simulation code the MTK and IMTK paths generate code from: the OMJLIR model `model` through
-the SimCode passes (SimCode.simulationCode). A translate's, and that of a model recompiled
-during its simulation (Runtime.translateToSimCode).
+the SimCode passes (SimCode.simulationCode), renamed to the generated code's identifiers
+(SimCode.codeView). A translate's, and that of a model recompiled during its simulation
+(Runtime.translateToSimCode).
 """
 mtkSimCode(model::OMJLIR.Model; eliminateNonDynamic::Union{Nothing, Bool, SimCode.EliminationOptions} = nothing,
            observedFilter::Union{Nothing, Vector{String}, Vector{Regex}} = nothing)::SimCode.SIM_CODE =
-  SimCode.simulationCode(model; eliminateNonDynamic,
-                         observedFilter = observedFilter === nothing ? nothing : _observedFilterStrings(observedFilter))
+  SimCode.codeView(SimCode.simulationCode(model; eliminateNonDynamic,
+                                          observedFilter = observedFilter === nothing ? nothing : _observedFilterStrings(observedFilter)))
 
 function _translationResult(result::Tuple{String, Expr})::Tuple{String, Expr}
   dumpGeneratedCode(result[1], result[2])

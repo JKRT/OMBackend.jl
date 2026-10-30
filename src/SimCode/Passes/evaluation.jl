@@ -272,7 +272,7 @@ end
 "The name and binding of the parameter `e` references; `nothing` for another expression."
 function boundParameterExpression(e::Exp, simCode::SIM_CODE, seen::OrderedSet{String})::Union{Nothing, Tuple{String, Exp}}
   local name = crefNameOf(e)
-  (name === nothing || name in seen || isTunableParameter(name)) && return nothing
+  (name === nothing || name in seen || isTunableParameter(codeName(simCode, name))) && return nothing
   local entry = get(simCode.stringToSimVarHT, name, nothing)
   entry === nothing && return nothing
   local k = last(entry).varKind

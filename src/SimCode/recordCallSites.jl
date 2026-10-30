@@ -203,13 +203,13 @@ function fieldArgument(field::IR.ComponentRef, ty::SType, ht::HT)::Exp
     return ARRAY_EXP(ty, false, Exp[ARRAY_EXP(rowTy, true, Exp[EXP_CREF(elementCref(field, [i, j], ht), ty.elementType)
                                                                 for j in 1:ty.dims[2]]) for i in 1:ty.dims[1]])
   end
-  return EXP_CREF(SimCref(Symbol(derivedKey(field)), Int[], field), ty)
+  return EXP_CREF(SimCref(Symbol(refKey(field)), Int[], field), ty)
 end
 
 "The reference of the element `index` of the array reference `array`: its variable's, else the array's with the subscripts (`elementRead`)."
 function elementCref(array::IR.ComponentRef, index::Vector{Int}, ht::HT)::SimCref
-  local read::SimCref = elementRead(SimCref(Symbol(derivedKey(array)), Int[], array), index)
-  local key::String = derivedKey(irRef(read))
+  local read::SimCref = elementRead(SimCref(Symbol(refKey(array)), Int[], array), index)
+  local key::String = refKey(irRef(read))
   return haskey(ht, key) ? SimCref(Symbol(key), Int[], read.ref) : read
 end
 
@@ -279,7 +279,7 @@ end
 
 "Field `k` (`name`) of a record element of an array argument: a reference's field's name, a record value's element, a call's field by TSUB."
 function recordElementField(e::Exp, k::Int, name::String, ty::SType, ht::HT)::Exp
-  e isa EXP_CREF && return (local field::IR.ComponentRef = fieldCref(irRef(e.cref), name); EXP_CREF(SimCref(Symbol(derivedKey(field)), Int[], field), ty))
+  e isa EXP_CREF && return (local field::IR.ComponentRef = fieldCref(irRef(e.cref), name); EXP_CREF(SimCref(Symbol(refKey(field)), Int[], field), ty))
   e isa RECORD && return expandRecordArguments(e.exps[k], ht)
   return TSUB(expandRecordArguments(e, ht), k, ty)
 end

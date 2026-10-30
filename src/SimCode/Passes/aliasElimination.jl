@@ -257,7 +257,8 @@ function eliminateAliasVariables(simCode::SIM_CODE)::SIM_CODE
   isempty(stillRead) || @debug "[SIMCODE: $(simCode.name): eliminateAliasVariables] eliminated variables still read, kept" stillRead
   local newHT = copy(ht)
   local eliminated = String[n for n in keys(replacements) if !(n in stillRead)]
-  foreach(n -> deleteEliminated!(newHT, ht, n, representativeOf[n]), eliminated)
+  local derivatives::Dict{String, String} = derivativeKeys(ht)
+  foreach(n -> deleteEliminated!(newHT, ht, derivatives, n, representativeOf[n]), eliminated)
   for (name, attributes) in mergedAttributes
     haskey(newHT, name) || continue
     local (index, v) = newHT[name]
@@ -275,14 +276,15 @@ function eliminateAliasVariables(simCode::SIM_CODE)::SIM_CODE
 end
 
 """
-    deleteEliminated!(newHT, ht, name, representative)
+    deleteEliminated!(newHT, ht, derivatives, name, representative)
 
 The eliminated variable `name` deleted from `newHT`; of a state aliased to a state, its
-derivative too (the substitution reads the representative's).
+derivative's entry too (`derivatives`, `derivativeKeys`: the substitution reads the representative's).
 """
-function deleteEliminated!(newHT::HT, ht::HT, name::String, representative::String)::Nothing
+function deleteEliminated!(newHT::HT, ht::HT, derivatives::Dict{String, String}, name::String, representative::String)::Nothing
   delete!(newHT, name)
-  last(ht[name]).varKind isa STATE && last(ht[representative]).varKind isa STATE && delete!(newHT, "der($(name))")
+  (last(ht[name]).varKind isa STATE && last(ht[representative]).varKind isa STATE && haskey(derivatives, name)) &&
+    delete!(newHT, derivatives[name])
   return nothing
 end
 
@@ -533,7 +535,8 @@ function eliminateRHSEquivalentEquations(simCode::SIM_CODE)::SIM_CODE
   isempty(replacements) && return simCode
   @debug "[SIMCODE: $(simCode.name): eliminateRHSEquivalentEquations] $(length(replacements)) variables aliased by equal right-hand sides"
   local newHT = copy(ht)
-  foreach(e -> deleteEliminated!(newHT, ht, e.eliminatedName, e.representativeName), entries)
+  local derivatives::Dict{String, String} = derivativeKeys(ht)
+  foreach(e -> deleteEliminated!(newHT, ht, derivatives, e.eliminatedName, e.representativeName), entries)
   for (name, attributes) in mergedAttributes
     haskey(newHT, name) || continue
     local (index, v) = newHT[name]

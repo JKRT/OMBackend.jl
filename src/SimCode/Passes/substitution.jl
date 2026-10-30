@@ -95,7 +95,7 @@ function substituted(e::ASUB, rs::Replacements)::Union{Nothing, Exp}
   e.exp isa EXP_CREF || return nothing
   local base = crefName(e.exp.cref)
   if all(s -> s isa ICONST, e.subs)
-    local r = get(rs, string(base, join(("[$(s.value)]" for s in e.subs))), nothing)
+    local r = get(rs, elementKey(e.exp.cref, Int[(s::ICONST).value for s in e.subs]), nothing)
     r === nothing || return replacementExp(r)
   end
   local r = get(rs, base, nothing)
