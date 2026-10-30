@@ -69,10 +69,11 @@ function Base.isequal(a::T, b::T)::Bool where {T <: Node}
 end
 Base.isequal(::Node, ::Node)::Bool = false
 
+"Fields hashed one by one after the type's name, an enumeration value by its integer: the same in every build (as OMJLIR's values, `IR.fieldHash`)."
 function Base.hash(a::T, h::UInt)::UInt where {T <: Node}
-  local r = hash(T, h)
+  local r::UInt = hash(nameof(T), h)
   for f in fieldnames(T)
-    r = hash(getfield(a, f), r)
+    r = IR.fieldHash(getfield(a, f), r)
   end
   return r
 end

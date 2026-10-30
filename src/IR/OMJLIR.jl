@@ -131,13 +131,23 @@ function Base.isequal(a::T, b::T)::Bool where {T <: Node}
 end
 Base.isequal(::Node, ::Node)::Bool = false
 
+"""
+Fields hashed one by one after the type's name: the same in every build. A type's own hash, and
+with it an enumeration value's, Julia derives from its module's build id, new with every
+precompile (the code generators' names and the iteration order of a `Dict` or `Set` of values
+changed with it).
+"""
 function Base.hash(a::T, h::UInt)::UInt where {T <: Node}
-  local r = hash(T, h)
+  local r::UInt = hash(nameof(T), h)
   for f in fieldnames(T)
-    r = hash(getfield(a, f), r)
+    r = fieldHash(getfield(a, f), r)
   end
   return r
 end
+
+"A value's field hashed: an enumeration value by its integer (Base's hash has its type's), any other value by its own."
+fieldHash(x::Enum, h::UInt)::UInt = hash(Integer(x), h)
+fieldHash(x::Any, h::UInt)::UInt = hash(x, h)
 
 #= ==================================================================================== =#
 #= Source locations                                                                     =#
