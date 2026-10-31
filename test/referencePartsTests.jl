@@ -1,6 +1,7 @@
 #= OMJLIR's references by their parts: a name is derived from them (`flatName`, `legacyName`), never taken apart.
    A slice of an array split along its inner dimensions (`T_SLICE`), and the algorithm lifter's questions by parts:
-   which references overlap, the wholes an assignment's target is a part of, the arrays equations constrain. The
+   which references overlap, the wholes an assignment's target is a part of, the arrays equations constrain; the
+   interpreter's values by paths (Evaluation's Interpret.jl), a scalar's wholes by its reference's parts. The
    reduced models' references (state sets, derivatives, array form) are checked in indexReductionTests
    (`referenceProblems`). =#
 using Test
@@ -70,6 +71,21 @@ import OMBackend
     @test aux.name === Symbol("der.a.b[1]") && aux.parts[1].ty isa IRp.T_DERAUX && P.legacyName(aux) == "der_a_b[1]"
     @test !IRp.isDerivativeCref(aux) && IRp.operandStart(aux) == 1 && aux.parts[2:end] == x.parts
     @test IRp.auxiliaryDerivativeCref(aux).name === Symbol("der.der.a.b[1]")
+  end
+
+  @testset "the interpreter's values by paths, the wholes of a reference by its parts" begin
+    local Ev = P.Evaluation
+    #= the records and arrays a scalar of the model is a part of, the longest first, and the paths from them =#
+    @test Ev.wholesOf(ref(part(:R0), part(:T, [1, 2]))) == [(Symbol("R0.T"), Ev.Step[[1, 2]]), (:R0, Ev.Step[:T, [1, 2]])]
+    @test Ev.wholesOf(ref(part(:a, [1]), part(:b, [2]))) ==
+      [(Symbol("a[1].b"), Ev.Step[[2]]), (Symbol("a[1]"), Ev.Step[:b, [2]]), (:a, Ev.Step[[1], :b, [2]])]
+    #= an array of records: an element, its field; a matrix as an array and back, a row of it =#
+    local v = Ev.FlatValue(Ev.Step[[1], :x] => 1.0, Ev.Step[[2], :x] => 2.0)
+    @test Ev.flatField(Ev.elementOf(v, [2]), :x) == Ev.scalarValue(2.0)
+    local m = Ev.fromArray([1.0 2.0; 3.0 4.0])
+    @test Ev.toArray(m) == [1.0 2.0; 3.0 4.0] && Ev.elementOf(m, [2]) == Ev.fromArray([3.0, 4.0])
+    #= an element's path under an array literal's index: its indices after the index =#
+    @test Ev.underStep([1], Ev.Step[[2], :f]) == Ev.Step[[1, 2], :f] && Ev.underStep([1], Ev.Step[:f]) == Ev.Step[[1], :f]
   end
 
   @testset "an algorithm's wholes; the arrays equations constrain" begin
