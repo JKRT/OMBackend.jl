@@ -401,6 +401,9 @@ function translate(fm::OMFrontend.Frontend.FlatModel;
   try
     delete!(ARRAY_ODE_MODELS, canonicalName(fm.name))
     omjlir === nothing && delete!(ARRAY_REDUCED_MODELS, canonicalName(fm.name))
+    #= an attempt with the arrays kept records its own reasons (as translateArrays); a scalarized translate after it, or
+       the reduced model's (`omjlir`), keeps them for OM's report =#
+    (scalarized || omjlir !== nothing) || delete!(ARRAY_PATH_REASONS, canonicalName(fm.name))
     if !scalarized && ARRAY_ODE_GENERATION[]
       local arrayResult = @BACKEND_PERFLOG "[backendAPI] generateArrayODECode" generateArrayODETargetCode(fm; functionList)
       arrayResult === nothing || return arrayResult

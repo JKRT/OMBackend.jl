@@ -350,7 +350,7 @@ function expToJuliaExpMTK(e::SC.EXP_CREF, simCode::SC.SIM_CODE)::Expr
   (e.cref.sym === :time && e.ty isa SC.TYPE_REAL) && return quote t end
   e.ty isa SC.TYPE_ARRAY && return _wholeArrayExpr(e, simCode)
   if !isempty(e.cref.subs)
-    local element = _arrayElementExpr(String(e.cref.sym), Any[s for s in e.cref.subs], simCode)
+    local element = _arrayElementExpr(e.cref, simCode)
     element === nothing || return element
   end
   return _variableExpr(e.cref, simCode)
@@ -609,33 +609,32 @@ function _emptyArrayExpr(ty::SC.TYPE_ARRAY)::Expr
 end
 
 """
-    _arrayElementExpr(base, subs, simCode)
+    _arrayElementExpr(c, simCode)
 
-An element of the array variable `base` (one kept as an array) by its lowered subscripts:
-with literal subscripts, the element of its binding (an array literal) or its scalar variable
-(`R_T[1][2]`: a record's field array has both, the parent's binding is empty where equations
-give the values); else `base[subs...]`. `nothing` for a `base` that is no array variable.
+The element `c` (its literal subscripts `c.subs`) of an array variable kept as an array (`c.sym`): the element of its
+binding (an array literal), else its scalar variable (`crefName(c)`: `R_T[1][2]`; a record's field array has both, the
+parent's binding is empty where equations give the values), else `base[subs...]`. `nothing` for an array that is no
+array variable.
 """
-function _arrayElementExpr(base::String, subs::Vector{Any}, simCode::SC.SIM_CODE)::Union{Nothing, Expr}
-  local ht = simCode.stringToSimVarHT
-  local entry = get(ht, base, nothing)
+function _arrayElementExpr(c::SC.SimCref, simCode::SC.SIM_CODE)::Union{Nothing, Expr}
+  local ht::SC.HT = simCode.stringToSimVarHT
+  local base::String = String(c.sym)
+  local entry::Union{Nothing, Tuple{Int, SC.SIMVAR}} = get(ht, base, nothing)
   (entry !== nothing && last(entry).varKind isa Union{SC.ARRAY, SC.ARRAY_PARAMETER}) || return nothing
-  if all(s -> s isa Integer, subs)
-    local binding = last(entry).varKind.bindExp
-    if binding isa SC.ARRAY_EXP
-      local element = binding
-      for i in subs
-        element isa SC.ARRAY_EXP || OMBackend.unsupported("a binding row that is not an array literal", element)
-        element = element.elements[i]
-      end
-      return expToJuliaExpMTK(element, simCode)
+  local binding::Union{Nothing, SC.Exp} = last(entry).varKind.bindExp
+  if binding isa SC.ARRAY_EXP
+    local element::SC.Exp = binding
+    for i in c.subs
+      element isa SC.ARRAY_EXP || OMBackend.unsupported("a binding row that is not an array literal", element)
+      element = element.elements[i]
     end
-    local scalar = get(ht, base * join("[$(i)]" for i in subs), nothing)
-    scalar === nothing || return quote $(Symbol(last(scalar).name)) end
+    return expToJuliaExpMTK(element, simCode)
   end
+  local scalar::Union{Nothing, Tuple{Int, SC.SIMVAR}} = get(ht, SC.crefName(c), nothing)
+  scalar === nothing || return quote $(Symbol(last(scalar).name)) end
   return quote
     $(LineNumberNode(@__LINE__, "Array subscript: $base"))
-    $(Symbol(base))[$(subs...)]
+    $(Symbol(base))[$(c.subs...)]
   end
 end
 
@@ -686,7 +685,7 @@ function _literalSubscriptExpr(e::SC.ASUB, subs::Vector{Int}, simCode::SC.SIM_CO
                                                          $(_modelicaFunctionCallArgs(call.args, simCode)...)))
   end
   if inner isa SC.EXP_CREF && isempty(inner.cref.subs)
-    local entry = get(simCode.stringToSimVarHT, SC.crefName(inner.cref) * join("[$(i)]" for i in subs), nothing)
+    local entry = get(simCode.stringToSimVarHT, SC.crefName(inner.cref, subs), nothing)
     entry === nothing || return quote $(Symbol(last(entry).name)) end
   end
   #= An element of a function's result (an output of several, an element of an array output:
