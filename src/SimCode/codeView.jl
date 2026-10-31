@@ -58,11 +58,13 @@ end
 """
 A reference renamed: its key's identifier, its subscripts and IR reference kept. A reference to no variable of the
 table with an IR reference (a record whose fields are the variables: `r` of `r.T`) by its identifier derived as a
-variable's (`derivedKey`); one without (`time`, an iterator, a function's local) as it is.
+variable's (`derivedKey`), an element of an array that is no variable (`subs`: a constant record's array field,
+`Medium.data.alow[1]`) by its array's (the reference without its last subscripts, as the lowering keyed it,
+`simCrefExp`); one without (`time`, an iterator, a function's local) as it is.
 """
 function renamed(rn::Renaming, c::SimCref)::SimCref
   local id::Union{Nothing, String} = get(rn.names, String(c.sym), nothing)
-  (id === nothing && c.ref !== nothing && isempty(c.subs)) && (id = derivedKey(c.ref))
+  (id === nothing && c.ref !== nothing) && (id = derivedKey(isempty(c.subs) ? c.ref : IR.withoutLastSubscripts(c.ref)))
   return id === nothing ? c : SimCref(Symbol(id), c.subs, c.ref)
 end
 

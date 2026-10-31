@@ -23,6 +23,19 @@ import OMFrontend
     @test SC.derivedKey(SC.fieldCref(ref(part(:r)), "a")) == "r_a"
   end
 
+  @testset "the code view's identifiers of what is no variable" begin
+    #= a field of a constant record (`Medium.data.MM`) by its derived identifier; an element of its array field
+       (`Medium.data.alow[1]`, a constant's array read in an equation: MSL Media's Inverse_sh_T) by its array's =#
+    local rn = SC.Renaming(Dict{String, String}())
+    local data = (f::Symbol, subs::Vector{Int}) -> ref(part(:Medium, Int[], IR.T_CLASS(:M)), part(:data, Int[], IR.T_CLASS(:D)), part(f, subs))
+    local field = SC.SimCref(Symbol("Medium.data.MM"), Int[], data(:MM, Int[]))
+    local element = SC.SimCref(Symbol("Medium.data.alow"), Int[1], data(:alow, [1]))
+    @test SC.renamed(rn, field).sym === :Medium_data_MM
+    @test SC.renamed(rn, element).sym === :Medium_data_alow && SC.renamed(rn, element).subs == [1]
+    #= a name of no reference (an iterator) as it is =#
+    @test SC.renamed(rn, SC.SimCref(:i, Int[], nothing)).sym === :i
+  end
+
   @testset "the variables a when body writes" begin
     local src = SC.NO_SOURCE
     local call = (args::SC.Exp...) -> SC.CALL(:f, SC.Exp[args...], SC.TYPE_REAL(), SC.CALL_FUNCTION)
