@@ -73,6 +73,23 @@ import OMBackend
     @test IRp.auxiliaryDerivativeCref(aux).name === Symbol("der.der.a.b[1]")
   end
 
+  @testset "equations alike as written; their forms up to the order of sides, terms and factors" begin
+    local R = P.IndexReduction
+    local x = (n::Symbol) -> IRp.CREF(ref(part(n)), IRp.T_REAL())
+    local op = (a, o, b) -> IRp.BINARY(a, o, b, IRp.T_REAL())
+    local eq = (l, r; source = IRp.NO_SOURCE) -> IRp.SCALAR_EQUATION(l, r, IRp.T_REAL(), source, IRp.DEFAULT_ATTRIBUTES)
+    #= two occurrences: other sources, other relations' indices (zero crossings) alike; another operator not =#
+    local rel = (k::Int, o) -> IRp.IF_EXPRESSION(IRp.RELATION(x(:a), o, x(:b), k), x(:a), x(:b), IRp.T_REAL())
+    @test IRp.sameForm(eq(x(:y), rel(1, IRp.GREATER); source = IRp.Source("A.mo", 1, 1)), eq(x(:y), rel(7, IRp.GREATER)))
+    @test !IRp.sameForm(eq(x(:y), rel(1, IRp.GREATER)), eq(x(:y), rel(1, IRp.LESS)))
+    @test IRp.formHash(eq(x(:y), rel(1, IRp.GREATER)), UInt(0)) == IRp.formHash(eq(x(:y), rel(3, IRp.GREATER)), UInt(0))
+    #= a + b = c is c - b = a; y = a * b is b * a = y; a = b is not a = c =#
+    @test R.equationForm(eq(op(x(:a), IRp.ADD, x(:b)), x(:c))) == R.equationForm(eq(op(x(:c), IRp.SUB, x(:b)), x(:a)))
+    @test R.equationForm(eq(x(:y), op(x(:a), IRp.MUL, x(:b)))) == R.equationForm(eq(op(x(:b), IRp.MUL, x(:a)), x(:y)))
+    @test R.equationForm(eq(x(:a), x(:b))) != R.equationForm(eq(x(:a), x(:c)))
+    @test hash(R.equationForm(eq(x(:a), x(:b)))) == hash(R.equationForm(eq(x(:b), x(:a))))
+  end
+
   @testset "the interpreter's values by paths, the wholes of a reference by its parts" begin
     local Ev = P.Evaluation
     #= the records and arrays a scalar of the model is a part of, the longest first, and the paths from them =#

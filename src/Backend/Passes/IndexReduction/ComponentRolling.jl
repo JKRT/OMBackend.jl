@@ -274,17 +274,92 @@ function rollGroup!(model::IR.Model, g::ComponentGroup)::Bool
 end
 
 """
+A term's form (`termForm`): an expression as written (`LeafForm`, alike by `IR.sameForm`), a sum's signed terms
+(`SumForm`) or a product's factors (`ProductForm`), each in a normal order (by their hashes, the same in every build).
+"""
+abstract type TermForm end
+
+struct LeafForm <: TermForm
+  e::IR.Expression
+end
+
+struct SumForm <: TermForm
+  terms::Vector{Tuple{Bool, TermForm}}
+end
+
+struct ProductForm <: TermForm
+  factors::Vector{TermForm}
+end
+
+"An equation other than a scalar one as written (`IR.sameForm`)."
+struct EquationForm
+  eq::IR.Equation
+end
+
+Base.:(==)(a::LeafForm, b::LeafForm)::Bool = IR.sameForm(a.e, b.e)
+Base.:(==)(a::SumForm, b::SumForm)::Bool = a.terms == b.terms
+Base.:(==)(a::ProductForm, b::ProductForm)::Bool = a.factors == b.factors
+Base.:(==)(a::EquationForm, b::EquationForm)::Bool = IR.sameForm(a.eq, b.eq)
+Base.hash(a::LeafForm, h::UInt)::UInt = IR.formHash(a.e, hash(:LeafForm, h))
+Base.hash(a::SumForm, h::UInt)::UInt = hash(a.terms, hash(:SumForm, h))
+Base.hash(a::ProductForm, h::UInt)::UInt = hash(a.factors, hash(:ProductForm, h))
+Base.hash(a::EquationForm, h::UInt)::UInt = IR.formHash(a.eq, hash(:EquationForm, h))
+
+"An equation's form (`equationForm`): a scalar equation's terms (`SumForm`), another equation as written."
+const RolledForm = Union{SumForm, EquationForm}
+
+"""
+    equationForm(eq) -> RolledForm
+
+An equation's form up to the order of its sides and of a sum's terms (and its sign: `a = b` is `b = a`, `a + b = c`
+is `c - b = a`): a scalar equation by its signed terms in a normal order (`SumForm`; of the two signs the one whose
+terms' hashes are the lesser); another as written (`EquationForm`). The instances' equations of one role have one form.
+"""
+function equationForm(eq::IR.Equation)::RolledForm
+  eq isa IR.SCALAR_EQUATION || return EquationForm(eq)
+  local terms::Vector{Tuple{Bool, TermForm}} =
+    sort!(signedTerms!(signedTerms!(Tuple{Bool, TermForm}[], eq.lhs, true), eq.rhs, false); by = hash)
+  local flipped::Vector{Tuple{Bool, TermForm}} = sort!(Tuple{Bool, TermForm}[(!s, f) for (s, f) in terms]; by = hash)
+  return SumForm(UInt[hash(t) for t in terms] <= UInt[hash(t) for t in flipped] ? terms : flipped)
+end
+
+"The signed terms of a sum (`(true, a)`, `(false, b)`), zeros left out, each term's form (`termForm`)."
+function signedTerms!(out::Vector{Tuple{Bool, TermForm}}, e::IR.Expression, positive::Bool)::Vector{Tuple{Bool, TermForm}}
+  if e isa IR.BINARY && e.op in (IR.ADD, IR.SUB)
+    signedTerms!(out, e.exp1, positive)
+    signedTerms!(out, e.exp2, e.op == IR.ADD ? positive : !positive)
+  elseif e isa IR.UNARY && e.op == IR.UMINUS
+    signedTerms!(out, e.exp, !positive)
+  elseif !(e isa Union{IR.REAL, IR.INTEGER} && iszero(e.value))
+    push!(out, (positive, termForm(e)))
+  end
+  return out
+end
+
+"A term's form: its sums' terms and its products' factors in a normal order; another expression as written."
+function termForm(e::IR.Expression)::TermForm
+  if (e isa IR.BINARY && e.op in (IR.ADD, IR.SUB)) || (e isa IR.UNARY && e.op == IR.UMINUS)
+    return SumForm(sort!(signedTerms!(Tuple{Bool, TermForm}[], e, true); by = hash))
+  elseif e isa IR.BINARY && e.op == IR.MUL
+    return ProductForm(sort!(TermForm[termForm(e.exp1), termForm(e.exp2)]; by = hash))
+  end
+  return LeafForm(e)
+end
+
+"""
     auxiliaryVariables(model, partition, g, memberOf, owned) -> Vector{Vector{Symbol}}
 
 The variables the passes made outside any component (`ifEq_tmp<k>`: of one part, no derivative by the kinds; not parameters) that only the equations of one instance read, matched
-across the instances: one list per role (instance by instance), the role the normalized equation that defines it
-(the first that reads it). NotHandled where the instances' roles differ.
+across the instances: one list per role (instance by instance), the role the form of the equation that defines it
+(the first that reads it, `equationForm`), in the order the equations first read the first instance's. NotHandled
+where the instances' roles differ.
 """
 function auxiliaryVariables(model::IR.Model, partition::IR.Partition, g::ComponentGroup, memberOf::Dict{Symbol, Tuple{Int, Int}},
                             owned::Set{Symbol})::Vector{Vector{Symbol}}
   local n::Int = length(g.members)
   local readers::Dict{Symbol, Set{Int}} = Dict{Symbol, Set{Int}}()
   local firstReader::Dict{Symbol, IR.Equation} = Dict{Symbol, IR.Equation}()
+  local readOrder::Vector{Symbol} = Symbol[]
   local antiderivative::Dict{Symbol, Symbol} = antiderivatives(model.variables)
   local candidate::Function = (x::Symbol) -> begin
     local v::Union{Nothing, IR.Variable} = get(model.variables, x, nothing)
@@ -305,20 +380,22 @@ function auxiliaryVariables(model::IR.Model, partition::IR.Partition, g::Compone
     end
     for x in free
       union!(get!(() -> Set{Int}(), readers, x), isempty(instances) ? Set{Int}(0) : instances)
-      haskey(firstReader, x) || (firstReader[x] = eq)
+      haskey(firstReader, x) || (firstReader[x] = eq; push!(readOrder, x))
     end
   end
-  local roles::Vector{Dict{String, Symbol}} = Dict{String, Symbol}[Dict{String, Symbol}() for _ in 1:n]
+  local roles::Vector{Dict{RolledForm, Symbol}} = Dict{RolledForm, Symbol}[Dict{RolledForm, Symbol}() for _ in 1:n]
   for (x, ks) in readers
     (length(ks) == 1 && !(0 in ks)) || continue
     local k::Int = only(ks)
-    local role::String = normalizedKey(IR.mapEquation!(e::IR.Expression -> roleExpression(e, x, memberOf), deepcopy(firstReader[x])))
+    local role::RolledForm = equationForm(IR.mapEquation!(e::IR.Expression -> roleExpression(e, x, memberOf), deepcopy(firstReader[x])))
     haskey(roles[k], role) && throw(NotHandled("two auxiliaries of one role in $(g.members[k])"))
     roles[k][role] = x
   end
-  all(r::Dict{String, Symbol} -> Set(keys(r)) == Set(keys(roles[1])), roles) ||
+  all(r::Dict{RolledForm, Symbol} -> Set(keys(r)) == Set(keys(roles[1])), roles) ||
     throw(NotHandled("the instances' auxiliary variables differ"))
-  return Vector{Symbol}[Symbol[roles[k][role] for k in 1:n] for role in sort!(collect(keys(roles[1])))]
+  local position::Dict{Symbol, Int} = Dict{Symbol, Int}(x => i for (i, x) in enumerate(readOrder))
+  local ordered::Vector{RolledForm} = sort!(collect(keys(roles[1])); by = role::RolledForm -> position[roles[1][role]])
+  return Vector{Symbol}[Symbol[roles[k][role] for k in 1:n] for role in ordered]
 end
 
 "`e` for an auxiliary's role: the auxiliary `x` as `§` (`MEMBER_PLACEHOLDER`), an instance's references with their member as it (`memberRelative`)."
@@ -566,7 +643,7 @@ end
 The equations with the group's instances rolled: those of no instance as they are; with `aliases` the equalities of
 two references of which one is an instance's (a connection set's) as their classes (`aliasClasses`); an equation of
 one instance rolled into a for-equation over the instances (`iterator`) where each instance has it as often
-(`normalizedKey` of its rolled form), once per occurrence, the first instance's as the body; the others element
+(`equationForm` of its rolled form), once per occurrence, the first instance's as the body; the others element
 equations (the instance's literal subscript).
 """
 function rolledEquations(equations::Vector{IR.Equation}, groups::Vector{ComponentGroup}, memberOf::Dict{Symbol, Tuple{Int, Int}},
@@ -575,21 +652,21 @@ function rolledEquations(equations::Vector{IR.Equation}, groups::Vector{Componen
   local rewrite::Function = (eq::IR.Equation, index::Function) ->
     IR.mapEquation!(e::IR.Expression -> rolledExpression(e, groups, memberOf, names, index), deepcopy(eq))
   local (kept::Vector{IR.Equation}, equalities::Vector{IR.Equation}) = aliases ? aliasClasses(equations, memberOf, names) : (equations, IR.Equation[])
-  #= each instance's equations by their rolled forms' keys =#
-  local keyed::Vector{Dict{String, Vector{IR.Equation}}} = Dict{String, Vector{IR.Equation}}[Dict{String, Vector{IR.Equation}}() for _ in 1:n]
-  local keyOf::IdDict{IR.Equation, String} = IdDict{IR.Equation, String}()
+  #= each instance's equations by their rolled forms =#
+  local keyed::Vector{Dict{RolledForm, Vector{IR.Equation}}} = Dict{RolledForm, Vector{IR.Equation}}[Dict{RolledForm, Vector{IR.Equation}}() for _ in 1:n]
+  local keyOf::IdDict{IR.Equation, RolledForm} = IdDict{IR.Equation, RolledForm}()
   local ordered::Vector{IR.Equation} = IR.Equation[kept; equalities]
   for eq in ordered
     local instances::Set{Int} = instancesOf(eq, memberOf, names)
     length(instances) == 1 || continue
-    local key::String = normalizedKey(rewrite(eq, loop))
+    local key::RolledForm = equationForm(rewrite(eq, loop))
     keyOf[eq] = key
     push!(get!(() -> IR.Equation[], keyed[only(instances)], key), eq)
   end
-  local rolls::Dict{String, Int} = Dict{String, Int}(key => minimum(get(keyed[k], key, IR.Equation[]) |> length for k in 1:n)
-                                                     for key in keys(keyed[1]))
+  local rolls::Dict{RolledForm, Int} = Dict{RolledForm, Int}(key => minimum(get(keyed[k], key, IR.Equation[]) |> length for k in 1:n)
+                                                             for key in keys(keyed[1]))
   local out::Vector{IR.Equation} = IR.Equation[]
-  local used::Dict{Tuple{Int, String}, Int} = Dict{Tuple{Int, String}, Int}()
+  local used::Dict{Tuple{Int, RolledForm}, Int} = Dict{Tuple{Int, RolledForm}, Int}()
   local range::IR.Expression = IR.RANGE(IR.INTEGER(1), nothing, IR.INTEGER(n), IR.T_ARRAY(IR.T_INTEGER(), IR.Dimension[IR.DIM_SIZE(n)]))
   for eq in ordered
     local instances::Set{Int} = instancesOf(eq, memberOf, names)
@@ -599,7 +676,7 @@ function rolledEquations(equations::Vector{IR.Equation}, groups::Vector{Componen
     end
     if length(instances) == 1
       local k::Int = only(instances)
-      local key::String = keyOf[eq]
+      local key::RolledForm = keyOf[eq]
       local j::Int = get(used, (k, key), 0) + 1
       used[(k, key)] = j
       if j <= get(rolls, key, 0)
@@ -752,38 +829,3 @@ function equalityEquation(a::IR.CREF, b::IR.CREF, like::IR.Equation)::IR.Equatio
                          f.source, f.attributes)
 end
 
-"""
-    normalizedKey(eq) -> String
-
-An equation's form up to the order of its sides and of a sum's terms (and its sign: `a = b` is `b = a`, `a + b = c`
-is `c - b = a`): a scalar equation by its signed terms sorted; another as printed.
-"""
-function normalizedKey(eq::IR.Equation)::String
-  eq isa IR.SCALAR_EQUATION || return replace(string(eq), r"\s+" => " ")
-  local terms::Vector{String} = sort!(signedTerms!(signedTerms!(String[], eq.lhs, true), eq.rhs, false))
-  local flipped::Vector{String} = sort!(String[(t[1] == '+' ? "-" : "+") * t[2:end] for t in terms])
-  return min(join(terms, " "), join(flipped, " "))
-end
-
-"The signed terms of a sum (`+a`, `-b`), zeros left out, each term's own sums normalized."
-function signedTerms!(out::Vector{String}, e::IR.Expression, positive::Bool)::Vector{String}
-  if e isa IR.BINARY && e.op in (IR.ADD, IR.SUB)
-    signedTerms!(out, e.exp1, positive)
-    signedTerms!(out, e.exp2, e.op == IR.ADD ? positive : !positive)
-  elseif e isa IR.UNARY && e.op == IR.UMINUS
-    signedTerms!(out, e.exp, !positive)
-  elseif !(e isa Union{IR.REAL, IR.INTEGER} && iszero(e.value))
-    push!(out, (positive ? "+" : "-") * termString(e))
-  end
-  return out
-end
-
-"A term as printed, its sums and the factors of its products in a normal order."
-function termString(e::IR.Expression)::String
-  if (e isa IR.BINARY && e.op in (IR.ADD, IR.SUB)) || (e isa IR.UNARY && e.op == IR.UMINUS)
-    return "(" * join(sort!(signedTerms!(String[], e, true)), " ") * ")"
-  elseif e isa IR.BINARY && e.op == IR.MUL
-    return "(" * join(sort!(String[termString(e.exp1), termString(e.exp2)]), " * ") * ")"
-  end
-  return replace(string(e), r"\s+" => " ")
-end

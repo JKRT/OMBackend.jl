@@ -2266,4 +2266,45 @@ end
 
 dump(model::Model)::String = sprint(dump, model)
 
+#= ==================================================================================== =#
+#= Forms: values alike as written                                                       =#
+#= ==================================================================================== =#
+
+"""
+    sameForm(a, b) -> Bool
+
+Whether `a` and `b` are alike as written, field by field (equations too, which `==` compares by identity), leaving
+out what one occurrence carries: a source, an equation's attributes, a relation's index (its zero crossing). The
+instances' equations of one class are alike (IndexReduction's component rolling matches them by it, `formHash`).
+"""
+sameForm(a, b)::Bool = a == b
+sameForm(a::Vector, b::Vector)::Bool = length(a) == length(b) && all(k::Int -> sameForm(a[k], b[k]), eachindex(a))
+sameForm(::Source, ::Source)::Bool = true
+sameForm(::EquationAttributes, ::EquationAttributes)::Bool = true
+sameForm(a::RELATION, b::RELATION)::Bool = a.op === b.op && sameForm(a.exp1, b.exp1) && sameForm(a.exp2, b.exp2)
+@generated function sameForm(a::T, b::T)::Bool where {T <: Union{Node, Equation, EquationBranch}}
+  return fieldComparison(T, sameForm)
+end
+
+"""
+    formHash(x, h) -> UInt
+
+The hash of `x`'s form: alike forms (`sameForm`) hash alike, the same in every build (a type by its name, an
+enumeration value by its integer).
+"""
+formHash(x, h::UInt)::UInt = hash(x, h)
+formHash(x::Enum, h::UInt)::UInt = hash(Integer(x), h)
+function formHash(a::Vector, h::UInt)::UInt
+  for x in a
+    h = formHash(x, h)
+  end
+  return hash(length(a), h)
+end
+formHash(::Source, h::UInt)::UInt = h
+formHash(::EquationAttributes, h::UInt)::UInt = h
+formHash(a::RELATION, h::UInt)::UInt = formHash(a.exp2, formHash(a.exp1, hash(Integer(a.op), hash(:RELATION, h))))
+@generated function formHash(a::T, h::UInt)::UInt where {T <: Union{Node, Equation, EquationBranch}}
+  return fieldHashing(T, formHash)
+end
+
 end # module OMJLIR
