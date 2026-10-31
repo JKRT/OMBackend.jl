@@ -250,12 +250,25 @@ end
     T_COMPONENTS(cls, members)
 
 The type of a part that stands for separately declared components of the class `cls` (EngineV6's `cylinder1`, ...,
-`cylinder6`) rolled into an array of `length(members)` (`IndexReduction.rollComponents!`): the part subscripted by a
-literal `k` is named as the member `members[k]` (`flatName`), so an element keeps its flat name (`cylinder3.x`).
+`cylinder6`) rolled into an array of `length(members)` (`IndexReduction.rollComponents!`). The part subscripted by a
+literal `k` is the member `members[k]` (`T_MEMBER`), so an element keeps its flat name (`cylinder3.x`).
 """
 struct T_COMPONENTS <: ModelicaType
   cls::Symbol
   members::Vector{Symbol}
+end
+
+"""
+    T_MEMBER(group, components, index)
+
+The type of a part that names one member of rolled components (`cylinder3`): the element `index` of the group part
+`group` of type `components` (`T_COMPONENTS`). The group part subscripted by a literal index is this part (`CrefPart`):
+a name in a flat name; the element of its group in an array's view (`partSubscripts`, `unsubscriptedPart`).
+"""
+struct T_MEMBER <: ModelicaType
+  group::Symbol
+  components::T_COMPONENTS
+  index::Int
 end
 
 """
@@ -336,12 +349,21 @@ struct DIM_UNKNOWN <: Dimension end
     CrefPart(name, subscripts, ty)
 
 One part of a component reference: a name, its subscripts (`b[2]` of `a.b[2].c`) and the type
-of the component it names, before the subscripts (`Real[3]` of `b`).
+of the component it names, before the subscripts (`Real[3]` of `b`). A part of rolled components (`T_COMPONENTS`)
+subscripted by one literal index is made the member it names (`cylinder3`, `T_MEMBER`), without subscripts.
 """
 struct CrefPart <: Node
   name::Symbol
   subscripts::Vector{Subscript}
   ty::ModelicaType
+  function CrefPart(name::Symbol, subscripts::Vector{Subscript}, ty::ModelicaType)
+    ty isa T_MEMBER && !isempty(subscripts) && throw(ArgumentError("the member $(name) subscripted"))
+    if ty isa T_COMPONENTS && length(subscripts) == 1
+      local k::Union{Nothing, Int} = literalIndex(subscripts[1])
+      k === nothing || return new(ty.members[k], Subscript[], T_MEMBER(name, ty, k))
+    end
+    return new(name, subscripts, ty)
+  end
 end
 
 """
@@ -371,16 +393,55 @@ Base.:(==)(a::ComponentRef, b::ComponentRef)::Bool = a.name === b.name
 Base.isequal(a::ComponentRef, b::ComponentRef)::Bool = a.name === b.name
 Base.hash(c::ComponentRef, h::UInt)::UInt = hash(c.name, h)
 
-"The subscripts of the last part: those of an array variable's reference."
-subscripts(c::ComponentRef)::Vector{Subscript} = c.parts[end].subscripts
+"Whether the part names a member of rolled components (`T_MEMBER`)."
+isMember(p::CrefPart)::Bool = isMember(p.ty)
+isMember(::T_MEMBER)::Bool = true
+isMember(::ModelicaType)::Bool = false
 
-"Whether `c` has a subscript in any part."
-hasSubscripts(c::ComponentRef)::Bool = any(p -> !isempty(p.subscripts), c.parts)
+"Whether a part's type is of rolled components: a group's (`T_COMPONENTS`) or a member's (`T_MEMBER`)."
+isRolled(::Union{T_COMPONENTS, T_MEMBER})::Bool = true
+isRolled(::ModelicaType)::Bool = false
+
+"""
+    partSubscripts(p) -> Vector{Subscript}
+
+The subscripts of the part `p` in its array's view: its own; a member's (`T_MEMBER`) its index in its group
+(`[3]` of `cylinder3`). The references taken apart into an array and the element's subscripts read these
+(`subscripts`, `hasSubscripts`, `appendSubscripts`).
+"""
+partSubscripts(p::CrefPart)::Vector{Subscript} = partSubscripts(p, p.ty)
+partSubscripts(p::CrefPart, ::ModelicaType)::Vector{Subscript} = p.subscripts
+partSubscripts(::CrefPart, t::T_MEMBER)::Vector{Subscript} = Subscript[INDEX(INTEGER(t.index))]
+
+"Whether the part is subscripted in its array's view (`partSubscripts`): a member is, by its index in its group."
+isSubscripted(p::CrefPart)::Bool = !isempty(p.subscripts) || isMember(p)
+
+"The name of the array the part `p` is of in its array's view: its own; a member's (`T_MEMBER`) its group's."
+arrayName(p::CrefPart)::Symbol = arrayName(p, p.ty)
+arrayName(p::CrefPart, ::ModelicaType)::Symbol = p.name
+arrayName(::CrefPart, t::T_MEMBER)::Symbol = t.group
+
+"The part `p` without its subscripts: of a member (`T_MEMBER`) its group's part (`cylinder1|...|cylinder6` of `cylinder3`)."
+unsubscriptedPart(p::CrefPart)::CrefPart = unsubscriptedPart(p, p.ty)
+unsubscriptedPart(p::CrefPart, ::ModelicaType)::CrefPart = CrefPart(p.name, Subscript[], p.ty)
+unsubscriptedPart(::CrefPart, t::T_MEMBER)::CrefPart = CrefPart(t.group, Subscript[], t.components)
+
+"The part `p` with `subscripts` in place of its own: of a member (`T_MEMBER`) its group's part subscripted (`unsubscriptedPart`)."
+function withSubscripts(p::CrefPart, subscripts::Vector{Subscript})::CrefPart
+  local base::CrefPart = unsubscriptedPart(p)
+  return CrefPart(base.name, subscripts, base.ty)
+end
+
+"The subscripts of the last part: those of an array variable's reference (`partSubscripts`)."
+subscripts(c::ComponentRef)::Vector{Subscript} = partSubscripts(c.parts[end])
+
+"Whether `c` has a subscript in any part (`isSubscripted`)."
+hasSubscripts(c::ComponentRef)::Bool = any(isSubscripted, c.parts)
 
 "The name of the variable `c` references: its own, or without the last part's subscripts."
 function variableName(c::ComponentRef, isVariable::F)::Symbol where {F}
   isVariable(c.name) && return c.name
-  isempty(c.parts[end].subscripts) && return c.name
+  isSubscripted(c.parts[end]) || return c.name
   return withoutLastSubscripts(c).name
 end
 
@@ -1151,14 +1212,15 @@ withOperatorsOf(like::ComponentRef, base::ComponentRef)::ComponentRef =
 
 """
 `c` with the subscripts of its last part replaced by `subscripts` (`x[2]` of `x[1]`): an element of an array variable
-or of a derivative array (`\$DER.c.T[i]` of `der(c[i].T)`: the subscripts on its last part).
+or of a derivative array (`\$DER.c.T[i]` of `der(c[i].T)`: the subscripts on its last part); a member's on its group's
+part (`unsubscriptedPart`).
 """
 withLastSubscripts(c::ComponentRef, subscripts::Vector{Subscript})::ComponentRef =
-  ComponentRef(CrefPart[c.parts[1:end - 1]; CrefPart(c.parts[end].name, subscripts, c.parts[end].ty)])
+  ComponentRef(CrefPart[(@view c.parts[1:end - 1]); withSubscripts(c.parts[end], subscripts)])
 
-"`c` with `subscripts` after its last part's own (`x[1]` of `x`, `x[1,2]` of `x[1]`)."
+"`c` with `subscripts` after its last part's own (`x[1]` of `x`, `x[1,2]` of `x[1]`; `partSubscripts`)."
 appendSubscripts(c::ComponentRef, subscripts::Vector{Subscript})::ComponentRef =
-  withLastSubscripts(c, Subscript[c.parts[end].subscripts; subscripts])
+  withLastSubscripts(c, Subscript[partSubscripts(c.parts[end]); subscripts])
 
 "`c` without its last part's subscripts (`a[1].x` of `a[1].x[2]`)."
 withoutLastSubscripts(c::ComponentRef)::ComponentRef = withLastSubscripts(c, Subscript[])
@@ -1169,7 +1231,8 @@ withoutLastSubscripts(c::ComponentRef)::ComponentRef = withLastSubscripts(c, Sub
 Whether the references `a` and `b` name the same variable or one a part of the other (`buf` and
 `buf[2]`, `r` and `r.x`, a row `m[1]` and its element `m[1,2]`), by their parts: the shorter's are the
 longer's first ones (`samePart`), its last part of the longer's name, one of the two not subscripted or
-its subscripts the other's first ones (a member of rolled components as that member).
+its subscripts the other's first ones; of another name a member of the rolled array the other names whole
+(`isMemberOf`: `ifEq_tmp2` and `ifEq_tmp1|ifEq_tmp2`).
 """
 function crefsOverlap(a::ComponentRef, b::ComponentRef)::Bool
   local (short::ComponentRef, long::ComponentRef) = length(a.parts) <= length(b.parts) ? (a, b) : (b, a)
@@ -1178,30 +1241,27 @@ function crefsOverlap(a::ComponentRef, b::ComponentRef)::Bool
     samePart(short.parts[k], long.parts[k]) || return false
   end
   local (s::CrefPart, l::CrefPart) = (short.parts[n], long.parts[n])
-  s.name === l.name || return false
+  s.name === l.name || return isMemberOf(s, l) || isMemberOf(l, s)
   (isempty(s.subscripts) || isempty(l.subscripts)) && return true
-  (memberName(s) !== nothing || memberName(l) !== nothing) && return samePart(s, l)
   sliceInner(s) == sliceInner(l) || return false
   return sameSubscripts(s.subscripts, l.subscripts, min(length(s.subscripts), length(l.subscripts)))
 end
 
+"Whether the part `m` is a member (`T_MEMBER`) of the rolled array the part `g` names whole."
+isMemberOf(m::CrefPart, g::CrefPart)::Bool = isMemberOf(m.ty, g)
+isMemberOf(t::T_MEMBER, g::CrefPart)::Bool = t.group === g.name && isempty(g.subscripts)
+isMemberOf(::ModelicaType, ::CrefPart)::Bool = false
+
 """
     samePart(p, q)
 
-Whether the parts `p` and `q` print alike in a flat name (`flatName`): the same member of rolled components (a part
-named as the member alike), else the same name, slice and subscripts; literal subscripts compared by value, without
-printing.
+Whether the parts `p` and `q` print alike in a flat name (`flatName`): the same name, slice and subscripts; literal
+subscripts compared by value, without printing.
 """
 function samePart(p::CrefPart, q::CrefPart)::Bool
-  local (mp::Union{Nothing, Symbol}, mq::Union{Nothing, Symbol}) = (memberName(p), memberName(q))
-  (mp !== nothing || mq !== nothing) &&
-    return printsAsName(p, mp) && printsAsName(q, mq) && something(mp, p.name) === something(mq, q.name)
   p.name === q.name && sliceInner(p) == sliceInner(q) && length(p.subscripts) == length(q.subscripts) || return false
   return sameSubscripts(p.subscripts, q.subscripts, length(p.subscripts))
 end
-
-"Whether the part `p` (its member name `member`, `memberName`) prints as a name alone: a member, or a part without subscripts or slice."
-printsAsName(p::CrefPart, member::Union{Nothing, Symbol})::Bool = member !== nothing || (isempty(p.subscripts) && !(p.ty isa T_SLICE))
 
 "A slice's inner subscripts (`T_SLICE`); `nothing` for another part."
 sliceInner(p::CrefPart)::Union{Nothing, Vector{Int}} = p.ty isa T_SLICE ? (p.ty::T_SLICE).inner : nothing
@@ -1225,8 +1285,11 @@ end
 "The element `index` (literal Integer indices) of the array reference `c`: `c` with them after its last part's subscripts (`x[1,2]` of `x`)."
 elementCref(c::ComponentRef, index::Vector{Int})::ComponentRef = appendSubscripts(c, Subscript[INDEX(INTEGER(k)) for k in index])
 
-"`c` without the subscripts of its parts (`a.x` of `a[1].x[2]`; a slice's part keeps its inner ones, `T_SLICE`)."
-withoutSubscripts(c::ComponentRef)::ComponentRef = ComponentRef(CrefPart[CrefPart(p.name, Subscript[], p.ty) for p in c.parts])
+"""
+`c` without the subscripts of its parts (`a.x` of `a[1].x[2]`; a slice's part keeps its inner ones, `T_SLICE`; a
+member's part is its group's, `unsubscriptedPart`).
+"""
+withoutSubscripts(c::ComponentRef)::ComponentRef = ComponentRef(CrefPart[unsubscriptedPart(p) for p in c.parts])
 
 "The field `name`, of type `ty`, of the record reference `c` (`r.f`)."
 withField(c::ComponentRef, name::Symbol, ty::ModelicaType)::ComponentRef = ComponentRef(CrefPart[c.parts; CrefPart(name, Subscript[], ty)])
@@ -1235,12 +1298,12 @@ withField(c::ComponentRef, name::Symbol, ty::ModelicaType)::ComponentRef = Compo
     upToFirstSubscripted(c) -> ComponentRef
 
 `c` up to its first part with subscripts, without them (`x` of `x[1,2]`, `c` of `c[2].T`): the array an element is of,
-as the scalarized model names its elements. A rolled component's member by its literal index (`memberName`) is a
-name, not a subscript. `c` itself where no part has subscripts.
+as the scalarized model names its elements. A rolled component's member (`T_MEMBER`) is a name. `c` itself where
+no part has subscripts.
 """
 function upToFirstSubscripted(c::ComponentRef)::ComponentRef
   for (k::Int, p::CrefPart) in enumerate(c.parts)
-    (isempty(p.subscripts) || memberName(p) !== nothing) && continue
+    isempty(p.subscripts) && continue
     return ComponentRef(CrefPart[c.parts[1:k - 1]; CrefPart(p.name, Subscript[], p.ty)])
   end
   return c
@@ -1265,17 +1328,6 @@ function literalIndices(subscripts::Vector{Subscript})::Union{Nothing, Vector{In
     out[k] = i
   end
   return out
-end
-
-"""
-The member a rolled component's part names by its literal index (`cylinder3` of the part `cylinder1|...|cylinder6`
-of type `T_COMPONENTS` subscripted `[3]`); `nothing` for another part.
-"""
-function memberName(p::CrefPart)::Union{Nothing, Symbol}
-  local t::ModelicaType = p.ty
-  (t isa T_COMPONENTS && length(p.subscripts) == 1) || return nothing
-  local k::Union{Nothing, Int} = literalIndex(p.subscripts[1])
-  return k === nothing ? nothing : t.members[k]
 end
 
 """
@@ -1863,6 +1915,7 @@ _print(io::IO, f::Field) = (_print(io, f.ty); print(io, " ", f.name))
 _print(io::IO, t::T_RECORD) = print(io, t.name)
 _print(io::IO, t::Union{T_EXTERNAL_OBJECT, T_CLASS}) = print(io, t.name)
 _print(io::IO, t::T_COMPONENTS) = print(io, t.cls, "[", length(t.members), "]")
+_print(io::IO, t::T_MEMBER) = print(io, t.components.cls)
 _print(io::IO, ::T_DER) = print(io, "der")
 _print(io::IO, ::T_STATEDER) = print(io, "stateDer")
 _print(io::IO, t::T_SLICE) = (_print(io, t.of); print(io, "[", join(t.inner, ","), "]"))
@@ -1888,19 +1941,13 @@ _print(io::IO, p::CrefPart) = print(io, flatName(CrefPart[p]))
 
 The flat name of a reference's parts: the names joined by `.`, each with its subscripts in
 brackets separated by `,`; a literal index as its value (`2`, `true`, `E.one`), another
-expression as written. A part of rolled components (`T_COMPONENTS`) subscripted by a literal
-index is named as that member (`cylinder3`); a slice's part (`T_SLICE`) with its inner subscripts first (`T[2,1]`).
+expression as written; a slice's part (`T_SLICE`) with its inner subscripts first (`T[2,1]`).
 """
 function flatName(parts::Vector{CrefPart})::Symbol
   length(parts) == 1 && isempty(parts[1].subscripts) && !(parts[1].ty isa T_SLICE) && return parts[1].name
   local io = IOBuffer()
   for (i, p) in enumerate(parts)
     i > 1 && print(io, '.')
-    local member::Union{Nothing, Symbol} = memberName(p)
-    if member !== nothing
-      print(io, member)
-      continue
-    end
     print(io, p.name)
     p.ty isa T_SLICE && print(io, '[', join((p.ty::T_SLICE).inner, ','), ']')
     isempty(p.subscripts) && continue

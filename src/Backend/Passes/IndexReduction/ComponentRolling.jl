@@ -125,13 +125,14 @@ end
 """
     memberReference(cref, memberOf) -> Union{Nothing, MemberReference}
 
-`cref` taken apart as a reference into an instance (`MemberReference`); `nothing` for a reference of no instance.
+`cref` taken apart as a reference into an instance (`MemberReference`); `nothing` for a reference of no instance (a
+rolled member's, `T_MEMBER`, reads a rolled array).
 """
 function memberReference(cref::IR.ComponentRef, memberOf::Dict{Symbol, Tuple{Int, Int}})::Union{Nothing, MemberReference}
   local k::Int = IR.operandStart(cref)
   k < length(cref.parts) || return nothing
   local member::IR.CrefPart = cref.parts[k]
-  isempty(member.subscripts) || return nothing
+  (isempty(member.subscripts) && !IR.isMember(member)) || return nothing
   local at::Union{Nothing, Tuple{Int, Int}} = get(memberOf, member.name, nothing)
   at === nothing && return nothing
   local rest::Vector{IR.CrefPart} = cref.parts[k + 1:end]
@@ -464,11 +465,12 @@ A reference to an instance's variable, record or component as a reference to the
 subscript `index(group, instance)` (a literal, or the iterator of a rolled equation): a reference whose first part
 is a member its group's part subscripted; a derivative's (`\$DER.cylinder2.x[2]`) the rolled derivative's, by the
 instance's subscript, the element's and its own on its last part (`IR.withLastSubscripts`); an auxiliary's its array's
-element. `nothing` for another.
+element. `nothing` for another (a rolled member's, `T_MEMBER`: it reads the rolled arrays).
 """
 function rolledReference(cref::IR.ComponentRef, groups::Vector{ComponentGroup}, memberOf::Dict{Symbol, Tuple{Int, Int}},
                          names::RolledNames, index::Function)::Union{Nothing, IR.ComponentRef}
   local first::IR.CrefPart = cref.parts[1]
+  IR.isMember(first) && return nothing
   local at::Union{Nothing, Tuple{Int, Int}} = isempty(first.subscripts) ? get(memberOf, first.name, nothing) : nothing
   if at !== nothing && length(cref.parts) >= 2
     local g::ComponentGroup = groups[at[1]]
@@ -509,8 +511,8 @@ function rolledExpression(e::IR.Expression, groups::Vector{ComponentGroup}, memb
   end
 end
 
-"Whether a reference reads a rolled array: its first part after its derivative parts a group's (`T_COMPONENTS`)."
-isRolledReference(cref::IR.ComponentRef)::Bool = cref.parts[IR.operandStart(cref)].ty isa IR.T_COMPONENTS
+"Whether a reference reads a rolled array: its first part after its derivative parts a group's or a member's (`IR.isRolled`)."
+isRolledReference(cref::IR.ComponentRef)::Bool = IR.isRolled(cref.parts[IR.operandStart(cref)].ty)
 
 "A variable with its binding and attributes reading the rolled arrays (`rewrite`)."
 function withRolledReferences(v::IR.Variable, rewrite::Function)::IR.Variable
@@ -541,10 +543,12 @@ end
 """
     instanceOf(cref, memberOf, names) -> Int
 
-The instance whose variable (record, component, derivative, auxiliary) the reference `cref` reads; 0 for another.
+The instance whose variable (record, component, derivative, auxiliary) the reference `cref` reads; 0 for another (a
+rolled member's, `T_MEMBER`).
 """
 function instanceOf(cref::IR.ComponentRef, memberOf::Dict{Symbol, Tuple{Int, Int}}, names::RolledNames)::Int
   local first::IR.CrefPart = cref.parts[1]
+  IR.isMember(first) && return 0
   local at::Union{Nothing, Tuple{Int, Int}} = (isempty(first.subscripts) && length(cref.parts) >= 2) ? get(memberOf, first.name, nothing) : nothing
   at === nothing || return at[2]
   if IR.isDerivativeCref(cref)
@@ -685,7 +689,8 @@ first part after its derivative parts) as `§` (`§.b.x` of `cylinder2.b.x`), af
 alike in every instance.
 """
 function memberOrder(shape::Int, cref::IR.ComponentRef, memberOf::Dict{Symbol, Tuple{Int, Int}})::String
-  haskey(memberOf, cref.parts[IR.operandStart(cref)].name) || return classOrder((shape, cref.name))
+  local member::IR.CrefPart = cref.parts[IR.operandStart(cref)]
+  (haskey(memberOf, member.name) && !IR.isMember(member)) || return classOrder((shape, cref.name))
   return classOrder((shape, memberRelative(cref).name))
 end
 
@@ -718,7 +723,7 @@ function equalityPair(eq::IR.Equation)::Union{Nothing, Tuple{IR.CREF, IR.CREF, I
     local byIterator::Function = (x::IR.CREF) -> begin
       local s::Vector{IR.Subscript} = x.cref.parts[end].subscripts
       length(s) == 1 && s[1] isa IR.INDEX && (s[1]::IR.INDEX).exp isa IR.CREF && ((s[1]::IR.INDEX).exp::IR.CREF).cref.name === eq.iterator.name &&
-        !any(p::IR.CrefPart -> !isempty(p.subscripts), x.cref.parts[1:end - 1])
+        !any(IR.isSubscripted, @view x.cref.parts[1:end - 1])
     end
     (byIterator(body.lhs) && byIterator(body.rhs)) || return nothing
     local whole::Function = (x::IR.CREF) -> IR.CREF(IR.withoutLastSubscripts(x.cref), x.ty)

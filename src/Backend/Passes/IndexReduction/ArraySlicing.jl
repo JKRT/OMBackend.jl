@@ -145,13 +145,13 @@ end
 """
     innerSplittable(model, name) -> Bool
 
-Whether the array `name` of the model is one of rolled components (its first part of type `T_COMPONENTS`) of more
+Whether the array `name` of the model is one of rolled components (its first part rolled, `IR.isRolled`) of more
 dimensions than the instances'.
 """
 function innerSplittable(model::IR.Model, name::Symbol)::Bool
   local v::Union{Nothing, IR.Variable} = get(model.variables, name, nothing)
   v === nothing && return false
-  return v.cref.parts[1].ty isa IR.T_COMPONENTS && length(IR.dimensions(v.ty)) > 1
+  return IR.isRolled(v.cref.parts[1].ty) && length(IR.dimensions(v.ty)) > 1
 end
 
 """
@@ -331,13 +331,13 @@ function slicedReference(x::IR.Expression, family::Dict{Symbol, Vector{Int}})::I
   local instance::IR.Subscript = subscripts[1]
   local element::IR.ModelicaType = IR.elementType(x.ty)
   local sliceRef::Function = (t::Vector{Int}) -> begin
-    local last::IR.CrefPart = x.cref.parts[end]
+    local last::IR.CrefPart = IR.unsubscriptedPart(x.cref.parts[end])
     local slice::IR.CrefPart = IR.CrefPart(last.name, IR.Subscript[], IR.T_SLICE(t, last.ty))
     #= a derivative's slice (one of one part too) subscripted on its last part (`IR.withLastSubscripts`), another's on
        its first (the instance) =#
     local cref::IR.ComponentRef = (IR.isDerivativeCref(x.cref) || length(x.cref.parts) == 1) ?
       IR.ComponentRef(IR.CrefPart[x.cref.parts[1:end - 1]; IR.CrefPart(slice.name, IR.Subscript[instance], slice.ty)]) :
-      IR.ComponentRef(IR.CrefPart[IR.CrefPart(x.cref.parts[1].name, IR.Subscript[instance], x.cref.parts[1].ty); x.cref.parts[2:end - 1]; slice])
+      IR.ComponentRef(IR.CrefPart[IR.withSubscripts(x.cref.parts[1], IR.Subscript[instance]); x.cref.parts[2:end - 1]; slice])
     IR.CREF(cref, element)
   end
   if length(subscripts) == 1 + length(sizes)

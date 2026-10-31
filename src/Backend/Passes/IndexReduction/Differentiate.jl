@@ -195,7 +195,7 @@ function arrayElementDerivative(e::IR.CREF, seeds::Seeds{<:ArrayVariables})::IR.
        `frame_a.R.w[\$i1]`): the array of its elements' derivatives (by name, 0 for a parameter's) at the subscripts =#
     local last::IR.CrefPart = e.cref.parts[end]
     if last.ty isa IR.T_ARRAY && length(IR.dimensions(last.ty)) == length(last.subscripts) &&
-       all(p::IR.CrefPart -> isempty(p.subscripts), e.cref.parts[1:end - 1]) && all(x::IR.Subscript -> x isa IR.INDEX, last.subscripts)
+       !any(IR.isSubscripted, @view e.cref.parts[1:end - 1]) && all(x::IR.Subscript -> x isa IR.INDEX, last.subscripts)
       return foldTree(selectElement(wholeDerivative(IR.withoutSubscripts(e.cref), last.ty, seeds), last.subscripts, e.ty))
     end
     return ZERO

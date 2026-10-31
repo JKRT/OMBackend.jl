@@ -132,10 +132,10 @@ end
 "The flat name of `cref` without its subscripts (`c[2].p.T` and `c.p.T[2]` are `c.p.T`; a slice's part keeps its inner ones, `T_SLICE`): the name of the variable it reads."
 unsubscriptedName(cref::IR.ComponentRef)::Symbol =
   !IR.hasSubscripts(cref) ? cref.name :
-    (length(cref.parts) == 1 && !(cref.parts[1].ty isa IR.T_SLICE)) ? cref.parts[1].name : IR.withoutSubscripts(cref).name
+    (length(cref.parts) == 1 && !(cref.parts[1].ty isa IR.T_SLICE)) ? IR.arrayName(cref.parts[1]) : IR.withoutSubscripts(cref).name
 
-"The subscripts of all parts of `cref`, in order (`c[2].v[3]`: 2, 3): those of the element of an array variable it names."
-allSubscripts(cref::IR.ComponentRef)::Vector{IR.Subscript} = IR.Subscript[s for p in cref.parts for s in p.subscripts]
+"The subscripts of all parts of `cref`, in order (`c[2].v[3]`: 2, 3; `IR.partSubscripts`): those of the element of an array variable it names."
+allSubscripts(cref::IR.ComponentRef)::Vector{IR.Subscript} = IR.Subscript[s for p in cref.parts for s in IR.partSubscripts(p)]
 
 """
     foldInteger(e)
@@ -254,12 +254,6 @@ function legacyName(cref::IR.ComponentRef)::String
   local io = IOBuffer()
   for (i, p) in enumerate(cref.parts)
     i > 1 && print(io, '_')
-    #= a part of rolled components by a literal index: the member (`cylinder3`), as `flatName` =#
-    local member::Union{Nothing, Symbol} = IR.memberName(p)
-    if member !== nothing
-      print(io, member)
-      continue
-    end
     print(io, p.name)
     #= a slice's inner subscripts (`T[1,2]`, `T_SLICE`, splitInner!) each in brackets of its own, as subscripts are =#
     p.ty isa IR.T_SLICE && foreach(k::Int -> print(io, '[', k, ']'), (p.ty::IR.T_SLICE).inner)

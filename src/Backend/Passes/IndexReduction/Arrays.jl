@@ -157,8 +157,8 @@ function elements(variables::IR.VariableSet)::Elements
                      Dict{Symbol, IR.ComponentRef}())
   local derived::Vector{Tuple{IR.Variable, IR.CrefPart, Symbol}} = Tuple{IR.Variable, IR.CrefPart, Symbol}[]
   #= the arrays of rolled components first (their elements may be another array's, kept beside them: rollComponents!) =#
-  local rolledFirst::Vector{IR.Variable} = IR.Variable[v for v in variables if v.cref.parts[1].ty isa IR.T_COMPONENTS]
-  append!(rolledFirst, IR.Variable[v for v in variables if !(v.cref.parts[1].ty isa IR.T_COMPONENTS)])
+  local rolledFirst::Vector{IR.Variable} = IR.Variable[v for v in variables if IR.isRolled(v.cref.parts[1].ty)]
+  append!(rolledFirst, IR.Variable[v for v in variables if !IR.isRolled(v.cref.parts[1].ty)])
   for v in rolledFirst
     v.ty isa IR.T_ARRAY || continue
     local from = derivedFrom(v, variables)

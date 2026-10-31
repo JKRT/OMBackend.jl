@@ -133,7 +133,7 @@ function constrainedBy(equations::Vector{IR.Equation})::Constrained
   local add::Function = (e::IR.Expression) -> foreach(IR.crefsOf(e)) do c::IR.ComponentRef
     push!(names, c.name)
     for (k, p) in enumerate(c.parts)
-      isempty(p.subscripts) || push!(arrays, IR.ComponentRef(IR.CrefPart[c.parts[1:k - 1]; IR.CrefPart(p.name, IR.Subscript[], p.ty)]).name)
+      IR.isSubscripted(p) && push!(arrays, IR.ComponentRef(IR.CrefPart[c.parts[1:k - 1]; IR.unsubscriptedPart(p)]).name)
     end
   end
   for eq in equations
@@ -840,7 +840,7 @@ The names of the wholes a reference is a part of, by its parts: each part with s
 function wholesOf(cref::IR.ComponentRef)::Vector{Symbol}
   local out::Vector{Symbol} = Symbol[]
   for (k, p) in enumerate(cref.parts)
-    isempty(p.subscripts) || push!(out, IR.ComponentRef(IR.CrefPart[cref.parts[1:k - 1]; IR.CrefPart(p.name, IR.Subscript[], p.ty)]).name)
+    IR.isSubscripted(p) && push!(out, IR.ComponentRef(IR.CrefPart[cref.parts[1:k - 1]; IR.unsubscriptedPart(p)]).name)
     k < length(cref.parts) && push!(out, IR.ComponentRef(cref.parts[1:k]).name)
   end
   return out

@@ -679,7 +679,7 @@ function _readsElementArray(g::Gen, eq::OIR.Equation)::Bool
     local base::Union{Nothing, OIR.ComponentRef} =
       (x isa OIR.SUBSCRIPTED && x.exp isa OIR.CREF && !OIR.hasSubscripts(x.exp.cref) && OIR.typeOf(x.exp) isa OIR.T_ARRAY) ? x.exp.cref :
       (x isa OIR.CREF && length(x.cref.parts) > 1 && !isempty(x.cref.parts[end].subscripts) &&
-       all(p::OIR.CrefPart -> isempty(p.subscripts), x.cref.parts[1:end - 1])) ? x.cref : nothing
+       !any(OIR.isSubscripted, @view x.cref.parts[1:end - 1])) ? x.cref : nothing
     base === nothing && return nothing
     local last::OIR.CrefPart = base.parts[end]
     local nm::String = String(OIR.ComponentRef(OIR.CrefPart[base.parts[1:end - 1]; OIR.CrefPart(last.name, OIR.Subscript[], last.ty)]).name)

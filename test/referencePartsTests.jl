@@ -32,7 +32,7 @@ import OMBackend
     @test IRp.crefsOverlap(ref(part(:r, [1])), ref(part(:r, [1]), part(:x)))
     @test !IRp.crefsOverlap(ref(part(:buf, [1])), ref(part(:buf, [12])))
     @test !IRp.crefsOverlap(ref(part(:x)), ref(part(:xy)))
-    #= a row covers its elements; a member of rolled components by its member name =#
+    #= a row covers its elements; a member of rolled components by its name (`T_MEMBER`) =#
     @test IRp.crefsOverlap(ref(part(:m, [1])), ref(part(:m, [1, 2])))
     @test !IRp.crefsOverlap(ref(part(:m, [2])), ref(part(:m, [1, 2])))
     @test IRp.crefsOverlap(ref(part(:r), part(:a, [2])), ref(part(:r), part(:a, [2]), part(:b)))
@@ -40,6 +40,28 @@ import OMBackend
     local members = IRp.T_COMPONENTS(:C, [:c1, :c2])
     @test IRp.crefsOverlap(ref(IRp.CrefPart(:c, IRp.Subscript[IRp.INDEX(IRp.INTEGER(2))], members), part(:x)), ref(part(:c2), part(:x)))
     @test !IRp.crefsOverlap(ref(IRp.CrefPart(:c, IRp.Subscript[IRp.INDEX(IRp.INTEGER(1))], members), part(:x)), ref(part(:c2), part(:x)))
+  end
+
+  @testset "a member of rolled components: a part of its own type" begin
+    local members = IRp.T_COMPONENTS(:C, [:c1, :c2, :c3])
+    local G = IRp.CrefPart(Symbol("c1|c2|c3"), IRp.Subscript[], members)
+    local index = (k::Int) -> IRp.Subscript[IRp.INDEX(IRp.INTEGER(k))]
+    local m = IRp.CrefPart(G.name, index(2), members)
+    #= the group part subscripted by a literal is the member: a name, its index in its type =#
+    @test m.name === :c2 && isempty(m.subscripts) && m.ty == IRp.T_MEMBER(G.name, members, 2) && IRp.isMember(m)
+    @test_throws ArgumentError IRp.CrefPart(:c2, index(1), m.ty)
+    local (x::IRp.ComponentRef, aux::IRp.ComponentRef) = (ref(m, part(:x)), ref(m))
+    @test x.name === Symbol("c2.x") && P.legacyName(x) == "c2_x" && IRp.upToFirstSubscripted(x) == x
+    #= in the array's view the group's element =#
+    @test IRp.hasSubscripts(x) && P.unsubscriptedName(x) === Symbol("c1|c2|c3.x") && P.unsubscriptedName(aux) === G.name
+    @test P.allSubscripts(x) == index(2) && IRp.subscripts(aux) == index(2)
+    @test IRp.withoutLastSubscripts(aux).name === G.name && IRp.withSubscripts(m, index(3)).name === :c3
+    @test P.IndexReduction.isRolledReference(x) && IRp.isRolled(G.ty) && !IRp.isMember(G)
+    #= the whole rolled array overlaps its member; another member and an iterator's element do not =#
+    local it = IRp.CrefPart(G.name, IRp.Subscript[IRp.INDEX(IRp.CREF(IRp.ComponentRef(:i), IRp.T_INTEGER()))], members)
+    @test IRp.crefsOverlap(ref(G), aux) && IRp.crefsOverlap(ref(G), ref(G, part(:x)))
+    @test !IRp.crefsOverlap(ref(IRp.CrefPart(G.name, index(1), members)), aux) && !IRp.crefsOverlap(ref(it), aux)
+    @test !IRp.isMember(it) && length(it.subscripts) == 1
   end
 
   @testset "an algorithm's wholes; the arrays equations constrain" begin

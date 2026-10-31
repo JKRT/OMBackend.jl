@@ -505,7 +505,7 @@ function _arrayElementIndex(simCode::SC.SIM_CODE)::ArrayElements
   local index::ArrayElements = ArrayElements()
   for (key::String, entry::Tuple{Int, SC.SIMVAR}) in simCode.stringToSimVarHT
     local ref::Union{Nothing, SC.IR.ComponentRef} = last(entry).cref
-    (ref === nothing || SC.IR.memberName(ref.parts[end]) !== nothing) && continue
+    (ref === nothing || SC.IR.isMember(ref.parts[end])) && continue
     local subscripts::Vector{SC.IR.Subscript} = SC.IR.subscripts(ref)
     length(subscripts) == 1 || continue
     local k::Union{Nothing, Int} = SC.IR.literalIndex(only(subscripts))

@@ -249,7 +249,7 @@ function simCrefExp(names::Names, cref::IR.ComponentRef, ty::IR.ModelicaType)::E
   end
   #= a scalar subscripted by ones is the scalar: the frontend's equations of expandable
      connectors' scalar signals (`bus2.y1[1] = two.bus.y1[1]`, Buildings' Templates) =#
-  (base in names.scalars && all(p -> isempty(p.subscripts), @view cref.parts[1:end-1]) &&
+  (base in names.scalars && !any(IR.isSubscripted, @view cref.parts[1:end-1]) &&
    all(s -> IR.literalIndex(s) == 1, last.subscripts)) &&
     return EXP_CREF(SimCref(Symbol(base), Int[], baseCref), simType(ty))
   local index::Union{Nothing, Vector{Int}} = IR.literalIndices(last.subscripts)

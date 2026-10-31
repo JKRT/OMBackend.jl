@@ -759,7 +759,7 @@ after it (a record array's field, Buildings' DX coils' `uacp[stage].UAcp`): `_dy
 otherwise.
 """
 function _dynamicSubscriptLookup(ref::SC.IR.ComponentRef, simCode::SC.SIM_CODE)::Union{Expr, Nothing}
-  local k::Union{Nothing, Int} = findfirst(p::SC.IR.CrefPart -> !isempty(p.subscripts) && SC.IR.memberName(p) === nothing, ref.parts)
+  local k::Union{Nothing, Int} = findfirst(p::SC.IR.CrefPart -> !isempty(p.subscripts), ref.parts)
   k === nothing && return nothing
   for p::SC.IR.CrefPart in ref.parts[k + 1:end]
     SC.IR.literalIndices(p.subscripts) === nothing && return nothing
