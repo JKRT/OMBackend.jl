@@ -823,10 +823,10 @@ function _recordElementFieldExps(exp::SC.Exp)::Union{Nothing, Vector{SC.Exp}}
 end
 
 """
-The element `subs` of the field array `field` (a record array's flattened field: `u.re`), by its identifier and its reference.
+The element `subs` of the field array `field` (a record array's flattened field: `u.re`), by its identifier (`_identifier`) and its reference.
 """
 function _fieldElement(field::SC.IR.ComponentRef, subs::Vector{Any}, ty::SC.SType)::SC.Exp
-  local name::Symbol = Symbol(SC.derivedKey(field))
+  local name::Symbol = Symbol(_identifier(field))
   if all(s -> s isa Int, subs)
     local index::Vector{Int} = Int[s for s in subs]
     return SC.EXP_CREF(SC.SimCref(name, index, SC.IR.elementCref(field, index)), ty)
@@ -876,12 +876,31 @@ end
 
 """
 The flattened symbol of the field `field` of the record the reference `c` reads (a function's flattened field, a model
-record's field variable): derived from the field's reference (`_fieldSymbol`).
+record's field variable): the field's reference's identifier (`_fieldSymbol`).
 """
 _flatFieldSymbol(c::SC.SimCref, field::AbstractString)::Symbol = _fieldSymbol(SC.irRef(c), field)
 
-"The identifier of the field `field` of the record reference `record`: the field's reference's (`derivedKey`: `r_f`, `u_re`)."
-_fieldSymbol(record::SC.IR.ComponentRef, field::AbstractString)::Symbol = Symbol(SC.derivedKey(SC.fieldCref(record, field)))
+"The identifier of the field `field` of the record reference `record` (`_identifier` of the field's reference: `r_f`, `u_re`)."
+_fieldSymbol(record::SC.IR.ComponentRef, field::AbstractString)::Symbol = Symbol(_identifier(SC.fieldCref(record, field)))
+
+"""
+The code view (`SC.codeView`) of the model whose algorithm code is being generated (its initial algorithms and
+initial when-statements, `inCodeView`); `nothing` for a function's body.
+"""
+const CODE_VIEW = Base.ScopedValues.ScopedValue{Union{Nothing, SC.SIM_CODE}}(nothing)
+
+"""
+The identifier of the reference `ref` in the code being generated: in a model's code view its variable's
+(`SC.identifierOf`: a renumbered clash's too), in a function's body derived from it (`SC.derivedKey`, the function's
+locals' names).
+"""
+function _identifier(ref::SC.IR.ComponentRef)::String
+  local view::Union{Nothing, SC.SIM_CODE} = CODE_VIEW[]
+  return view === nothing ? SC.derivedKey(ref) : SC.identifierOf(view, ref)
+end
+
+"`f()`, generating algorithm code of the model whose code view is `view` (`CODE_VIEW`)."
+inCodeView(f::F, view::SC.SIM_CODE) where {F} = Base.ScopedValues.with(f, CODE_VIEW => view)
 
 """
     _algCallArgs(args; builtin = false, shared) -> Vector{Any}

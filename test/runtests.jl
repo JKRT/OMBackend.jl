@@ -342,6 +342,8 @@ import .ExampleModels
   include("functionBodyCrefsTests.jl")
   #= the partial evaluation of function calls, its environment by references =#
   include("functionEvaluationTests.jl")
+  #= the code generators by references: record fields, a when body's writes, hvcats, small models =#
+  include("referenceLookupTests.jl")
 
   #= ── 14. Protected variables keep their attributes ────────────── =#
   include("protectedAttributesTests.jl")

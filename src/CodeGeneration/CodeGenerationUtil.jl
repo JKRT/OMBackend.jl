@@ -674,24 +674,26 @@ end
   Extract common hvcat subexpressions from a list of equation Exprs.
   Returns (modifiedEquations, preambleAssignments) where preamble contains
   local variable assignments for deduplicated hvcat calls, in the order of their
-  first occurrences (a key is the call's text, the code generator's line numbers
-  in it: by the keys' hashes, an edit of the code generator reordered them).
+  first occurrences. A call is keyed by its expression without line numbers
+  (`HvcatKey`): its printed text carried the code generator's, so equal calls
+  made at different lines were not shared, and its hash order changed with an
+  edit of the code generator.
 """
 function extractCommonHvcats(equations::Vector)
-  local allHvcats::OrderedDict{String, Int} = OrderedDict{String, Int}()
-  local hvcatExprs::Dict{String, Expr} = Dict{String, Expr}()
+  local allHvcats::OrderedDict{HvcatKey, Int} = OrderedDict{HvcatKey, Int}()
+  local hvcatExprs::Dict{HvcatKey, Expr} = Dict{HvcatKey, Expr}()
   for eq in equations
-    local found::Dict{String, Bool} = Dict{String, Bool}()
+    local found::Set{HvcatKey} = Set{HvcatKey}()
     _collectHvcats!(eq, allHvcats, hvcatExprs, found)
   end
-  local duplicates::OrderedDict{String, Int} = filter(p -> p.second >= 2, allHvcats)
+  local duplicates::OrderedDict{HvcatKey, Int} = filter(p -> p.second >= 2, allHvcats)
   if isempty(duplicates)
     return equations, Expr[]
   end
-  local replacements::Dict{String, Symbol} = Dict{String, Symbol}()
+  local replacements::Dict{HvcatKey, Symbol} = Dict{HvcatKey, Symbol}()
   local preamble::Vector{Expr} = Expr[]
   local idx::Int = 0
-  for (key::String, _) in duplicates
+  for (key::HvcatKey, _) in duplicates
     local varName::Symbol = Symbol("_hv_", idx)
     replacements[key] = varName
     push!(preamble, :(local $varName = $(hvcatExprs[key])))
@@ -701,34 +703,69 @@ function extractCommonHvcats(equations::Vector)
   return modifiedEqs, preamble
 end
 
-function _collectHvcats!(expr, counts::OrderedDict{String,Int}, exprs::Dict{String,Expr}, found::Dict{String,Bool})
-  if !(expr isa Expr)
-    return
+"Whether `expr` is a call of `hvcat`."
+_isHvcat(expr::Expr)::Bool = expr.head == :call && length(expr.args) >= 1 && expr.args[1] == :hvcat
+
+"""
+    HvcatKey(expr)
+
+An `hvcat` call as a key: the call without its line numbers, equal by structure, its literals by type and value (`1`
+is not `1.0`, which `isequal` of the expressions takes as equal).
+"""
+struct HvcatKey
+  expr::Expr
+  HvcatKey(expr::Expr) = new(MacroTools.striplines(expr))
+end
+
+Base.:(==)(a::HvcatKey, b::HvcatKey)::Bool = _sameTree(a.expr, b.expr)
+Base.isequal(a::HvcatKey, b::HvcatKey)::Bool = _sameTree(a.expr, b.expr)
+Base.hash(k::HvcatKey, h::UInt)::UInt = _treeHash(k.expr, h)
+
+"Whether `a` and `b` are the same expression tree: heads, arguments, leaves of the same type and value."
+function _sameTree(a, b)::Bool
+  if a isa Expr
+    (b isa Expr && a.head === b.head && length(a.args) == length(b.args)) || return false
+    for k in eachindex(a.args)
+      _sameTree(a.args[k], b.args[k]) || return false
+    end
+    return true
   end
-  if expr.head == :call && length(expr.args) >= 1 && expr.args[1] == :hvcat
-    local key = string(expr)
-    if !haskey(found, key)
-      found[key] = true
+  return typeof(a) === typeof(b) && isequal(a, b)
+end
+
+"The hash of an expression tree, as `_sameTree` compares it (a leaf by its type and value)."
+function _treeHash(a, h::UInt)::UInt
+  a isa Expr || return hash(a, hash(typeof(a), h))
+  h = hash(a.head, h)
+  for x in a.args
+    h = _treeHash(x, h)
+  end
+  return h
+end
+
+"The `hvcat` calls of `expr`, each counted once per equation (`found`) into `counts`, the first of each key kept in `exprs`."
+function _collectHvcats!(expr, counts::OrderedDict{HvcatKey, Int}, exprs::Dict{HvcatKey, Expr}, found::Set{HvcatKey})::Nothing
+  expr isa Expr || return nothing
+  if _isHvcat(expr)
+    local key::HvcatKey = HvcatKey(expr)
+    if !(key in found)
+      push!(found, key)
       counts[key] = get(counts, key, 0) + 1
-      if !haskey(exprs, key)
-        exprs[key] = expr
-      end
+      haskey(exprs, key) || (exprs[key] = expr)
     end
   end
   for arg in expr.args
     _collectHvcats!(arg, counts, exprs, found)
   end
+  return nothing
 end
 
-function _replaceHvcats(expr, replacements::Dict{String,Symbol})
-  if !(expr isa Expr)
-    return expr
-  end
-  if expr.head == :call && length(expr.args) >= 1 && expr.args[1] == :hvcat
-    local key = string(expr)
-    if haskey(replacements, key)
-      return replacements[key]
-    end
+"`expr` with each `hvcat` call of a key in `replacements` replaced by its local."
+function _replaceHvcats(expr, replacements::Dict{HvcatKey, Symbol})
+  expr isa Expr || return expr
+  if _isHvcat(expr)
+    local name::Union{Nothing, Symbol} = get(replacements, HvcatKey(expr), nothing)
+    name === nothing || return name
   end
   for i in eachindex(expr.args)
     expr.args[i] = _replaceHvcats(expr.args[i], replacements)

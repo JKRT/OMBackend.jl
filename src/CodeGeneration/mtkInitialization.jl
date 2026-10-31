@@ -665,7 +665,8 @@ initialization's values).
 function _initialWhenOpToJulia(wStmt::SC.Statement, simCode::SC.SIM_CODE, renamedNames::OrderedSet{String} = OrderedSet{String}())
   local sub = e::SC.Exp -> _substituteBoundParameters(_preAtInitialization(_initialIsTrue(_derAsCall(e)), simCode), simCode)
   local lowerAlg = e::SC.Exp -> _initialDerivativeReads(_renameAlgIdentifiers(
-    _resolveModelicaCallTargets(AlgorithmicCodeGeneration.expToJuliaExpAlg(sub(e))), renamedNames, ""))
+    _resolveModelicaCallTargets(AlgorithmicCodeGeneration.inCodeView(() -> AlgorithmicCodeGeneration.expToJuliaExpAlg(sub(e)), simCode)),
+    renamedNames, ""))
   if wStmt isa SC.NORETCALL
     return :($(lowerAlg(wStmt.exp)); nothing)
   elseif wStmt isa SC.ASSIGN
@@ -710,7 +711,8 @@ function _initialWhenOpToJuliaEarly(wStmt::SC.Statement, simCode::SC.SIM_CODE,
                                     renamedNames::OrderedSet{String}, seenLHS::OrderedSet{String})::Expr
   local sub = e::SC.Exp -> _substituteBoundParameters(_initialIsTrue(e), simCode)
   local lowerAlg = e::SC.Exp -> _renameAlgIdentifiers(
-    _resolveModelicaCallTargets(AlgorithmicCodeGeneration.expToJuliaExpAlg(sub(e))), renamedNames)
+    _resolveModelicaCallTargets(AlgorithmicCodeGeneration.inCodeView(() -> AlgorithmicCodeGeneration.expToJuliaExpAlg(sub(e)), simCode)),
+    renamedNames)
   if wStmt isa SC.NORETCALL
     return :($(lowerAlg(wStmt.exp)); nothing)
   elseif wStmt isa SC.ASSIGN
@@ -875,7 +877,7 @@ function generateInitialAlgorithmEarlyFunction(simCode::SC.SIM_CODE)::Expr
   local seenLHS = copy(lhsNames)
   for ia in _earlyInitialAlgorithms(simCode)
     if ia.section
-      for s in AlgorithmicCodeGeneration.generateStatements(ia.statements)
+      for s in AlgorithmicCodeGeneration.inCodeView(() -> AlgorithmicCodeGeneration.generateStatements(ia.statements), simCode)
         push!(stmts, _qualifyInvokedFunctions(_renameAlgIdentifiers(s, renamedNames)))
       end
     else

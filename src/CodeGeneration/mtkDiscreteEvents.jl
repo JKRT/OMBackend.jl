@@ -1492,13 +1492,13 @@ end
 
 """
 The target of field `f` of a record target of a tuple assignment: the field's variable
-(`r_f`: the field's reference, `SimCode.fieldCref`, its key derived from it), or an omitted output's.
+(`r_f`: the field's reference, `SimCode.fieldCref`, its identifier `identifierOf`), or an omitted output's.
 """
-function _recordFieldTarget(target::SC.Exp, f::String)::SC.Exp
+function _recordFieldTarget(target::SC.Exp, f::String, simCode::SC.SIM_CODE)::SC.Exp
   target isa SC.WILD && return target
   target isa SC.EXP_CREF || unsupported("this record target of a tuple assignment in a when", target)
   local field::SC.IR.ComponentRef = SC.fieldCref(SC.irRef(target.cref), f)
-  return SC.EXP_CREF(SC.SimCref(Symbol(SC.derivedKey(field)), Int[], field), SC.TYPE_REAL())
+  return SC.EXP_CREF(SC.SimCref(Symbol(SC.identifierOf(simCode, field)), Int[], field), SC.TYPE_REAL())
 end
 
 """
@@ -1676,7 +1676,7 @@ function _createWhenStatementsMTK(statements::Vector{SC.Statement}, simCode::SC.
         else
           for f in fields
             pos += 1
-            _emitWhenTupleElementAssignMTK!(res, _recordFieldTarget(elem, f), :($tupSym[$pos]), simCode)
+            _emitWhenTupleElementAssignMTK!(res, _recordFieldTarget(elem, f, simCode), :($tupSym[$pos]), simCode)
           end
         end
       end
