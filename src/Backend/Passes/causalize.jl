@@ -271,13 +271,13 @@ end
     lowerHigherOrderDerivatives!(model)
 
 A derivative of a derivative as the first derivative of an auxiliary variable:
-`der(der(x))` is `der(der_x)` with the variable `der_x` and the equation `der_x = der(x)`
-(after the others; once per variable), recursively for higher ones. In the equations of the
+`der(der(x))` is `der(der.x)` with the variable `der.x` (`IR.auxiliaryDerivativeCref`, `der_x` in the code) and the
+equation `der.x = der(x)` (after the others; once per variable), recursively for higher ones. In the equations of the
 continuous-time partitions and the structural modes.
 """
 function lowerHigherOrderDerivatives!(model::IR.Model)::IR.Model
   for (variables, p) in partitionsWithVariables(model)
-    local auxiliaries = Dict{String, IR.ComponentRef}()
+    local auxiliaries = Dict{IR.ComponentRef, IR.ComponentRef}()
     local equations = IR.Equation[]
     local g = e -> IR.mapExp(x -> lowerNestedDer(x, variables, auxiliaries, equations), e)
     foreach(eq -> mapRoots!(g, eq), p.equations)
@@ -291,7 +291,7 @@ isDerOf(e::IR.Expression)::Bool = IR.isBuiltinCall(e, :der) && length(e.argument
 "Whether `e` is `der(...der(x)...)` of a reference `x`."
 endsInReference(e::IR.Expression)::Bool = e isa IR.CREF || (isDerOf(e) && endsInReference(e.arguments[1]))
 
-function lowerNestedDer(e::IR.Expression, variables::IR.VariableSet, auxiliaries::Dict{String, IR.ComponentRef},
+function lowerNestedDer(e::IR.Expression, variables::IR.VariableSet, auxiliaries::Dict{IR.ComponentRef, IR.ComponentRef},
                         equations::Vector{IR.Equation})::IR.Expression
   (isDerOf(e) && isDerOf(e.arguments[1]) && endsInReference(e.arguments[1].arguments[1])) || return e
   local aux = derivativeVariable(e.arguments[1], e.attributes, variables, auxiliaries, equations)
@@ -301,23 +301,22 @@ end
 """
     derivativeVariable(d, attributes, variables, auxiliaries, equations)
 
-The auxiliary variable equal to the derivative `d = der(a)`: `der_<a>` (of `a` lowered first
-if itself a derivative), with its equation `der_<a> = der(a)`; one per variable.
+The auxiliary variable equal to the derivative `d = der(a)`: `der.a` (`IR.auxiliaryDerivativeCref`, of `a` lowered
+first if itself a derivative), with its equation `der.a = der(a)`; one per variable (`auxiliaries`, by `a`).
 """
 function derivativeVariable(d::IR.CALL, attributes::IR.CallAttributes, variables::IR.VariableSet,
-                            auxiliaries::Dict{String, IR.ComponentRef}, equations::Vector{IR.Equation})::IR.ComponentRef
-  local arg = d.arguments[1]
-  local base = arg isa IR.CREF ? arg.cref : derivativeVariable(arg, attributes, variables, auxiliaries, equations)
-  local baseName = legacyName(base)
-  local existing = get(auxiliaries, baseName, nothing)
+                            auxiliaries::Dict{IR.ComponentRef, IR.ComponentRef}, equations::Vector{IR.Equation})::IR.ComponentRef
+  local arg::IR.Expression = d.arguments[1]
+  local base::IR.ComponentRef = arg isa IR.CREF ? arg.cref : derivativeVariable(arg, attributes, variables, auxiliaries, equations)
+  local existing::Union{Nothing, IR.ComponentRef} = get(auxiliaries, base, nothing)
   existing === nothing || return existing
-  local aux = IR.ComponentRef(Symbol("der_", baseName), IR.T_REAL())
+  local aux::IR.ComponentRef = IR.auxiliaryDerivativeCref(base)
   push!(variables, IR.Variable(aux, IR.T_REAL(), IR.ALGEBRAIC(), nothing, IR.NO_ATTRIBUTES, IR.NO_DIRECTION,
                                false, IR.NOT_CONNECTOR, IR.NO_SOURCE, :lowerHigherOrderDerivatives))
   push!(equations, IR.SCALAR_EQUATION(IR.CREF(aux, IR.T_REAL()),
                                       IR.CALL(:der, IR.Expression[IR.CREF(base, IR.T_REAL())], IR.T_REAL(), attributes),
                                       IR.T_REAL(), IR.NO_SOURCE, IR.DEFAULT_ATTRIBUTES))
-  auxiliaries[baseName] = aux
+  auxiliaries[base] = aux
   return aux
 end
 

@@ -64,6 +64,14 @@ import OMBackend
     @test !IRp.isMember(it) && length(it.subscripts) == 1
   end
 
+  @testset "an auxiliary for der(x): an operator part before x's parts" begin
+    local x = ref(part(:a), part(:b, [1]))
+    local aux = IRp.auxiliaryDerivativeCref(x)
+    @test aux.name === Symbol("der.a.b[1]") && aux.parts[1].ty isa IRp.T_DERAUX && P.legacyName(aux) == "der_a_b[1]"
+    @test !IRp.isDerivativeCref(aux) && IRp.operandStart(aux) == 1 && aux.parts[2:end] == x.parts
+    @test IRp.auxiliaryDerivativeCref(aux).name === Symbol("der.der.a.b[1]")
+  end
+
   @testset "an algorithm's wholes; the arrays equations constrain" begin
     @test P.wholesOf(ref(part(:r), part(:a, [2]), part(:b))) == Symbol[:r, Symbol("r.a"), Symbol("r.a[2]")]
     @test P.wholesOf(ref(part(:x, [2]))) == Symbol[:x]

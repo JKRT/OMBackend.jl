@@ -1218,7 +1218,7 @@ function ODE_MODE_MTK_MODEL_GENERATION(simCode::SC.SIM_CODE, modelName::String, 
     if sv.varKind isa Union{SC.PARAMETER, SC.ARRAY_PARAMETER})
   #= after OMBackend's index reduction, a state and the derivative variables aliased to it (`\$DER.x`)
      form relays: the state keeps its name, unless introduceDerivatives or index reduction made it (a second-order
-     chain's `\$DER.x`, a state set's variables); `der_x` of lowerHigherOrderDerivatives is a state of the model =#
+     chain's `\$DER.x`, a state set's variables); `der.x` of lowerHigherOrderDerivatives (`der_x` in the code) is a state of the model =#
   local _relayKeep = simCode.indexReduced ?
     union(_condDiscretes, OrderedSet{Symbol}(Symbol(s) for s in stateVariables
                                              if !(last(simCode.stringToSimVarHT[s]).irOrigin in

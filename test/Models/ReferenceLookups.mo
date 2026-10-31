@@ -40,4 +40,14 @@ package ReferenceLookups "Code generation that asks the references: a table by a
     der(x) = y;
   end RecordArrayFields;
 
+  model DerivativeAuxiliaryName "der(der(x)) beside a variable named der_x: the auxiliary for der(x), der.x, is a variable of its own"
+    Real x(start = 1, fixed = true);
+    Real der_x;
+  initial equation
+    der(x) = 0;
+  equation
+    der(der(x)) = -x;
+    der_x = 2 * x;
+  end DerivativeAuxiliaryName;
+
 end ReferenceLookups;

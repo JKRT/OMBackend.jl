@@ -290,6 +290,16 @@ index reduction's link `\$STATEDER.x = \$DER.x`): the state is the reference of 
 struct T_STATEDER <: ModelicaType end
 
 """
+    T_DERAUX()
+
+The type of the first part of an auxiliary variable for `der(x)` that a lowering introduces (`der.x`,
+`auxiliaryDerivativeCref`): lowerHigherOrderDerivatives' (`der(der(x))` as `der(der.x)` with `der.x = der(x)`), a
+discretized clocked partition's (`der(x)` at its ticks). A variable of its own, not a derivative variable (`\$DER.x`,
+`T_DER`); its identifier in the code is `der_x` (`legacyName`).
+"""
+struct T_DERAUX <: ModelicaType end
+
+"""
     T_SLICE(inner, of)
 
 The type of a part that names a slice of an array split along its inner dimensions (`IndexReduction.splitInner!`):
@@ -1184,6 +1194,9 @@ derivativeCref(c::ComponentRef)::ComponentRef = withOperator(CrefPart(Symbol("\$
 "The reference of a selected state's own derivative (index reduction's link): a part `\$STATEDER` (T_STATEDER) before the state's parts."
 stateDerivativeCref(c::ComponentRef)::ComponentRef = withOperator(CrefPart(Symbol("\$STATEDER"), Subscript[], T_STATEDER()), c)
 
+"The reference of an auxiliary variable for `der(c)` (`der.x`, `T_DERAUX`): a part `der` before `c`'s parts."
+auxiliaryDerivativeCref(c::ComponentRef)::ComponentRef = withOperator(CrefPart(:der, Subscript[], T_DERAUX()), c)
+
 "Whether `c` is a derivative's reference (`\$DER.x`, `\$STATEDER.x`): its first part of type T_DER or T_STATEDER."
 isDerivativeCref(c::ComponentRef)::Bool = c.parts[1].ty isa Union{T_DER, T_STATEDER}
 
@@ -1918,6 +1931,7 @@ _print(io::IO, t::T_COMPONENTS) = print(io, t.cls, "[", length(t.members), "]")
 _print(io::IO, t::T_MEMBER) = print(io, t.components.cls)
 _print(io::IO, ::T_DER) = print(io, "der")
 _print(io::IO, ::T_STATEDER) = print(io, "stateDer")
+_print(io::IO, ::T_DERAUX) = print(io, "derAux")
 _print(io::IO, t::T_SLICE) = (_print(io, t.of); print(io, "[", join(t.inner, ","), "]"))
 _print(io::IO, t::T_TUPLE) = (print(io, "("); _printJoined(io, t.types); print(io, ")"))
 _print(io::IO, t::T_FUNCTION) = print(io, "function ", t.name)

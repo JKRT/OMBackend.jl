@@ -82,13 +82,14 @@ end
 
 The element variable `name` of the element view as a reference into its array in the arrays-kept model
 (`x[2]`, `c[2].T`; `\$DER.x[2]` as the element 2 of the derivative array `\$DER.x`, `IR.withLastSubscripts`); a scalar
-variable by its own reference.
+variable by its own reference; NotHandled for a name of neither.
 """
 function arrayElementRef(name::Symbol, E::Elements, variables::IR.VariableSet)::IR.ComponentRef
   local element = get(E.array, name, nothing)
   if element === nothing
-    local v = get(variables, name, nothing)
-    return v === nothing ? IR.ComponentRef(name, IR.T_REAL()) : v.cref
+    local v::Union{Nothing, IR.Variable} = get(variables, name, nothing)
+    v === nothing && throw(NotHandled("the element view's variable $(name), of no array and not of the model"))
+    return v.cref
   end
   local (array::Symbol, index::Vector{Int}) = element
   local arrayVariable::Union{Nothing, IR.Variable} = get(variables, array, nothing)

@@ -1,7 +1,7 @@
 #= The code generators ask the references (9c): a record field's reference and identifier from its parts, the
    variables a when body writes by their references, the hoisted hvcats by their expressions; and through small models
    (Models/ReferenceLookups.mo) a table read by a discrete index, an array an initial algorithm assigns, a function
-   over an array of records. =#
+   over an array of records, a higher derivative's auxiliary beside a variable named as its code identifier. =#
 using Test
 import OMBackend
 import OMFrontend
@@ -82,6 +82,15 @@ import OMFrontend
     local (_, sol) = simulate("InitialArray", 0.1)
     @test string(sol.retcode) == "Success"
     @test [value(sol, "x[$k]", 1) for k in 1:3] ≈ [1.0, 2.0, 3.0]
+  end
+
+  @testset "a higher derivative's auxiliary beside a variable named alike" begin
+    #= der(der(x)) lowered through der.x (`IR.auxiliaryDerivativeCref`), `der_x` in the code as the variable der_x is:
+       two variables, x = cos(t), der_x = 2 cos(t) =#
+    local (_, sol) = simulate("DerivativeAuxiliaryName", 1.0)
+    @test string(sol.retcode) == "Success"
+    @test isapprox(OMBackend.getVariableValues(sol, "x")[end], cos(1.0); rtol = 1e-3)
+    @test isapprox(OMBackend.getVariableValues(sol, "der_x")[end], 2 * cos(1.0); rtol = 1e-3)
   end
 
   @testset "a function over an array of records" begin
