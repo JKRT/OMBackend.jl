@@ -245,7 +245,7 @@ not a kept one.
 function arrayElementValues!(values::OrderedDict{String, ParameterValue}, name::String, binding::Exp, simCode::SIM_CODE,
                              kept::OrderedSet{String}, index::Vector{Int} = Int[])::Nothing
   binding isa ARRAY_EXP || return nothing
-  local array::SimCref = SimCref(Symbol(name), Int[], last(simCode.stringToSimVarHT[name]).cref)
+  local array::SimCref = SimCref(Symbol(name), Int[], last(simCode.stringToSimVarHT[name]).ref)
   for (i, x) in enumerate(binding.elements)
     local at::Vector{Int} = Int[index; i]
     local elementName_::String = elementKey(array, at)
@@ -502,7 +502,7 @@ function foldedObservations(simCode::SIM_CODE, dropped::Vector{String}, valueOf:
   local folded = Set{String}(simCode.foldedVariables)
   local names = String[n for n in dropped if n in folded]
   local ht = simCode.stringToSimVarHT
-  local equations::Vector{RESIDUAL_EQUATION} = RESIDUAL_EQUATION[RESIDUAL_EQUATION(BINARY(EXP_CREF(SimCref(Symbol(n), Int[], last(ht[n]).cref), last(ht[n]).elementType), OP_SUB, valueOf(n)),
+  local equations::Vector{RESIDUAL_EQUATION} = RESIDUAL_EQUATION[RESIDUAL_EQUATION(BINARY(EXP_CREF(SimCref(Symbol(n), Int[], last(ht[n]).ref), last(ht[n]).elementType), OP_SUB, valueOf(n)),
                                                         NO_SOURCE, EQ_ATTR_DEFAULT) for n in names]
   return (names, equations)
 end

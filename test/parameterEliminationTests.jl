@@ -46,7 +46,9 @@ end
   local aRef::OMBackend.OMJLIR.ComponentRef = OMBackend.OMJLIR.ComponentRef(:A)
   local read::SC.Exp = SC.ASUB(SC.EXP_CREF(SC.SimCref(:A, Int[], aRef), SC.TYPE_ARRAY(SC.TYPE_REAL(), Int[3])), SC.Exp[M.simCref("i", SC.TYPE_INTEGER())])
   local residual::SC.Exp = SC.BINARY(M.simCref("y"), SC.OP_SUB, SC.BINARY(read, SC.OP_ADD, M.simCref("B[2]")))
-  sc = SC.update(sc; arrayOf = arrays, residualEquations = SC.RESIDUAL_EQUATION[SC.RESIDUAL_EQUATION(residual, SC.NO_SOURCE, SC.EQ_ATTR_DEFAULT)])
+  local index::SC.ReferenceIndex = sc.referenceIndex
+  sc = SC.update(sc; referenceIndex = SC.ReferenceIndex(index.references, index.keyByReference, arrays, index.codeNames),
+                 residualEquations = SC.RESIDUAL_EQUATION[SC.RESIDUAL_EQUATION(residual, SC.NO_SOURCE, SC.EQ_ATTR_DEFAULT)])
   local kept::Vector{String} = sort(String[k for (k, (_, v)) in SC.eliminateConstantParameters(sc).stringToSimVarHT if v.varKind isa SC.PARAMETER])
   @test kept == ["A[1]", "A[2]", "A[3]"]
 end

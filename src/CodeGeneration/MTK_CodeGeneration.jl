@@ -291,7 +291,7 @@ function substituteRelayAliasesInWhens(simCode::SC.SIM_CODE, relayAliases::Dict{
     local ty = get(tyOf, string(k), nothing)
     ty === nothing && continue
     local entry::Union{Nothing, Tuple{Int, SC.SIMVAR}} = get(simCode.stringToSimVarHT, string(r), nothing)
-    replacements[string(k)] = SC.Replacement(SC.EXP_CREF(SC.SimCref(Symbol(r), Int[], entry === nothing ? nothing : last(entry).cref), ty), false, false)
+    replacements[string(k)] = SC.Replacement(SC.EXP_CREF(SC.SimCref(Symbol(r), Int[], entry === nothing ? nothing : last(entry).ref), ty), false, false)
   end
   isempty(replacements) && return simCode
   return SC.update(simCode; whenEquations = SC.WHEN_EQUATION[SC.WHEN_EQUATION(SC.substitute(w.whenEquation, replacements), w.source, w.attr)

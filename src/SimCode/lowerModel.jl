@@ -116,8 +116,6 @@ function lowerSystem(model::IR.Model, variables::IR.VariableSet, partition::IR.P
   local simVars = SIMVAR[SIMVAR(simName(names, v.cref), nothing, simVarKind(v, names), simVarAttributes(v, names),
                                 simType(IR.elementType(v.ty)), simKind(v.kind, variables, names), v.origin, v.cref) for v in vars]
   local ht = createIndices(simVars, derivativeReferences(vars, variables, names))
-  local references::Dict{String, IR.ComponentRef} =
-    Dict{String, IR.ComponentRef}(k => sv.cref for (k, (_, sv)) in ht if sv.cref !== nothing)
   local eqs = classifyEquations(partition.equations)
   local initialAlgorithms = INITIAL_ALGORITHM[INITIAL_ALGORITHM(simStatements(names, w.branches[1].body), w.kind === IR.INITIAL_SECTION)
                                               for w in eqs.initialWhens]
@@ -141,14 +139,31 @@ function lowerSystem(model::IR.Model, variables::IR.VariableSet, partition::IR.P
                   String(codeName(Symbol(something(model.initialMode, model.name)))), model.frontendModel, irreducibles,
                   functions, any(f -> f isa EXTERNAL_MODELICA_FUNCTION, functions),
                   RESIDUAL_EQUATION[], String[], AliasEntry[], nothing, initialAlgorithms, asserts, String[],
-                  any(v -> v.kind isa Union{IR.DUMMY_STATE, IR.DUMMY_DER}, vars), references, referenceKeys(references),
-                  elementArrays(references), codeIdentifiers(String[simName(names, v.cref) for v in vars], references, ht, model.name))
+                  any(v -> v.kind isa Union{IR.DUMMY_STATE, IR.DUMMY_DER}, vars),
+                  ReferenceIndex(ht, String[simName(names, v.cref) for v in vars], model.name))
+end
+
+"""
+    ReferenceIndex(ht, order, modelName) -> ReferenceIndex
+
+The reference index of the variables `ht` (`ReferenceIndex`): their references (`SIMVAR.ref`), the keys by them
+(`referenceKeys`), the arrays of the elements (`elementArrays`), the identifiers (`codeIdentifiers`, `order` the
+variables' order in the IR, `modelName` for a renamed `t`).
+"""
+function ReferenceIndex(ht::HT, order::Vector{String}, modelName::String)::ReferenceIndex
+  local references::Dict{String, IR.ComponentRef} = Dict{String, IR.ComponentRef}()
+  for (key::String, entry::Tuple{Int, SIMVAR}) in ht
+    local ref::Union{Nothing, IR.ComponentRef} = last(entry).ref
+    ref === nothing || (references[key] = ref)
+  end
+  return ReferenceIndex(references, referenceKeys(references), elementArrays(references),
+                        codeIdentifiers(order, references, ht, modelName))
 end
 
 """
     codeIdentifiers(order, references, ht, modelName) -> Dict{String, String}
 
-Each variable's identifier in the generated code by its key (`SIM_CODE.codeNames`), derived from its reference:
+Each variable's identifier in the generated code by its key (`ReferenceIndex.codeNames`), derived from its reference:
 its legacy name (`derivedKey`: `a_b[1][2]` of `a.b[1,2]`); a state's derivative `der(x)` of its state's; a variable
 named `t`, MTK's independent variable, `<model>V_t`. The legacy form is not one-to-one (`j2.v` and a variable `j2_v`,
 MSL's Fourbar1): of the variables of one legacy name the least qualified (the first, in `order`, the variables'
@@ -506,8 +521,8 @@ function scalarizedArrayParameter(x::EXP_CREF, ht::OrderedDict{String, Tuple{Int
   local array::IR.ComponentRef = x.cref.ref
   local entries = Tuple{Vector{Int}, Exp}[]
   for (_, (_, sv)) in ht
-    sv.cref === nothing && continue
-    local index::Union{Nothing, Vector{Int}} = elementIndex(sv.cref, array)
+    sv.ref === nothing && continue
+    local index::Union{Nothing, Vector{Int}} = elementIndex(sv.ref, array)
     index === nothing && continue
     (sv.varKind isa PARAMETER && sv.varKind.bindExp !== nothing) || continue
     push!(entries, (index, sv.varKind.bindExp))

@@ -689,7 +689,7 @@ what the code generators read to declare an Integer, Boolean or enumeration vari
 its kind in OMJLIR (`IR.VariableKind`: a state, a state's derivative as an algebraic
 unknown, index reduction's dummy derivative or dummy state, ...), the variables it names
 by their simulation names (`simKind`), its origin there (`:model` for one of the flat
-model, else the pass that introduced it) and its reference there (`cref`: its parts, from which its
+model, else the pass that introduced it) and its reference there (`ref`: its parts, from which its
 name is derived; a state's derivative the IR derivative variable's); `nothing` for a variable that is
 not the IR's.
 """
@@ -701,7 +701,7 @@ struct SIMVAR <: Node
   elementType::SType
   irKind::Union{Nothing, IR.VariableKind}
   irOrigin::Union{Nothing, Symbol}
-  cref::Union{Nothing, IR.ComponentRef}
+  ref::Union{Nothing, IR.ComponentRef}
 end
 
 SIMVAR(name::String, index::Union{Nothing, Int}, varKind::SimVarType, attributes::SimVarAttributes, elementType::SType) =
@@ -871,6 +871,27 @@ struct AliasEntry
 end
 
 """
+    ReferenceIndex(references, keyByReference, arrayOf, codeNames)
+    ReferenceIndex(ht, order, modelName)
+
+The simulation code's variables by their IR references and the names derived from them, built together from the
+variables' references once at lowering (`ReferenceIndex(ht, order, modelName)`) and renamed together (`codeView`):
+- `references`: every variable's IR reference by its key (`SIMVAR.ref`), the eliminated ones' too (a state's
+  derivative the IR derivative variable's): the structure of a name (`referenceOf`);
+- `keyByReference`: the keys by the references' names, `references` inverted (`keyOf`);
+- `arrayOf`: the array each element variable is an element of, by its key (`arrayBase` of its reference;
+  `elementArray`);
+- `codeNames`: each variable's identifier in the generated code by its key (`codeIdentifiers`; `codeName`): what the
+  code generators and OM.jl's results know it by (`a_b[1][2]` of `a.b[1,2]`, `der(x)` of a state's derivative).
+"""
+struct ReferenceIndex
+  references::Dict{String, IR.ComponentRef}
+  keyByReference::Dict{Symbol, String}
+  arrayOf::Dict{String, Symbol}
+  codeNames::Dict{String, String}
+end
+
+"""
     SIM_CODE
 
 The simulation code of a model: its variables by name (index, SimVar), its residual, initial,
@@ -906,27 +927,24 @@ struct SIM_CODE
   foldedVariables::Vector{String}
   "OMBackend reduced the model's index (Passes.IndexReduction, OMBACKEND_INDEX_REDUCTION): MTK only tears."
   indexReduced::Bool
-  "Every variable's IR reference by its key, the eliminated ones' too (a state's derivative the IR derivative variable's): the structure of a name."
-  references::Dict{String, IR.ComponentRef}
-  "The keys by the IR references' names (`references` inverted): the variable a reference names (`keyOf`)."
-  keyByReference::Dict{Symbol, String}
-  "The array each element variable is an element of, by its key (`arrayBase` of its reference, once at lowering; the eliminated ones' too): `elementArray`."
-  arrayOf::Dict{String, Symbol}
   """
-  Each variable's identifier in the generated code by its key (`codeIdentifiers`, once at lowering): what the code
-  generators and OM.jl's results know it by (`a_b[1][2]` of `a.b[1,2]`, `der(x)` of a state's derivative). The code
-  generators see the simulation code renamed to them (`codeView`); the passes match user-given names against them.
+  The variables' IR references, the keys by them, the arrays of the elements and the identifiers in the generated
+  code (`ReferenceIndex`). The code generators see the simulation code renamed to the identifiers (`codeView`); the
+  passes match user-given names against them.
   """
-  codeNames::Dict{String, String}
+  referenceIndex::ReferenceIndex
 end
 
 """
 The array the variable `key` is an element of (`arrayBase` of its reference: `x` of `x[2]`, `c` of `c[2].T`), from
-`SIM_CODE.arrayOf`; `nothing` for a variable that is no element.
+`ReferenceIndex.arrayOf`; `nothing` for a variable that is no element.
 """
-elementArray(sc::SIM_CODE, key::String)::Union{Nothing, Symbol} = get(sc.arrayOf, key, nothing)
+elementArray(sc::SIM_CODE, key::String)::Union{Nothing, Symbol} = get(sc.referenceIndex.arrayOf, key, nothing)
 
-"The arrays of the element variables of `references`, by their keys (`SIM_CODE.arrayOf`)."
+"The IR reference of the variable `key` (`ReferenceIndex.references`, an eliminated variable's too); `nothing` for a name of no variable."
+referenceOf(sc::SIM_CODE, key::String)::Union{Nothing, IR.ComponentRef} = get(sc.referenceIndex.references, key, nothing)
+
+"The arrays of the element variables of `references`, by their keys (`ReferenceIndex.arrayOf`)."
 function elementArrays(references::Dict{String, IR.ComponentRef})::Dict{String, Symbol}
   local out::Dict{String, Symbol} = Dict{String, Symbol}()
   for (key::String, ref::IR.ComponentRef) in references
@@ -936,11 +954,12 @@ function elementArrays(references::Dict{String, IR.ComponentRef})::Dict{String, 
   return out
 end
 
-"The identifier of the variable `key` in the generated code (`SIM_CODE.codeNames`); `key` itself for a name of no variable (`time`, an iterator)."
-codeName(sc::SIM_CODE, key::AbstractString)::String = get(sc.codeNames, key, key)
+"The identifier of the variable `key` in the generated code (`ReferenceIndex.codeNames`); `key` itself for a name of no variable (`time`, an iterator)."
+codeName(sc::SIM_CODE, key::AbstractString)::String = get(sc.referenceIndex.codeNames, key, key)
 
-"The key of the variable the IR reference `ref` names; `nothing` for one that names none."
-keyOf(sc::SIM_CODE, ref::IR.ComponentRef)::Union{Nothing, String} = get(sc.keyByReference, ref.name, nothing)
+"The key of the variable the IR reference `ref` (or of the reference name `name`) names; `nothing` for one that names none."
+keyOf(sc::SIM_CODE, ref::IR.ComponentRef)::Union{Nothing, String} = keyOf(sc, ref.name)
+keyOf(sc::SIM_CODE, name::Symbol)::Union{Nothing, String} = get(sc.referenceIndex.keyByReference, name, nothing)
 
 """
     identifierOf(sc, ref) -> String
@@ -955,7 +974,7 @@ function identifierOf(sc::SIM_CODE, ref::IR.ComponentRef)::String
 end
 
 "The IR reference of the variable `v`; an error naming it if it has none (a test's mock)."
-irRef(v::SIMVAR)::IR.ComponentRef = v.cref === nothing ? error("SimCode variable $(v.name) has no IR reference") : v.cref
+irRef(v::SIMVAR)::IR.ComponentRef = v.ref === nothing ? error("SimCode variable $(v.name) has no IR reference") : v.ref
 
 "The keys by the IR references' names of `references`; an error naming both keys if two variables have one reference."
 function referenceKeys(references::Dict{String, IR.ComponentRef})::Dict{Symbol, String}

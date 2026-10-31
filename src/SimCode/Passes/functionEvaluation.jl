@@ -650,9 +650,9 @@ function initialAlgorithmEnvironment(simCode::SIM_CODE)::Tuple{Env, Interpretati
   local ctx = Interpretation(simCode)
   local env = Env(IR.ComponentRef(:time) => 0.0)
   for (_, (_, v)) in simCode.stringToSimVarHT
-    (v.varKind isa PARAMETER && v.varKind.bindExp !== nothing && v.cref !== nothing) || continue
+    (v.varKind isa PARAMETER && v.varKind.bindExp !== nothing && v.ref !== nothing) || continue
     local x = tryEvalNumeric(v.varKind.bindExp, simCode)
-    x === nothing || (env[v.cref] = x)
+    x === nothing || (env[v.ref] = x)
   end
   for a in simCode.initialAlgorithms
     local trial = copy(env)

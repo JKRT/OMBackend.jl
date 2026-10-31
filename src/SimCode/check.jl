@@ -191,7 +191,7 @@ function checkReferenceResolution(simCode::SIM_CODE)::Vector{CheckViolation}
   local ht = simCode.stringToSimVarHT
   local known = union(OrderedSet{String}(keys(ht)), OrderedSet{String}(simCode.eliminatedVariables), BUILTIN_NAMES)
   #= every variable's array (`elementArray`), or its own name for one that is no element: a subscripted read's array is one of them =#
-  local bases::Set{Symbol} = Set{Symbol}(something(elementArray(simCode, k), sv.cref.name) for (k, (_, sv)) in ht if sv.cref !== nothing)
+  local bases::Set{Symbol} = Set{Symbol}(something(elementArray(simCode, k), sv.ref.name) for (k, (_, sv)) in ht if sv.ref !== nothing)
   for (i, eq) in enumerate(simCode.residualEquations)
     local bound = Set{String}()
     foreachExp(e -> e isa REDUCTION && foreach(it -> push!(bound, String(it.name)), e.iterators), eq.exp)
@@ -217,18 +217,18 @@ checkCanonicalNames(simCode::SIM_CODE)::Vector{CheckViolation} =
                  for name in keys(simCode.stringToSimVarHT) if occursin('.', name)]
 
 """
-The references of the simulation code: every variable has its IR reference (`SIMVAR.cref`, in
-`references`), none of whose parts carries structure in its name (`IR.structureInName`), and every
+The references of the simulation code: every variable has its IR reference (`SIMVAR.ref`, in
+`ReferenceIndex.references`), none of whose parts carries structure in its name (`IR.structureInName`), and every
 reference the equations read (residual, initial, if-equations' branches, when bodies, asserts, initial
 algorithms) has one (`SimCref.ref`): the structure of every name, so that no pass takes a name apart.
 """
 function checkReferences(simCode::SIM_CODE)::Vector{CheckViolation}
   local out::Vector{CheckViolation} = CheckViolation[]
   for (key, (_, sv)) in simCode.stringToSimVarHT
-    (sv.cref === nothing || !haskey(simCode.references, key)) &&
+    (sv.ref === nothing || referenceOf(simCode, key) === nothing) &&
       push!(out, CheckViolation(:references, :error, key, "variable without its IR reference"))
   end
-  for (key, ref) in simCode.references
+  for (key, ref) in simCode.referenceIndex.references
     IR.structureInName(ref) && push!(out, CheckViolation(:references, :error, key, "IR reference $(ref.name) with structure in a part's name"))
   end
   local missing::Function = (place::Tuple{Symbol, Int}, c::SimCref) -> c.ref === nothing &&

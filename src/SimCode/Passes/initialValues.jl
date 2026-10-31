@@ -179,7 +179,7 @@ function propagateInitialValues(simCode::SIM_CODE)::SIM_CODE
   local residuals = Exp[]
   for (name, (_, v)) in ht
     if v.varKind isa PARAMETER && v.varKind.bindExp !== nothing
-      push!(residuals, BINARY(EXP_CREF(SimCref(Symbol(name), Int[], v.cref), TYPE_REAL()), OP_SUB, v.varKind.bindExp))
+      push!(residuals, BINARY(EXP_CREF(SimCref(Symbol(name), Int[], v.ref), TYPE_REAL()), OP_SUB, v.varKind.bindExp))
     end
     if v.elementType isa TYPE_REAL && v.attributes.start !== nothing
       local s = initialValue(v.attributes.start, env)

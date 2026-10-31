@@ -138,8 +138,8 @@ function indexOverconstraintDiagnostic(simCode::SIM_CODE)::SIM_CODE
   local derivativeColumn = Dict{String, String}()
   for (k::String, entry::Tuple{Int, SIMVAR}) in ht
     local v::SIMVAR = last(entry)
-    (isUnknownVarKind(v.varKind) && isState(v) && v.cref !== nothing) || continue
-    derivativeColumn[k] = String(IR.derivativeCref(v.cref).name)
+    (isUnknownVarKind(v.varKind) && isState(v) && v.ref !== nothing) || continue
+    derivativeColumn[k] = String(IR.derivativeCref(v.ref).name)
   end
   local states = Set{String}(keys(derivativeColumn))
   local algebraic = Set{String}(k for (k, (_, v)) in ht if isUnknownVarKind(v.varKind) && !isState(v))

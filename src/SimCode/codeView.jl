@@ -1,5 +1,5 @@
 #= The simulation code as the code generators see it: every key, reference and name renamed to its identifier
-   in the generated code (`SIM_CODE.codeNames`), derived from the references once at lowering. The passes key
+   in the generated code (`ReferenceIndex.codeNames`), derived from the references once at lowering. The passes key
    the simulation code by the references' flat names; the generated code, OM.jl's results and the runtime know
    the variables by these identifiers (`a_b[1][2]`, `der(x)`). =#
 
@@ -12,7 +12,7 @@ eliminated, irreducible, shared, top, folded variables) as its identifier (`code
 no variable (`time`, an iterator, a function's local) as it is. `codeNames` then maps each identifier to itself.
 """
 function codeView(sc::SIM_CODE)::SIM_CODE
-  local rn::Renaming = Renaming(sc.codeNames)
+  local rn::Renaming = Renaming(sc.referenceIndex.codeNames)
   local name::Function = (k::String) -> get(rn.names, k, k)
   local ht::OrderedDict{String, Tuple{Int, SIMVAR}} = OrderedDict{String, Tuple{Int, SIMVAR}}()
   for (k::String, entry::Tuple{Int, SIMVAR}) in sc.stringToSimVarHT
@@ -36,10 +36,7 @@ function codeView(sc::SIM_CODE)::SIM_CODE
                                                       for a in sc.initialAlgorithms],
                 asserts = ASSERT_EQUATION[renamed(rn, a) for a in sc.asserts],
                 foldedVariables = String[name(k) for k in sc.foldedVariables],
-                references = Dict{String, IR.ComponentRef}(name(k) => r for (k, r) in sc.references),
-                keyByReference = Dict{Symbol, String}(r => name(k) for (r, k) in sc.keyByReference),
-                arrayOf = Dict{String, Symbol}(name(k) => a for (k, a) in sc.arrayOf),
-                codeNames = Dict{String, String}(id => id for id in values(sc.codeNames)))
+                referenceIndex = renamed(rn, sc.referenceIndex))
 end
 
 "The identifiers of `codeView`, by the keys they rename; as a traversal's `recur`, an expression or statement renamed."
@@ -48,6 +45,15 @@ struct Renaming
 end
 (rn::Renaming)(e::Exp, a::Nothing) = (renamed(rn, e), a)
 (rn::Renaming)(s::Statement, a::Nothing) = (renamed(rn, s), a)
+
+"The reference index with its keys renamed to their identifiers (`codeView`); each identifier its own then."
+function renamed(rn::Renaming, ri::ReferenceIndex)::ReferenceIndex
+  local name::Function = (k::String) -> get(rn.names, k, k)
+  return ReferenceIndex(Dict{String, IR.ComponentRef}(name(k) => r for (k, r) in ri.references),
+                        Dict{Symbol, String}(r => name(k) for (r, k) in ri.keyByReference),
+                        Dict{String, Symbol}(name(k) => a for (k, a) in ri.arrayOf),
+                        Dict{String, String}(id => id for id in values(ri.codeNames)))
+end
 
 """
 A reference renamed: its key's identifier, its subscripts and IR reference kept. A reference to no variable of the
@@ -87,7 +93,7 @@ function renamed(rn::Renaming, v::SIMVAR)::SIMVAR
   local attributes::SimVarAttributes = SimVarAttributes(e(a.start), e(a.fixed), e(a.nominal), e(a.min), e(a.max), e(a.unit),
                                                         e(a.displayUnit), e(a.quantity), a.stateSelect, a.isProtected)
   local irKind::Union{Nothing, IR.VariableKind} = v.irKind === nothing ? nothing : IR.mapKindNames((x::Symbol) -> Symbol(name(String(x))), v.irKind)
-  return SIMVAR(name(v.name), v.index, renamedKind(rn, v.varKind), attributes, v.elementType, irKind, v.irOrigin, v.cref)
+  return SIMVAR(name(v.name), v.index, renamedKind(rn, v.varKind), attributes, v.elementType, irKind, v.irOrigin, v.ref)
 end
 
 "A variable's category with the names and expressions it holds renamed."

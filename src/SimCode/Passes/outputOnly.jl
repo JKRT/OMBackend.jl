@@ -154,7 +154,7 @@ function essentialEquations(simCode::SIM_CODE, matchOrder::Vector{Int}, nameOf::
     1 <= i <= length(reads) || continue
     for n in reads[i]
       haskey(solvedBy, n) && !(solvedBy[n] in essential) && push!(queue, solvedBy[n])
-      local ref::Union{Nothing, IR.ComponentRef} = get(simCode.references, n, nothing)
+      local ref::Union{Nothing, IR.ComponentRef} = referenceOf(simCode, n)
       local solving::Union{Nothing, Vector{Int}} = ref === nothing ? nothing : get(solvedByBase, ref.name, nothing)
       solving === nothing && continue
       for j in solving
@@ -273,10 +273,10 @@ function eliminateOutputOnlyVariables(simCode::SIM_CODE, options::EliminationOpt
     eq isa ARRAY_EQUATION && continue
     foreach(e -> crefNames!(initialReads, e), equationExps(eq))
   end
-  #= a variable read, or the variable of its array (`elementArray`, `keyByReference`) =#
+  #= a variable read, or the variable of its array (`elementArray`, `keyOf`) =#
   local stillRead = name::String -> begin
     local array::Union{Nothing, Symbol} = elementArray(simCode, name)
-    local base::Union{Nothing, String} = array === nothing ? nothing : get(simCode.keyByReference, array, nothing)
+    local base::Union{Nothing, String} = array === nothing ? nothing : keyOf(simCode, array)
     any(n -> any(i -> !(i in removed), get(readBy, n, OrderedSet{Int}())), base === nothing ? (name,) : (name, base)) ||
       name in whenReads || name in initialReads || name in complexParts
   end

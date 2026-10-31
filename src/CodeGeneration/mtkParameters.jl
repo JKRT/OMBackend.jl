@@ -386,7 +386,7 @@ function createArrayParameterPrelude(simCode::SC.SIM_CODE)::Vector{Expr}
   local scalarGroups::Dict{String, Vector{Tuple{Vector{Int}, Any, Int}}} = Dict{String, Vector{Tuple{Vector{Int}, Any, Int}}}()
   for (_, entry::Tuple{Int, SC.SIMVAR}) in ht
     local simVar::SC.SIMVAR = last(entry)
-    local ref::Union{Nothing, SC.IR.ComponentRef} = simVar.cref
+    local ref::Union{Nothing, SC.IR.ComponentRef} = simVar.ref
     ref === nothing && continue
     local array::SC.IR.ComponentRef = SC.IR.upToFirstSubscripted(ref)
     #= an element of the array: subscripted on its last part only =#

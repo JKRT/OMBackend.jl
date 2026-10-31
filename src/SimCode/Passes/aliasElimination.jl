@@ -518,7 +518,7 @@ function eliminateRHSEquivalentEquations(simCode::SIM_CODE)::SIM_CODE
       local name = crefName(v.cref)
       (j == best || name == repName || name in shared || name in claimed || name in representatives) && continue
       local sv = last(ht[name])
-      (sv.cref !== nothing && isComplexPartCref(sv.cref)) && continue
+      (sv.ref !== nothing && isComplexPartCref(sv.ref)) && continue
       isStateSelectAlways(sv) && continue
       (name in irreducible && !(representative.varKind isa STATE && sv.varKind isa STATE)) && continue
       local n = xor(negated, repNegated)

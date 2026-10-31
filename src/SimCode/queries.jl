@@ -63,16 +63,16 @@ derivativeKeys(ht::HT)::Dict{String, String} =
   Dict{String, String}(v.varKind.varName => k for (k, (_, v)) in ht if v.varKind isa STATE_DERIVATIVE)
 
 "A variable with another category."
-withKind(v::SIMVAR, k::SimVarType)::SIMVAR = SIMVAR(v.name, v.index, k, v.attributes, v.elementType, v.irKind, v.irOrigin, v.cref)
+withKind(v::SIMVAR, k::SimVarType)::SIMVAR = SIMVAR(v.name, v.index, k, v.attributes, v.elementType, v.irKind, v.irOrigin, v.ref)
 "A variable with the index `index` (and the category `k`)."
 withIndex(v::SIMVAR, index::Int, k::SimVarType = v.varKind)::SIMVAR =
-  SIMVAR(v.name, index, k, v.attributes, v.elementType, v.irKind, v.irOrigin, v.cref)
+  SIMVAR(v.name, index, k, v.attributes, v.elementType, v.irKind, v.irOrigin, v.ref)
 "A variable with the IR reference `cref`."
 withCref(v::SIMVAR, cref::Union{Nothing, IR.ComponentRef})::SIMVAR =
   SIMVAR(v.name, v.index, v.varKind, v.attributes, v.elementType, v.irKind, v.irOrigin, cref)
 "A variable with the attributes `a`."
 withAttributes(v::SIMVAR, a::SimVarAttributes)::SIMVAR =
-  SIMVAR(v.name, v.index, v.varKind, a, v.elementType, v.irKind, v.irOrigin, v.cref)
+  SIMVAR(v.name, v.index, v.varKind, a, v.elementType, v.irKind, v.irOrigin, v.ref)
 
 hasStructuralTransitions(sc::SIM_CODE)::Bool = !isempty(sc.structuralTransitions)
 hasSubModels(sc::SIM_CODE)::Bool = !isempty(sc.subModels)
@@ -216,7 +216,7 @@ function deadStateNames(simCode::SIM_CODE)::Vector{String}
   local names::Set{String} = Set{String}(crefName(c) for c in derived)
   local bases::Set{Symbol} = Set{Symbol}(arrayBase(c.ref) for c in derived if c.ref !== nothing)
   return String[v.name for (_, (_, v)) in simCode.stringToSimVarHT
-                if v.varKind isa STATE && !(v.name in names) && !(v.cref !== nothing && something(elementArray(simCode, v.name), v.cref.name) in bases)]
+                if v.varKind isa STATE && !(v.name in names) && !(v.ref !== nothing && something(elementArray(simCode, v.name), v.ref.name) in bases)]
 end
 
 """
