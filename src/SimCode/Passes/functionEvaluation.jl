@@ -512,11 +512,15 @@ function interpretStatements!(body::Vector{Statement}, env::Env, ctx::Interpreta
       r isa RANGE || throw(InterpretationBail())
       local (a, st, b) = (interpret(r.start, env, ctx), r.step === nothing ? 1 : interpret(r.step, env, ctx), interpret(r.stop, env, ctx))
       (a isa Integer && st isa Integer && b isa Integer && st != 0) || throw(InterpretationBail())
+      #= the iterator is the loop's own: a variable of its name is hidden in the body, not changed =#
+      local iterator::IR.ComponentRef = IR.ComponentRef(s.iterator.name)
+      local hidden = get(env, iterator, missing)
       for i in a:st:b
         step!(ctx)
-        env[IR.ComponentRef(s.iterator.name)] = i
+        env[iterator] = i
         interpretStatements!(s.body, env, ctx)
       end
+      hidden === missing ? delete!(env, iterator) : (env[iterator] = hidden)
     elseif s isa ASSERT
       local holds = try
         truthOf(interpret(s.condition, env, ctx))

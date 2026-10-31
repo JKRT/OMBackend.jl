@@ -805,16 +805,20 @@ The fields of an element of an array of records, `u[k]`, as `u_re[k]`, `u_im[k]`
 field arrays, indexed alike); `nothing` for another expression. Scalar fields only.
 """
 function _recordElementFieldExps(exp::SC.Exp)::Union{Nothing, Vector{SC.Exp}}
-  local (array, subs, ty) = if exp isa SC.EXP_CREF && !isempty(exp.cref.subs)
-    (SC.IR.withoutLastSubscripts(SC.irRef(exp.cref)), Any[s for s in exp.cref.subs], exp.ty)
+  local ty::SC.SType = if exp isa SC.EXP_CREF && !isempty(exp.cref.subs)
+    exp.ty
   elseif exp isa SC.ASUB && exp.exp isa SC.EXP_CREF && isempty(exp.exp.cref.subs)
-    (SC.irRef(exp.exp.cref), Any[s for s in exp.subs], SC.typeOf(exp))
+    SC.typeOf(exp)
   else
     return nothing
   end
-  local t = ty isa SC.TYPE_COMPLEX ? ty : nothing
+  local t::Union{Nothing, SC.TYPE_COMPLEX} = ty isa SC.TYPE_COMPLEX ? ty : nothing
   (t === nothing || !t.isRecord || isempty(t.fieldNames)) && return nothing
   all(ft -> !(ft isa SC.TYPE_ARRAY) && isempty(_recordFieldNames(ft)), t.fieldTypes) || return nothing
+  #= the array of records: an element's reference without the element's subscripts (on its last part) =#
+  local (array::SC.IR.ComponentRef, subs::Vector{Any}) = exp isa SC.EXP_CREF ?
+    (SC.IR.withoutLastSubscripts(SC.irRef(exp.cref)), Any[s for s in exp.cref.subs]) :
+    (SC.irRef(((exp::SC.ASUB).exp::SC.EXP_CREF).cref), Any[s for s in (exp::SC.ASUB).subs])
   return SC.Exp[_fieldElement(SC.fieldCref(array, n), subs, ft) for (n, ft) in zip(t.fieldNames, t.fieldTypes)]
 end
 

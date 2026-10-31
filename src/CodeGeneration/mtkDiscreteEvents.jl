@@ -1602,15 +1602,20 @@ The variables a when body assigns or reinitializes, by the arrays of their refer
 """
 function _writtenArrays(statements::Vector{SC.Statement})::Vector{SC.IR.ComponentRef}
   local out::Vector{SC.IR.ComponentRef} = SC.IR.ComponentRef[]
-  local written!::Function = (c::SC.SimCref) -> (c.ref === nothing || push!(out, SC.IR.upToFirstSubscripted(c.ref)); nothing)
   for s in statements
     if s isa SC.ASSIGN
-      SC.foreachExp(x::SC.Exp -> (x isa Union{SC.EXP_CREF, SC.DER, SC.PRE} && written!(x.cref); nothing), s.left)
+      SC.foreachExp(x::SC.Exp -> (x isa Union{SC.EXP_CREF, SC.DER, SC.PRE} && _writtenArray!(out, x.cref); nothing), s.left)
     elseif s isa SC.REINIT
-      written!(s.stateVar)
+      _writtenArray!(out, s.stateVar)
     end
   end
   return out
+end
+
+"The array of the reference `c` (`upToFirstSubscripted`), pushed onto `out`; nothing for one without an IR reference."
+function _writtenArray!(out::Vector{SC.IR.ComponentRef}, c::SC.SimCref)::Nothing
+  c.ref === nothing || push!(out, SC.IR.upToFirstSubscripted(c.ref))
+  return nothing
 end
 
 """

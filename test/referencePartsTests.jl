@@ -32,7 +32,14 @@ import OMBackend
     @test IRp.crefsOverlap(ref(part(:r, [1])), ref(part(:r, [1]), part(:x)))
     @test !IRp.crefsOverlap(ref(part(:buf, [1])), ref(part(:buf, [12])))
     @test !IRp.crefsOverlap(ref(part(:x)), ref(part(:xy)))
-    @test !IRp.crefsOverlap(ref(part(:m, [1])), ref(part(:m, [1, 2])))
+    #= a row covers its elements; a member of rolled components by its member name =#
+    @test IRp.crefsOverlap(ref(part(:m, [1])), ref(part(:m, [1, 2])))
+    @test !IRp.crefsOverlap(ref(part(:m, [2])), ref(part(:m, [1, 2])))
+    @test IRp.crefsOverlap(ref(part(:r), part(:a, [2])), ref(part(:r), part(:a, [2]), part(:b)))
+    @test !IRp.crefsOverlap(ref(part(:r), part(:a, [2])), ref(part(:r), part(:a, [3]), part(:b)))
+    local members = IRp.T_COMPONENTS(:C, [:c1, :c2])
+    @test IRp.crefsOverlap(ref(IRp.CrefPart(:c, IRp.Subscript[IRp.INDEX(IRp.INTEGER(2))], members), part(:x)), ref(part(:c2), part(:x)))
+    @test !IRp.crefsOverlap(ref(IRp.CrefPart(:c, IRp.Subscript[IRp.INDEX(IRp.INTEGER(1))], members), part(:x)), ref(part(:c2), part(:x)))
   end
 
   @testset "an algorithm's wholes; the arrays equations constrain" begin

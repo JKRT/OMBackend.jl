@@ -1167,16 +1167,59 @@ withoutLastSubscripts(c::ComponentRef)::ComponentRef = withLastSubscripts(c, Sub
     crefsOverlap(a, b)
 
 Whether the references `a` and `b` name the same variable or one a part of the other (`buf` and
-`buf[2]`, `r` and `r.x`), by their parts: the shorter's are the longer's first ones, its last part
-not subscripted or subscripted as the longer's.
+`buf[2]`, `r` and `r.x`, a row `m[1]` and its element `m[1,2]`), by their parts: the shorter's are the
+longer's first ones (`samePart`), its last part of the longer's name, one of the two not subscripted or
+its subscripts the other's first ones (a member of rolled components as that member).
 """
 function crefsOverlap(a::ComponentRef, b::ComponentRef)::Bool
   local (short::ComponentRef, long::ComponentRef) = length(a.parts) <= length(b.parts) ? (a, b) : (b, a)
   local n::Int = length(short.parts)
-  (n == 1 || ComponentRef(short.parts[1:n - 1]) == ComponentRef(long.parts[1:n - 1])) || return false
+  for k in 1:n - 1
+    samePart(short.parts[k], long.parts[k]) || return false
+  end
   local (s::CrefPart, l::CrefPart) = (short.parts[n], long.parts[n])
   s.name === l.name || return false
-  return isempty(s.subscripts) || flatName(CrefPart[s]) === flatName(CrefPart[l])
+  (isempty(s.subscripts) || isempty(l.subscripts)) && return true
+  (memberName(s) !== nothing || memberName(l) !== nothing) && return samePart(s, l)
+  sliceInner(s) == sliceInner(l) || return false
+  return sameSubscripts(s.subscripts, l.subscripts, min(length(s.subscripts), length(l.subscripts)))
+end
+
+"""
+    samePart(p, q)
+
+Whether the parts `p` and `q` print alike in a flat name (`flatName`): the same member of rolled components (a part
+named as the member alike), else the same name, slice and subscripts; literal subscripts compared by value, without
+printing.
+"""
+function samePart(p::CrefPart, q::CrefPart)::Bool
+  local (mp::Union{Nothing, Symbol}, mq::Union{Nothing, Symbol}) = (memberName(p), memberName(q))
+  (mp !== nothing || mq !== nothing) &&
+    return printsAsName(p, mp) && printsAsName(q, mq) && something(mp, p.name) === something(mq, q.name)
+  p.name === q.name && sliceInner(p) == sliceInner(q) && length(p.subscripts) == length(q.subscripts) || return false
+  return sameSubscripts(p.subscripts, q.subscripts, length(p.subscripts))
+end
+
+"Whether the part `p` (its member name `member`, `memberName`) prints as a name alone: a member, or a part without subscripts or slice."
+printsAsName(p::CrefPart, member::Union{Nothing, Symbol})::Bool = member !== nothing || (isempty(p.subscripts) && !(p.ty isa T_SLICE))
+
+"A slice's inner subscripts (`T_SLICE`); `nothing` for another part."
+sliceInner(p::CrefPart)::Union{Nothing, Vector{Int}} = p.ty isa T_SLICE ? (p.ty::T_SLICE).inner : nothing
+
+"Whether the first `n` subscripts of `a` and `b` print alike: literal Integer and Boolean indices by value, another by its printed form."
+function sameSubscripts(a::Vector{Subscript}, b::Vector{Subscript}, n::Int)::Bool
+  for k in 1:n
+    local (s::Subscript, t::Subscript) = (a[k], b[k])
+    local (x::Union{Nothing, Expression}, y::Union{Nothing, Expression}) = (s isa INDEX ? s.exp : nothing, t isa INDEX ? t.exp : nothing)
+    if x isa INTEGER && y isa INTEGER
+      x.value == y.value || return false
+    elseif x isa BOOLEAN && y isa BOOLEAN
+      x.value == y.value || return false
+    else
+      sprint(_printSubscriptInName, s) == sprint(_printSubscriptInName, t) || return false
+    end
+  end
+  return true
 end
 
 "The element `index` (literal Integer indices) of the array reference `c`: `c` with them after its last part's subscripts (`x[1,2]` of `x`)."
@@ -1295,6 +1338,11 @@ struct FunctionVariable <: Node
   binding::Union{Nothing, Expression}
   fieldBindings::Vector{Pair{Symbol, Expression}}
   cref::ComponentRef
+  function FunctionVariable(name::Symbol, ty::ModelicaType, binding::Union{Nothing, Expression},
+                            fieldBindings::Vector{Pair{Symbol, Expression}}, cref::ComponentRef)
+    name === cref.name || error("FunctionVariable $(name): its reference names $(cref.name)")
+    return new(name, ty, binding, fieldBindings, cref)
+  end
 end
 
 FunctionVariable(name::Symbol, ty::ModelicaType, binding::Union{Nothing, Expression}, fieldBindings::Vector{Pair{Symbol, Expression}}) =

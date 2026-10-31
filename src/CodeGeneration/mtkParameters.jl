@@ -364,9 +364,10 @@ function createArrayParameterPrelude(simCode::SC.SIM_CODE)::Vector{Expr}
     return exprs
   end
 
-  local emitted = OrderedSet{String}()
-  for (varName, (_, simVar)) in ht
-    local bindExp = simVar.varKind isa SC.ARRAY_PARAMETER ? simVar.varKind.bindExp : nothing
+  local emitted::OrderedSet{String} = OrderedSet{String}()
+  for (varName::String, entry::Tuple{Int, SC.SIMVAR}) in ht
+    local simVar::SC.SIMVAR = last(entry)
+    local bindExp::Union{Nothing, SC.Exp} = simVar.varKind isa SC.ARRAY_PARAMETER ? simVar.varKind.bindExp : nothing
     bindExp === nothing && continue
     varName ∈ neededBases || continue
     varName ∈ emitted && continue
@@ -382,8 +383,9 @@ function createArrayParameterPrelude(simCode::SC.SIM_CODE)::Vector{Expr}
 
   #= A needed array whose elements are the variables (scalarized parameters): the elements by
      their references' indices, the array by its reference's identifier. =#
-  local scalarGroups = Dict{String, Vector{Tuple{Vector{Int}, Any, Int}}}()
-  for (_, (_, simVar)) in ht
+  local scalarGroups::Dict{String, Vector{Tuple{Vector{Int}, Any, Int}}} = Dict{String, Vector{Tuple{Vector{Int}, Any, Int}}}()
+  for (_, entry::Tuple{Int, SC.SIMVAR}) in ht
+    local simVar::SC.SIMVAR = last(entry)
     local ref::Union{Nothing, SC.IR.ComponentRef} = simVar.cref
     ref === nothing && continue
     local array::SC.IR.ComponentRef = SC.IR.upToFirstSubscripted(ref)
@@ -404,22 +406,22 @@ function createArrayParameterPrelude(simCode::SC.SIM_CODE)::Vector{Expr}
           (indices, val, length(indices)))
   end
 
-  for (baseName, entries) in scalarGroups
+  for (baseName::String, entries::Vector{Tuple{Vector{Int}, Any, Int}}) in scalarGroups
     baseName ∈ emitted && continue
-    local nDims = entries[1][3]
+    local nDims::Int = entries[1][3]
     all(e -> e[3] == nDims, entries) || continue
-    local maxIdx = zeros(Int, nDims)
+    local maxIdx::Vector{Int} = zeros(Int, nDims)
     for (idxs, _, _) in entries
       for d in 1:nDims
         maxIdx[d] = max(maxIdx[d], idxs[d])
       end
     end
-    local expectedCount = prod(maxIdx)
+    local expectedCount::Int = prod(maxIdx)
     length(entries) == expectedCount || continue
     local elemType = isa(entries[1][2], Bool) ? Bool :
                      isa(entries[1][2], Integer) ? Int : Float64
     local arr = Array{elemType}(undef, maxIdx...)
-    local complete = true
+    local complete::Bool = true
     for (idxs, val, _) in entries
       try
         arr[idxs...] = val
@@ -529,7 +531,7 @@ function _recordArrayFieldArrays(dataStructureVariables::Vector{String}, simCode
   local elements::OrderedDict{SC.IR.ComponentRef, Dict{Int, Vector{String}}} = OrderedDict{SC.IR.ComponentRef, Dict{Int, Vector{String}}}()
   for ds in dataStructureVariables
     local simVar::SC.SIMVAR = last(ht[ds])
-    local bindExp = simVar.varKind isa SC.DATA_STRUCTURE ? simVar.varKind.bindExp : nothing
+    local bindExp::Union{Nothing, SC.Exp} = simVar.varKind isa SC.DATA_STRUCTURE ? simVar.varKind.bindExp : nothing
     bindExp isa SC.RECORD || continue
     local ref::SC.IR.ComponentRef = SC.irRef(simVar)
     local subscripts::Vector{SC.IR.Subscript} = SC.IR.subscripts(ref)

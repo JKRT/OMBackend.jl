@@ -48,7 +48,6 @@ import ...SimCode
 import ...OMBackend
 import ..AlgorithmicCodeGeneration
 import ...@BACKEND_LOGGING
-import ...COMPONENT_SEPARATOR
 
 import Symbolics
 import Symbolics.RuntimeGeneratedFunctions
@@ -679,21 +678,21 @@ end
   in it: by the keys' hashes, an edit of the code generator reordered them).
 """
 function extractCommonHvcats(equations::Vector)
-  local allHvcats = OrderedDict{String, Int}()
-  local hvcatExprs = Dict{String, Expr}()
+  local allHvcats::OrderedDict{String, Int} = OrderedDict{String, Int}()
+  local hvcatExprs::Dict{String, Expr} = Dict{String, Expr}()
   for eq in equations
-    local found = Dict{String, Bool}()
+    local found::Dict{String, Bool} = Dict{String, Bool}()
     _collectHvcats!(eq, allHvcats, hvcatExprs, found)
   end
-  local duplicates = filter(p -> p.second >= 2, allHvcats)
+  local duplicates::OrderedDict{String, Int} = filter(p -> p.second >= 2, allHvcats)
   if isempty(duplicates)
     return equations, Expr[]
   end
-  local replacements = Dict{String, Symbol}()
-  local preamble = Expr[]
-  local idx = 0
-  for (key, _) in duplicates
-    local varName = Symbol("_hv_", idx)
+  local replacements::Dict{String, Symbol} = Dict{String, Symbol}()
+  local preamble::Vector{Expr} = Expr[]
+  local idx::Int = 0
+  for (key::String, _) in duplicates
+    local varName::Symbol = Symbol("_hv_", idx)
     replacements[key] = varName
     push!(preamble, :(local $varName = $(hvcatExprs[key])))
     idx += 1

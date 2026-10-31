@@ -152,11 +152,11 @@ end
 
 A reference to a simulation variable: its key (`body_frame_a_r_0`, `x[2]`), for an element of an
 array variable kept as an array the integer subscripts, and the IR reference it was lowered from
-(`ref`: the variable's, an element's with its subscripts, a record's field's), by whose parts every
-structural question is answered (the array an element is of, a record's field). The key is derived
-from it (`derivedKey`), except a collision's renamed key (`collidingNames`) and a state's derivative's
-`der(x)`, until both go (step 9b). Equal by key and subscripts: a single `===` on the symbol compares
-names. `ref` is `nothing` only for a function's flattened local the code generators make, and in tests.
+(`ref`: the variable's, an element's with its subscripts, a record's field's, a function's local's), by
+whose parts every structural question is answered (the array an element is of, a record's field). The
+key is the reference's flat name (`refKey`; a function's local's its identifier, `derivedKey`); in the
+code view (`codeView`) the identifier. Equal by key and subscripts: a single `===` on the symbol compares
+names. `ref` is `nothing` only in tests.
 """
 struct SimCref
   sym::Symbol
@@ -164,10 +164,10 @@ struct SimCref
   ref::Union{Nothing, IR.ComponentRef}
 end
 
-"A reference by its key alone, without its IR reference: tests, the code generators' function locals."
+"A reference by its key alone, without its IR reference: tests."
 SimCref(sym::Symbol) = SimCref(sym, Int[], nothing)
 
-"The IR reference of `c`; an error naming its key if it has none (a code generator's function local)."
+"The IR reference of `c`; an error naming its key if it has none (a test's)."
 irRef(c::SimCref)::IR.ComponentRef =
   c.ref === nothing ? error("SimCode reference $(c.sym) has no IR reference") : c.ref
 

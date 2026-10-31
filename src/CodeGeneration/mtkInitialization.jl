@@ -491,34 +491,41 @@ function _initAlgStartValue(sv::SC.SIMVAR, simCode::SC.SIM_CODE)::Float64
   return v === nothing ? _readStartAttributeAsLiteral(sv) : v
 end
 
+"The element variables of one-dimensional arrays by the arrays' identifiers (`_arrayElementIndex`)."
+const ArrayElements = Dict{String, Vector{Tuple{String, Int}}}
+
 """
-The element variables of the array whose identifier is `name`, each with its one literal index (`x[1]`, `x[2]` of `x`;
-a 2-D array's not matched), in the order of their indices: the variables whose references are subscripted on their
-last part only by it, the reference without it having that identifier.
+    _arrayElementIndex(simCode) -> ArrayElements
+
+The element variables of the one-dimensional arrays, each with its one literal index (`x[1]`, `x[2]` of `x`; a 2-D
+array's not), in the order of their indices, by the array's identifier: the variables whose references are subscripted
+on their last part only, by one index, the reference without it the array's. One pass over the variables.
 """
-function _arrayElementVariables(name::String, simCode::SC.SIM_CODE)::Vector{Tuple{String, Int}}
-  local out::Vector{Tuple{String, Int}} = Tuple{String, Int}[]
+function _arrayElementIndex(simCode::SC.SIM_CODE)::ArrayElements
+  local index::ArrayElements = ArrayElements()
   for (key::String, entry::Tuple{Int, SC.SIMVAR}) in simCode.stringToSimVarHT
     local ref::Union{Nothing, SC.IR.ComponentRef} = last(entry).cref
     (ref === nothing || SC.IR.memberName(ref.parts[end]) !== nothing) && continue
     local subscripts::Vector{SC.IR.Subscript} = SC.IR.subscripts(ref)
     length(subscripts) == 1 || continue
     local k::Union{Nothing, Int} = SC.IR.literalIndex(only(subscripts))
-    (k === nothing || SC.identifierOf(simCode, SC.IR.withoutLastSubscripts(ref)) != name) || push!(out, (key, k))
+    k === nothing && continue
+    push!(get!(Vector{Tuple{String, Int}}, index, SC.identifierOf(simCode, SC.IR.withoutLastSubscripts(ref))), (key, k))
   end
-  return sort!(out; by = last)
+  foreach(elements::Vector{Tuple{String, Int}} -> sort!(elements; by = last), values(index))
+  return index
 end
 
 """
 The non-parameter variables that the assignments to `lhsNames` set, as (assigned name,
 variable, index into the assigned value): the name itself (index nothing), or for an array
-its element variables by one index (`_arrayElementVariables`: `x := {1, 2, 3}`; a 2-D array's
-are not matched). A for loop's iterator (`iterators`, also among the assigned names) is no
-variable, even where an array of its name is. An array parameter is refused (captured as one
-number; none in MSL 3.2.3: 14 initial algorithms).
+its element variables by one index (`_arrayElementIndex`, made at the first array, or passed as
+`elements`: `x := {1, 2, 3}`; a 2-D array's are not matched). A for loop's iterator (`iterators`,
+also among the assigned names) is no variable, even where an array of its name is. An array
+parameter is refused (captured as one number; none in MSL 3.2.3: 14 initial algorithms).
 """
 function _initAlgTargets(lhsNames, simCode::SC.SIM_CODE, iterators::Set{String} = Set{String}();
-                         parameters::Bool = false)::Vector{Tuple{String, String, Union{Nothing, Int}}}
+                         parameters::Bool = false, elements::Union{Nothing, ArrayElements} = nothing)::Vector{Tuple{String, String, Union{Nothing, Int}}}
   local ht = simCode.stringToSimVarHT
   local out = Tuple{String, String, Union{Nothing, Int}}[]
   for name in lhsNames
@@ -527,7 +534,8 @@ function _initAlgTargets(lhsNames, simCode::SC.SIM_CODE, iterators::Set{String} 
     elseif name in iterators
       Tuple{String, Union{Nothing, Int}}[]
     else
-      Tuple{String, Union{Nothing, Int}}[(key, k) for (key, k) in _arrayElementVariables(name, simCode)]
+      elements === nothing && (elements = _arrayElementIndex(simCode))
+      Tuple{String, Union{Nothing, Int}}[(key, k) for (key, k) in get(elements, name, Tuple{String, Int}[])]
     end
     for (el, k) in elems
       local sv = last(ht[el])
@@ -848,11 +856,13 @@ function generateInitialAlgorithmEarlyFunction(simCode::SC.SIM_CODE)::Expr
      untaken branch leaves (an initial algorithm determines all its left-hand sides). An array,
      the vector of its elements' starts. =#
   local iterators = _initAlgIterators(simCode)
+  local elements::Union{Nothing, ArrayElements} = nothing
   for name in lhsNames
     local start = if haskey(ht, name)
       _initAlgStartValue(last(ht[name]), simCode)
     else
-      local elems = _initAlgTargets([name], simCode, iterators)
+      elements === nothing && (elements = _arrayElementIndex(simCode))
+      local elems = _initAlgTargets([name], simCode, iterators; elements)
       local starts = zeros(isempty(elems) ? 0 : maximum(last, elems))
       for (_, el, k) in elems
         starts[k] = _initAlgStartValue(last(ht[el]), simCode)

@@ -56,7 +56,6 @@ import ..CodeGeneration: lowerKnownSymbolicFunctionCall
 import ..MTKDump: dumpPreStructuralSimplifyExpr
 
 import ...@BACKEND_LOGGING
-import ...COMPONENT_SEPARATOR
 
 import Symbolics
 import Symbolics.RuntimeGeneratedFunctions
@@ -586,8 +585,8 @@ function _wholeArrayExpr(e::SC.EXP_CREF, simCode::SC.SIM_CODE)::Expr
   local ty = e.ty::SC.TYPE_ARRAY
   any(==(0), ty.dims) && return _emptyArrayExpr(ty)
   any(<(0), ty.dims) && OMBackend.unsupported("array dimension", e)
-  local name = SC.crefName(e.cref)
-  local lastElement = name * join("[$(d)]" for d in ty.dims)
+  local name::String = SC.crefName(e.cref)
+  local lastElement::String = SC.crefName(e.cref, ty.dims)
   haskey(simCode.stringToSimVarHT, lastElement) && return quote $(Symbol(name)) end
   local (aliasResolved, aliasExpr) = resolveAliasedCref(lastElement, simCode)
   if aliasResolved
@@ -595,11 +594,14 @@ function _wholeArrayExpr(e::SC.EXP_CREF, simCode::SC.SIM_CODE)::Expr
     return aliasExpr
   end
   length(ty.dims) <= 2 || OMBackend.unsupported("an array of more than two dimensions without variables", name)
-  local element::Function = (idx::Vector{Int}) -> expToJuliaExpMTK(SC.EXP_CREF(SC.SimCref(Symbol(name), idx,
-    e.cref.ref === nothing ? nothing : SC.IR.elementCref(e.cref.ref, idx)), ty.elementType), simCode)
-  length(ty.dims) == 1 && return Expr(:vect, (element([i]) for i in 1:ty.dims[1])...)
-  return Expr(:vcat, (Expr(:row, (element([i, j]) for j in 1:ty.dims[2])...) for i in 1:ty.dims[1])...)
+  length(ty.dims) == 1 && return Expr(:vect, (_wholeArrayElement(e, name, [i], simCode) for i in 1:ty.dims[1])...)
+  return Expr(:vcat, (Expr(:row, (_wholeArrayElement(e, name, [i, j], simCode) for j in 1:ty.dims[2])...) for i in 1:ty.dims[1])...)
 end
+
+"The element `idx` of the whole array `e` (named `name`: its identifier and subscripts), its reference the array's element's."
+_wholeArrayElement(e::SC.EXP_CREF, name::String, idx::Vector{Int}, simCode::SC.SIM_CODE)::Expr =
+  expToJuliaExpMTK(SC.EXP_CREF(SC.SimCref(Symbol(name), idx, e.cref.ref === nothing ? nothing : SC.IR.elementCref(e.cref.ref, idx)),
+                               (e.ty::SC.TYPE_ARRAY).elementType), simCode)
 
 function _emptyArrayExpr(ty::SC.TYPE_ARRAY)::Expr
   local elementType = ty.elementType isa SC.TYPE_INTEGER ? :Int : ty.elementType isa SC.TYPE_BOOL ? :Bool : :Float64
@@ -798,6 +800,10 @@ function _dynamicSubscriptLookup(ref::SC.IR.ComponentRef, subs::Vector{SC.Exp}, 
   return _dynamicElementLookup(array, index, SC.IR.CrefPart[], simCode)
 end
 
+"The identifier of the element `index` of the array reference `array` followed by the parts `fields` (`identifierOf`)."
+_elementIdentifier(simCode::SC.SIM_CODE, array::SC.IR.ComponentRef, index::Vector{Int}, fields::Vector{SC.IR.CrefPart})::String =
+  SC.identifierOf(simCode, SC.IR.ComponentRef(SC.IR.CrefPart[SC.IR.elementCref(array, index).parts; fields]))
+
 "A subscript as `_dynamicElementLookup`'s index: a literal Integer's value, a variable's symbol; nothing for another."
 function _dynamicIndex(s::SC.IR.Subscript, simCode::SC.SIM_CODE)::Union{Nothing, Int, Symbol}
   local i::Union{Nothing, Int} = SC.IR.literalIndex(s)
@@ -820,19 +826,17 @@ function _dynamicElementLookup(array::SC.IR.ComponentRef, index::Vector{Union{In
                                simCode::SC.SIM_CODE)::Union{Expr, Nothing}
   all(i -> i isa Int, index) && return nothing
   local ht::SC.HT = simCode.stringToSimVarHT
-  local name::Function = (I::Vector{Int}) ->
-    SC.identifierOf(simCode, SC.IR.ComponentRef(SC.IR.CrefPart[SC.IR.elementCref(array, I).parts; fields]))
   #= the extent of each dimension: the elements along it from 1 =#
   local dims::Vector{Int} = Int[]
   for d in eachindex(index)
     local n::Int = 0
-    while haskey(ht, name(Int[j == d ? n + 1 : 1 for j in eachindex(index)]))
+    while haskey(ht, _elementIdentifier(simCode, array, Int[j == d ? n + 1 : 1 for j in eachindex(index)], fields))
       n += 1
     end
     n == 0 && return nothing
     push!(dims, n)
   end
-  local names::Array{String} = map(I::CartesianIndex -> name(collect(Int, Tuple(I))), CartesianIndices(Tuple(dims)))
+  local names::Array{String} = map(I::CartesianIndex -> _elementIdentifier(simCode, array, collect(Int, Tuple(I)), fields), CartesianIndices(Tuple(dims)))
   local table::Union{Nothing, Array{Float64}} = _knownValues(names, simCode)
   table === nothing || return :(OMBackend.CodeGeneration.constTableLookup($(table), $(index...)))
   local dynamic::Vector{Int} = findall(i -> !(i isa Int), index)
@@ -840,7 +844,7 @@ function _dynamicElementLookup(array::SC.IR.ComponentRef, index::Vector{Union{In
   local d::Int = only(dynamic)
   local symbols::Vector{Symbol} = Symbol[]
   for k in 1:dims[d]
-    local entry::Union{Nothing, Tuple{Int, SC.SIMVAR}} = get(ht, name(Int[j == d ? k : index[j]::Int for j in eachindex(index)]), nothing)
+    local entry::Union{Nothing, Tuple{Int, SC.SIMVAR}} = get(ht, _elementIdentifier(simCode, array, Int[j == d ? k : index[j]::Int for j in eachindex(index)], fields), nothing)
     entry === nothing && return nothing
     push!(symbols, Symbol(last(entry).name))
   end

@@ -133,8 +133,7 @@ function flattenRecordParameters(fn::IR.ModelicaFunction)::FlattenedFunction
   fn.external === nothing || return FlattenedFunction(fn, nInputs)
   local fields = RecordFields()
   local inputs = reduce(vcat, (flattenRecordVariable(v, fields) for v in fn.inputs); init = IR.FunctionVariable[])
-  local inputNames = Set{Symbol}(v.name for v in fn.inputs)
-  local outputs = reduce(vcat, (flattenRecordVariable(v, fields; output = true, inputNames) for v in fn.outputs);
+  local outputs = reduce(vcat, (flattenRecordVariable(v, fields; output = true) for v in fn.outputs);
                          init = IR.FunctionVariable[])
   for l in fn.locals
     local lf = localRecordArrayFields(l)
@@ -158,7 +157,7 @@ recordTypeOf(ty::IR.ModelicaType)::Union{Nothing, IR.T_RECORD} =
   ty isa IR.T_RECORD ? ty : ty isa IR.T_ARRAY && ty.elementType isa IR.T_RECORD ? ty.elementType : nothing
 
 """
-    flattenRecordVariable(v, fields; output, inputNames)
+    flattenRecordVariable(v, fields; output)
 
 A record variable as its fields' variables (`r.a`, ...; of a record array of its dimensions
 and the field's), its fields recorded in `fields`; another variable with its dimensions and
@@ -166,8 +165,7 @@ binding flattened. An output field starts at its value of the record's binding (
 value's or a constructor call's element, else the field of the value), else at its field
 binding (MLS 12.4.4).
 """
-function flattenRecordVariable(v::IR.FunctionVariable, fields::RecordFields; output::Bool = false,
-                               inputNames::Set{Symbol} = Set{Symbol}())::Vector{IR.FunctionVariable}
+function flattenRecordVariable(v::IR.FunctionVariable, fields::RecordFields; output::Bool = false)::Vector{IR.FunctionVariable}
   local rec = recordTypeOf(v.ty)
   rec === nothing && return IR.FunctionVariable[flattenedVariable(v, fields)]
   local recordDims = IR.Dimension[flattenedDimension(d, fields) for d in IR.dimensions(v.ty)]
@@ -198,7 +196,7 @@ isConstructorCall(e::IR.CALL)::Bool = e.ty isa IR.T_RECORD && e.ty.name === e.na
 
 "A variable with the records in its dimensions and binding flattened (`m = size(u, 1)`)."
 flattenedVariable(v::IR.FunctionVariable, fields::RecordFields)::IR.FunctionVariable =
-  IR.FunctionVariable(v.name, flattenedType(v.ty, fields), v.binding === nothing ? nothing : flattenedExpression(v.binding, fields),
+  IR.FunctionVariable(v.cref, flattenedType(v.ty, fields), v.binding === nothing ? nothing : flattenedExpression(v.binding, fields),
                       v.fieldBindings)
 
 flattenedType(ty::IR.T_ARRAY, fields::RecordFields)::IR.ModelicaType =
