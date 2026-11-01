@@ -570,8 +570,9 @@ end
     reduceIndexArrays!(model) -> Bool
 
 Index reduction of an arrays-kept model in array form: planned on its element view (`scalarizeArrays`, `knownPlan`),
-committed in array form (`arrayCommit`, `commitArrays!`); true where reduced. False where the model has no
-continuous arrays or needs no reduction. An array whose elements the plan treats differently (slicing) is split into
+committed in array form (`arrayCommit`, `commitArrays!`); true where reduced. A model of index 1 is committed with
+the plan that differentiates nothing (its states, their derivative variables and links in array form, as the array
+code reads them): false. False, the model not changed, where it has no continuous arrays. An array whose elements the plan treats differently (slicing) is split into
 its elements first (`splitArrays!`), and the plan committed again. NotHandled where the array form does not take the
 plan (der() of an expression, a split down to no array equations: the caller takes the scalarized path and discards
 the model, which a split may have changed).
@@ -581,8 +582,7 @@ function reduceIndexArrays!(model::IR.Model)::Bool
   any(readsDerCall, model.continuous[1].equations) && throw(NotHandled("der() of an expression with arrays kept"))
   local view::Scalarized = scalarizeArrays(model)
   local partition::IR.Partition = view.model.continuous[1]
-  local written::Union{Nothing, Plan} = plan(view.model, partition)
-  written === nothing && return false
+  local written::Plan = plan(view.model, partition; indexOne = true)
   #= the array form of the plan as written first: a plan it does not take is refused before the simulation code's
      values are computed for the plan again (`knownPlan`). Arrays whose elements it treats differently (slicing) are
      split into their elements, until it takes it. The element view stays (the splits keep the model's meaning), so
@@ -596,8 +596,7 @@ function reduceIndexArrays!(model::IR.Model)::Bool
     try
       arrayCommit(model, model.continuous[1], view, written)
       stale || break
-      written = plan(view.model, partition)
-      written === nothing && return false
+      written = plan(view.model, partition; indexOne = true)
       stale = false
       arrayCommit(model, model.continuous[1], view, written)
       break
@@ -617,9 +616,36 @@ function reduceIndexArrays!(model::IR.Model)::Bool
       stale = true
     end
   end
+  return commitArrayPlan!(model, view, written)
+end
+
+"""
+    commitIndexOne!(model) -> Bool
+
+A model without continuous arrays (on the arrays-kept route, for the array code) of index 1 committed as
+`reduceIndexArrays!` commits one: the plan that differentiates nothing, its states, their derivative variables and
+links. False, the model not changed, where its index is above one (the scalarized path reduces it).
+"""
+function commitIndexOne!(model::IR.Model)::Bool
+  any(readsDerCall, model.continuous[1].equations) && throw(NotHandled("der() of an expression"))
+  local view::Scalarized = scalarizeArrays(model)
+  local written::Plan = plan(view.model, view.model.continuous[1]; indexOne = true)
+  isempty(written.differentiated) || return false
+  commitArrayPlan!(model, view, written)
+  return true
+end
+
+"""
+    commitArrayPlan!(model, view, written) -> Bool
+
+The plan `written`, made on the element view `view` of `model` and taken by its array form, made again with the
+simulation code's values (`KNOWN_VALUES`) and committed in array form (`arrayCommit`, `commitArrays!`), the
+derivative unknowns solved for; whether it reduced the index (differentiated equations).
+"""
+function commitArrayPlan!(model::IR.Model, view::Scalarized, written::Plan)::Bool
   local known = KNOWN_VALUES[] === nothing ? Dict{Symbol, IR.Expression}() : KNOWN_VALUES[](view.model)
-  local p = isempty(known) ? written : plan(view.model, partition; known)
-  p === nothing && return false
+  local p::Plan = isempty(known) ? written : plan(view.model, view.model.continuous[1]; known, indexOne = true)
+  local reduced::Bool = !isempty(p.differentiated)
   local c = arrayCommit(model, model.continuous[1], view, p)
   commitArrays!(model, model.continuous[1], c)
   #= the derivative unknowns solved for, as on the scalarized path (`reduceIndex!`): left algebraic unknowns, MSL
@@ -629,6 +655,6 @@ function reduceIndexArrays!(model::IR.Model)::Bool
   local stateText = isempty(states) ? "" : ", states $(join(first(states, 8), ", "))"
   local setText = c.sets == 0 ? "" : ", $(c.sets) dynamic state set$(c.sets == 1 ? "" : "s")"
   local solvedText = isempty(solved) ? "" : "; $(length(solved)) derivatives solved for"
-  @info "[index reduction] $(model.name): in array form, $(length(c.equations)) equations added$(stateText)$(setText)$(solvedText)"
-  return true
+  @info "[index reduction] $(model.name): $(reduced ? "" : "of index 1, ")in array form, $(length(c.equations)) equations added$(stateText)$(setText)$(solvedText)"
+  return reduced
 end

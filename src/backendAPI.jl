@@ -270,8 +270,8 @@ const ARRAY_PATH_FULL = CodeGeneration.ArrayODEGen.FULL
 const ARRAY_ODE_MODELS = Set{String}()
 
 """
-The models (canonical names) whose index the last translate reduced in array form, their
-arrays kept until the simulation code (`arrayReducedModel`, OMBACKEND_ARRAY_INDEX_REDUCTION).
+The models (canonical names) the last translate lowered with their arrays kept until the simulation code
+(`reducedArrayModel`: the index reduced in array form where above one; OMBACKEND_ARRAY_INDEX_REDUCTION).
 """
 const ARRAY_REDUCED_MODELS = Set{String}()
 
@@ -541,12 +541,13 @@ end
     reducedArrayModel(fm; functionList = nothing) -> Union{Nothing, OMJLIR.Model}
 
 A flat model with arrays kept lowered with its arrays, through the passes (`runPassesKeepingArrays!`:
-its array equations as for-equations), its index reduced in array form
-(`Passes.IndexReduction.reduceIndexArrays!`): what the array code (`generateReducedArrayODETargetCode`)
-or the scalarized form (`scalarizedReducedModel`) is made from. `nothing` where the array form does
-not take the model (switched off, no for-equations or array equations over continuous arrays, index
-one, what it does not handle or the lowering does not support: logged; another error: a warning),
-the reason recorded (`declineArrayPath!`).
+its array equations as for-equations), its index reduced in array form where above one, its states
+committed in array form (`Passes.IndexReduction.reduceIndexArrays!`; a model without arrays to keep of
+index 1 the same, `commitIndexOne!`, for the array code only): what the array code
+(`generateReducedArrayODETargetCode`) or the scalarized form (`scalarizedReducedModel`) is made from.
+`nothing` where the array form does not take the model (switched off, no arrays to keep and of index
+above one, what it does not handle or the lowering does not support: logged; another error: a
+warning), the reason recorded (`declineArrayPath!`).
 """
 function reducedArrayModel(fm::OMFrontend.Frontend.FlatModel;
                            functionList::Union{Nothing, FunctionList} = nothing)::Union{Nothing, OMJLIR.Model}
@@ -559,20 +560,18 @@ function reducedArrayModel(fm::OMFrontend.Frontend.FlatModel;
   local reduction::Module = Passes.IndexReduction
   return _arrayReductionStep(fm, decline) do
     local lowered::OMJLIR.Model = LowerFlatModel.lowerFlatModel(fm; functions = something(functionList, MetaModelica.nil))
-    #= a model without for-equations or array equations over continuous arrays reduces as the scalarized one: the
-       passes not run for it; unless its separately declared components are rolled into arrays (OMBACKEND_ROLL_COMPONENTS) =#
+    #= arrays to keep: for-equations or array equations over continuous arrays, or separately declared components
+       rolled into arrays (OMBACKEND_ROLL_COMPONENTS) =#
     local roll::Bool = envSwitch("OMBACKEND_ROLL_COMPONENTS") && !isempty(reduction.componentGroups(lowered.variables))
-    if !roll && !(reduction.hasContinuousArrays(lowered) && reduction.hasArrayEquations(lowered))
-      decline("no for-equations or array equations over continuous arrays")
-      return nothing
-    end
+    local arrays::Bool = roll || (reduction.hasContinuousArrays(lowered) && reduction.hasArrayEquations(lowered))
     local model::OMJLIR.Model = Passes.runPassesKeepingArrays!(lowered)
-    if roll && reduction.rollComponents!(model) == 0 && !(reduction.hasContinuousArrays(model) && reduction.hasArrayEquations(model))
-      decline("no for-equations or array equations over continuous arrays, its components not rolled")
-      return nothing
-    end
-    if !reduction.reduceIndexArrays!(model)
-      decline("index 1, nothing to reduce")
+    (roll && reduction.rollComponents!(model) == 0) &&
+      (arrays = reduction.hasContinuousArrays(model) && reduction.hasArrayEquations(model))
+    if arrays
+      reduction.reduceIndexArrays!(model)
+    elseif !reduction.commitIndexOne!(model)
+      #= none to keep and of index above one: the model reduces as the scalarized one =#
+      decline("no for-equations or array equations over continuous arrays, of index above one")
       return nothing
     end
     model
@@ -585,11 +584,13 @@ end
 The model reduced in array form (`reducedArrayModel`; not changed) scalarized for the scalar
 simulation code (`scalarizeArrays`), its derivative unknowns solved for (`solveDerivatives!`,
 OMBACKEND_SOLVE_DERIVATIVES); recorded in ARRAY_REDUCED_MODELS. `nothing` where that fails (the
-reason recorded as `reducedArrayModel`'s).
+reason recorded as `reducedArrayModel`'s), and for a model without arrays to keep (committed for the array code
+only, `commitIndexOne!`): the frontend scalarizes it as before.
 """
 function scalarizedReducedModel(fm::OMFrontend.Frontend.FlatModel, reduced::OMJLIR.Model)::Union{Nothing, OMJLIR.Model}
   local decline::Function = (reason::String) -> declineArrayPath!(canonicalName(fm.name), "array index reduction", reason)
   local reduction::Module = Passes.IndexReduction
+  reduction.hasContinuousArrays(reduced) || return nothing
   local scalar::Union{Nothing, OMJLIR.Model} = _arrayReductionStep(fm, decline) do
     local s::OMJLIR.Model = reduction.scalarizeArrays(reduced).model
     envSwitch("OMBACKEND_SOLVE_DERIVATIVES") && reduction.solveDerivatives!(s, s.continuous[1])
