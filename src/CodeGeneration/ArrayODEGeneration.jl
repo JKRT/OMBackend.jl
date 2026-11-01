@@ -961,6 +961,20 @@ function _aliasTerms(c::EqClass)::Union{Nothing, Tuple{Ref, Ref, Bool}}
   return (x, y, n1 == n2)
 end
 
+"The variables the initial algorithms assign."
+function _initAlgAssigned(g::Gen)::Set{String}
+  local names::Set{String} = Set{String}()
+  local visit!::Function = function (stmts::Vector{Stmt})
+    for st in stmts
+      st isa SAssign && push!(names, st.target.name)
+      st isa SIf && foreach(b::Tuple{IR, Vector{Stmt}} -> visit!(b[2]), st.branches)
+      (st isa SFor || st isa SWhile) && visit!(st.body)
+    end
+  end
+  foreach(a::AlgClass -> visit!(a.body), g.initAlgs)
+  return names
+end
+
 "The variables algorithms (also initial ones) and when-equations assign."
 function _assignedNames(g::Gen)::Set{String}
   local names::Set{String} = Set{String}()
@@ -2725,11 +2739,11 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
   _OMBACKEND.envSwitch("OMBACKEND_ARRAY_TRACE") && println("[arraycode] ", nAliases, " alias variables read through their roots")
   local nChains::Int = _simplifySemiLinear!(g)
   (nChains > 0 && _OMBACKEND.envSwitch("OMBACKEND_ARRAY_TRACE")) && println("[arraycode] ", nChains, " semiLinear chain(s) rewritten (MLS 3.7.2.5)")
-  #= Every discrete variable is assigned in a when-equation. =#
-  #= Discrete variables not assigned in a when-equation are computed by equations: unknowns
-     of the system, kept in the discrete buffer (they change only at events: their
+  #= Discrete variables not assigned in a when-equation or an initial algorithm (which they keep between events) are
+     computed by equations: unknowns of the system, kept in the discrete buffer (they change only at events: their
      relations are fixed between events). =#
-  local assigned = Set{String}(t.name for w in g.whens for (kind, t, _) in w.body if kind == :assign)
+  local assigned::Set{String} = union(Set{String}(t.name for w in g.whens for (kind, t, _) in w.body if kind == :assign),
+                                      _initAlgAssigned(g))
   local nU = g.nStates + g.nAlg
   for (nm, info) in sort!(collect(g.vars); by = first)
     (info.kind == :discrete && !(nm in assigned)) || continue
@@ -2763,15 +2777,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
   local pattern = _jacobianPattern(el, matchRow, deps, g.nStates)
   local (initUnknowns, initBody, nInit, freeCols) = _initialization(g, deps, producer, fixedMask)
   #= initial algorithms: code, and what they assign (initial equations may not read it) =#
-  local initAlgOuts = Set{String}()
-  local collectOuts! = function (stmts)
-    for st in stmts
-      st isa SAssign && push!(initAlgOuts, st.target.name)
-      st isa SIf && foreach(b -> collectOuts!(b[2]), st.branches)
-      (st isa SFor || st isa SWhile) && collectOuts!(st.body)
-    end
-  end
-  foreach(ia -> collectOuts!(ia.body), g.initAlgs)
+  local initAlgOuts::Set{String} = _initAlgAssigned(g)
   for c in g.initClasses, r in accesses!(accesses!(Ref[], c.lhs), c.rhs)
     r.name in initAlgOuts && ns("initial equation reads $(r.name), which an initial algorithm assigns")
   end

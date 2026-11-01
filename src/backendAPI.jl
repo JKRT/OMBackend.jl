@@ -582,7 +582,8 @@ end
     scalarizedReducedModel(fm, reduced) -> Union{Nothing, OMJLIR.Model}
 
 The model reduced in array form (`reducedArrayModel`; not changed) scalarized for the scalar
-simulation code (`scalarizeArrays`), its derivative unknowns solved for (`solveDerivatives!`,
+simulation code (`scalarizeArrays`), its if-expressions left inline lifted (`liftIfExpressions!`), its
+derivative unknowns solved for (`solveDerivatives!`,
 OMBACKEND_SOLVE_DERIVATIVES); recorded in ARRAY_REDUCED_MODELS. `nothing` where that fails (the
 reason recorded as `reducedArrayModel`'s), and for a model without arrays to keep (committed for the array code
 only, `commitIndexOne!`): the frontend scalarizes it as before.
@@ -593,6 +594,9 @@ function scalarizedReducedModel(fm::OMFrontend.Frontend.FlatModel, reduced::OMJL
   reduction.hasContinuousArrays(reduced) || return nothing
   local scalar::Union{Nothing, OMJLIR.Model} = _arrayReductionStep(fm, decline) do
     local s::OMJLIR.Model = reduction.scalarizeArrays(reduced).model
+    #= the if-expressions the arrays-kept passes left inline (reading a for-equation's iterator), lifted as the
+       scalarized path lifts them =#
+    Passes.liftIfExpressions!(s)
     envSwitch("OMBACKEND_SOLVE_DERIVATIVES") && reduction.solveDerivatives!(s, s.continuous[1])
     s
   end

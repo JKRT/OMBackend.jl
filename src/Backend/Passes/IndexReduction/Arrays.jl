@@ -815,6 +815,81 @@ function rolledEquation(eq::IR.ARRAY_EQUATION, variables::IR.VariableSet)::IR.Eq
   return nestedFor(IR.Equation[body], sizes)
 end
 
+"""
+    splitStaticIfs!(model) -> Model
+
+The for-equations of `model`'s continuous partitions (arrays kept) with an if-equation in their body on the iterator
+alone (its conditions fold to literals at each of its values: `if i == 1 then ... else ... end if`): that if-equation
+as for-equations over the runs of values that take one branch, each with the branch's equations (`for i in 1:1`,
+`for i in 2:n`); the body's other equations stay in the for-equation. Index reduction and the derivatives' solve in
+array form read them as any for-equation's body.
+"""
+function splitStaticIfs!(model::IR.Model)::IR.Model
+  for p in model.continuous
+    p.equations = IR.Equation[x for eq in p.equations for x in staticIfsSplit(eq)]
+  end
+  return model
+end
+
+"The equation `eq` with its static if-equations split (`splitStaticIfs!`): itself, or the for-equations it becomes."
+function staticIfsSplit(eq::IR.Equation)::Vector{IR.Equation}
+  eq isa IR.FOR_EQUATION || return IR.Equation[eq]
+  local range::Union{Nothing, StepRange{Int, Int}} = literalRange(foldTree(eq.iterator.range))
+  range === nothing && return IR.Equation[eq]
+  local kept::Vector{IR.Equation} = IR.Equation[]
+  local split::Vector{IR.Equation} = IR.Equation[]
+  for b in eq.body
+    local taken::Union{Nothing, Vector{Int}} = b isa IR.IF_EQUATION ? staticBranches(b, eq.iterator.name, range) : nothing
+    if taken === nothing
+      push!(kept, b)
+      continue
+    end
+    local ifEq::IR.IF_EQUATION = b
+    for k in sort!(unique(taken))
+      local equations::Vector{IR.Equation} = k == 0 ? ifEq.elseEquations : ifEq.branches[k].equations
+      isempty(equations) && continue
+      for run in valueRuns(Int[v for (v, t) in zip(range, taken) if t == k])
+        local runRange::IR.RANGE = IR.RANGE(IR.INTEGER(first(run)), nothing, IR.INTEGER(last(run)),
+                                            IR.T_ARRAY(IR.T_INTEGER(), IR.Dimension[IR.DIM_SIZE(length(run))]))
+        push!(split, IR.FOR_EQUATION(IR.Iterator(eq.iterator.name, runRange), deepcopy(equations), eq.source, eq.attributes))
+      end
+    end
+  end
+  isempty(split) && return IR.Equation[eq]
+  isempty(kept) || pushfirst!(split, IR.FOR_EQUATION(eq.iterator, kept, eq.source, eq.attributes))
+  return split
+end
+
+"""
+The branch an if-equation takes at each value of the iterator `name` in `range` (its position; 0: the else), where its
+conditions are of literals there (`literalCondition`); `nothing` where one is not.
+"""
+function staticBranches(eq::IR.IF_EQUATION, name::Symbol, range::StepRange{Int, Int})::Union{Nothing, Vector{Int}}
+  local taken::Vector{Int} = Int[]
+  for v in range
+    local branch::Int = 0
+    for (k, b) in enumerate(eq.branches)
+      local c::Union{Nothing, Bool} = literalCondition(foldTree(withIterator(b.condition, name, v)))
+      c === nothing && return nothing
+      if c
+        branch = k
+        break
+      end
+    end
+    push!(taken, branch)
+  end
+  return taken
+end
+
+"The ascending `values` as runs of consecutive integers (`[1, 2, 3, 5]`: `1:3`, `5:5`)."
+function valueRuns(values::Vector{Int})::Vector{UnitRange{Int}}
+  local runs::Vector{UnitRange{Int}} = UnitRange{Int}[]
+  for v in values
+    (!isempty(runs) && last(runs[end]) == v - 1) ? (runs[end] = first(runs[end]):v) : push!(runs, v:v)
+  end
+  return runs
+end
+
 "Whether `e` reads a continuous array variable (a state, a derivative, an algebraic array), whole or by an element."
 readsContinuousArray(e::IR.Expression, variables::IR.VariableSet)::Bool =
   IR.anyExp(x -> x isa IR.CREF && isContinuousArray(get(variables, unsubscriptedName(x.cref), nothing)), e)
