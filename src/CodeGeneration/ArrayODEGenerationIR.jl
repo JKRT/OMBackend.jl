@@ -1014,6 +1014,55 @@ function _whenTargets!(out::Set{Symbol}, eq::OIR.Equation, variables::OIR.Variab
   return nothing
 end
 
+"""
+The lifted discrete clusters the event iteration runs at every pass (`liftDiscreteEquations!`: a cluster without
+relations, triggered by `change(pre(v))`, a condition the code generation never evaluates) as their discrete equations
+`v = e`, which the array code evaluates at every pass of every event and at the initialization; the initial arms'
+assignments of the same variables left out. The other equations as they are.
+"""
+function _everyPassClusters(equations::Vector{OIR.Equation})::Vector{OIR.Equation}
+  local targets::Set{Symbol} = Set{Symbol}()
+  local out::Vector{OIR.Equation} = OIR.Equation[]
+  for eq in equations
+    if _isEveryPassCluster(eq)
+      for st in (eq::OIR.WHEN_EQUATION).branches[1].body
+        local a::OIR.ASSIGNMENT = st
+        push!(targets, (a.lhs::OIR.CREF).cref.name)
+        push!(out, OIR.SCALAR_EQUATION(a.lhs, a.rhs, OIR.typeOf(a.lhs), a.source, OIR.DEFAULT_ATTRIBUTES))
+      end
+    else
+      push!(out, eq)
+    end
+  end
+  isempty(targets) && return equations
+  return OIR.Equation[e for e in (_withoutInitialArms(eq, targets) for eq in out) if e !== nothing]
+end
+
+"Whether `eq` is a lifted cluster run at every pass: one branch, triggered by `change(pre(v))` (or several of them), assignments."
+function _isEveryPassCluster(eq::OIR.Equation)::Bool
+  (eq isa OIR.WHEN_EQUATION && eq.kind == OIR.REGULAR_WHEN && length(eq.branches) == 1) || return false
+  local br::OIR.WhenBranch = eq.branches[1]
+  return !br.atInitial && !br.atTerminal && !isempty(br.triggers) && all(_isChangeOfPre, br.triggers) &&
+         all(st::OIR.Statement -> st isa OIR.ASSIGNMENT && st.lhs isa OIR.CREF, br.body)
+end
+
+"`change(pre(v))`, or an `or` of them (`changeOfPreCondition`)."
+_isChangeOfPre(c::OIR.Expression)::Bool =
+  (OIR.isBuiltinCall(c, :change) && OIR.isBuiltinCall(c.arguments[1], :pre)) ||
+  (c isa OIR.LBINARY && c.op === OIR.OR && _isChangeOfPre(c.exp1) && _isChangeOfPre(c.exp2))
+
+"`eq` without an initial arm's assignments to `targets` (an arm left with none: nothing)."
+function _withoutInitialArms(eq::OIR.Equation, targets::Set{Symbol})::Union{Nothing, OIR.Equation}
+  (eq isa OIR.WHEN_EQUATION && eq.kind == OIR.INITIAL_WHEN && length(eq.branches) == 1) || return eq
+  local br::OIR.WhenBranch = eq.branches[1]
+  local kept::Vector{OIR.Statement} = OIR.Statement[st for st in br.body
+                                                    if !(st isa OIR.ASSIGNMENT && st.lhs isa OIR.CREF && st.lhs.cref.name in targets)]
+  isempty(kept) && return nothing
+  length(kept) == length(br.body) && return eq
+  return OIR.WHEN_EQUATION(OIR.WhenBranch[OIR.WhenBranch(br.triggers, br.atInitial, br.atTerminal, kept)], eq.kind, eq.source,
+                           eq.attributes)
+end
+
 "The variable a reference is to or into: its own name, else (an element) its array's."
 _variableNameOf(c::OIR.ComponentRef, variables::OIR.VariableSet)::Symbol =
   (OIR.hasSubscripts(c) && !haskey(variables, c.name)) ? Passes.unsubscriptedName(c) : c.name
@@ -1168,7 +1217,7 @@ function _generateIR(model::OIR.Model, modelName::String; functions::Union{Nothi
      expression; not a function with an assert (inlined, its check is lost: normalizeWithAssert) =#
   local inlinable::Dict{Symbol, OIR.ModelicaFunction} =
     Dict{Symbol, OIR.ModelicaFunction}(f.name => f for f in model.functions if f.external === nothing && !_hasAssert(f.body))
-  for eq in partition.equations
+  for eq in _everyPassClusters(partition.equations)
     local kept::Union{Nothing, OIR.Equation} = _withoutDefinitions(eq, unread)
     kept === nothing || _addEquationIR!(g, _inlinedEquation(kept, inlinable), String[], NO_SLOTS)
   end
