@@ -36,7 +36,8 @@
 #=
 Array-preserving code generation (experimental, 2026-10-05).
 
-For a flat model from the frontend's no-scalarize mode (`scalarize = false`), builds a
+For an OMJLIR model lowered with its arrays kept (the frontend's `scalarize = false`; its variables and
+equations made this module's classes by ArrayODEGenerationIR.jl, the front half), builds a
 DifferentialEquations.jl module whose right-hand side keeps the model's array structure: the
 generated code grows with the number of equation classes, not with the array sizes.
 
@@ -54,12 +55,12 @@ generated code grows with the number of equation classes, not with the array siz
      that occurs once, under +, -, *, /). Algebraic loops: small ones by a Newton solve per
      element, large ones torn (`_tearBlock`) and solved where the equations reach them
      (`blockSolve!`); values from parameters only computed once per solve (`invariants!`),
-     the relations' crossing functions from what they need only (`crossings!`). From an
-     OMJLIR model, calls inlined after index reduction where a function's body runs into
-     one expression (`_inlinedEquation`).
+     the relations' crossing functions from what they need only (`crossings!`). Calls
+     inlined after index reduction where a function's body runs into one expression
+     (`_inlinedEquation`).
   4. Code: one loop per batch over its domain columns (an affine range, else a table passed
-     as data), parameters and start values evaluated by the frontend once and passed as
-     data (all parameters tunable; bindings that read a changed parameter are computed
+     as data), parameters and start values evaluated once (on the model's element view) and
+     passed as data (all parameters tunable; bindings that read a changed parameter are computed
      again), the Jacobian's sparsity pattern from the element dependencies.
   5. Events, as OpenModelica (and OMBackend's MTK path, relationRefresh.jl): a relation on
      continuous variables keeps its value between events, its crossing function shifted by a
@@ -72,13 +73,11 @@ generated code grows with the number of equation classes, not with the array siz
      fixed = false parameters (NonlinearSolve, relations fixed per solve until they settle),
      then the initial algorithms.
 
-Not (yet) handled, reported with the reason so the caller scalarizes as before: systems
-needing index reduction (the flat model's; an OMJLIR model comes reduced), elsewhen in
-when-equations, array slices.
+What the front half does not (yet) handle it reports with the reason, and the caller scalarizes
+(ArrayODEGenerationIR.jl's header lists it).
 =#
 module ArrayODEGen
 
-import OMFrontend
 import ModelingToolkit
 import ..CodeGeneration: stripBeginBlocks, ModelicaAssertionError
 import ...LowerFlatModel: FunctionList
@@ -86,8 +85,6 @@ import ...OMJLIR
 import ...Passes
 
 const SII = ModelingToolkit.SymbolicIndexingInterface
-
-const F = OMFrontend.Frontend
 
 include("ArrayBlockSolve.jl")
 
@@ -321,30 +318,6 @@ struct NotSupported <: Exception
 end
 ns(msg::AbstractString) = throw(NotSupported(String(msg)))
 
-"""
-The frontend's evaluation of a binding, range or start value; a failure there (an
-expression its evaluator does not handle) puts the model outside the array path.
-"""
-function _evalFrontend(@nospecialize(e))
-  try
-    return F.evalExp(e)
-  catch err
-    err isa NotSupported && rethrow(err)
-    ns("the frontend cannot evaluate " * _str(e) * ": " * Base.first(sprint(showerror, err), 120))
-  end
-end
-
-"""
-An expression in a reason message (printing must not fail).
-"""
-_str(@nospecialize(x)) = try
-  Base.first(F.toString(x), 200)
-catch
-  string("<", nameof(typeof(x)), ">")
-end
-
-#= ---------------------------------------------------------------- IR =#
-
 abstract type IR end
 struct Lit <: IR
   v::Any
@@ -411,12 +384,6 @@ function accesses!(acc::Vector{Ref}, x::IR)
   return acc
 end
 
-_nRel(x::IR) = x isa Rel ? max(x.id, _nRel(x.lhs), _nRel(x.rhs)) :
-               x isa EvFn ? max(x.id + 1, _nRel(x.arg)) :
-               x isa Op ? maximum(_nRel, x.args; init = 0) : 0
-
-#= ---------------------------------------------------------------- variables, classes =#
-
 """
     IRVariable(variable, names, value)
 
@@ -436,7 +403,7 @@ mutable struct VarInfo
   perPart::Vector{Int}    #= subscripts per cref part, root first =#
   offset::Int             #= first element in u, the algebraic buffer or the discrete buffer =#
   vtype::Symbol           #= :real, :int or :bool =#
-  var::Union{F.Variable, IRVariable}
+  var::IRVariable
 end
 
 struct EqClass
@@ -553,113 +520,14 @@ Ctx(iters, elem) = Ctx(iters, elem, Base.RefValue(0), false, Base.RefValue(0))
 Ctx(iters, elem, nrel, noEvent) = Ctx(iters, elem, nrel, noEvent, Base.RefValue(0))
 _with(ctx::Ctx; elem = ctx.elem, noEvent = ctx.noEvent) = Ctx(ctx.iters, elem, ctx.nrel, noEvent, ctx.nsam)
 
-function _partsRootFirst(cr::F.ComponentRef)::Vector{F.ComponentRef}
-  local parts = F.ComponentRef[]
-  while F.isvariant(cr, F.COMPONENT_REF_CREF)
-    pushfirst!(parts, cr)
-    cr = cr.restCref
-  end
-  return parts
-end
-
-_crefName(cr::F.ComponentRef)::String = join([F.name(p.node) for p in _partsRootFirst(cr)], ".")
-
-"""
-A literal frontend expression as a Julia value (scalars, nested arrays row-major).
-"""
-function _literalValue(e::F.Expression)
-  e = F.getBindingExp(e)
-  if e isa F.REAL_EXPRESSION
-    return Float64(e.value)
-  elseif e isa F.INTEGER_EXPRESSION
-    return Int(e.value)
-  elseif e isa F.BOOLEAN_EXPRESSION
-    return Bool(e.value)
-  elseif e isa F.ENUM_LITERAL_EXPRESSION
-    return e.index
-  elseif e isa F.STRING_EXPRESSION
-    return String(e.value)
-  elseif e isa F.CAST_EXPRESSION
-    return _literalValue(e.exp)
-  elseif e isa F.ARRAY_EXPRESSION
-    local els = [_literalValue(x) for x in e.elements]
-    isempty(els) && return Float64[]
-    if els[1] isa AbstractArray
-      local nd = ndims(els[1])
-      return permutedims(cat(els...; dims = nd + 1), (nd + 1, 1:nd...))
-    end
-    return [x for x in els]
-  end
-  ns("value not literal after evaluation: " * _str(e))
-end
-
-function _evalBinding(b::F.Binding, v::F.Variable, what::String)
-  F.isBound(b) || ns("$(what) of $(_str(v.name)) has no binding")
-  local val = _literalValue(_evalFrontend(F.getTypedExp(b)))
-  local dims = F.isArray(v.ty) ? [F.size(d) for d in F.arrayDims(v.ty)] : Int[]
-  if !isempty(dims) && !(val isa AbstractArray)
-    return fill(val, dims...)   #= each =#
-  end
-  return val
-end
-
 function _paramValue!(g::Gen, name::String)
   haskey(g.params, name) && return g.params[name]
-  local info = g.vars[name]
-  local val::Any = _parameterValue(g, name, info.var)
+  local v::IRVariable = g.vars[name].var
+  local val::Any = v.value === nothing ? ns("the value of parameter $(name)") : v.value
   g.params[name] = val
   g.paramSyms[name] = Symbol("P_", replace(name, r"[^A-Za-z0-9_]" => "_"))
   return val
 end
-
-"""
-The value of the parameter `name` (its variable `v`): a parameter with fixed = false its start, another its binding,
-evaluated by the frontend; an OMJLIR model's as evaluated on its element view.
-"""
-_parameterValue(g::Gen, name::String, v::F.Variable) =
-  name in g.freeParams ? _freeParamStart(v) : _evalBinding(v.binding, v, "parameter")
-_parameterValue(::Gen, name::String, v::IRVariable) = v.value === nothing ? ns("the value of parameter $(name)") : v.value
-
-"""
-A parameter with fixed = false starts (the initialization's guess) from its start value.
-"""
-function _freeParamStart(v::F.Variable)
-  local dims = F.isArray(v.ty) ? [F.size(d) for d in F.arrayDims(v.ty)] : Int[]
-  local st = _startValues(v, isempty(dims) ? 1 : prod(dims))
-  isempty(dims) && return st[1]
-  return permutedims(reshape(st, reverse(dims)...), length(dims):-1:1)   #= row-major start values =#
-end
-
-"""
-Start values of a variable, row-major.
-"""
-function _startValues(v::F.Variable, n::Int)::Vector{Float64}
-  local start = nothing
-  for (an, ab) in v.typeAttributes
-    an == "start" && (start = _evalBinding(ab, v, "start"))
-  end
-  start === nothing && return zeros(n)
-  local vals = start isa AbstractArray ? Float64.(vec(permutedims(start, ndims(start):-1:1))) : fill(Float64(start), n)
-  length(vals) == n || ns("start of $(_str(v.name))")
-  return vals
-end
-
-"""
-The fixed attribute of a variable's elements, row-major (default false).
-"""
-function _fixedValues(v::F.Variable, n::Int; default::Bool = false)::Vector{Bool}
-  for (an, ab) in v.typeAttributes
-    if an == "fixed"
-      local f = _evalBinding(ab, v, "fixed")
-      local vals = f isa AbstractArray ? Bool.(vec(permutedims(f, ndims(f):-1:1))) : fill(Bool(f), n)
-      length(vals) == n || ns("fixed of $(_str(v.name))")
-      return vals
-    end
-  end
-  return fill(default, n)
-end
-
-#= ---------------------------------------------------------------- frontend expressions to IR =#
 
 const MATH_BUILTINS = Dict("sin" => :sin, "cos" => :cos, "tan" => :tan, "asin" => :asin,
                            "acos" => :acos, "atan" => :atan, "atan2" => :atan, "exp" => :exp,
@@ -674,27 +542,6 @@ _modelicaString(args...) = _OMBACKEND.CodeGeneration.AlgorithmicCodeGeneration.m
 
 const MATH_WRAPPED = ("sin", "cos", "tan", "asin", "acos", "atan", "atan2", "sinh", "cosh", "tanh", "exp", "log", "log10")
 
-function _binaryOp(op)::Symbol
-  O = F.Op
-  op in (O.ADD, O.ADD_EW, O.ADD_SCALAR_ARRAY, O.ADD_ARRAY_SCALAR) && return :+
-  op in (O.SUB, O.SUB_EW, O.SUB_SCALAR_ARRAY, O.SUB_ARRAY_SCALAR) && return :-
-  op in (O.MUL, O.MUL_EW, O.MUL_SCALAR_ARRAY, O.MUL_ARRAY_SCALAR) && return :*
-  op in (O.DIV, O.DIV_EW, O.DIV_SCALAR_ARRAY, O.DIV_ARRAY_SCALAR) && return :/
-  op in (O.POW, O.POW_EW, O.POW_SCALAR_ARRAY, O.POW_ARRAY_SCALAR) && return :^
-  ns("operator $(op) (matrix products and the like)")
-end
-
-function _relationOp(op)::Symbol
-  O = F.Op
-  op == O.LESS && return :<
-  op == O.LESSEQ && return :<=
-  op == O.GREATER && return :>
-  op == O.GREATEREQ && return :>=
-  op == O.EQUAL && return :(==)
-  op == O.NEQUAL && return :!=
-  ns("relation operator $(op)")
-end
-
 """
 Whether an expression varies continuously (states, algebraic variables, time).
 """
@@ -706,311 +553,8 @@ function _continuous(g::Gen, x::IR)::Bool
   return false   #= an EvFn is constant between events =#
 end
 
-"""
-A Boolean-valued expression (whatever type the call's argument was given: String(n > 3)).
-"""
-_booleanExp(@nospecialize(e)) = e isa F.CAST_EXPRESSION ? _booleanExp(e.exp) :
-  (e isa F.RELATION_EXPRESSION || e isa F.LBINARY_EXPRESSION || e isa F.LUNARY_EXPRESSION || e isa F.BOOLEAN_EXPRESSION)
-
-"""
-An assert's message as an expression (String(x, ...) formatted as OpenModelica does);
-its text where the array path cannot evaluate it.
-"""
-function _messageIR(g::Gen, @nospecialize(m::F.Expression), ctx::Ctx)::IR
-  try
-    return toIR(g, m, _with(ctx; noEvent = true))
-  catch err
-    err isa NotSupported || rethrow(err)
-    return Lit(_str(m))
-  end
-end
-
-function toIR(g::Gen, @nospecialize(e::F.Expression), ctx::Ctx)::IR
-  if e isa F.REAL_EXPRESSION || e isa F.INTEGER_EXPRESSION || e isa F.BOOLEAN_EXPRESSION || e isa F.ENUM_LITERAL_EXPRESSION
-    return Lit(_literalValue(e))
-  elseif e isa F.BINDING_EXP
-    #= a binding the frontend propagated (into an argument): its expression =#
-    return toIR(g, F.getBindingExp(e), ctx)
-  elseif e isa F.STRING_EXPRESSION
-    return Lit(String(e.value))
-  elseif e isa F.TUPLE_ELEMENT_EXPRESSION
-    #= the output, and in an element-wise context its element (Buildings' SignalRanker,
-       y = Vectors.sort(u): the first output, a vector, was assigned to y[k]) =#
-    local out = Op(:index, IR[toIR(g, e.tupleExp, _with(ctx; elem = Int[])), Lit(e.index)])
-    if F.isArray(F.typeOf(e)) && !isempty(ctx.elem)
-      length(ctx.elem) == F.dimensionCount(F.typeOf(e)) || ns("an array output outside an element-wise context")
-      return Op(:index, IR[out, (Slot(k) for k in ctx.elem)...])
-    end
-    return out
-  elseif e isa F.CAST_EXPRESSION
-    return toIR(g, e.exp, ctx)
-  elseif e isa F.CREF_EXPRESSION
-    return _crefIR(g, e, ctx, false)
-  elseif e isa F.UNARY_EXPRESSION
-    e.operator.op == F.Op.UMINUS || ns("unary operator")
-    return Op(:neg, IR[toIR(g, e.exp, ctx)])
-  elseif e isa F.BINARY_EXPRESSION
-    local O = F.Op
-    e.operator.op in (O.SCALAR_PRODUCT, O.MUL_MATRIX_VECTOR, O.MUL_VECTOR_MATRIX, O.MATRIX_PRODUCT) &&
-      return _productIR(g, e, ctx)
-    #= a + b of Strings: concatenation =#
-    F.isString(F.typeOf(e)) && return Op(:string, IR[toIR(g, e.exp1, ctx), toIR(g, e.exp2, ctx)])
-    return Op(_binaryOp(e.operator.op), IR[toIR(g, e.exp1, ctx), toIR(g, e.exp2, ctx)])
-  elseif e isa F.LUNARY_EXPRESSION
-    e.operator.op == F.Op.NOT || ns("logical operator")
-    return Op(:!, IR[toIR(g, e.exp, ctx)])
-  elseif e isa F.LBINARY_EXPRESSION
-    local lop = e.operator.op == F.Op.AND ? :&& : e.operator.op == F.Op.OR ? :|| : ns("logical operator")
-    return Op(lop, IR[toIR(g, e.exp1, ctx), toIR(g, e.exp2, ctx)])
-  elseif e isa F.RELATION_EXPRESSION
-    local op = _relationOp(e.operator.op)
-    local l = toIR(g, e.exp1, ctx)
-    local r = toIR(g, e.exp2, ctx)
-    if ctx.noEvent || !(_continuous(g, l) || _continuous(g, r))
-      return Op(op, IR[l, r])
-    end
-    op in (:(==), :!=) && ns("equality relation on continuous variables")
-    ctx.nrel[] += 1
-    return Rel(op, l, r, ctx.nrel[])
-  elseif e isa F.IF_EXPRESSION
-    return Op(:if, IR[toIR(g, e.condition, ctx), toIR(g, e.trueBranch, ctx), toIR(g, e.falseBranch, ctx)])
-  elseif e isa F.CALL_EXPRESSION
-    return _callIR(g, e, ctx)
-  elseif e isa F.ARRAY_EXPRESSION && !isempty(ctx.elem)
-    #= An element of an array in an element-wise equation. =#
-    local val = try
-      _literalValue(e)
-    catch err
-      err isa NotSupported || rethrow(err)
-      nothing
-    end
-    if val === nothing
-      #= {a, 2*a, b}: a vector of scalar expressions =#
-      length(ctx.elem) == 1 || ns("non-literal array expression " * _str(e))
-      local inner = _with(ctx; elem = Int[])
-      return Op(:index, IR[Op(:vect, IR[toIR(g, x, inner) for x in e.elements]), Slot(ctx.elem[1])])
-    end
-    ndims(val) == length(ctx.elem) || ns("array expression rank")
-    return Op(:index, IR[Lit(val); IR[Slot(k) for k in ctx.elem]])
-  end
-  ns("expression " * string(nameof(typeof(e))) * ": " * _str(e))
-end
-
-function _callIR(g::Gen, e::F.CALL_EXPRESSION, ctx::Ctx)::IR
-  local call = e.call
-  F.isvariant(call, F.TYPED_REDUCTION) && return _iterReductionIR(g, call, ctx, _str(e))
-  F.isvariant(call, F.TYPED_CALL) || ns("call " * _str(e))
-  local fname = F.AbsynUtil.pathString(F.name(call.fn))
-  local args = collect(call.arguments)
-  #= delay() reads its argument's history: the ModelingToolkit path's (delays.jl). It was
-     the function bodies' builtin, delay(x, d) = x (OM.jl's DelayChain: no delay). =#
-  fname in ("delay", "OpenModelica.Internal.delay2", "OpenModelica.Internal.delay3") && ns("delay()")
-  if fname == "der"
-    args[1] isa F.CREF_EXPRESSION || ns("der of an expression: " * _str(e))
-    return _crefIR(g, args[1], ctx, true)
-  elseif fname == "pre"
-    args[1] isa F.CREF_EXPRESSION || ns("pre of an expression: " * _str(e))
-    local r = _crefIR(g, args[1], ctx, false)
-    r isa Ref || ns("pre of " * _str(e))
-    return Pre(r)
-  elseif fname == "homotopy"
-    #= homotopy(actual, simplified): the actual expression outside initialization =#
-    return toIR(g, args[1], ctx)
-  elseif fname == "noEvent"
-    return toIR(g, args[1], _with(ctx; noEvent = true))
-  elseif fname == "smooth"
-    return toIR(g, args[2], ctx)
-  elseif fname == "initial"
-    g.usesInitial = true
-    return Op(:initial, IR[])
-  elseif fname == "edge" || fname == "change"
-    local r = toIR(g, args[1], ctx)
-    r isa Ref || ns("$(fname) of " * _str(args[1]))
-    return fname == "edge" ? Op(:&&, IR[r, Op(:!, IR[Pre(r)])]) : Op(:!=, IR[r, Pre(r)])
-  elseif fname == "sample" || endswith(fname, ".sample")
-    length(args) == 2 || ns("sample with $(length(args)) arguments")
-    ctx.nsam[] += 1
-    return Op(:sample, IR[toIR(g, args[1], ctx), toIR(g, args[2], ctx), Lit(ctx.nsam[])])
-  elseif fname == "semiLinear"
-    #= semiLinear(x, k1, k2) = smooth(0, if x >= 0 then k1*x else k2*x) =#
-    local x = toIR(g, args[1], ctx)
-    return Op(:if, IR[Op(:>=, IR[x, Lit(0.0)]), Op(:*, IR[x, toIR(g, args[2], ctx)]), Op(:*, IR[x, toIR(g, args[3], ctx)])])
-  elseif fname in ("sum", "product") || (fname in ("min", "max") && length(args) == 1)
-    return _reductionIR(g, fname, args[1], ctx)
-  elseif fname == "String"
-    #= String(r, significantDigits, minimumLength, leftJustified), String(r, format),
-       String(i|b|e, minimumLength, leftJustified): OpenModelica's formatting (modelica_String) =#
-    local xs = IR[toIR(g, a, ctx) for a in args]
-    local ty = F.typeOf(args[1])
-    length(xs) == 2 && return Op(:String, xs)
-    length(xs) == 4 && return Op(:String, IR[xs[1], Op(:Int, IR[xs[2]]), Op(:Int, IR[xs[3]]), Op(:Bool, IR[xs[4]])])
-    length(xs) == 3 || ns("String with $(length(xs)) arguments")
-    local v = F.isEnumeration(ty) ? Op(:index, IR[Lit(Tuple(String[String(l) for l in ty.literals])), Op(:Int, IR[xs[1]])]) :
-              (F.isBoolean(ty) || _booleanExp(args[1])) ? Op(:Bool, IR[xs[1]]) :
-              F.isInteger(ty) ? Op(:Int, IR[xs[1]]) : ns("String of " * _str(args[1]))
-    return Op(:String, IR[v, Op(:Int, IR[xs[2]]), Op(:Bool, IR[xs[3]])])
-  elseif fname in ("integer", "floor", "ceil", "div", "mod", "rem")
-    #= event-generating (MLS 3.7.2) unless under noEvent or of discrete arguments:
-       mod(x, y) = x - floor(x / y) * y, rem(x, y) = x - div(x, y) * y =#
-    local xs = IR[toIR(g, a, ctx) for a in args]
-    local q = length(xs) == 2 ? Op(:/, IR[xs[1], xs[2]]) : xs[1]
-    local kind = fname in ("integer", "floor", "mod") ? :floor : fname == "ceil" ? :ceil : :trunc
-    local v = if ctx.noEvent || !_continuous(g, q)
-      Op(kind, IR[q])
-    else
-      ctx.nrel[] += 2
-      EvFn(kind, q, ctx.nrel[] - 1)
-    end
-    fname in ("mod", "rem") || return v
-    return Op(:-, IR[xs[1], Op(:*, IR[v, xs[2]])])
-  end
-  #= a Modelica function of the model (_functionDefinitions): its outputs as a tuple if more
-     than one (the frontend picks one with a TUPLE_ELEMENT_EXPRESSION) =#
-  local jn = replace(fname, "." => "_")
-  if haskey(g.functions, jn)
-    local xs = IR[]
-    for a in args
-      F.isRecord(F.typeOf(a)) && ns("function $(fname) with a record argument")
-      push!(xs, F.isArray(F.typeOf(a)) ? _arrayValueIR(g, a, ctx) : toIR(g, a, _with(ctx; elem = Int[])))
-    end
-    local call = Op(:fcall, IR[Lit(Symbol(jn)), xs...])
-    #= a function of more outputs typed as its first (no tuple element around it: Buildings'
-       SignalRanker, `y = Modelica.Math.Vectors.sort(u)`): that output, not the tuple =#
-    g.functions[jn] > 1 && !F.isvariant(F.typeOf(e), F.TYPE_TUPLE) && (call = Op(:index, IR[call, Lit(1)]))
-    #= an array result in an element-wise context: the element =#
-    if F.isArray(F.typeOf(e))
-      local nd = F.dimensionCount(F.typeOf(e))
-      length(ctx.elem) == nd || ns("array result of $(fname) outside an element-wise context")
-      return Op(:index, IR[call, (Slot(k) for k in ctx.elem)...])
-    end
-    return call
-  end
-  #= array built-ins in an element-wise context: the element =#
-  if F.isArray(F.typeOf(e)) && fname in ("fill", "zeros", "ones", "identity", "transpose")
-    local nd = F.dimensionCount(F.typeOf(e))
-    length(ctx.elem) == nd || ns("$(fname) outside an element-wise context")
-    fname == "fill" && (F.isArray(F.typeOf(args[1])) ? ns("fill of an array") : return toIR(g, args[1], _with(ctx; elem = Int[])))
-    fname == "zeros" && return Lit(0.0)
-    fname == "ones" && return Lit(1.0)
-    fname == "identity" && return Op(:if, IR[Op(:(==), IR[Slot(ctx.elem[1]), Slot(ctx.elem[2])]), Lit(1.0), Lit(0.0)])
-    return toIR(g, args[1], _with(ctx; elem = reverse(ctx.elem)))
-  end
-  if fname == "size" && length(args) == 2
-    #= size(a, k) of a known size =#
-    local ty = F.typeOf(args[1])
-    (F.isArray(ty) && F.hasKnownSize(ty)) || ns("size of " * _str(args[1]))
-    local k = _literalValue(_evalFrontend(args[2]))
-    return Lit([F.size(d) for d in F.arrayDims(ty)][k])
-  end
-  #= Modelica.Math's elementary functions are the built-in ones (external "builtin") =#
-  local jf = startswith(fname, "Modelica.Math.") && fname[15:end] in MATH_WRAPPED ?
-    MATH_BUILTINS[fname[15:end]] : get(MATH_BUILTINS, fname, nothing)
-  jf === nothing && ns("function $(fname)")
-  return Op(jf, IR[toIR(g, a, ctx) for a in args])
-end
-
-"""
-An array value (a function's array argument): its elements written out (as a reduction's
-terms), column-major, reshaped to its dimensions.
-"""
-function _arrayValueIR(g::Gen, @nospecialize(e::F.Expression), ctx::Ctx)::IR
-  local ty = F.typeOf(e)
-  F.hasKnownSize(ty) || ns("array argument of unknown size " * _str(e))
-  local dims = [F.size(d) for d in F.arrayDims(ty)]
-  prod(dims) <= MAX_REDUCTION_TERMS || ns("array argument of $(prod(dims)) elements")
-  local tmp = Int[(g.tmpSlot -= 1) for _ in dims]
-  local body = toIR(g, e, _with(ctx; elem = tmp))
-  local elems = IR[]
-  for t in Iterators.product((1:d for d in dims)...)   #= column-major: the first index fastest =#
-    push!(elems, _substSlots(body, Dict(tmp[k] => t[k] for k in eachindex(tmp))))
-  end
-  return Op(:arrayval, IR[Lit(Tuple(dims)), elems...])
-end
-
 #= sum/product/min/max of an array of known (small) size: the terms written out. =#
 const MAX_REDUCTION_TERMS = 1000
-
-function _reductionIR(g::Gen, fname::String, @nospecialize(arg::F.Expression), ctx::Ctx)::IR
-  local ty = F.typeOf(arg)
-  (F.isArray(ty) && F.hasKnownSize(ty)) || ns("$(fname) of " * _str(arg))
-  local dims = [F.size(d) for d in F.arrayDims(ty)]
-  local n = prod(dims)
-  n <= MAX_REDUCTION_TERMS || ns("$(fname) over $(n) elements")
-  n == 0 && return Lit(fname == "product" ? 1.0 : fname == "sum" ? 0.0 : ns("$(fname) of an empty array"))
-  #= the element at temporary slots -1, -2, ... then each element's subscripts substituted =#
-  local tmp = collect(-1:-1:-length(dims))
-  local body = toIR(g, arg, _with(ctx; elem = tmp))
-  local terms = IR[]
-  for t in Iterators.product(reverse([1:d for d in dims])...)
-    local vals = reverse(collect(t))
-    push!(terms, _substSlots(body, Dict(tmp[k] => vals[k] for k in eachindex(tmp))))
-  end
-  local op = fname == "sum" ? :+ : fname == "product" ? :* : Symbol(fname)
-  local acc = terms[1]
-  for t in terms[2:end]
-    acc = Op(op, IR[acc, t])
-  end
-  return acc
-end
-
-"""
-sum(e for i in r, j in s), product, min, max: the terms for every iterator value written out.
-"""
-function _iterReductionIR(g::Gen, call, ctx::Ctx, text::String)::IR
-  local fname = F.AbsynUtil.pathString(F.name(call.fn))
-  fname in ("sum", "product", "min", "max") || ns("reduction " * text)
-  local iters = copy(ctx.iters)
-  local slots = Int[]; local ranges = Vector{Int}[]
-  for (node, range) in call.iters
-    local k = (g.tmpSlot -= 1)
-    iters[F.name(node)] = k
-    push!(slots, k)
-    push!(ranges, _loopValues(range))
-  end
-  local n = prod(length.(ranges))
-  n <= MAX_REDUCTION_TERMS || ns("reduction over $(n) values: " * text)
-  n == 0 && return Lit(fname == "product" ? 1.0 : fname == "sum" ? 0.0 : ns("empty reduction " * text))
-  local body = toIR(g, call.exp, Ctx(iters, ctx.elem, ctx.nrel, ctx.noEvent, ctx.nsam))
-  local terms = IR[]
-  for t in Iterators.product(reverse(ranges)...)
-    local vals = reverse(collect(t))
-    push!(terms, _substSlots(body, Dict(slots[k] => vals[k] for k in eachindex(slots))))
-  end
-  local op = fname == "sum" ? :+ : fname == "product" ? :* : Symbol(fname)
-  return foldl((a, b) -> Op(op, IR[a, b]), terms)
-end
-
-"""
-Matrix and vector products in an element-wise context: the inner dimension written out.
-"""
-function _productIR(g::Gen, e::F.BINARY_EXPRESSION, ctx::Ctx)::IR
-  local O = F.Op
-  local op = e.operator.op
-  local t1 = F.typeOf(e.exp1); local t2 = F.typeOf(e.exp2)
-  (F.hasKnownSize(t1) && F.hasKnownSize(t2)) || ns("product of unknown size")
-  local d1 = [F.size(d) for d in F.arrayDims(t1)]; local d2 = [F.size(d) for d in F.arrayDims(t2)]
-  local k = (g.tmpSlot -= 1)
-  local (e1, e2, inner) = if op == O.SCALAR_PRODUCT
-    (Int[k], Int[k], d1[1])
-  elseif op == O.MUL_MATRIX_VECTOR
-    length(ctx.elem) == 1 || ns("matrix-vector product rank")
-    ([ctx.elem[1], k], Int[k], d1[2])
-  elseif op == O.MUL_VECTOR_MATRIX
-    length(ctx.elem) == 1 || ns("vector-matrix product rank")
-    (Int[k], [k, ctx.elem[1]], d1[1])
-  elseif op == O.MATRIX_PRODUCT
-    length(ctx.elem) == 2 || ns("matrix product rank")
-    ([ctx.elem[1], k], [k, ctx.elem[2]], d1[2])
-  else
-    ns("operator $(op)")
-  end
-  inner <= MAX_REDUCTION_TERMS || ns("product with inner dimension $(inner)")
-  inner == 0 && return Lit(0.0)
-  local a = toIR(g, e.exp1, _with(ctx; elem = e1))
-  local b = toIR(g, e.exp2, _with(ctx; elem = e2))
-  local terms = IR[_substSlots(Op(:*, IR[a, b]), Dict(k => i)) for i in 1:inner]
-  return foldl((x, y) -> Op(:+, IR[x, y]), terms)
-end
 
 function _substSlots(x::IR, vals::Dict{Int, Int})::IR
   if x isa Slot
@@ -1034,67 +578,6 @@ function _substSlots(x::IR, vals::Dict{Int, Int})::IR
   return x
 end
 
-function _crefIR(g::Gen, e::F.CREF_EXPRESSION, ctx::Ctx, der::Bool)::IR
-  local cr = e.cref
-  F.isvariant(cr, F.COMPONENT_REF_CREF) || ns("cref " * _str(e))
-  if F.isIterator(cr)
-    local nm = F.name(cr.node)
-    haskey(ctx.iters, nm) || ns("iterator $(nm) outside its loop")
-    return Slot(ctx.iters[nm])
-  end
-  local name = _crefName(cr)
-  if name == "time" && !haskey(g.vars, name)
-    return TimeIR()
-  end
-  local info = get(g.vars, name, nothing)
-  info === nothing && ns("unknown variable $(name)")
-  local parts = _partsRootFirst(cr)
-  length(parts) == length(info.perPart) || ns("cref parts of $(name)")
-  local subs = IR[]
-  local free = 0
-  local nextFree = function ()
-    free += 1
-    free <= length(ctx.elem) || ns("array operand $(_str(e)) outside an element-wise context")
-    return Slot(ctx.elem[free])
-  end
-  for (p, n) in zip(parts, info.perPart)
-    local ps = collect(p.subscripts)
-    if isempty(ps)
-      for _ in 1:n
-        push!(subs, nextFree())
-      end
-    else
-      length(ps) == n || ns("partial subscripts on $(name)")
-      for s in ps
-        if s isa F.SUBSCRIPT_INDEX
-          push!(subs, toIR(g, s.index, ctx))
-        elseif s isa F.SUBSCRIPT_WHOLE
-          push!(subs, nextFree())
-        else
-          ns("subscript " * _str(s))
-        end
-      end
-    end
-  end
-  (free == 0 || free == length(ctx.elem)) || ns("operand rank of $(_str(e))")
-  der && info.kind != :state && ns("der of non-state $(name)")
-  return Ref(name, subs, der)
-end
-
-#= ---------------------------------------------------------------- equation classes =#
-
-function _loopValues(@nospecialize(r::F.Expression))::Vector{Int}
-  if r isa F.RANGE_EXPRESSION
-    local start = _literalValue(_evalFrontend(r.start))
-    local stop = _literalValue(_evalFrontend(r.stop))
-    local step = r.step === nothing ? 1 : _literalValue(_evalFrontend(F.Util.getOption(r.step)))
-    (start isa Int && stop isa Int && step isa Int) && return collect(start:step:stop)
-  end
-  local vals = _literalValue(_evalFrontend(r))
-  (vals isa AbstractVector && all(v -> v isa Int, vals)) || ns("for range " * _str(r))
-  return Vector{Int}(vals)
-end
-
 #= Domains: one column per instance, one row per slot (the first slot varies slowest). =#
 const NO_SLOTS = Matrix{Int}(undef, 0, 1)
 
@@ -1110,17 +593,6 @@ function _crossDomain(d::Matrix{Int}, vals::Vector{Int})::Matrix{Int}
 end
 
 _crossDomain(d::Matrix{Int}, ranges::Vector{Vector{Int}}) = foldl(_crossDomain, ranges; init = d)
-
-"""
-sample() of an equation as the sample slot of the when wi that schedules its instants.
-"""
-function _sampleSlots(x::IR, wi::Int)::IR
-  x isa Op && x.op == :sample && return Op(:sampleof, IR[Lit(wi), x.args[3]])
-  x isa Op && return Op(x.op, IR[_sampleSlots(a, wi) for a in x.args])
-  x isa Rel && return Rel(x.op, _sampleSlots(x.lhs, wi), _sampleSlots(x.rhs, wi), x.id)
-  x isa EvFn && return EvFn(x.kind, _sampleSlots(x.arg, wi), x.id)
-  return x
-end
 
 """
 The first sample slot of when wi: the slots are numbered when by when, instance by instance.
@@ -1183,133 +655,6 @@ function _evalStatic(g::Gen, x::IR, d::Matrix{Int}, col::Int; structural::Bool =
   ns("condition not static")
 end
 
-function _addEquation!(g::Gen, @nospecialize(eq::F.Equation), iterNames::Vector{String}, idom::Matrix{Int};
-                       initial::Bool = false)
-  size(idom, 2) == 0 && return
-  local iters = Dict(n => k for (k, n) in enumerate(iterNames))
-  local nIter = length(iterNames)
-  if F.isvariant(eq, F.EQUATION_FOR)
-    local values = _loopValues(F.Util.getOption(eq.range))
-    isempty(values) && return
-    local dom = _crossDomain(idom, values)
-    for b in eq.body
-      _addEquation!(g, b, [iterNames; F.name(eq.iterator)], dom; initial = initial)
-    end
-    return
-  end
-  if F.isvariant(eq, F.EQUATION_IF)
-    #= Conditions on loop indices and parameters only: each instance takes its branch. =#
-    local ctx = Ctx(iters, Int[], Base.RefValue(0), true)
-    local conds = IR[]
-    for br in eq.branches
-      F.isvariant(br, F.EQUATION_BRANCH) || ns("if-equation branch")
-      push!(conds, toIR(g, br.condition, ctx))
-    end
-    all(c -> _isStatic(g, c), conds) || return _addDynamicIf!(g, eq, iterNames, idom; initial = initial)
-    local groups = [Int[] for _ in eq.branches]
-    for j in 1:size(idom, 2)
-      local k = findfirst(c -> _evalStatic(g, c, idom, j) == true, conds)
-      k === nothing || push!(groups[k], j)
-    end
-    for (br, cols) in zip(eq.branches, groups)
-      isempty(cols) && continue
-      for b in br.body
-        _addEquation!(g, b, iterNames, idom[:, cols]; initial = initial)
-      end
-    end
-    return
-  end
-  if F.isvariant(eq, F.EQUATION_NORETCALL)
-    #= a call without a result (Modelica.Fluid.Utilities.checkBoundary): run with the asserts =#
-    local cctx = Ctx(iters, Int[], Base.RefValue(0), true)
-    push!(initial ? g.initAsserts : g.asserts,
-          AssertClass(Op(:seq, IR[toIR(g, eq.exp, cctx), Lit(true)]), false, nIter, idom, _str(eq), "", Lit("")))
-    return
-  end
-  if initial && F.isvariant(eq, F.EQUATION_ASSERT)
-    #= checked once, after the initialization =#
-    local actx = Ctx(iters, Int[], Base.RefValue(0), true)
-    push!(g.initAsserts, AssertClass(toIR(g, eq.condition, actx), occursin("warning", _str(eq.level)),
-                                     nIter, idom, _str(eq.condition), _str(eq.message), _messageIR(g, eq.message, actx)))
-    return
-  end
-  if initial
-    (F.isvariant(eq, F.EQUATION_EQUALITY) || F.isvariant(eq, F.EQUATION_ARRAY_EQUALITY)) ||
-      ns("initial equation " * first(_str(eq), 200))
-    local edims = F.isArray(eq.ty) ? [F.size(d) for d in F.arrayDims(eq.ty)] : Int[]
-    #= relations of initial equations are evaluated at the start (no events) =#
-    local ctx = Ctx(iters, collect((nIter + 1):(nIter + length(edims))), Base.RefValue(0), true)
-    local dom = _crossDomain(idom, [collect(1:d) for d in edims])
-    size(dom, 2) == 0 && return
-    local ilhs = toIR(g, eq.lhs, ctx); local irhs = toIR(g, eq.rhs, ctx)
-    #= d = expr for a discrete variable (CDL Discrete: y = y_start): the initial value, assigned
-       after the initialization's solve like an initial algorithm's (it is no unknown of it) =#
-    if isempty(edims) && ilhs isa Ref && !ilhs.der && g.vars[ilhs.name].kind == :discrete &&
-       !any(r -> r.name == ilhs.name, accesses!(Ref[], irhs))
-      push!(g.initAlgs, AlgClass(Stmt[SAssign(ilhs, irhs)], nIter, idom, 0, 0, _str(eq)))
-      return
-    end
-    #= p = expr of parameters for a parameter with fixed = false: assigned once, as an initial
-       algorithm's (no unknown of the solve): MSL GlobalSeed's `id_impure =
-       initializeImpureRandom(seed)`, an impure call the solve's Newton made at every evaluation,
-       a new value each time (ImpureGenerator stalled). Not of free parameters the solve determines
-       (a double exponential's `eta = exp(-T/tau1) - exp(-T/tau2)`); those an earlier such assignment
-       gives are known (GlobalSeed's `id_impure` of its `seed`) =#
-    local assignedOnce::Function = (name::String) -> any(a::AlgClass -> any(st::Stmt -> st isa SAssign && st.target.name == name, a.body), g.initAlgs)
-    if isempty(edims) && ilhs isa Ref && !ilhs.der && ilhs.name in g.freeParams && !(get(g.params, ilhs.name, nothing) isa AbstractArray) &&
-       all(r -> r.name != ilhs.name && g.vars[r.name].kind == :param && (!(r.name in g.freeParams) || assignedOnce(r.name)), accesses!(Ref[], irhs))
-      push!(g.initAlgs, AlgClass(Stmt[SAssign(ilhs, irhs)], nIter, idom, 0, 0, _str(eq)))
-      return
-    end
-    push!(g.initClasses, EqClass(ilhs, irhs, size(dom, 1), dom, 0, _str(eq)))
-    return
-  end
-  if F.isvariant(eq, F.EQUATION_WHEN)
-    _addWhen!(g, eq, iterNames, idom)
-    return
-  end
-  if F.isvariant(eq, F.EQUATION_ASSERT)
-    local ctx = Ctx(iters, Int[], Base.RefValue(0), true)
-    push!(g.asserts, AssertClass(toIR(g, eq.condition, ctx), occursin("warning", _str(eq.level)),
-                                 nIter, idom, _str(eq.condition), _str(eq.message), _messageIR(g, eq.message, ctx)))
-    return
-  end
-  if F.isvariant(eq, F.EQUATION_EQUALITY) && eq.lhs isa F.TUPLE_EXPRESSION
-    #= (a, b) = f(x): an algorithm node assigning each target its output =#
-    local ctx = Ctx(iters, Int[])
-    local call = toIR(g, eq.rhs, ctx)
-    ctx.nsam[] == 0 || ns("sample outside a when-condition")
-    push!(g.algs, AlgClass(_tupleAssignments(g, eq.lhs, call, ctx), nIter, idom, ctx.nrel[], 0, _str(eq)))
-    return
-  end
-  (F.isvariant(eq, F.EQUATION_EQUALITY) || F.isvariant(eq, F.EQUATION_ARRAY_EQUALITY)) ||
-    ns("equation " * first(_str(eq), 200))
-  local edims = F.isArray(eq.ty) ? [F.size(d) for d in F.arrayDims(eq.ty)] : Int[]
-  local ctx = Ctx(iters, collect((nIter + 1):(nIter + length(edims))))
-  local lhs = toIR(g, eq.lhs, ctx)
-  local rhs = toIR(g, eq.rhs, ctx)
-  if ctx.nsam[] > 0
-    #= sampleTrigger = sample(t0, samplePeriod) (CDL Discrete): true at the instants only. A
-       when without a body schedules the instants; the equation reads its sample slots. =#
-    isempty(edims) || ns("sample outside a when-condition, in an array equation")
-    local samples = IR[]
-    local collect! = function (x::IR)
-      x isa Op && x.op == :sample && push!(samples, x)
-      x isa Op && foreach(collect!, x.args)
-      x isa Rel && (collect!(x.lhs); collect!(x.rhs))
-      x isa EvFn && collect!(x.arg)
-    end
-    collect!(lhs); collect!(rhs)
-    push!(g.whens, WhenClass(length(samples) == 1 ? samples[1] : Op(:||, samples), Tuple{Symbol, Ref, IR}[], [1],
-                             nIter, idom, 0, ctx.nsam[], "sample() of " * _str(eq)))
-    local wi = length(g.whens)
-    lhs = _sampleSlots(lhs, wi); rhs = _sampleSlots(rhs, wi)
-  end
-  local dom = _crossDomain(idom, [collect(1:d) for d in edims])
-  size(dom, 2) == 0 && return
-  push!(g.classes, EqClass(lhs, rhs, size(dom, 1), dom, ctx.nrel[], _str(eq)))
-end
-
 """
 Whether a condition depends on loop indices and parameters only.
 """
@@ -1319,136 +664,10 @@ _isStatic(g::Gen, x::IR)::Bool =
   (x isa Op && !(x.op in (:initial, :sample)) && all(a -> _isStatic(g, a), x.args))
 
 """
-An if-equation on variable conditions whose branches (with an else) each give the same
-variables as v = e: one equation per variable, v = if c1 then e1 elseif ... else en (as
-omc's if-equation to if-expression); its relations generate events.
-"""
-function _addDynamicIf!(g::Gen, @nospecialize(eq::F.Equation), iterNames::Vector{String}, idom::Matrix{Int};
-                        initial::Bool = false)
-  local iters = Dict(n => k for (k, n) in enumerate(iterNames))
-  local nIter = length(iterNames)
-  local branches = collect(eq.branches)
-  local last = branches[end].condition
-  (last isa F.BOOLEAN_EXPRESSION && last.value) || ns("if-equation on a variable condition without else")
-  local keyed = Vector{Dict{String, Any}}()
-  for br in branches
-    local d = Dict{String, Any}()
-    for b in br.body
-      (F.isvariant(b, F.EQUATION_EQUALITY) || F.isvariant(b, F.EQUATION_ARRAY_EQUALITY)) && b.lhs isa F.CREF_EXPRESSION ||
-        ns("if-equation on a variable condition: branch equation " * first(_str(b), 120))
-      local k = _str(b.lhs)
-      haskey(d, k) && ns("if-equation on a variable condition: two equations for " * k)
-      d[k] = b
-    end
-    push!(keyed, d)
-  end
-  all(d -> Set(keys(d)) == Set(keys(keyed[1])), keyed) ||
-    ns("if-equation on a variable condition: branches give different variables")
-  for k in sort!(collect(keys(keyed[1])))
-    local first = keyed[1][k]
-    local edims = F.isArray(first.ty) ? [F.size(d) for d in F.arrayDims(first.ty)] : Int[]
-    local ctx = Ctx(iters, collect((nIter + 1):(nIter + length(edims))), Base.RefValue(0), initial)
-    local lhs = toIR(g, first.lhs, ctx)
-    local rhs = toIR(g, keyed[end][k].rhs, ctx)
-    for i in (length(branches) - 1):-1:1
-      rhs = Op(:if, IR[toIR(g, branches[i].condition, _with(ctx; elem = Int[])), toIR(g, keyed[i][k].rhs, ctx), rhs])
-    end
-    ctx.nsam[] == 0 || ns("sample outside a when-condition")
-    local dom = _crossDomain(idom, [collect(1:d) for d in edims])
-    size(dom, 2) == 0 && continue
-    push!(initial ? g.initClasses : g.classes,
-          EqClass(lhs, rhs, size(dom, 1), dom, initial ? 0 : ctx.nrel[], string(k, " = if ... (", _str(eq.branches[1].condition), ")")))
-  end
-end
-
-"""
-(a, _, c) = call: the call once, into a temporary, and an assignment of each
-(non-wildcard) target from its output (the call was made per target, and per element of
-an array target).
-"""
-function _tupleAssignments(g::Gen, @nospecialize(lhs), call::IR, ctx::Ctx)::Vector{Stmt}
-  local out = Stmt[]
-  local res = Slot(g.tmpSlot -= 1)
-  for (i, e) in enumerate(lhs.elements)
-    (e isa F.CREF_EXPRESSION && F.isvariant(e.cref, F.COMPONENT_REF_WILD)) && continue
-    e isa F.CREF_EXPRESSION || ns("tuple target " * _str(e))
-    if F.isArray(F.typeOf(e))
-      #= a whole array ((r, state) = random(pre(state)): Buildings.Occupants): element by
-         element from that output =#
-      local name = _crefName(e.cref)
-      local info = get(g.vars, name, nothing)
-      (info !== nothing && info.kind in (:alg, :discrete) && !isempty(info.dims) &&
-       all(p -> isempty(collect(p.subscripts)), _partsRootFirst(e.cref))) || ns("tuple target " * _str(e))
-      for t in Iterators.product((1:d for d in info.dims)...)
-        local subs = IR[Lit(k) for k in t]
-        push!(out, SAssign(Ref(name, subs, false), Op(:index, IR[Op(:index, IR[res, Lit(i)]), subs...])))
-      end
-      continue
-    end
-    local target = toIR(g, e, ctx)
-    (target isa Ref && g.vars[target.name].kind in (:alg, :discrete)) || ns("tuple target " * _str(e))
-    push!(out, SAssign(target, Op(:index, IR[res, Lit(i)])))
-  end
-  isempty(out) || pushfirst!(out, SCall(Op(:setlocal, IR[res, call])))
-  return out
-end
-
-function _addWhen!(g::Gen, @nospecialize(eq::F.Equation), iterNames::Vector{String}, idom::Matrix{Int})
-  local ctx = Ctx(Dict(n => k for (k, n) in enumerate(iterNames)), Int[])
-  local conds = IR[]
-  local body = Tuple{Symbol, Ref, IR}[]
-  local starts = Int[]
-  local noTarget = Ref("", IR[], false)
-  for br in eq.branches
-    F.isvariant(br, F.EQUATION_BRANCH) || ns("when branch")
-    push!(conds, _whenCondition(g, br.condition, ctx))
-    push!(starts, length(body) + 1)
-    for b in br.body
-      if F.isvariant(b, F.EQUATION_REINIT)
-        local target = toIR(g, b.cref, ctx)
-        (target isa Ref && g.vars[target.name].kind == :state) || ns("reinit of a non-state")
-        push!(body, (:reinit, target, toIR(g, b.reinitExp, ctx)))
-      elseif F.isvariant(b, F.EQUATION_EQUALITY) && b.lhs isa F.TUPLE_EXPRESSION
-        for st in _tupleAssignments(g, b.lhs, toIR(g, b.rhs, ctx), ctx)
-          st isa SCall && (push!(body, (:call, noTarget, st.call)); continue)
-          g.vars[st.target.name].kind == :discrete || ns("when assigns a non-discrete variable")
-          push!(body, (:assign, st.target, st.value))
-        end
-      elseif F.isvariant(b, F.EQUATION_EQUALITY) && b.lhs isa F.CREF_EXPRESSION && !F.isArray(b.ty)
-        local target = toIR(g, b.lhs, ctx)
-        (target isa Ref && g.vars[target.name].kind == :discrete) || ns("when assigns a non-discrete variable")
-        push!(body, (:assign, target, toIR(g, b.rhs, ctx)))
-      elseif F.isvariant(b, F.EQUATION_ASSERT)
-        #= checked when the body runs =#
-        push!(g.assertTexts, (_str(b.condition), _str(b.message), occursin("warning", _str(b.level))))
-        local actx = _with(ctx; noEvent = true)
-        push!(body, (:call, noTarget, Op(:assertcall, IR[toIR(g, b.condition, actx), _messageIR(g, b.message, actx),
-                                                            Lit(length(g.assertTexts))])))
-      elseif F.isvariant(b, F.EQUATION_NORETCALL)
-        push!(body, (:call, noTarget, toIR(g, b.exp, _with(ctx; noEvent = true))))
-      else
-        ns("when body equation " * first(_str(b), 120))
-      end
-  end
-  end
-  local cond = length(conds) == 1 ? conds[1] : Op(:elsewhen, conds)
-  push!(g.whens, WhenClass(cond, body, starts, length(iterNames), idom, ctx.nrel[], ctx.nsam[], _str(eq)))
-end
-
-"""
 initial() activates a when at the initialization only as its condition (MLS 8.6, as
 OpenModelica): inside an expression (initial() or x > 0.6) it is false.
 """
 _topLevelInitial(x::IR) = (x isa Op && x.op == :initial) ? x : _noInitial(x)
-
-"""
-A when-condition: a Boolean expression, or a vector of them (when {c1, c2}: Op(:vect),
-each element with its own condition slot and edge; initial() counts as an element).
-"""
-function _whenCondition(g::Gen, @nospecialize(c::F.Expression), ctx::Ctx)::IR
-  c isa F.ARRAY_EXPRESSION || return _topLevelInitial(toIR(g, c, ctx))
-  return Op(:vect, IR[_topLevelInitial(toIR(g, el, ctx)) for el in c.elements])
-end
 
 """
 The condition elements of a when (one for a scalar condition).
@@ -1456,53 +675,6 @@ The condition elements of a when (one for a scalar condition).
 _condElements(c::IR)::Vector{IR} = (c isa Op && c.op == :elsewhen) ? IR[e for b in c.args for e in _condElements(b)] :
                                    (c isa Op && c.op == :vect) ? c.args : IR[c]
 _noInitial(x::IR) = !(x isa Op) ? x : x.op == :initial ? Lit(false) : Op(x.op, IR[_noInitial(a) for a in x.args])
-
-"""
-An algorithm section: statements to IR. A vectorized algorithm (one for-loop over a \$
-iterator, from a component array) keeps the loop as the class domain.
-"""
-function _addAlgorithm!(g::Gen, alg)
-  local stmts = collect(alg.statements)
-  local iterNames = String[]
-  local idom = NO_SLOTS
-  while length(stmts) == 1 && F.isvariant(stmts[1], F.ALG_FOR) && startswith(F.name(stmts[1].iterator), "\$")
-    local values = _loopValues(F.Util.getOption(stmts[1].range))
-    isempty(values) && return
-    push!(iterNames, F.name(stmts[1].iterator))
-    idom = _crossDomain(idom, values)
-    stmts = collect(stmts[1].body)
-  end
-  local ctx = Ctx(Dict(n => k for (k, n) in enumerate(iterNames)), Int[])
-  local nwhen = Base.RefValue(0)
-  local body = Stmt[_stmtIR(g, st, ctx, nwhen) for st in stmts]
-  ctx.nsam[] == 0 || ns("sample in an algorithm")
-  push!(g.algs, AlgClass(body, length(iterNames), idom, ctx.nrel[], nwhen[], _str(alg.statements[1])))
-end
-
-"""
-An initial algorithm: run once at the initialization, after the free states are solved and
-before the first event iteration, without events (its relations and event-generating
-functions literal). It may assign discrete variables (and assert); initial equations may not
-read what it assigns.
-"""
-function _addInitialAlgorithm!(g::Gen, alg)
-  local stmts = collect(alg.statements)
-  local iterNames = String[]
-  local idom = NO_SLOTS
-  while length(stmts) == 1 && F.isvariant(stmts[1], F.ALG_FOR) && startswith(F.name(stmts[1].iterator), "\$")
-    local values = _loopValues(F.Util.getOption(stmts[1].range))
-    isempty(values) && return
-    push!(iterNames, F.name(stmts[1].iterator))
-    idom = _crossDomain(idom, values)
-    stmts = collect(stmts[1].body)
-  end
-  local ctx = Ctx(Dict(n => k for (k, n) in enumerate(iterNames)), Int[], Base.RefValue(0), true)
-  local nwhen = Base.RefValue(0)
-  local body = Stmt[_stmtIR(g, st, ctx, nwhen) for st in stmts]
-  (nwhen[] == 0 && ctx.nsam[] == 0) || ns("when or sample in an initial algorithm")
-  _initAlgTargets(g, body)
-  push!(g.initAlgs, AlgClass(body, length(iterNames), idom, 0, 0, _str(alg.statements[1])))
-end
 
 function _initAlgTargets(g::Gen, stmts::Vector{Stmt})
   for st in stmts
@@ -1515,47 +687,6 @@ function _initAlgTargets(g::Gen, stmts::Vector{Stmt})
       _initAlgTargets(g, st.body)
     end
   end
-end
-
-function _stmtIR(g::Gen, @nospecialize(st), ctx::Ctx, nwhen::Base.RefValue{Int})::Stmt
-  if F.isvariant(st, F.ALG_NORETCALL)
-    return SCall(toIR(g, st.exp, ctx))
-  end
-  if F.isvariant(st, F.ALG_ASSIGNMENT) && st.lhs isa F.TUPLE_EXPRESSION
-    return SIf([(Lit(true), _tupleAssignments(g, st.lhs, toIR(g, st.rhs, ctx), ctx))])
-  end
-  if F.isvariant(st, F.ALG_ASSIGNMENT)
-    (st.lhs isa F.CREF_EXPRESSION && !F.isArray(st.ty)) || ns("assignment " * _str(st))
-    local target = toIR(g, st.lhs, ctx)
-    #= a parameter with fixed = false: an initial algorithm computes it (_initAlgTargets) =#
-    (target isa Ref && (g.vars[target.name].kind in (:alg, :discrete) || target.name in g.freeParams)) ||
-      ns("assignment to " * _str(st.lhs))
-    return SAssign(target, toIR(g, st.rhs, ctx))
-  elseif F.isvariant(st, F.ALG_IF)
-    return SIf([(toIR(g, c, ctx), Stmt[_stmtIR(g, b, ctx, nwhen) for b in body]) for (c, body) in st.branches])
-  elseif F.isvariant(st, F.ALG_FOR)
-    local values = _loopValues(F.Util.getOption(st.range))
-    local k = (g.tmpSlot -= 1)
-    local inner = Ctx(merge(ctx.iters, Dict(F.name(st.iterator) => k)), ctx.elem, ctx.nrel, ctx.noEvent, ctx.nsam)
-    return SFor(k, values, Stmt[_stmtIR(g, b, inner, nwhen) for b in st.body])
-  elseif F.isvariant(st, F.ALG_WHILE)
-    return SWhile(toIR(g, st.condition, _with(ctx; noEvent = true)), Stmt[_stmtIR(g, b, ctx, nwhen) for b in st.body])
-  elseif F.isvariant(st, F.ALG_WHEN)
-    local branches = Tuple{IR, Vector{Stmt}}[]
-    local ids = Vector{Int}[]
-    for (c, body) in st.branches
-      local cond = _whenCondition(g, c, ctx)
-      push!(ids, [(nwhen[] += 1) for _ in _condElements(cond)])
-      push!(branches, (cond, Stmt[_stmtIR(g, b, ctx, nwhen) for b in body]))
-    end
-    return SWhen(branches, ids)
-  elseif F.isvariant(st, F.ALG_ASSERT)
-    push!(g.assertTexts, (_str(st.condition), _str(st.message), occursin("warning", _str(st.level))))
-    return SAssert(toIR(g, st.condition, _with(ctx; noEvent = true)), length(g.assertTexts), _messageIR(g, st.message, ctx))
-  elseif F.isvariant(st, F.ALG_BREAK)
-    return SBreak()
-  end
-  ns("statement " * _str(st))
 end
 
 """
@@ -3345,14 +2476,7 @@ function jl(g::Gen, x::IR)
     local info = g.vars[x.name]
     local idx = Any[jl(g, s) for s in x.subs]
     if info.kind == :param
-      if info.vtype == :other
-        #= A String parameter (CDL Utilities.Assert's message): its value, as a literal. =#
-        info.var isa IRVariable && ns("parameter $(x.name) of a type the array path does not pass")
-        F.isString(F.arrayElementType(info.var.ty)) || ns("parameter $(x.name) of a type the array path does not pass")
-        local sv = _evalBinding(info.var.binding, info.var, "parameter")
-        (sv isa AbstractString || sv isa AbstractArray{<:AbstractString}) || ns("parameter $(x.name): no String value")
-        return isempty(idx) ? sv : Expr(:ref, sv, idx...)
-      end
+      info.vtype == :other && ns("parameter $(x.name) of a type the array path does not pass")
       local v = _paramValue!(g, x.name)
       v isa AbstractArray && return _discreteRead(info, Expr(:ref, g.paramSyms[x.name], idx...))
       return g.paramSyms[x.name]
@@ -3395,7 +2519,7 @@ function jl(g::Gen, x::IR)
     x.op == :initial && return :(p.initPhase[1])
     x.op == :String && return Expr(:call, _modelicaString, args...)
     x.op == :fcall && return Expr(:call, args...)
-    #= a temporary's value (a tuple equation's call: _tupleAssignments) =#
+    #= a temporary's value (a tuple equation's call) =#
     x.op == :setlocal && return Expr(:(=), args...)
     x.op == :assertcall && return :(($(args[1])) || _assertFailed(p, $(args[3]), ($(args[3]), _col), t, $(args[2])))
     x.op == :seq && return Expr(:block, args...)
@@ -3497,40 +2621,6 @@ function _loopCode(nslots::Int, domain::Matrix{Int}, cols::Vector{Int}, body::Ex
   return :(for _c in 1:$m; $(sets...); $body; end)
 end
 
-function _elementNames(v::F.Variable)::Vector{String}
-  F.isArray(v.ty) || return [F.toString(v.name)]
-  return [F.toString(cr) for cr in F._expandArrayParts(v.name)]
-end
-_elementNames(v::IRVariable)::Vector{String} = v.names
-
-"""
-Whether the code may not change the parameter of variable `v` at a simulation (a structural parameter); an OMJLIR
-model's parameters are structural only where the code reads them so (Gen's `structural`).
-"""
-_structuralParameter(v::F.Variable)::Bool = F.variability(v) <= F.Variability.STRUCTURAL_PARAMETER
-_structuralParameter(::IRVariable)::Bool = false
-
-#= ---------------------------------------------------------------- parameters =#
-
-"""
-The parameters a binding reads (of a variable's: an OMJLIR variable's binding, `_bindingDepsIR`).
-"""
-_bindingDeps(g::Gen, v::F.Variable)::Vector{String} = _bindingDeps(g, v.binding)
-_bindingDeps(g::Gen, v::IRVariable)::Vector{String} = _bindingDepsIR(g, v.variable)
-function _bindingDeps(g::Gen, b::F.Binding)::Vector{String}
-  F.isBound(b) || return String[]
-  local deps = String[]
-  F.fold(F.getTypedExp(b), (e, acc) -> begin
-    if e isa F.CREF_EXPRESSION && F.isvariant(e.cref, F.COMPONENT_REF_CREF) && !F.isIterator(e.cref)
-      local nm = _crefName(e.cref)
-      local info = get(g.vars, nm, nothing)
-      info !== nothing && info.kind == :param && !(nm in deps) && push!(deps, nm)
-    end
-    acc
-  end, 0)
-  return deps
-end
-
 """
 The parameters the equations read and, transitively, those their bindings read, in
 dependency order, each with its binding as code over the others (nothing when the
@@ -3544,7 +2634,7 @@ function _parameterRules(g::Gen)
     get(state, nm, 0) == 2 && return
     get(state, nm, 0) == 1 && ns("cyclic parameter bindings at $(nm)")
     state[nm] = 1
-    for d in _bindingDeps(g, g.vars[nm].var)
+    for d in _bindingDeps(g, g.vars[nm].var.variable)
       visit(d)
     end
     _paramValue!(g, nm)
@@ -3555,7 +2645,7 @@ function _parameterRules(g::Gen)
   local rules = Any[]
   for nm in order
     local info = g.vars[nm]
-    local deps::Vector{String} = _bindingDeps(g, info.var)
+    local deps::Vector{String} = _bindingDeps(g, info.var.variable)
     local code = isempty(deps) ? nothing : try
       _bindingCode(g, info)
     catch err
@@ -3565,60 +2655,6 @@ function _parameterRules(g::Gen)
     push!(rules, (g.paramSyms[nm], Symbol[g.paramSyms[d] for d in deps], code))
   end
   return (order, rules)
-end
-
-function _bindingCode(g::Gen, info::VarInfo)
-  info.var isa IRVariable && return _bindingCodeIR(g, info)
-  local b = info.var.binding
-  local e = F.getTypedExp(b)
-  local nd = length(info.dims)
-  local deps = _bindingDeps(g, b)
-  local locals = [:(local $(g.paramSyms[d]) = vals[$(QuoteNode(g.paramSyms[d]))]) for d in deps]
-  local value
-  if nd == 0 || F.isEach(b) || F.dimensionCount(F.typeOf(e)) == 0
-    local ir = toIR(g, e, Ctx(Dict{String, Int}(), Int[]))
-    value = nd == 0 ? jl(g, ir) : :(fill($(jl(g, ir)), $(info.dims...)))
-  else
-    F.dimensionCount(F.typeOf(e)) == nd || ns("binding rank")
-    local ir = toIR(g, e, Ctx(Dict{String, Int}(), collect(1:nd)))
-    value = Expr(:comprehension, Expr(:generator, jl(g, ir), [:($(Symbol("s", k)) = 1:$(info.dims[k])) for k in 1:nd]...))
-  end
-  return :((vals) -> begin
-    $(locals...)
-    $value
-  end)
-end
-
-#= ---------------------------------------------------------------- entry =#
-
-"""
-    generateArrayODECode(flatModel, modelName) -> (modelName, moduleExpr) or (nothing, reason)
-
-The array-preserving module of a no-scalarize flat model, or `nothing` and the reason the
-model is outside the supported scope.
-"""
-function generateArrayODECode(fm::F.FlatModel, modelName::String; functions::Union{Nothing, FunctionList} = nothing)
-  try
-    return (modelName, _generate(fm, modelName; functions = functions))
-  catch err
-    err isa NotSupported || rethrow(err)
-    return (nothing, err.msg)
-  end
-end
-
-_vtypeOrOther(v::F.Variable)::Symbol = try
-  _vtype(v)
-catch err
-  err isa NotSupported || rethrow(err)
-  :other
-end
-
-function _vtype(v::F.Variable)::Symbol
-  local ty = F.arrayElementType(v.ty)
-  F.isBoolean(ty) && return :bool
-  (F.isInteger(ty) || F.isEnumeration(ty)) && return :int
-  F.isReal(ty) && return :real
-  ns("variable type of $(_str(v.name))")
 end
 
 """
@@ -3673,124 +2709,9 @@ function _functionDefinitions(functions::Union{Nothing, FunctionList})
   return (defs, outs)
 end
 
-function _generate(fm::F.FlatModel, modelName::String; functions::Union{Nothing, FunctionList} = nothing)::Expr
-  local (functionDefs, functionOutputs) = _functionDefinitions(functions)
-  (FULL[] || isempty(fm.initialAlgorithms)) || ns("initial algorithms (OMBackend.ARRAY_PATH_FULL)")
-  #= States: the variables under der(). =#
-  local stateNames = Set{String}()
-  local collectDer = function (e, acc)
-    if e isa F.CALL_EXPRESSION && F.isvariant(e.call, F.TYPED_CALL) &&
-       F.AbsynUtil.pathString(F.name(e.call.fn)) == "der"
-      local a = e.call.arguments[1]
-      a isa F.CREF_EXPRESSION && push!(stateNames, _crefName(a.cref))
-    end
-    return acc
-  end
-  for eq in fm.equations
-    F.foldExp(eq, (e, acc) -> F.fold(e, collectDer, acc), 0)
-  end
-  local g = Gen(Dict{String, VarInfo}(), 0, 0, 0, Dict{String, Any}(), Dict{String, Symbol}(), Set{String}(),
-                EqClass[], EqClass[], AlgClass[], Tuple{String, String, Bool}[], WhenClass[], AssertClass[], 0, 0, 0, 0,
-                -1000, false, Dict{Int, Int}(), AlgClass[], String[], AssertClass[], functionOutputs, Dict{String, String}())
-  local stateNamesOrdered = String[]; local algNamesOrdered = String[]
-  local u0 = Float64[]; local d0 = Float64[]; local discreteNamesOrdered = String[]; local a0 = Float64[]
-  local fixedMask = Bool[]
-  local fixedNonStates = String[]
-  for v in fm.variables
-    local nm = _crefName(v.name)
-    F.hasKnownSize(v.ty) || ns("$(nm) of unknown size")
-    #= its value a C pointer, no Float64 (Buildings' ExtendableArray in the borehole
-       examples); the MTK path holds it as a data structure =#
-    F.isExternalObject(F.arrayElementType(v.ty)) && ns("the external object $(nm)")
-    local dims = F.isArray(v.ty) ? [F.size(d) for d in F.arrayDims(v.ty)] : Int[]
-    local nparts = length(_partsRootFirst(v.name))
-    local perPart = isempty(dims) ? zeros(Int, nparts) :
-      [length(collect(p.subscripts)) for p in _partsRootFirst(F._expandArrayParts(v.name)[1])]
-    local n = isempty(dims) ? 1 : prod(dims)
-    local var = F.variability(v)
-    if nm in stateNames
-      g.vars[nm] = VarInfo(:state, dims, perPart, g.nStates, :real, v)
-      g.nStates += n
-      append!(u0, _startValues(v, n))
-      append!(fixedMask, _fixedValues(v, n))
-      append!(stateNamesOrdered, _elementNames(v))
-    elseif var <= F.Variability.NON_STRUCTURAL_PARAMETER
-      local fx = _fixedValues(v, n; default = true)
-      if any(!, fx)
-        FULL[] || ns("parameter $(nm) with fixed = false (OMBackend.ARRAY_PATH_FULL)")
-        all(!, fx) || ns("parameter $(nm) with fixed = false on some elements")
-        F.isBound(v.binding) && ns("parameter $(nm) with fixed = false and a binding")
-        push!(g.freeParams, nm)
-      end
-      g.vars[nm] = VarInfo(:param, dims, perPart, 0, _vtypeOrOther(v), v)
-    elseif var == F.Variability.CONTINUOUS
-      g.vars[nm] = VarInfo(:alg, dims, perPart, g.nAlg, :real, v)
-      g.nAlg += n
-      append!(a0, _startValues(v, n))
-      any(_fixedValues(v, n)) && push!(fixedNonStates, nm)
-      append!(algNamesOrdered, _elementNames(v))
-    else
-      g.vars[nm] = VarInfo(:discrete, dims, perPart, g.nDiscrete, _vtype(v), v)
-      g.nDiscrete += n
-      append!(d0, _startValues(v, n))
-      append!(discreteNamesOrdered, _elementNames(v))
-    end
-  end
-  if g.nStates == 0
-    #= A model without states gets one with der = 0 (as omc), so it can be integrated. =#
-    isempty(fm.variables) && ns("no variables")
-    g.vars["\$dummy"] = VarInfo(:state, Int[], [0], 0, :real, fm.variables[1])
-    g.nStates = 1
-    push!(u0, 0.0); push!(fixedMask, true); push!(stateNamesOrdered, "\$dummy")
-    push!(g.classes, EqClass(Ref("\$dummy", IR[], true), Lit(0.0), 0, Matrix{Int}(undef, 0, 1), 0, "der(\$dummy) = 0"))
-  end
-  for eq in fm.equations
-    _addEquation!(g, eq, String[], NO_SLOTS)
-  end
-  #= Declaration bindings of variables (Real y = e;) are equations too. =#
-  for v in fm.variables
-    local nm = _crefName(v.name)
-    local info = g.vars[nm]
-    (info.kind in (:alg, :discrete, :state) && F.isBound(v.binding)) || continue
-    local nd = length(info.dims)
-    local ctx = Ctx(Dict{String, Int}(), collect(1:nd))
-    local lhs = Ref(nm, IR[Slot(k) for k in 1:nd], false)
-    local rhs = toIR(g, F.getTypedExp(v.binding), ctx)
-    local dom = _crossDomain(NO_SLOTS, [collect(1:d) for d in info.dims])
-    size(dom, 2) == 0 && continue
-    push!(g.classes, EqClass(lhs, rhs, nd, dom, ctx.nrel[], string(nm, " = ", _str(F.getTypedExp(v.binding)))))
-  end
-  (FULL[] || isempty(fm.initialEquations)) || ns("initial equations (OMBackend.ARRAY_PATH_FULL)")
-  (FULL[] || isempty(fixedNonStates)) || ns("fixed start on non-state $(fixedNonStates[1]) (OMBackend.ARRAY_PATH_FULL)")
-  for nm in fixedNonStates
-    #= fixed = true on a variable that is no state: the initial equation v = start =#
-    local info = g.vars[nm]
-    local v = info.var
-    local n = isempty(info.dims) ? 1 : prod(info.dims)
-    local fx = _fixedValues(v, n); local st = _startValues(v, n)
-    local k = 0
-    for t in (isempty(info.dims) ? [()] : vec([reverse(t) for t in Iterators.product(reverse([1:d for d in info.dims])...)]))
-      k += 1
-      fx[k] || continue
-      push!(g.initClasses, EqClass(Ref(nm, IR[Lit(i) for i in t], false), Lit(st[k]), 0, NO_SLOTS, 0, "$(nm) = start"))
-    end
-  end
-  for eq in fm.initialEquations
-    _addEquation!(g, eq, String[], NO_SLOTS; initial = true)
-  end
-  for alg in fm.algorithms
-    _addAlgorithm!(g, alg)
-  end
-  for alg in fm.initialAlgorithms
-    _addInitialAlgorithm!(g, alg)
-  end
-  return _emitModule(g, modelName, functionDefs, u0, d0, a0, fixedMask, stateNamesOrdered, algNamesOrdered,
-                     discreteNamesOrdered)
-end
-
 """
-The module of an array model from its variables and classes (`g`, from a front half: the flat model's `_generate`,
-the OMJLIR model's `_generateIR`), its Modelica functions' definitions, the initial values of the states, discrete
+The module of an array model from its variables and classes (`g`, from the front half: the OMJLIR model's
+`_generateIR`), its Modelica functions' definitions, the initial values of the states, discrete
 variables and algebraic variables (row-major), the states' fixed attributes and the element names: the matching,
 the schedule, the initialization and the code.
 """
@@ -4236,13 +3157,13 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     local info = g.vars[nm]
     isempty(info.dims) && continue
     local subs = vec([reverse(t) for t in Iterators.product(reverse([1:d for d in info.dims])...)])
-    for (en, t) in zip(_elementNames(info.var), subs)
+    for (en, t) in zip(info.var.names, subs)
       paramElements[en] = (sym, t)
       paramElements[_OMBACKEND.canonicalName(en)] = (sym, t)
     end
   end
   local fixedParams = Symbol[g.paramSyms[nm] for nm in paramOrder
-                             if nm in g.structural || _structuralParameter(g.vars[nm].var)]
+                             if nm in g.structural]
   local ruleExprs = [:(($(QuoteNode(sym)), $(deps), $(code === nothing ? :(nothing) : code))) for (sym, deps, code) in rules]
   local jacProto = pattern === nothing ? :(nothing) :
     :(Symbolics.SparseArrays.sparse($(pattern[1]), $(pattern[2]), ones($(length(pattern[1]))), $nStates, $nStates, (x, y) -> x))

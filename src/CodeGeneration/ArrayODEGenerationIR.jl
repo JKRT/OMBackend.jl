@@ -108,7 +108,7 @@ _typedValue(x::Float64, vtype::Symbol) = vtype == :int ? round(Int, x) : vtype =
 """
 The parameters an OMJLIR variable's binding reads.
 """
-function _bindingDepsIR(g::Gen, v::OIR.Variable)::Vector{String}
+function _bindingDeps(g::Gen, v::OIR.Variable)::Vector{String}
   local deps::Vector{String} = String[]
   v.binding === nothing && return deps
   OIR.foreachExp(v.binding) do x::OIR.Expression
@@ -126,10 +126,10 @@ end
 A scalar parameter's binding as code over the parameters it reads (`_bindingCode`); an array parameter's is not
 expressed: its value then does not follow a changed dependency.
 """
-function _bindingCodeIR(g::Gen, info::VarInfo)
+function _bindingCode(g::Gen, info::VarInfo)
   isempty(info.dims) || ns("an array parameter's binding")
   local v::OIR.Variable = (info.var::IRVariable).variable
-  local deps::Vector{String} = _bindingDepsIR(g, v)
+  local deps::Vector{String} = _bindingDeps(g, v)
   local locals::Vector{Expr} = Expr[:(local $(g.paramSyms[d])::$(typeof(_paramValue!(g, d))) = vals[$(QuoteNode(g.paramSyms[d]))])
                                     for d in deps]
   local value::Any = jl(g, toIR(g, v.binding, Ctx(Dict{String, Int}(), Int[])))
@@ -523,7 +523,7 @@ function _callIRx(g::Gen, e::OIR.CALL, ctx::Ctx)::IR
 end
 
 """
-The classes of an OMJLIR equation (`_addEquation!` of the flat model's): a for-equation's body over its iterator's
+The classes of an OMJLIR equation: a for-equation's body over its iterator's
 range (the domain crossed), a scalar equation one class over the domain, an assert one checked over it.
 """
 function _addEquationIR!(g::Gen, eq::OIR.Equation, iterNames::Vector{String}, idom::Matrix{Int}; initial::Bool = false)
@@ -573,7 +573,7 @@ function _addEquationIR!(g::Gen, eq::OIR.Equation, iterNames::Vector{String}, id
 end
 
 """
-A when-equation (`_addWhen!` of the flat model's), over the domain: each branch's triggers its condition (several
+A when-equation, over the domain: each branch's triggers its condition (several
 the vector of them, each an edge of its own; a branch active at the initialization with initial() among them: `when
 initial()` alone), its statements the body: assignments to discrete variables, reinit of states, asserts (checked
 when it runs) and calls. Not a when of the passes' initial or structural kinds, terminal(), or other statements.
@@ -620,7 +620,7 @@ function _addWhenIR!(g::Gen, eq::OIR.WHEN_EQUATION, iterNames::Vector{String}, i
 end
 
 """
-An if-equation (`_addDynamicIf!` of the flat model's): on conditions of parameters and iterators each instance its
+An if-equation: on conditions of parameters and iterators each instance its
 branch's equations; on a variable condition each variable its branches assign (`v = e` in every branch and the else)
 one class `v = if c1 then e1 elseif ... else en`.
 """
