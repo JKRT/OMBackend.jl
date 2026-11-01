@@ -180,6 +180,19 @@ end
 
   #= blockSolve! from a guess at the solution: a fresh Jacobian (its evaluations at perturbed points), its first step
      at round-off; the equations' a was left at the last color's perturbed point (1.5e-8 relative) =#
+  @testset "A latch on pre(), a when-assigned Real, initial assignments" begin
+    #= active = nmax > pre(n) (a cluster on change(pre(n))): n rises at 0 and 0.25, then active is false: x[i] = i / 4 =#
+    local (s::Vector{Float64}, a::Vector{Float64}, _) = _bothWays("ArrayPath.PreLatch", ["n", "x[1]", "x[2]"])
+    @test a ≈ [2.0, 0.25, 0.5] atol = 1e-6
+    @test maximum(abs.(s .- a)) < 1e-6
+    #= T0 = 0.1, 0.3, 0.5, 0.7, 0.9 from the samples, d = 3 + 5, p1 = 2, p2 = 3 (the parameters not in the results):
+       x[i] = p2 t + i (the integral of T0) =#
+    local (s2::Vector{Float64}, a2::Vector{Float64}, _) = _bothWays("ArrayPath.ImplicitDiscrete", ["T0", "d", "x[1]", "x[2]"])
+    local held::Float64 = 0.1 * 0.2 + 0.3 * 0.2 + 0.5 * 0.2 + 0.7 * 0.2 + 0.9 * 0.1
+    @test a2 ≈ [0.9, 8.0, 3.0 + held, 3.0 + 2 * held] atol = 1e-6
+    @test maximum(abs.(s2 .- a2)) < 1e-6
+  end
+
   @testset "A block solve's equations at its solution after a fresh Jacobian" begin
     local AG::Module = OMBackend.CodeGeneration.ArrayODEGen
     local SA::Module = OMBackend.CodeGeneration.Symbolics.SparseArrays

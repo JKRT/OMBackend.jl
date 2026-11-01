@@ -546,8 +546,9 @@ committed in array form (`Passes.IndexReduction.reduceIndexArrays!`; a model wit
 index 1 the same, `commitIndexOne!`, for the array code only): what the array code
 (`generateReducedArrayODETargetCode`) or the scalarized form (`scalarizedReducedModel`) is made from.
 `nothing` where the array form does not take the model (switched off, no arrays to keep and of index
-above one, what it does not handle or the lowering does not support: logged; another error: a
-warning), the reason recorded (`declineArrayPath!`).
+above one, of index 1 with clocked partitions, of index above one with an if-expression that reads a
+for-equation's iterator, what it does not handle or the lowering does not support: logged; another
+error: a warning), the reason recorded (`declineArrayPath!`).
 """
 function reducedArrayModel(fm::OMFrontend.Frontend.FlatModel;
                            functionList::Union{Nothing, FunctionList} = nothing)::Union{Nothing, OMJLIR.Model}
@@ -563,12 +564,28 @@ function reducedArrayModel(fm::OMFrontend.Frontend.FlatModel;
     #= arrays to keep: for-equations or array equations over continuous arrays, or separately declared components
        rolled into arrays (OMBACKEND_ROLL_COMPONENTS) =#
     local roll::Bool = envSwitch("OMBACKEND_ROLL_COMPONENTS") && !isempty(reduction.componentGroups(lowered.variables))
-    local arrays::Bool = roll || (reduction.hasContinuousArrays(lowered) && reduction.hasArrayEquations(lowered))
+    local own::Bool = reduction.hasContinuousArrays(lowered) && reduction.hasArrayEquations(lowered)
+    #= the passes lower clocked partitions to when-equations on sample(): the array code does not keep their semantics
+       (a tick's value at the start, the order of a partition's equations), the scalar path does =#
+    local clocked::Bool = Passes.hasClocks(lowered)
     local model::OMJLIR.Model = Passes.runPassesKeepingArrays!(lowered)
-    (roll && reduction.rollComponents!(model) == 0) &&
-      (arrays = reduction.hasContinuousArrays(model) && reduction.hasArrayEquations(model))
-    if arrays
-      reduction.reduceIndexArrays!(model)
+    #= if-expressions that read a for-equation's iterator, which the passes left inline: the array code reads them, the
+       scalarized form of a reduced model would need them lifted =#
+    local inlineIfs::Bool = any(eq::OMJLIR.Equation -> eq isa OMJLIR.FOR_EQUATION && Passes.ifReadsIterator(eq),
+                                model.continuous[1].equations)
+    local rolled::Bool = roll && reduction.rollComponents!(model) > 0
+    if own || rolled
+      local reduced::Bool = reduction.reduceIndexArrays!(model)
+      if !reduced && clocked
+        decline("index 1 with clocked partitions")
+        return nothing
+      elseif reduced && inlineIfs
+        decline("an if-expression that reads a for-equation's iterator, in a model of index above one")
+        return nothing
+      end
+    elseif clocked
+      decline("index 1 with clocked partitions")
+      return nothing
     elseif !reduction.commitIndexOne!(model)
       #= none to keep and of index above one: the model reduces as the scalarized one =#
       decline("no for-equations or array equations over continuous arrays, of index above one")
@@ -582,8 +599,7 @@ end
     scalarizedReducedModel(fm, reduced) -> Union{Nothing, OMJLIR.Model}
 
 The model reduced in array form (`reducedArrayModel`; not changed) scalarized for the scalar
-simulation code (`scalarizeArrays`), its if-expressions left inline lifted (`liftIfExpressions!`), its
-derivative unknowns solved for (`solveDerivatives!`,
+simulation code (`scalarizeArrays`), its derivative unknowns solved for (`solveDerivatives!`,
 OMBACKEND_SOLVE_DERIVATIVES); recorded in ARRAY_REDUCED_MODELS. `nothing` where that fails (the
 reason recorded as `reducedArrayModel`'s), and for a model of index 1 (its states committed for the array code only):
 the frontend scalarizes it as before.
@@ -594,9 +610,6 @@ function scalarizedReducedModel(fm::OMFrontend.Frontend.FlatModel, reduced::OMJL
   reduction.indexReduced(reduced) || return nothing
   local scalar::Union{Nothing, OMJLIR.Model} = _arrayReductionStep(fm, decline) do
     local s::OMJLIR.Model = reduction.scalarizeArrays(reduced).model
-    #= the if-expressions the arrays-kept passes left inline (reading a for-equation's iterator), lifted as the
-       scalarized path lifts them =#
-    Passes.liftIfExpressions!(s)
     envSwitch("OMBACKEND_SOLVE_DERIVATIVES") && reduction.solveDerivatives!(s, s.continuous[1])
     s
   end

@@ -1233,6 +1233,10 @@ function _generateIR(model::OIR.Model, modelName::String; functions::Union{Nothi
     end
   end
   _addInitialEquationsIR!(g, OIR.Equation[_inlinedEquation(eq, inlinable) for eq in partition.initialEquations])
+  #= arrays it keeps: of its own, or (rolled components too) of a model whose index was reduced in array form; the
+     components of a model of index 1 are rolled for nothing it keeps (its loops the scalar path's) =#
+  local keepsArrays::Bool = _IRD.indexReduced(model) ||
+    any(v::OIR.Variable -> _IRD.isContinuousArray(v) && !any(p::OIR.CrefPart -> OIR.isRolled(p.ty), v.cref.parts), model.variables)
   return _emitModule(g, modelName, functionDefs, u0, d0, a0, fixedMask, stateNamesOrdered, algNamesOrdered,
-                     discreteNamesOrdered)
+                     discreteNamesOrdered; keepsArrays)
 end

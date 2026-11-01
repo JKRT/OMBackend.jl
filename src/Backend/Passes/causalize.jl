@@ -447,9 +447,9 @@ the other's parameter pinned). Stays inline: an if-expression in `noEvent` or of
 whose relations all are (no events, MLS 8.5); of a record value (the variable is a Real); in
 the branches of a lifted one, one whose condition does not depend on time (a state-dependent
 condition crosses in both directions: its branches are evaluated as a continuous product); in a
-for-equation (arrays kept), one that reads its iterator. The when-equations (their code generation
-evaluates them in place) and algorithms are left. Lifting again (a model scalarized after the
-arrays-kept passes) adds variables under names not taken.
+for-equation (arrays kept), one that reads its iterator (the array code reads it inline; the scalar
+path takes such a model from the frontend's scalarized flatten). The when-equations (their code
+generation evaluates them in place) and algorithms are left.
 """
 function liftIfExpressions!(model::IR.Model)::IR.Model
   for (variables, p) in partitionsWithVariables(model)
@@ -459,24 +459,13 @@ function liftIfExpressions!(model::IR.Model)::IR.Model
       #= for-equations come here only with the arrays kept: an if-expression that reads the iterator stays inline
          (lifted, its if-equation would read the iterator outside its loop: MSL RobotR3.oneAxis's
          `moving[i] = if abs(q_end[i] - q_begin[i]) > eps then ...`, a free `i` in the generated code); the array
-         code and index reduction read it there, the scalarized form lifts it (`scalarizedReducedModel`) =#
+         code and index reduction read it there =#
       (eq isa IR.FOR_EQUATION && ifReadsIterator(eq)) && continue
-      #= an if-equation of an earlier lifting (a model lifted again): its conditions and values as that lifting left
-         them, lifted only where they read time =#
-      local made::Bool = eq isa IR.IF_EQUATION && liftedIfEquation(eq, variables)
-      mapRoots!(e -> lift(lifter, e, made), eq)
+      mapRoots!(e -> lift(lifter, e, false), eq)
     end
     append!(p.equations, lifter.equations)
   end
   return model
-end
-
-"Whether the if-equation `eq` is one `liftIfExpressions!` made: each branch assigns one variable it added."
-function liftedIfEquation(eq::IR.IF_EQUATION, variables::IR.VariableSet)::Bool
-  local assignsLifted::Function = (body::Vector{IR.Equation}) -> length(body) == 1 && body[1] isa IR.SCALAR_EQUATION &&
-    body[1].lhs isa IR.CREF && haskey(variables, body[1].lhs.cref.name) &&
-    variables[body[1].lhs.cref.name].origin === :liftIfExpressions
-  return all(b -> assignsLifted(b.equations), eq.branches) && assignsLifted(eq.elseEquations)
 end
 
 """
@@ -533,11 +522,7 @@ function lift(lifter::IfExpressionLifter, e::IR.Expression, timeDependentOnly::B
   local key = (conditions, values, elseValue)
   local existing = get(lifter.lifted, key, nothing)
   existing === nothing || return existing
-  local name::Symbol = Symbol("ifEq_tmp", lifter.tick[])
-  while haskey(lifter.variables, name)
-    lifter.tick[] += 1
-    name = Symbol("ifEq_tmp", lifter.tick[])
-  end
+  local name = Symbol("ifEq_tmp", lifter.tick[])
   lifter.tick[] += 1
   local v = IR.CREF(IR.ComponentRef(name, IR.T_REAL()), IR.T_REAL())
   push!(lifter.variables, IR.Variable(name, IR.T_REAL(), IR.ALGEBRAIC(), nothing, IR.NO_ATTRIBUTES, IR.NO_DIRECTION,

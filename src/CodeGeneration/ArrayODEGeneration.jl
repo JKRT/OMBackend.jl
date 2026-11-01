@@ -115,11 +115,12 @@ end
 
 """
 The entry of the discrete log for time t: at an event instant the values before it (the left
-limit, as the states' interpolation and OpenModelica's result files), at the stop time the
-final ones; `right` takes the values after an event instant (the second of a saved pair).
+limit, as the states' interpolation and OpenModelica's result files), at the start time the
+values after its events (nothing is before it: a clock's first tick, `sample(0, T)`), at the stop
+time the final ones; `right` takes the values after an event instant (the second of a saved pair).
 """
 _dlogIndex(times, t, tend, right::Bool = false) =
-  (right || t >= tend) ? max(1, searchsortedlast(times, t)) : max(1, searchsortedfirst(times, t) - 1)
+  (right || t >= tend || t <= times[1]) ? max(1, searchsortedlast(times, t)) : max(1, searchsortedfirst(times, t) - 1)
 
 const _OMBACKEND = parentmodule(parentmodule(@__MODULE__))
 
@@ -2727,11 +2728,12 @@ end
 The module of an array model from its variables and classes (`g`, from the front half: the OMJLIR model's
 `_generateIR`), its Modelica functions' definitions, the initial values of the states, discrete
 variables and algebraic variables (row-major), the states' fixed attributes and the element names: the matching,
-the schedule, the initialization and the code.
+the schedule, the initialization and the code. `keepsArrays`: whether the model keeps arrays an algebraic loop may
+go through (its own, or rolled components of a reduced model).
 """
 function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::Vector{Float64}, d0::Vector{Float64},
                      a0::Vector{Float64}, fixedMask::Vector{Bool}, stateNamesOrdered::Vector{String},
-                     algNamesOrdered::Vector{String}, discreteNamesOrdered::Vector{String})::Expr
+                     algNamesOrdered::Vector{String}, discreteNamesOrdered::Vector{String}; keepsArrays::Bool = true)::Expr
   g.classes = _reroll(g.classes)
   g.classes = EqClass[EqClass(_folded(c.lhs), _folded(c.rhs), c.nslots, c.domain, c.nrel, c.text) for c in g.classes]
   g.initClasses = EqClass[EqClass(_folded(c.lhs), _folded(c.rhs), c.nslots, c.domain, c.nrel, c.text) for c in g.initClasses]
@@ -2768,9 +2770,10 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     println("[arraycode] ", length(g.classes), " classes, ", length(el.class), " instances; loop blocks (instances => count): ",
             sort!(collect(blockSizes)), "; ", length(loops.families), " families")
   end
-  #= algebraic loops in the array code only where it keeps arrays (a class of more than one instance): a model without
-     arrays gains nothing from it, and the scalar path solves its loops (tearing) with its initialization and events =#
-  local hasArrays::Bool = any(c::EqClass -> size(c.domain, 2) > 1, g.classes)
+  #= algebraic loops in the array code only where it keeps arrays (a class of more than one instance, and `keepsArrays`:
+     not only rolled components of a model of index 1): a model without arrays gains nothing from it, and the scalar
+     path solves its loops (tearing) with its initialization and events =#
+  local hasArrays::Bool = keepsArrays && any(c::EqClass -> size(c.domain, 2) > 1, g.classes)
   (isempty(loops.blocks) || hasArrays) || ns("algebraic loop in a model without arrays (the scalar path solves it)")
   local large::BitVector = _largeBlocks(g, loops, matchRow)
   local deps::Union{Nothing, Vector{Vector{Int}}} = _stateDeps(el, matchRow, batches, producer, loops, g.nStates)
