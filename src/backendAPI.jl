@@ -585,13 +585,13 @@ The model reduced in array form (`reducedArrayModel`; not changed) scalarized fo
 simulation code (`scalarizeArrays`), its if-expressions left inline lifted (`liftIfExpressions!`), its
 derivative unknowns solved for (`solveDerivatives!`,
 OMBACKEND_SOLVE_DERIVATIVES); recorded in ARRAY_REDUCED_MODELS. `nothing` where that fails (the
-reason recorded as `reducedArrayModel`'s), and for a model without arrays to keep (committed for the array code
-only, `commitIndexOne!`): the frontend scalarizes it as before.
+reason recorded as `reducedArrayModel`'s), and for a model of index 1 (its states committed for the array code only):
+the frontend scalarizes it as before.
 """
 function scalarizedReducedModel(fm::OMFrontend.Frontend.FlatModel, reduced::OMJLIR.Model)::Union{Nothing, OMJLIR.Model}
   local decline::Function = (reason::String) -> declineArrayPath!(canonicalName(fm.name), "array index reduction", reason)
   local reduction::Module = Passes.IndexReduction
-  reduction.hasContinuousArrays(reduced) || return nothing
+  reduction.indexReduced(reduced) || return nothing
   local scalar::Union{Nothing, OMJLIR.Model} = _arrayReductionStep(fm, decline) do
     local s::OMJLIR.Model = reduction.scalarizeArrays(reduced).model
     #= the if-expressions the arrays-kept passes left inline (reading a for-equation's iterator), lifted as the

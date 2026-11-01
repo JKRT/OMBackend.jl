@@ -127,7 +127,8 @@ end
 
 """
 A parameter's binding as code over the parameters it reads (`_bindingCode`): a scalar's value; an array's its elements
-(row-major, each the binding's element distributed as `_subscriptedIRx` does), shaped as the parameter's value.
+(row-major, each the binding's element distributed as `_subscriptedIRx` does), shaped as the parameter's value, or one
+value for every element (`each`).
 """
 function _bindingCode(g::Gen, info::VarInfo)
   local v::OIR.Variable = (info.var::IRVariable).variable
@@ -137,6 +138,9 @@ function _bindingCode(g::Gen, info::VarInfo)
   local ctx::Ctx = Ctx(Dict{String, Int}(), Int[])
   local value::Any = if isempty(info.dims)
     jl(g, toIR(g, v.binding, ctx))
+  elseif !(OIR.typeOf(v.binding) isa OIR.T_ARRAY)
+    #= one value for every element (`each`) =#
+    :(fill($(jl(g, toIR(g, v.binding, ctx))), $(info.dims...)))
   else
     local elementType::OIR.ModelicaType = (v.ty::OIR.T_ARRAY).elementType
     local elements::Vector{Any} = Any[]
@@ -573,18 +577,58 @@ function _callIRx(g::Gen, e::OIR.CALL, ctx::Ctx)::IR
 end
 
 """
-Whether the initial equation `lhs = rhs` gives a scalar parameter with fixed = false the value of an expression of
-parameters (`p = expr`): assigned once, as an initial algorithm's, no unknown of the initialization's solve. MSL
-GlobalSeed's `id_impure = initializeImpureRandom(seed)`: an impure call the solve's Newton made at every evaluation, a
-new value each time (ImpureGenerator stalled). Not of free parameters the solve determines (a double exponential's
-`eta = exp(-T/tau1) - exp(-T/tau2)`); those an earlier such assignment gives are known (GlobalSeed's `id_impure`).
+Whether the initial equation `lhs = rhs` is an assignment, made once as an initial algorithm's (no unknown of the
+initialization's solve): a scalar discrete variable's initial value (`d = expr`, CDL Discrete's `y = y_start`, assigned
+after the solve), or a scalar parameter with fixed = false given the value of an expression of parameters (`p =
+expr`): MSL GlobalSeed's `id_impure = initializeImpureRandom(seed)`, an impure call the solve's Newton made at every
+evaluation, a new value each time (ImpureGenerator stalled). Not of free parameters the solve determines (a double
+exponential's `eta = exp(-T/tau1) - exp(-T/tau2)`); those an earlier such assignment gives are known.
 """
 function _initialAssignment(g::Gen, lhs::IR, rhs::IR)::Bool
-  (lhs isa Ref && !lhs.der && lhs.name in g.freeParams && isempty(g.vars[lhs.name].dims)) || return false
-  local assignedOnce::Function = (name::String) ->
+  (lhs isa Ref && !lhs.der && isempty(g.vars[lhs.name].dims)) || return false
+  local known::Function = (name::String) -> !(name in g.freeParams) ||
     any(a::AlgClass -> any(st::Stmt -> st isa SAssign && st.target.name == name, a.body), g.initAlgs)
-  return all(r::Ref -> r.name != lhs.name && g.vars[r.name].kind == :param && (!(r.name in g.freeParams) || assignedOnce(r.name)),
-             accesses!(Ref[], rhs))
+  local reads::Vector{Ref} = accesses!(Ref[], rhs)
+  g.vars[lhs.name].kind == :discrete &&
+    return all(r::Ref -> r.name != lhs.name && (g.vars[r.name].kind != :param || known(r.name)), reads)
+  lhs.name in g.freeParams || return false
+  return all(r::Ref -> r.name != lhs.name && g.vars[r.name].kind == :param && known(r.name), reads)
+end
+
+"""
+The initial equations: the assignments among them (a discrete variable's initial value, a parameter with fixed = false
+given its value from parameters: `_initialAssignment`) as initial algorithms, in the order their parameters become known (GlobalSeed's `seed`, then `id_impure =
+initializeImpureRandom(seed)`, whatever the equations' order); the others as initial equations (`_addEquationIR!`).
+"""
+function _addInitialEquationsIR!(g::Gen, equations::Vector{OIR.Equation})::Nothing
+  local pending::Vector{Tuple{OIR.SCALAR_EQUATION, IR, IR, Int}} = Tuple{OIR.SCALAR_EQUATION, IR, IR, Int}[]
+  for eq in equations
+    if eq isa OIR.SCALAR_EQUATION && !(eq.lhs isa OIR.TUPLE)
+      local ctx::Ctx = Ctx(Dict{String, Int}(), Int[], Base.RefValue(0), true)
+      local lhs::IR = toIR(g, eq.lhs, ctx)
+      local rhs::IR = toIR(g, eq.rhs, ctx)
+      ctx.nsam[] == 0 || ns("sample() in an equation")
+      push!(pending, (eq, lhs, rhs, ctx.nrel[]))
+    else
+      _addEquationIR!(g, eq, String[], NO_SLOTS; initial = true)
+    end
+  end
+  local assigned::Bool = true
+  while assigned
+    assigned = false
+    for k in eachindex(pending)
+      local (eq::OIR.SCALAR_EQUATION, lhs::IR, rhs::IR, _) = pending[k]
+      _initialAssignment(g, lhs, rhs) || continue
+      push!(g.initAlgs, AlgClass(Stmt[SAssign(lhs::Ref, rhs)], 0, NO_SLOTS, 0, 0, _strIR(eq)))
+      deleteat!(pending, k)
+      assigned = true
+      break
+    end
+  end
+  for (eq, lhs, rhs, nrel) in pending
+    push!(g.initClasses, EqClass(lhs, rhs, 0, NO_SLOTS, nrel, _strIR(eq)))
+  end
+  return nothing
 end
 
 """
@@ -625,10 +669,6 @@ function _addEquationIR!(g::Gen, eq::OIR.Equation, iterNames::Vector{String}, id
     local lhs::IR = toIR(g, eq.lhs, ctx)
     local rhs::IR = toIR(g, eq.rhs, ctx)
     ctx.nsam[] == 0 || ns("sample() in an equation")
-    if initial && _initialAssignment(g, lhs, rhs)
-      push!(g.initAlgs, AlgClass(Stmt[SAssign(lhs::Ref, rhs)], nIter, idom, 0, 0, _strIR(eq)))
-      return
-    end
     push!(initial ? g.initClasses : g.classes, EqClass(lhs, rhs, nIter, idom, ctx.nrel[], _strIR(eq)))
     return
   elseif eq isa OIR.IF_EQUATION
@@ -673,8 +713,8 @@ function _addWhenIR!(g::Gen, eq::OIR.WHEN_EQUATION, iterNames::Vector{String}, i
     for c in br.triggers
       if OIR.isBuiltinCall(c, :change) && !(c.arguments[1] isa OIR.CREF)
         #= change(e) of a Boolean expression (a lifted discrete cluster's trigger): e or not e becomes true =#
-        OIR.typeOf(c.arguments[1]) isa OIR.T_BOOLEAN || ns("change of $(_strIR(c.arguments[1]))")
         local x::IR = toIR(g, c.arguments[1], ctx)
+        _isBooleanIR(g, x) || ns("change of $(_strIR(c.arguments[1]))")
         append!(triggers, IR[x, Op(:!, IR[x])])
       else
         push!(triggers, _topLevelInitial(toIR(g, c, ctx)))
@@ -744,6 +784,16 @@ function _tupleAssignments(g::Gen, lhs::OIR.TUPLE, call::IR, ctx::Ctx)::Vector{S
   return out
 end
 
+"Whether `x` is Boolean-valued in the code: a relation, a logical operation, a Boolean variable or its pre value."
+function _isBooleanIR(g::Gen, x::IR)::Bool
+  x isa Rel && return true
+  x isa Lit && return x.v isa Bool
+  x isa Op && return x.op in (:!, :&&, :||, :initial)
+  x isa Ref && return g.vars[x.name].vtype == :bool
+  x isa Pre && return _isBooleanIR(g, x.ref)
+  return false
+end
+
 """
 A when-equation of the passes' initial kinds (`INITIAL_SECTION`: an initial algorithm section, an algorithm's `when
 initial()`; `INITIAL_WHEN`: the initial arm of a lifted algorithm or discrete cluster), over the domain: an initial
@@ -762,12 +812,17 @@ end
 
 """
 An OMJLIR statement of an algorithm the array code runs (an initial algorithm's): assignments to a scalar variable
-(an algebraic or discrete one, a parameter with fixed = false), if, for (over a literal range: its iterator a
+(an algebraic or discrete one, a parameter with fixed = false; to an element chosen by an if-expression, an
+if-statement), if, for (over a literal range: its iterator a
 temporary slot), while, assert, a call without a result, break. Not when-statements (an initial algorithm has none),
 reinit, return, terminate.
 """
 function _stmtIR(g::Gen, st::OIR.Statement, ctx::Ctx)::Stmt
-  if st isa OIR.ASSIGNMENT
+  if st isa OIR.ASSIGNMENT && st.lhs isa OIR.IF_EXPRESSION
+    #= an element of a split array by a variable index (`if i == 1 then y[1] else ...`): each branch assigns its element =#
+    return SIf(Tuple{IR, Vector{Stmt}}[(toIR(g, st.lhs.condition, ctx), Stmt[_stmtIR(g, OIR.ASSIGNMENT(st.lhs.thenExp, st.rhs, st.source), ctx)]),
+                                       (Lit(true), Stmt[_stmtIR(g, OIR.ASSIGNMENT(st.lhs.elseExp, st.rhs, st.source), ctx)])])
+  elseif st isa OIR.ASSIGNMENT
     st.lhs isa OIR.CREF || ns("an assignment to $(_strIR(st.lhs))")
     local target::IR = toIR(g, st.lhs, ctx)
     (target isa Ref && (g.vars[target.name].kind in (:alg, :discrete) || target.name in g.freeParams)) ||
@@ -945,6 +1000,20 @@ function _unreadDerivatives(partition::OIR.Partition, variables::OIR.VariableSet
   return Set{Symbol}(n for n in candidates if get(definitions, n, 0) > 0 && get(reads, n, 0) == definitions[n])
 end
 
+"The variables the when-equations in `eq` (in for-equations too) assign, onto `out`."
+function _whenTargets!(out::Set{Symbol}, eq::OIR.Equation, variables::OIR.VariableSet)::Nothing
+  if eq isa OIR.FOR_EQUATION
+    for b in eq.body
+      _whenTargets!(out, b, variables)
+    end
+  elseif eq isa OIR.WHEN_EQUATION
+    for br in eq.branches, st in br.body
+      (st isa OIR.ASSIGNMENT && st.lhs isa OIR.CREF) && push!(out, _variableNameOf(st.lhs.cref, variables))
+    end
+  end
+  return nothing
+end
+
 "The variable a reference is to or into: its own name, else (an element) its array's."
 _variableNameOf(c::OIR.ComponentRef, variables::OIR.VariableSet)::Symbol =
   (OIR.hasSubscripts(c) && !haskey(variables, c.name)) ? Passes.unsubscriptedName(c) : c.name
@@ -1009,6 +1078,9 @@ function _generateIR(model::OIR.Model, modelName::String; functions::Union{Nothi
   local fixedMask::Vector{Bool} = Bool[]
   local fixedNonStates::Vector{String} = String[]
   local unread::Set{Symbol} = _unreadDerivatives(partition, model.variables)
+  #= a variable a when-equation assigns is discrete (MLS 3.8.3; the frontend's implicitly discrete one is algebraic) =#
+  local whenAssigned::Set{Symbol} = Set{Symbol}()
+  foreach(eq::OIR.Equation -> _whenTargets!(whenAssigned, eq, model.variables), partition.equations)
   for v in model.variables
     local nm::String = String(v.name)
     local kind::OIR.VariableKind = v.kind
@@ -1060,7 +1132,7 @@ function _generateIR(model::OIR.Model, modelName::String; functions::Union{Nothi
       append!(u0, startOf.(names))
       append!(fixedMask, Bool[fixedOf(x, false) for x in names])
       append!(stateNamesOrdered, elementNames)
-    elseif kind isa OIR.DISCRETE || (kind isa OIR.ALGEBRAIC && vtype in (:int, :bool))
+    elseif kind isa OIR.DISCRETE || (kind isa OIR.ALGEBRAIC && (vtype in (:int, :bool) || v.name in whenAssigned))
       vtype == :other && ns("the discrete variable $(nm) of type $(v.ty)")
       #= an Integer or Boolean an equation computes (MultiBody's colors): discrete, in the discrete buffer =#
       g.vars[nm] = VarInfo(:discrete, dims, perPart, g.nDiscrete, vtype, IRVariable(v, elementNames, nothing))
@@ -1111,9 +1183,7 @@ function _generateIR(model::OIR.Model, modelName::String; functions::Union{Nothi
       push!(g.initClasses, EqClass(Ref(nm, IR[Lit(i) for i in t], false), Lit(startOf(x)), 0, NO_SLOTS, 0, "$(names[k]) = start"))
     end
   end
-  for eq in partition.initialEquations
-    _addEquationIR!(g, _inlinedEquation(eq, inlinable), String[], NO_SLOTS; initial = true)
-  end
+  _addInitialEquationsIR!(g, OIR.Equation[_inlinedEquation(eq, inlinable) for eq in partition.initialEquations])
   return _emitModule(g, modelName, functionDefs, u0, d0, a0, fixedMask, stateNamesOrdered, algNamesOrdered,
                      discreteNamesOrdered)
 end

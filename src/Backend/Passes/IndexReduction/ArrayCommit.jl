@@ -635,6 +635,9 @@ function commitIndexOne!(model::IR.Model)::Bool
   return true
 end
 
+"Whether index reduction reduced `model`: it has dummy derivatives (one for each differentiated equation)."
+indexReduced(model::IR.Model)::Bool = any(v::IR.Variable -> v.kind isa Union{IR.DUMMY_DER, IR.DUMMY_STATE}, model.variables)
+
 """
     commitArrayPlan!(model, view, written) -> Bool
 
