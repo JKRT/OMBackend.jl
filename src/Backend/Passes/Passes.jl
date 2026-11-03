@@ -110,14 +110,15 @@ end
 
 `model`, lowered with its arrays kept, through the passes before index reduction (`PIPELINE`), its array
 equations of continuous arrays kept as for-equations over their elements (`IndexReduction.rollArrayEquations!`,
-before `expandEquations`, which splits the others): what the array form of index reduction takes.
+before `expandEquations`, which splits the others), its for-equations' if-equations on the iterator alone split by
+the values taking each branch (`IndexReduction.splitStaticIfs!`): what the array form of index reduction takes.
 """
 function runPassesKeepingArrays!(model::IR.Model)::IR.Model
   for (name, pass) in PIPELINE
     name == "expandEquations" && (model = IndexReduction.rollArrayEquations!(model))
     model = pass(model)
   end
-  return model
+  return IndexReduction.splitStaticIfs!(model)
 end
 
 end # module Passes

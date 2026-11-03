@@ -87,6 +87,9 @@ catch
   string("<", nameof(typeof(x)), ">")
 end
 
+"Whether an assert's level is `AssertionLevel.warning`: the enumeration literal by its position, not its printing."
+_isWarningIR(level::OIR.Expression)::Bool = level isa OIR.ENUM_LITERAL && level.ty.literals[level.index] === :warning
+
 "The value type of an OMJLIR type's elements: :real, :int (Integer, enumerations), :bool, or :other."
 function _vtypeIR(ty::OIR.ModelicaType)::Symbol
   local el::OIR.ModelicaType = ty isa OIR.T_ARRAY ? ty.elementType : ty
@@ -108,7 +111,7 @@ _typedValue(x::Float64, vtype::Symbol) = vtype == :int ? round(Int, x) : vtype =
 """
 The parameters an OMJLIR variable's binding reads.
 """
-function _bindingDepsIR(g::Gen, v::OIR.Variable)::Vector{String}
+function _bindingDeps(g::Gen, v::OIR.Variable)::Vector{String}
   local deps::Vector{String} = String[]
   v.binding === nothing && return deps
   OIR.foreachExp(v.binding) do x::OIR.Expression
@@ -123,16 +126,31 @@ function _bindingDepsIR(g::Gen, v::OIR.Variable)::Vector{String}
 end
 
 """
-A scalar parameter's binding as code over the parameters it reads (`_bindingCode`); an array parameter's is not
-expressed: its value then does not follow a changed dependency.
+A parameter's binding as code over the parameters it reads (`_bindingCode`): a scalar's value; an array's its elements
+(row-major, each the binding's element distributed as `_subscriptedIRx` does), shaped as the parameter's value, or one
+value for every element (`each`).
 """
-function _bindingCodeIR(g::Gen, info::VarInfo)
-  isempty(info.dims) || ns("an array parameter's binding")
+function _bindingCode(g::Gen, info::VarInfo)
   local v::OIR.Variable = (info.var::IRVariable).variable
-  local deps::Vector{String} = _bindingDepsIR(g, v)
+  local deps::Vector{String} = _bindingDeps(g, v)
   local locals::Vector{Expr} = Expr[:(local $(g.paramSyms[d])::$(typeof(_paramValue!(g, d))) = vals[$(QuoteNode(g.paramSyms[d]))])
                                     for d in deps]
-  local value::Any = jl(g, toIR(g, v.binding, Ctx(Dict{String, Int}(), Int[])))
+  local ctx::Ctx = Ctx(Dict{String, Int}(), Int[])
+  local value::Any = if isempty(info.dims)
+    jl(g, toIR(g, v.binding, ctx))
+  elseif !(OIR.typeOf(v.binding) isa OIR.T_ARRAY)
+    #= one value for every element (`each`) =#
+    :(fill($(jl(g, toIR(g, v.binding, ctx))), $(info.dims...)))
+  else
+    local elementType::OIR.ModelicaType = (v.ty::OIR.T_ARRAY).elementType
+    local elements::Vector{Any} = Any[]
+    for t in Iterators.product(reverse([1:d for d in info.dims])...)   #= row-major: the last index fastest =#
+      local subscripts::Vector{OIR.Subscript} = OIR.Subscript[OIR.INDEX(OIR.INTEGER(i)) for i in reverse(collect(t))]
+      push!(elements, jl(g, toIR(g, OIR.SUBSCRIPTED(v.binding, subscripts, elementType), ctx)))
+    end
+    local vect::Expr = Expr(:vect, elements...)
+    length(info.dims) == 1 ? vect : :(permutedims(reshape($vect, $(reverse(info.dims)...)), $(length(info.dims)):-1:1))
+  end
   return :((vals) -> begin
     $(locals...)
     $value
@@ -465,6 +483,27 @@ function _functionCallIRx(g::Gen, e::OIR.CALL, ctx::Ctx)::IR
   return call
 end
 
+"""
+sum, product, min or max (`fname`) of the array `arg`: its elements (`arg[i, ...]`, distributed as `_subscriptedIRx`
+does) written out, row-major, `MAX_REDUCTION_TERMS` at most, and combined; sum and product of an empty array 0 and 1.
+"""
+function _reductionIRx(g::Gen, fname::String, arg::OIR.Expression, ctx::Ctx)::IR
+  local ty::OIR.ModelicaType = OIR.typeOf(arg)
+  ty isa OIR.T_ARRAY || ns("$(fname) of $(_strIR(arg))")
+  local dims::Vector{Int} = Int[d isa OIR.DIM_SIZE ? d.size : ns("$(fname) of an array of a size not known: $(_strIR(arg))")
+                                for d in ty.dimensions]
+  local n::Int = prod(dims)
+  n <= MAX_REDUCTION_TERMS || ns("$(fname) over $(n) elements")
+  n == 0 && return Lit(fname == "product" ? 1.0 : fname == "sum" ? 0.0 : ns("$(fname) of an empty array"))
+  local terms::Vector{IR} = IR[]
+  for t in Iterators.product(reverse([1:d for d in dims])...)   #= row-major: the last index fastest =#
+    local subscripts::Vector{OIR.Subscript} = OIR.Subscript[OIR.INDEX(OIR.INTEGER(i)) for i in reverse(collect(t))]
+    push!(terms, toIR(g, OIR.SUBSCRIPTED(arg, subscripts, ty.elementType), ctx))
+  end
+  local op::Symbol = fname == "sum" ? :+ : fname == "product" ? :* : Symbol(fname)
+  return foldl((a::IR, b::IR) -> Op(op, IR[a, b]), terms)
+end
+
 function _callIRx(g::Gen, e::OIR.CALL, ctx::Ctx)::IR
   local fname::String = String(e.name)
   local args::Vector{OIR.Expression} = e.arguments
@@ -497,6 +536,21 @@ function _callIRx(g::Gen, e::OIR.CALL, ctx::Ctx)::IR
   elseif fname == "semiLinear"
     local x::IR = toIR(g, args[1], ctx)
     return Op(:if, IR[Op(:>=, IR[x, Lit(0.0)]), Op(:*, IR[x, toIR(g, args[2], ctx)]), Op(:*, IR[x, toIR(g, args[3], ctx)])])
+  elseif fname in ("sum", "product") || (fname in ("min", "max") && length(args) == 1)
+    return _reductionIRx(g, fname, args[1], ctx)
+  elseif fname == "String"
+    #= String(r, significantDigits, minimumLength, leftJustified), String(r, format), String(i|b|e, minimumLength,
+       leftJustified): OpenModelica's formatting (modelica_String) =#
+    local strs::Vector{IR} = IR[toIR(g, a, ctx) for a in args]
+    length(strs) == 2 && return Op(:String, strs)
+    length(strs) == 4 && return Op(:String, IR[strs[1], Op(:Int, IR[strs[2]]), Op(:Int, IR[strs[3]]), Op(:Bool, IR[strs[4]])])
+    length(strs) == 3 || ns("String with $(length(strs)) arguments")
+    local strTy::OIR.ModelicaType = OIR.typeOf(args[1])
+    local strValue::IR = strTy isa OIR.T_ENUMERATION ?
+      Op(:index, IR[Lit(Tuple(String[String(l) for l in strTy.literals])), Op(:Int, IR[strs[1]])]) :
+      strTy isa OIR.T_BOOLEAN ? Op(:Bool, IR[strs[1]]) :
+      strTy isa OIR.T_INTEGER ? Op(:Int, IR[strs[1]]) : ns("String of $(_strIR(args[1]))")
+    return Op(:String, IR[strValue, Op(:Int, IR[strs[2]]), Op(:Bool, IR[strs[3]])])
   elseif fname in ("integer", "floor", "ceil", "div", "mod", "rem")
     local xs::Vector{IR} = IR[toIR(g, a, ctx) for a in args]
     local q::IR = length(xs) == 2 ? Op(:/, IR[xs[1], xs[2]]) : xs[1]
@@ -523,7 +577,62 @@ function _callIRx(g::Gen, e::OIR.CALL, ctx::Ctx)::IR
 end
 
 """
-The classes of an OMJLIR equation (`_addEquation!` of the flat model's): a for-equation's body over its iterator's
+Whether the initial equation `lhs = rhs` is an assignment, made once as an initial algorithm's (no unknown of the
+initialization's solve): a scalar discrete variable's initial value (`d = expr`, CDL Discrete's `y = y_start`, assigned
+after the solve), or a scalar parameter with fixed = false given the value of an expression of parameters (`p =
+expr`): MSL GlobalSeed's `id_impure = initializeImpureRandom(seed)`, an impure call the solve's Newton made at every
+evaluation, a new value each time (ImpureGenerator stalled). Not of free parameters the solve determines (a double
+exponential's `eta = exp(-T/tau1) - exp(-T/tau2)`); those an earlier such assignment gives are known.
+"""
+function _initialAssignment(g::Gen, lhs::IR, rhs::IR)::Bool
+  (lhs isa Ref && !lhs.der && isempty(g.vars[lhs.name].dims)) || return false
+  local known::Function = (name::String) -> !(name in g.freeParams) ||
+    any(a::AlgClass -> any(st::Stmt -> st isa SAssign && st.target.name == name, a.body), g.initAlgs)
+  local reads::Vector{Ref} = accesses!(Ref[], rhs)
+  g.vars[lhs.name].kind == :discrete &&
+    return all(r::Ref -> r.name != lhs.name && (g.vars[r.name].kind != :param || known(r.name)), reads)
+  lhs.name in g.freeParams || return false
+  return all(r::Ref -> r.name != lhs.name && g.vars[r.name].kind == :param && known(r.name), reads)
+end
+
+"""
+The initial equations: the assignments among them (a discrete variable's initial value, a parameter with fixed = false
+given its value from parameters: `_initialAssignment`) as initial algorithms, in the order their parameters become known (GlobalSeed's `seed`, then `id_impure =
+initializeImpureRandom(seed)`, whatever the equations' order); the others as initial equations (`_addEquationIR!`).
+"""
+function _addInitialEquationsIR!(g::Gen, equations::Vector{OIR.Equation})::Nothing
+  local pending::Vector{Tuple{OIR.SCALAR_EQUATION, IR, IR, Int}} = Tuple{OIR.SCALAR_EQUATION, IR, IR, Int}[]
+  for eq in equations
+    if eq isa OIR.SCALAR_EQUATION && !(eq.lhs isa OIR.TUPLE)
+      local ctx::Ctx = Ctx(Dict{String, Int}(), Int[], Base.RefValue(0), true)
+      local lhs::IR = toIR(g, eq.lhs, ctx)
+      local rhs::IR = toIR(g, eq.rhs, ctx)
+      ctx.nsam[] == 0 || ns("sample() in an equation")
+      push!(pending, (eq, lhs, rhs, ctx.nrel[]))
+    else
+      _addEquationIR!(g, eq, String[], NO_SLOTS; initial = true)
+    end
+  end
+  local assigned::Bool = true
+  while assigned
+    assigned = false
+    for k in eachindex(pending)
+      local (eq::OIR.SCALAR_EQUATION, lhs::IR, rhs::IR, _) = pending[k]
+      _initialAssignment(g, lhs, rhs) || continue
+      push!(g.initAlgs, AlgClass(Stmt[SAssign(lhs::Ref, rhs)], 0, NO_SLOTS, 0, 0, _strIR(eq)))
+      deleteat!(pending, k)
+      assigned = true
+      break
+    end
+  end
+  for (eq, lhs, rhs, nrel) in pending
+    push!(g.initClasses, EqClass(lhs, rhs, 0, NO_SLOTS, nrel, _strIR(eq)))
+  end
+  return nothing
+end
+
+"""
+The classes of an OMJLIR equation: a for-equation's body over its iterator's
 range (the domain crossed), a scalar equation one class over the domain, an assert one checked over it.
 """
 function _addEquationIR!(g::Gen, eq::OIR.Equation, iterNames::Vector{String}, idom::Matrix{Int}; initial::Bool = false)
@@ -547,6 +656,13 @@ function _addEquationIR!(g::Gen, eq::OIR.Equation, iterNames::Vector{String}, id
       _addEquationIR!(g, b, [iterNames; String(eq.iterator.name)], dom; initial = initial)
     end
     return
+  elseif eq isa OIR.SCALAR_EQUATION && eq.lhs isa OIR.TUPLE
+    #= (a, b) = f(x): an algorithm node assigning each target its output =#
+    local tupleCtx::Ctx = Ctx(iters, Int[])
+    local tupleCall::IR = toIR(g, eq.rhs, tupleCtx)
+    tupleCtx.nsam[] == 0 || ns("sample() in an equation")
+    push!(g.algs, AlgClass(_tupleAssignments(g, eq.lhs, tupleCall, tupleCtx), nIter, idom, tupleCtx.nrel[], 0, _strIR(eq)))
+    return
   elseif eq isa OIR.SCALAR_EQUATION
     #= relations of initial equations are evaluated at the start (no events) =#
     local ctx::Ctx = Ctx(iters, Int[], Base.RefValue(0), initial)
@@ -560,9 +676,12 @@ function _addEquationIR!(g::Gen, eq::OIR.Equation, iterNames::Vector{String}, id
     return
   elseif eq isa OIR.ASSERT_EQUATION
     local actx::Ctx = Ctx(iters, Int[], Base.RefValue(0), true)
+    #= a call without a result (`callEquation`: a call equation run where the asserts are checked): made, then true =#
+    local checked::IR = (eq.condition isa OIR.CALL && eq.condition.ty isa OIR.T_NORETCALL) ?
+      Op(:seq, IR[toIR(g, eq.condition, actx), Lit(true)]) : toIR(g, eq.condition, actx)
     push!(initial ? g.initAsserts : g.asserts,
-          AssertClass(toIR(g, eq.condition, actx), occursin("warning", _strIR(eq.level)), nIter, idom,
-                      _strIR(eq.condition), _strIR(eq.message), _messageIRx(g, eq.message, actx)))
+          AssertClass(checked, _isWarningIR(eq.level), nIter, idom, _strIR(eq.condition), _strIR(eq.message),
+                      _messageIRx(g, eq.message, actx)))
     return
   elseif eq isa OIR.WHEN_EQUATION
     initial && ns("a when-equation among the initial equations: $(_strIR(eq))")
@@ -573,12 +692,15 @@ function _addEquationIR!(g::Gen, eq::OIR.Equation, iterNames::Vector{String}, id
 end
 
 """
-A when-equation (`_addWhen!` of the flat model's), over the domain: each branch's triggers its condition (several
+A when-equation, over the domain: each branch's triggers its condition (several
 the vector of them, each an edge of its own; a branch active at the initialization with initial() among them: `when
-initial()` alone), its statements the body: assignments to discrete variables, reinit of states, asserts (checked
-when it runs) and calls. Not a when of the passes' initial or structural kinds, terminal(), or other statements.
+initial()` alone; change(e) of a Boolean expression the vector {e, not e}), its statements the body: assignments to
+discrete variables, reinit of states, asserts (checked
+when it runs) and calls. The passes' initial kinds (an initial algorithm, the initial arm of a lifted cluster) as
+initial algorithms (`_addInitialWhenIR!`). Not a structural when, terminal(), or other statements.
 """
 function _addWhenIR!(g::Gen, eq::OIR.WHEN_EQUATION, iterNames::Vector{String}, idom::Matrix{Int})::Nothing
+  eq.kind in (OIR.INITIAL_WHEN, OIR.INITIAL_SECTION) && return _addInitialWhenIR!(g, eq, iterNames, idom)
   eq.kind == OIR.REGULAR_WHEN || ns("a when-equation of kind $(eq.kind): $(_strIR(eq))")
   local ctx::Ctx = Ctx(Dict{String, Int}(n => k for (k, n) in enumerate(iterNames)), Int[])
   local conds::Vector{IR} = IR[]
@@ -587,8 +709,22 @@ function _addWhenIR!(g::Gen, eq::OIR.WHEN_EQUATION, iterNames::Vector{String}, i
   local noTarget::Ref = Ref("", IR[], false)
   for br in eq.branches
     br.atTerminal && ns("terminal() in a when-condition: $(_strIR(eq))")
-    local triggers::Vector{IR} = IR[_topLevelInitial(toIR(g, c, ctx)) for c in br.triggers]
-    br.atInitial && push!(triggers, Op(:initial, IR[]))
+    local triggers::Vector{IR} = IR[]
+    for c in br.triggers
+      if OIR.isBuiltinCall(c, :change) && !(c.arguments[1] isa OIR.CREF)
+        #= change(e) of a Boolean expression (a lifted discrete cluster's trigger): e or not e becomes true =#
+        local x::IR = toIR(g, c.arguments[1], ctx)
+        _isBooleanIR(g, x) || ns("change of $(_strIR(c.arguments[1]))")
+        append!(triggers, IR[x, Op(:!, IR[x])])
+      else
+        push!(triggers, _topLevelInitial(toIR(g, c, ctx)))
+      end
+    end
+    if br.atInitial
+      #= the branch fires in the initialization's event iteration (USES_INITIAL), as an initial() call's =#
+      g.usesInitial = true
+      push!(triggers, Op(:initial, IR[]))
+    end
     isempty(triggers) && ns("a when-branch without a condition: $(_strIR(eq))")
     push!(conds, length(triggers) == 1 ? triggers[1] : Op(:vect, triggers))
     push!(starts, length(body) + 1)
@@ -603,7 +739,7 @@ function _addWhenIR!(g::Gen, eq::OIR.WHEN_EQUATION, iterNames::Vector{String}, i
         (state isa Ref && g.vars[state.name].kind == :state) || ns("reinit of a non-state: $(_strIR(eq))")
         push!(body, (:reinit, state, toIR(g, st.value, ctx)))
       elseif st isa OIR.ASSERT
-        push!(g.assertTexts, (_strIR(st.condition), _strIR(st.message), occursin("warning", _strIR(st.level))))
+        push!(g.assertTexts, (_strIR(st.condition), _strIR(st.message), _isWarningIR(st.level)))
         local actx::Ctx = _with(ctx; noEvent = true)
         push!(body, (:call, noTarget, Op(:assertcall, IR[toIR(g, st.condition, actx), _messageIRx(g, st.message, actx),
                                                          Lit(length(g.assertTexts))])))
@@ -620,7 +756,105 @@ function _addWhenIR!(g::Gen, eq::OIR.WHEN_EQUATION, iterNames::Vector{String}, i
 end
 
 """
-An if-equation (`_addDynamicIf!` of the flat model's): on conditions of parameters and iterators each instance its
+The statements of `(a, _, c) = call` (a tuple equation): the call once, into a temporary, and an assignment of each
+target that is not a wildcard from its output; a whole array target element by element from that output
+(`(r, state) = random(pre(state))`: Buildings.Occupants).
+"""
+function _tupleAssignments(g::Gen, lhs::OIR.TUPLE, call::IR, ctx::Ctx)::Vector{Stmt}
+  local out::Vector{Stmt} = Stmt[]
+  local res::Slot = Slot(g.tmpSlot -= 1)
+  for (i, e) in enumerate(lhs.elements)
+    e isa OIR.WILD && continue
+    e isa OIR.CREF || ns("tuple target $(_strIR(e))")
+    if e.ty isa OIR.T_ARRAY && !OIR.hasSubscripts(e.cref)
+      local name::String = String(e.cref.name)
+      local info::Union{Nothing, VarInfo} = get(g.vars, name, nothing)
+      (info !== nothing && info.kind in (:alg, :discrete) && !isempty(info.dims)) || ns("tuple target $(_strIR(e))")
+      for t in Iterators.product((1:d for d in info.dims)...)
+        local subs::Vector{IR} = IR[Lit(k) for k in t]
+        push!(out, SAssign(Ref(name, subs, false), Op(:index, IR[Op(:index, IR[res, Lit(i)]), subs...])))
+      end
+      continue
+    end
+    local target::IR = toIR(g, e, ctx)
+    (target isa Ref && g.vars[target.name].kind in (:alg, :discrete)) || ns("tuple target $(_strIR(e))")
+    push!(out, SAssign(target, Op(:index, IR[res, Lit(i)])))
+  end
+  isempty(out) || pushfirst!(out, SCall(Op(:setlocal, IR[res, call])))
+  return out
+end
+
+"Whether `x` is Boolean-valued in the code: a relation, a logical operation, a Boolean variable or its pre value."
+function _isBooleanIR(g::Gen, x::IR)::Bool
+  x isa Rel && return true
+  x isa Lit && return x.v isa Bool
+  x isa Op && return x.op in (:!, :&&, :||, :initial)
+  x isa Ref && return g.vars[x.name].vtype == :bool
+  x isa Pre && return _isBooleanIR(g, x.ref)
+  return false
+end
+
+"""
+A when-equation of the passes' initial kinds (`INITIAL_SECTION`: an initial algorithm section, an algorithm's `when
+initial()`; `INITIAL_WHEN`: the initial arm of a lifted algorithm or discrete cluster), over the domain: an initial
+algorithm, run once at the initialization after the free states are solved, before the first event iteration (its
+relations literal); it assigns discrete variables and parameters with fixed = false (`_initAlgTargets`).
+"""
+function _addInitialWhenIR!(g::Gen, eq::OIR.WHEN_EQUATION, iterNames::Vector{String}, idom::Matrix{Int})::Nothing
+  (length(eq.branches) == 1 && isempty(eq.branches[1].triggers)) || ns("an initial when-equation with triggers: $(_strIR(eq))")
+  local ctx::Ctx = Ctx(Dict{String, Int}(n => k for (k, n) in enumerate(iterNames)), Int[], Base.RefValue(0), true)
+  local body::Vector{Stmt} = Stmt[_stmtIR(g, st, ctx) for st in eq.branches[1].body]
+  ctx.nsam[] == 0 || ns("sample() in an initial algorithm: $(_strIR(eq))")
+  _initAlgTargets(g, body)
+  push!(g.initAlgs, AlgClass(body, length(iterNames), idom, 0, 0, _strIR(eq)))
+  return nothing
+end
+
+"""
+An OMJLIR statement of an algorithm the array code runs (an initial algorithm's): assignments to a scalar variable
+(an algebraic or discrete one, a parameter with fixed = false; to an element chosen by an if-expression, an
+if-statement), if, for (over a literal range: its iterator a
+temporary slot), while, assert, a call without a result, break. Not when-statements (an initial algorithm has none),
+reinit, return, terminate.
+"""
+function _stmtIR(g::Gen, st::OIR.Statement, ctx::Ctx)::Stmt
+  if st isa OIR.ASSIGNMENT && st.lhs isa OIR.IF_EXPRESSION
+    #= an element of a split array by a variable index (`if i == 1 then y[1] else ...`): each branch assigns its element =#
+    return SIf(Tuple{IR, Vector{Stmt}}[(toIR(g, st.lhs.condition, ctx), Stmt[_stmtIR(g, OIR.ASSIGNMENT(st.lhs.thenExp, st.rhs, st.source), ctx)]),
+                                       (Lit(true), Stmt[_stmtIR(g, OIR.ASSIGNMENT(st.lhs.elseExp, st.rhs, st.source), ctx)])])
+  elseif st isa OIR.ASSIGNMENT
+    st.lhs isa OIR.CREF || ns("an assignment to $(_strIR(st.lhs))")
+    local target::IR = toIR(g, st.lhs, ctx)
+    (target isa Ref && (g.vars[target.name].kind in (:alg, :discrete) || target.name in g.freeParams)) ||
+      ns("an assignment to $(_strIR(st.lhs))")
+    return SAssign(target, toIR(g, st.rhs, ctx))
+  elseif st isa OIR.IF_STATEMENT
+    local branches::Vector{Tuple{IR, Vector{Stmt}}} =
+      Tuple{IR, Vector{Stmt}}[(toIR(g, b.condition, ctx), Stmt[_stmtIR(g, x, ctx) for x in b.body]) for b in st.branches]
+    isempty(st.elseBody) || push!(branches, (Lit(true), Stmt[_stmtIR(g, x, ctx) for x in st.elseBody]))
+    return SIf(branches)
+  elseif st isa OIR.FOR_STATEMENT
+    local range::Union{Nothing, StepRange{Int, Int}} = _IRD.literalRange(_IRD.foldTree(st.iterator.range))
+    range === nothing && ns("for range $(_strIR(st.iterator.range))")
+    local k::Int = (g.tmpSlot -= 1)
+    local inner::Ctx = Ctx(merge(ctx.iters, Dict{String, Int}(String(st.iterator.name) => k)), ctx.elem, ctx.nrel, ctx.noEvent, ctx.nsam)
+    return SFor(k, collect(range), Stmt[_stmtIR(g, x, inner) for x in st.body])
+  elseif st isa OIR.WHILE_STATEMENT
+    return SWhile(toIR(g, st.condition, _with(ctx; noEvent = true)), Stmt[_stmtIR(g, x, ctx) for x in st.body])
+  elseif st isa OIR.ASSERT
+    push!(g.assertTexts, (_strIR(st.condition), _strIR(st.message), _isWarningIR(st.level)))
+    local actx::Ctx = _with(ctx; noEvent = true)
+    return SAssert(toIR(g, st.condition, actx), length(g.assertTexts), _messageIRx(g, st.message, actx))
+  elseif st isa OIR.NORETCALL
+    return SCall(toIR(g, st.call, _with(ctx; noEvent = true)))
+  elseif st isa OIR.BREAK
+    return SBreak()
+  end
+  ns("a statement $(nameof(typeof(st))): $(_strIR(st))")
+end
+
+"""
+An if-equation: on conditions of parameters and iterators each instance its
 branch's equations; on a variable condition each variable its branches assign (`v = e` in every branch and the else)
 one class `v = if c1 then e1 elseif ... else en`.
 """
@@ -742,6 +976,124 @@ function _inlinedEquation(eq::OIR.Equation, functions::Dict{Symbol, OIR.Modelica
   return eq
 end
 
+"""
+The derivative variables (`ALGEBRAIC_DER`, `\$DER.x`) of the partition's equations that only their definitions read
+(scalar equations of the variable, or of its elements at the iterators, on their left side; no initial equation):
+the state's link took their value (`solvedInArrays` puts the small solved values in), so the code computes neither.
+"""
+function _unreadDerivatives(partition::OIR.Partition, variables::OIR.VariableSet)::Set{Symbol}
+  local candidates::Set{Symbol} = Set{Symbol}(v.name for v in variables if v.kind isa OIR.ALGEBRAIC_DER)
+  isempty(candidates) && return candidates
+  local reads::Dict{Symbol, Int} = Dict{Symbol, Int}()
+  local definitions::Dict{Symbol, Int} = Dict{Symbol, Int}()
+  foreach(eq::OIR.Equation -> _countDefinitions!(definitions, eq, candidates, variables), partition.equations)
+  #= an initial equation reads the variable, also one with it on its left (`der(x) = 0`, a steady start) =#
+  for eq in Iterators.flatten((partition.equations, partition.initialEquations))
+    OIR.foreachExp(eq) do x::OIR.Expression
+      if x isa OIR.CREF
+        local n::Symbol = _variableNameOf(x.cref, variables)
+        n in candidates && (reads[n] = get(reads, n, 0) + 1)
+      end
+      nothing
+    end
+  end
+  return Set{Symbol}(n for n in candidates if get(definitions, n, 0) > 0 && get(reads, n, 0) == definitions[n])
+end
+
+"The variables the when-equations in `eq` (in for-equations too) assign, onto `out`."
+function _whenTargets!(out::Set{Symbol}, eq::OIR.Equation, variables::OIR.VariableSet)::Nothing
+  if eq isa OIR.FOR_EQUATION
+    for b in eq.body
+      _whenTargets!(out, b, variables)
+    end
+  elseif eq isa OIR.WHEN_EQUATION
+    for br in eq.branches, st in br.body
+      (st isa OIR.ASSIGNMENT && st.lhs isa OIR.CREF) && push!(out, _variableNameOf(st.lhs.cref, variables))
+    end
+  end
+  return nothing
+end
+
+"""
+The lifted discrete clusters the event iteration runs at every pass (`liftDiscreteEquations!`: a cluster without
+relations, triggered by `change(pre(v))`, a condition the code generation never evaluates) as their discrete equations
+`v = e`, which the array code evaluates at every pass of every event and at the initialization; the initial arms'
+assignments of the same variables left out. The other equations as they are.
+"""
+function _everyPassClusters(equations::Vector{OIR.Equation})::Vector{OIR.Equation}
+  local targets::Set{Symbol} = Set{Symbol}()
+  local out::Vector{OIR.Equation} = OIR.Equation[]
+  for eq in equations
+    if _isEveryPassCluster(eq)
+      for st in (eq::OIR.WHEN_EQUATION).branches[1].body
+        local a::OIR.ASSIGNMENT = st
+        push!(targets, (a.lhs::OIR.CREF).cref.name)
+        push!(out, OIR.SCALAR_EQUATION(a.lhs, a.rhs, OIR.typeOf(a.lhs), a.source, OIR.DEFAULT_ATTRIBUTES))
+      end
+    else
+      push!(out, eq)
+    end
+  end
+  isempty(targets) && return equations
+  return OIR.Equation[e for e in (_withoutInitialArms(eq, targets) for eq in out) if e !== nothing]
+end
+
+"Whether `eq` is a lifted cluster run at every pass: one branch, triggered by `change(pre(v))` (or several of them), assignments."
+function _isEveryPassCluster(eq::OIR.Equation)::Bool
+  (eq isa OIR.WHEN_EQUATION && eq.kind == OIR.REGULAR_WHEN && length(eq.branches) == 1) || return false
+  local br::OIR.WhenBranch = eq.branches[1]
+  return !br.atInitial && !br.atTerminal && !isempty(br.triggers) && all(_isChangeOfPre, br.triggers) &&
+         all(st::OIR.Statement -> st isa OIR.ASSIGNMENT && st.lhs isa OIR.CREF, br.body)
+end
+
+"`change(pre(v))`, or an `or` of them (`changeOfPreCondition`)."
+_isChangeOfPre(c::OIR.Expression)::Bool =
+  (OIR.isBuiltinCall(c, :change) && OIR.isBuiltinCall(c.arguments[1], :pre)) ||
+  (c isa OIR.LBINARY && c.op === OIR.OR && _isChangeOfPre(c.exp1) && _isChangeOfPre(c.exp2))
+
+"`eq` without an initial arm's assignments to `targets` (an arm left with none: nothing)."
+function _withoutInitialArms(eq::OIR.Equation, targets::Set{Symbol})::Union{Nothing, OIR.Equation}
+  (eq isa OIR.WHEN_EQUATION && eq.kind == OIR.INITIAL_WHEN && length(eq.branches) == 1) || return eq
+  local br::OIR.WhenBranch = eq.branches[1]
+  local kept::Vector{OIR.Statement} = OIR.Statement[st for st in br.body
+                                                    if !(st isa OIR.ASSIGNMENT && st.lhs isa OIR.CREF && st.lhs.cref.name in targets)]
+  isempty(kept) && return nothing
+  length(kept) == length(br.body) && return eq
+  return OIR.WHEN_EQUATION(OIR.WhenBranch[OIR.WhenBranch(br.triggers, br.atInitial, br.atTerminal, kept)], eq.kind, eq.source,
+                           eq.attributes)
+end
+
+"The variable a reference is to or into: its own name, else (an element) its array's."
+_variableNameOf(c::OIR.ComponentRef, variables::OIR.VariableSet)::Symbol =
+  (OIR.hasSubscripts(c) && !haskey(variables, c.name)) ? Passes.unsubscriptedName(c) : c.name
+
+"The definitions in `eq` (scalar equations, in for-equations too, with a reference on the left) of the `candidates`, counted."
+function _countDefinitions!(definitions::Dict{Symbol, Int}, eq::OIR.Equation, candidates::Set{Symbol},
+                            variables::OIR.VariableSet)::Nothing
+  if eq isa OIR.FOR_EQUATION
+    for b in eq.body
+      _countDefinitions!(definitions, b, candidates, variables)
+    end
+  elseif eq isa OIR.SCALAR_EQUATION && eq.lhs isa OIR.CREF
+    local n::Symbol = _variableNameOf(eq.lhs.cref, variables)
+    n in candidates && (definitions[n] = get(definitions, n, 0) + 1)
+  end
+  return nothing
+end
+
+"The equation `eq` without the definitions of the variables `unread` (a for-equation's body of them: none)."
+function _withoutDefinitions(eq::OIR.Equation, unread::Set{Symbol})::Union{Nothing, OIR.Equation}
+  isempty(unread) && return eq
+  if eq isa OIR.FOR_EQUATION
+    local body::Vector{OIR.Equation} = OIR.Equation[b for b in (_withoutDefinitions(x, unread) for x in eq.body) if b !== nothing]
+    isempty(body) && return nothing
+    return length(body) == length(eq.body) ? eq : OIR.FOR_EQUATION(eq.iterator, body, eq.source, eq.attributes)
+  end
+  (eq isa OIR.SCALAR_EQUATION && eq.lhs isa OIR.CREF) || return eq
+  local c::OIR.ComponentRef = eq.lhs.cref
+  return (c.name in unread || (OIR.hasSubscripts(c) && Passes.unsubscriptedName(c) in unread)) ? nothing : eq
+end
+
 function _generateIR(model::OIR.Model, modelName::String; functions::Union{Nothing, FunctionList} = nothing)::Expr
   (length(model.continuous) == 1 && isempty(model.clocked) && isempty(model.modes)) ||
     ns("an OMJLIR model of several partitions, clocks or structural modes")
@@ -774,6 +1126,10 @@ function _generateIR(model::OIR.Model, modelName::String; functions::Union{Nothi
   local u0::Vector{Float64} = Float64[]; local d0::Vector{Float64} = Float64[]; local a0::Vector{Float64} = Float64[]
   local fixedMask::Vector{Bool} = Bool[]
   local fixedNonStates::Vector{String} = String[]
+  local unread::Set{Symbol} = _unreadDerivatives(partition, model.variables)
+  #= a variable a when-equation assigns is discrete (MLS 3.8.3; the frontend's implicitly discrete one is algebraic) =#
+  local whenAssigned::Set{Symbol} = Set{Symbol}()
+  foreach(eq::OIR.Equation -> _whenTargets!(whenAssigned, eq, model.variables), partition.equations)
   for v in model.variables
     local nm::String = String(v.name)
     local kind::OIR.VariableKind = v.kind
@@ -781,6 +1137,7 @@ function _generateIR(model::OIR.Model, modelName::String; functions::Union{Nothi
       g.derOf[nm] = String(kind.state)
       continue
     end
+    v.name in unread && continue
     local dims::Vector{Int} = _dimsIR(v)
     local n::Int = isempty(dims) ? 1 : prod(dims)
     #= the element view's elements; of a record field array of a parameter (its elements parameters of their own, the
@@ -824,7 +1181,7 @@ function _generateIR(model::OIR.Model, modelName::String; functions::Union{Nothi
       append!(u0, startOf.(names))
       append!(fixedMask, Bool[fixedOf(x, false) for x in names])
       append!(stateNamesOrdered, elementNames)
-    elseif kind isa OIR.DISCRETE || (kind isa OIR.ALGEBRAIC && vtype in (:int, :bool))
+    elseif kind isa OIR.DISCRETE || (kind isa OIR.ALGEBRAIC && (vtype in (:int, :bool) || v.name in whenAssigned))
       vtype == :other && ns("the discrete variable $(nm) of type $(v.ty)")
       #= an Integer or Boolean an equation computes (MultiBody's colors): discrete, in the discrete buffer =#
       g.vars[nm] = VarInfo(:discrete, dims, perPart, g.nDiscrete, vtype, IRVariable(v, elementNames, nothing))
@@ -844,16 +1201,25 @@ function _generateIR(model::OIR.Model, modelName::String; functions::Union{Nothi
       ns("the variable $(nm) of kind $(nameof(typeof(kind)))")
     end
   end
-  g.nStates == 0 && ns("no states")
   for (link, state) in g.derOf
     haskey(g.vars, state) && g.vars[state].kind == :state || ns("the state derivative $(link) of $(state), not a state")
+  end
+  if g.nStates == 0
+    #= a model without states gets one with der = 0 (as omc), so that it can be integrated =#
+    local dummy::OIR.Variable = OIR.Variable(Symbol("\$dummy"), OIR.T_REAL(), OIR.ALGEBRAIC(), nothing, OIR.NO_ATTRIBUTES,
+                                             OIR.NO_DIRECTION, false, OIR.NOT_CONNECTOR, OIR.NO_SOURCE, :arrayCode)
+    g.vars["\$dummy"] = VarInfo(:state, Int[], [0], 0, :real, IRVariable(dummy, String["\$dummy"], nothing))
+    g.nStates = 1
+    push!(u0, 0.0); push!(fixedMask, true); push!(stateNamesOrdered, "\$dummy")
+    push!(g.classes, EqClass(Ref("\$dummy", IR[], true), Lit(0.0), 0, Matrix{Int}(undef, 0, 1), 0, "der(\$dummy) = 0"))
   end
   #= after index reduction, the calls inlined (MLS: InlineAfterIndexReduction, Inline) where a body runs into one
      expression; not a function with an assert (inlined, its check is lost: normalizeWithAssert) =#
   local inlinable::Dict{Symbol, OIR.ModelicaFunction} =
     Dict{Symbol, OIR.ModelicaFunction}(f.name => f for f in model.functions if f.external === nothing && !_hasAssert(f.body))
-  for eq in partition.equations
-    _addEquationIR!(g, _inlinedEquation(eq, inlinable), String[], NO_SLOTS)
+  for eq in _everyPassClusters(partition.equations)
+    local kept::Union{Nothing, OIR.Equation} = _withoutDefinitions(eq, unread)
+    kept === nothing || _addEquationIR!(g, _inlinedEquation(kept, inlinable), String[], NO_SLOTS)
   end
   for nm in fixedNonStates
     #= fixed = true on a variable that is no state: the initial equation v = start =#
@@ -866,9 +1232,11 @@ function _generateIR(model::OIR.Model, modelName::String; functions::Union{Nothi
       push!(g.initClasses, EqClass(Ref(nm, IR[Lit(i) for i in t], false), Lit(startOf(x)), 0, NO_SLOTS, 0, "$(names[k]) = start"))
     end
   end
-  for eq in partition.initialEquations
-    _addEquationIR!(g, _inlinedEquation(eq, inlinable), String[], NO_SLOTS; initial = true)
-  end
+  _addInitialEquationsIR!(g, OIR.Equation[_inlinedEquation(eq, inlinable) for eq in partition.initialEquations])
+  #= arrays it keeps: of its own, or (rolled components too) of a model whose index was reduced in array form; the
+     components of a model of index 1 are rolled for nothing it keeps (its loops the scalar path's) =#
+  local keepsArrays::Bool = _IRD.indexReduced(model) ||
+    any(v::OIR.Variable -> _IRD.isContinuousArray(v) && !any(p::OIR.CrefPart -> OIR.isRolled(p.ty), v.cref.parts), model.variables)
   return _emitModule(g, modelName, functionDefs, u0, d0, a0, fixedMask, stateNamesOrdered, algNamesOrdered,
-                     discreteNamesOrdered)
+                     discreteNamesOrdered; keepsArrays)
 end

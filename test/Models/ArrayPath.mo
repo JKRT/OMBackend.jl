@@ -452,4 +452,37 @@ package ArrayPath
     end when;
     assert(v[1] < 100, "v[1] stays below 100");
   end CoupledLoopEvents;
+  model PreLatch "a discrete equation on pre() of a counter, lifted as a cluster triggered by change(pre(n)) (run at every pass, as MSL Digital's Pulse): two samples, then inactive"
+    parameter Integer nmax = 2;
+    discrete Integer n(start = 0, fixed = true);
+    Boolean active;
+    Real x[2](each start = 0, each fixed = true);
+  equation
+    active = nmax > pre(n);
+    when active and sample(0, 0.25) then
+      n = pre(n) + 1;
+    end when;
+    for i in 1:2 loop
+      der(x[i]) = if active then i else 0;
+    end for;
+  end PreLatch;
+  model ImplicitDiscrete "a Real assigned in a when-equation (implicitly discrete, as MSL Pulse's T_start) read by loop equations; a discrete's initial value by an initial equation; free parameters whose initial equations come before the ones they read"
+    Real T0(start = 0);
+    discrete Real d;
+    parameter Real p2(fixed = false);
+    parameter Real p1(fixed = false);
+    Real x[2](each start = 0, each fixed = true);
+  initial equation
+    p2 = p1 + 1;
+    p1 = 2;
+    d = 3;
+  equation
+    when sample(0.1, 0.2) then
+      T0 = time;
+      d = pre(d) + 1;
+    end when;
+    for i in 1:2 loop
+      der(x[i]) = i * T0 + p2;
+    end for;
+  end ImplicitDiscrete;
 end ArrayPath;

@@ -253,10 +253,9 @@ end
 
 """
 Array-preserving code generation for flat models translated with `scalarized = false`
-(experimental): an explicit ODE whose equations are `der(x) = e`, `der(x[i]) = e` or for-loops
-of these gets a DifferentialEquations.jl module that keeps the loops (CodeGeneration.ArrayODEGen);
-other models are scalarized at the backend entry as before. Toggle with
-`OMBackend.ARRAY_ODE_GENERATION[] = false`.
+(experimental): the OMJLIR model lowered with its arrays kept (`reducedArrayModel`) gets a
+DifferentialEquations.jl module that keeps the loops (CodeGeneration.ArrayODEGen); other models are
+scalarized as before. Toggle with `OMBackend.ARRAY_ODE_GENERATION[] = false`.
 """
 const ARRAY_ODE_GENERATION = Ref{Bool}(true)
 
@@ -271,8 +270,8 @@ const ARRAY_PATH_FULL = CodeGeneration.ArrayODEGen.FULL
 const ARRAY_ODE_MODELS = Set{String}()
 
 """
-The models (canonical names) whose index the last translate reduced in array form, their
-arrays kept until the simulation code (`arrayReducedModel`, OMBACKEND_ARRAY_INDEX_REDUCTION).
+The models (canonical names) the last translate lowered with their arrays kept until the simulation code
+(`reducedArrayModel`: the index reduced in array form where above one; OMBACKEND_ARRAY_INDEX_REDUCTION).
 """
 const ARRAY_REDUCED_MODELS = Set{String}()
 
@@ -292,11 +291,11 @@ end
     scalarizedFallbackReason(name) -> String
 
 Why the model `name` (canonical) goes through the scalarizing flatten: the reasons the arrays-kept
-paths gave at its last translate (array code generation, then array index reduction).
+paths gave at its last translate (array index reduction, then the array code after it).
 """
 function scalarizedFallbackReason(name::String)::String
   local reasons = get(ARRAY_PATH_REASONS, name, Dict{String, String}())
-  local parts::Vector{String} = String["$(path): $(reasons[path])" for path in ("array code generation", "array index reduction", "array code after index reduction")
+  local parts::Vector{String} = String["$(path): $(reasons[path])" for path in ("array index reduction", "array code after index reduction")
                         if haskey(reasons, path)]
   return isempty(parts) ? "no reason recorded" : join(parts, "; ")
 end
@@ -380,8 +379,8 @@ lowered to OMJLIR and through its passes (`omjlirModel`; `omjlir`: that OMJLIR m
 lowered, `translateReducedArrays`), to the simulation code and its
 passes (SimCode.simulationCode; SimCode.deSimulationCode for DEMode), checked
 (`checkSimCode`), and the code generated for the backend mode. A flat model with arrays kept
-(`scalarized = false`) goes to the array-preserving generation first (ARRAY_ODE_GENERATION), to
-this path where it is outside its scope.
+(`scalarized = false`) is lowered with its arrays and goes to the array-preserving generation first
+(`reducedArrayModel`, ARRAY_ODE_GENERATION), to this path where it is outside its scope.
 """
 function translate(fm::OMFrontend.Frontend.FlatModel;
                    functionList::Union{Nothing, FunctionList} = nothing,
@@ -401,13 +400,9 @@ function translate(fm::OMFrontend.Frontend.FlatModel;
   try
     delete!(ARRAY_ODE_MODELS, canonicalName(fm.name))
     omjlir === nothing && delete!(ARRAY_REDUCED_MODELS, canonicalName(fm.name))
-    #= an attempt with the arrays kept records its own reasons (as translateArrays); a scalarized translate after it, or
-       the reduced model's (`omjlir`), keeps them for OM's report =#
+    #= an attempt with the arrays kept records its own reasons (as translateReducedArrays); a scalarized translate after
+       it, or the reduced model's (`omjlir`), keeps them for OM's report =#
     (scalarized || omjlir !== nothing) || delete!(ARRAY_PATH_REASONS, canonicalName(fm.name))
-    if !scalarized && ARRAY_ODE_GENERATION[]
-      local arrayResult = @BACKEND_PERFLOG "[backendAPI] generateArrayODECode" generateArrayODETargetCode(fm; functionList)
-      arrayResult === nothing || return arrayResult
-    end
     #= the index reduced in array form: its array code, else its scalarized form =#
     local arrayReduction::Bool = !scalarized && omjlir === nothing
     if arrayReduction
@@ -546,12 +541,14 @@ end
     reducedArrayModel(fm; functionList = nothing) -> Union{Nothing, OMJLIR.Model}
 
 A flat model with arrays kept lowered with its arrays, through the passes (`runPassesKeepingArrays!`:
-its array equations as for-equations), its index reduced in array form
-(`Passes.IndexReduction.reduceIndexArrays!`): what the array code (`generateReducedArrayODETargetCode`)
-or the scalarized form (`scalarizedReducedModel`) is made from. `nothing` where the array form does
-not take the model (switched off, no for-equations or array equations over continuous arrays, index
-one, what it does not handle or the lowering does not support: logged; another error: a warning),
-the reason recorded (`declineArrayPath!`).
+its array equations as for-equations), its index reduced in array form where above one, its states
+committed in array form (`Passes.IndexReduction.reduceIndexArrays!`; a model without arrays to keep of
+index 1 the same, `commitIndexOne!`, for the array code only): what the array code
+(`generateReducedArrayODETargetCode`) or the scalarized form (`scalarizedReducedModel`) is made from.
+`nothing` where the array form does not take the model (switched off, no arrays to keep and of index
+above one, of index 1 with clocked partitions, of index above one with an if-expression that reads a
+for-equation's iterator, what it does not handle or the lowering does not support: logged; another
+error: a warning), the reason recorded (`declineArrayPath!`).
 """
 function reducedArrayModel(fm::OMFrontend.Frontend.FlatModel;
                            functionList::Union{Nothing, FunctionList} = nothing)::Union{Nothing, OMJLIR.Model}
@@ -564,20 +561,34 @@ function reducedArrayModel(fm::OMFrontend.Frontend.FlatModel;
   local reduction::Module = Passes.IndexReduction
   return _arrayReductionStep(fm, decline) do
     local lowered::OMJLIR.Model = LowerFlatModel.lowerFlatModel(fm; functions = something(functionList, MetaModelica.nil))
-    #= a model without for-equations or array equations over continuous arrays reduces as the scalarized one: the
-       passes not run for it; unless its separately declared components are rolled into arrays (OMBACKEND_ROLL_COMPONENTS) =#
+    #= arrays to keep: for-equations or array equations over continuous arrays, or separately declared components
+       rolled into arrays (OMBACKEND_ROLL_COMPONENTS) =#
     local roll::Bool = envSwitch("OMBACKEND_ROLL_COMPONENTS") && !isempty(reduction.componentGroups(lowered.variables))
-    if !roll && !(reduction.hasContinuousArrays(lowered) && reduction.hasArrayEquations(lowered))
-      decline("no for-equations or array equations over continuous arrays")
-      return nothing
-    end
+    local own::Bool = reduction.hasContinuousArrays(lowered) && reduction.hasArrayEquations(lowered)
+    #= the passes lower clocked partitions to when-equations on sample(): the array code does not keep their semantics
+       (a tick's value at the start, the order of a partition's equations), the scalar path does =#
+    local clocked::Bool = Passes.hasClocks(lowered)
     local model::OMJLIR.Model = Passes.runPassesKeepingArrays!(lowered)
-    if roll && reduction.rollComponents!(model) == 0 && !(reduction.hasContinuousArrays(model) && reduction.hasArrayEquations(model))
-      decline("no for-equations or array equations over continuous arrays, its components not rolled")
+    #= if-expressions that read a for-equation's iterator, which the passes left inline: the array code reads them, the
+       scalarized form of a reduced model would need them lifted =#
+    local inlineIfs::Bool = any(eq::OMJLIR.Equation -> eq isa OMJLIR.FOR_EQUATION && Passes.ifReadsIterator(eq),
+                                model.continuous[1].equations)
+    local rolled::Bool = roll && reduction.rollComponents!(model) > 0
+    if own || rolled
+      local reduced::Bool = reduction.reduceIndexArrays!(model)
+      if !reduced && clocked
+        decline("index 1 with clocked partitions")
+        return nothing
+      elseif reduced && inlineIfs
+        decline("an if-expression that reads a for-equation's iterator, in a model of index above one")
+        return nothing
+      end
+    elseif clocked
+      decline("index 1 with clocked partitions")
       return nothing
-    end
-    if !reduction.reduceIndexArrays!(model)
-      decline("index 1, nothing to reduce")
+    elseif !reduction.commitIndexOne!(model)
+      #= none to keep and of index above one: the model reduces as the scalarized one =#
+      decline("no for-equations or array equations over continuous arrays, of index above one")
       return nothing
     end
     model
@@ -590,11 +601,13 @@ end
 The model reduced in array form (`reducedArrayModel`; not changed) scalarized for the scalar
 simulation code (`scalarizeArrays`), its derivative unknowns solved for (`solveDerivatives!`,
 OMBACKEND_SOLVE_DERIVATIVES); recorded in ARRAY_REDUCED_MODELS. `nothing` where that fails (the
-reason recorded as `reducedArrayModel`'s).
+reason recorded as `reducedArrayModel`'s), and for a model of index 1 (its states committed for the array code only):
+the frontend scalarizes it as before.
 """
 function scalarizedReducedModel(fm::OMFrontend.Frontend.FlatModel, reduced::OMJLIR.Model)::Union{Nothing, OMJLIR.Model}
   local decline::Function = (reason::String) -> declineArrayPath!(canonicalName(fm.name), "array index reduction", reason)
   local reduction::Module = Passes.IndexReduction
+  reduction.indexReduced(reduced) || return nothing
   local scalar::Union{Nothing, OMJLIR.Model} = _arrayReductionStep(fm, decline) do
     local s::OMJLIR.Model = reduction.scalarizeArrays(reduced).model
     envSwitch("OMBACKEND_SOLVE_DERIVATIVES") && reduction.solveDerivatives!(s, s.continuous[1])
@@ -632,7 +645,7 @@ end
 The array ODE module of a flat model whose index was reduced in array form (`reduced`,
 `reducedArrayModel`; not changed): its derivative unknowns solved in array form
 (`Passes.IndexReduction.solvedInArrays`), the OMJLIR front half of ArrayODEGen; cached as a DE-mode
-model (`generateArrayODETargetCode`'s), recorded in ARRAY_ODE_MODELS and ARRAY_REDUCED_MODELS.
+model (`_registerArrayODEModule!`), recorded in ARRAY_ODE_MODELS and ARRAY_REDUCED_MODELS.
 `nothing` where it is outside the array code's scope (ARRAY_ODE_GENERATION off, tunable parameters,
 an algebraic loop left, ...): the reason logged and recorded (`declineArrayPath!`, "array code after
 index reduction"), and the caller scalarizes the reduced model.
@@ -683,6 +696,8 @@ function translateReducedArrays(fm::OMFrontend.Frontend.FlatModel;
                                 eliminateNonDynamic::Union{Nothing, Bool, SimCode.EliminationOptions} = nothing,
                                 observedFilter::Union{Nothing, Vector{String}, Vector{Regex}} = nothing,
                                 checkSimCode::Bool = true)
+  delete!(ARRAY_ODE_MODELS, canonicalName(fm.name))
+  delete!(ARRAY_PATH_REASONS, canonicalName(fm.name))
   local reduced::Union{Nothing, OMJLIR.Model} = @BACKEND_PERFLOG "[backendAPI] reducedArrayModel" reducedArrayModel(fm; functionList)
   reduced === nothing && return nothing
   local arrayCode::Union{Nothing, Tuple{String, Expr}} =
@@ -844,45 +859,6 @@ function generateDETargetCode(simCode::SimCode.SIM_CODE)::Tuple{String, Expr}
     COMPILED_MODELS_DEJL[modelName] = (modelCode, moduleAlreadyExists, codeHash)
   end
   Cache.store!(canonicalName(modelName), Cache.sizeOf(modelCode))
-  return (modelName, modelCode)
-end
-
-"""
-    translateArrays(flatModel) -> (modelName, code) or nothing
-
-The array-preserving translation of a flat model with arrays kept (from the frontend's
-`scalarize = false`), or `nothing` when the model is outside its scope (the reason is
-logged). OM falls back to the scalarizing flatten and `translate` then.
-"""
-function translateArrays(fm::OMFrontend.Frontend.FlatModel; functionList::Union{Nothing, FunctionList} = nothing)
-  delete!(ARRAY_ODE_MODELS, canonicalName(fm.name))
-  delete!(ARRAY_REDUCED_MODELS, canonicalName(fm.name))
-  delete!(ARRAY_PATH_REASONS, canonicalName(fm.name))
-  if !ARRAY_ODE_GENERATION[]
-    declineArrayPath!(canonicalName(fm.name), "array code generation", "switched off (OMBackend.ARRAY_ODE_GENERATION)")
-    return nothing
-  end
-  if !isempty(TUNABLE_PARAMETERS[])
-    @info "[backendAPI] array ODE path not taken for $(canonicalName(fm.name)): withTunableParameters (the ModelingToolkit path's tunable sets)"
-    declineArrayPath!(canonicalName(fm.name), "array code generation", "withTunableParameters (the ModelingToolkit path's tunable sets)")
-    return nothing
-  end
-  return @BACKEND_PERFLOG "[backendAPI] generateArrayODECode" generateArrayODETargetCode(fm; functionList)
-end
-
-"""
-The array ODE module of a no-scalarize flat model (ARRAY_ODE_GENERATION), cached as a
-DE-mode model; nothing (and an @info with the reason) for a model outside its scope.
-"""
-function generateArrayODETargetCode(fm::OMFrontend.Frontend.FlatModel; functionList::Union{Nothing, FunctionList} = nothing)
-  local modelName = canonicalName(fm.name)
-  local (name, modelCode) = CodeGeneration.ArrayODEGen.generateArrayODECode(fm, modelName; functions = functionList)
-  if name === nothing
-    @info "[backendAPI] array ODE path not taken for $(modelName): $(modelCode)"
-    declineArrayPath!(modelName, "array code generation", string(modelCode))
-    return nothing
-  end
-  _registerArrayODEModule!(modelName, modelCode)
   return (modelName, modelCode)
 end
 

@@ -63,17 +63,19 @@ capacitance's der() out of the system). `nothing` when not set.
 const KNOWN_VALUES = Ref{Union{Nothing, Function}}(nothing)
 
 """
-    plan(model, partition) -> Union{Nothing, Plan}
+    plan(model, partition; indexOne = false) -> Union{Nothing, Plan}
 
 The index reduction of `partition`, without changing the model; `nothing` where the partition
-is of index 1 (nothing to differentiate). Throws NotHandled where a step does not handle it.
+is of index 1 (nothing to differentiate), unless `indexOne`: then the plan that differentiates
+nothing, which commits the states (the arrays-kept route's, `reduceIndexArrays!`). Throws
+NotHandled where a step does not handle it.
 Made on the partition with the values known before the simulation as literals
 (`withKnownValues`), the structure the code generators see, der() of an expression expanded
 (`expandDerivatives!`).
 """
 function plan(model::IR.Model, partition::IR.Partition;
               known::Dict{Symbol, IR.Expression} = Dict{Symbol, IR.Expression}(),
-              trace::Union{Nothing, Vector{BlockTrace}} = nothing)::Union{Nothing, Plan}
+              trace::Union{Nothing, Vector{BlockTrace}} = nothing, indexOne::Bool = false)::Union{Nothing, Plan}
   any(v -> v.ty isa IR.T_ARRAY && !(v.kind isa Union{IR.PARAMETER, IR.CONSTANT}), model.variables) &&
     throw(NotHandled("array variables (the arrays-kept path; scalarized models only)"))
   #= the structure the code generators see: the known values substituted =#
@@ -85,31 +87,33 @@ function plan(model::IR.Model, partition::IR.Partition;
   nRows == unknownCount(s) ||
     throw(NotHandled("a continuous system of $(nRows) rows over $(unknownCount(s)) unknowns (not square as the structure reads it)"))
   local preferred = artificialStates!(s, folded, model.variables; prefer = envSwitch("OMBACKEND_PREFER_STATES"))
-  preferred == 0 && return planStructure(s, nRows, folded, model; trace, known)
+  preferred == 0 && return planStructure(s, nRows, folded, model; trace, known, indexOne)
   try
-    return planStructure(s, nRows, folded, model; trace, known)
+    return planStructure(s, nRows, folded, model; trace, known, indexOne)
   catch e
     e isa NotHandled || rethrow()
     #= the artificial states of StateSelect.prefer given up where their equations do not differentiate, as
        OpenModelica's sanityCheckArtificialStates (all of them here) =#
     local t = Structure(model.variables, folded, model.functions; derived)
     artificialStates!(t, folded, model.variables; prefer = false)
-    return planStructure(t, nRows, folded, model; trace, known)
+    return planStructure(t, nRows, folded, model; trace, known, indexOne)
   end
 end
 
 """
-    planStructure(s, nRows, partition, model; trace, known) -> Union{Nothing, Plan}
+    planStructure(s, nRows, partition, model; trace, known, indexOne) -> Union{Nothing, Plan}
 
 The plan of `plan` from the structure `s` of `partition` (its first `nRows` rows the partition's, its artificial
-states' derivatives added): Pantelides' algorithm, the differentiated equations, the dummy derivatives; `nothing`
-where nothing is differentiated. `known`: the simulation code's values the plan is made with.
+states' derivatives added): Pantelides' algorithm, the differentiated equations, the dummy derivatives; where nothing
+is differentiated `nothing`, or with `indexOne` the plan of no differentiation. `known`: the simulation code's values
+the plan is made with.
 """
 function planStructure(s::Structure, nRows::Int, partition::IR.Partition, model::IR.Model;
                        trace::Union{Nothing, Vector{BlockTrace}} = nothing,
-                       known::Dict{Symbol, IR.Expression} = Dict{Symbol, IR.Expression}())::Union{Nothing, Plan}
+                       known::Dict{Symbol, IR.Expression} = Dict{Symbol, IR.Expression}(),
+                       indexOne::Bool = false)::Union{Nothing, Plan}
   pantelides!(s)
-  length(s.rows) == nRows && return nothing
+  length(s.rows) == nRows && return indexOne ? Plan(s, Dict{Int, Vector{IR.Equation}}(), Set{Int}(), DynamicSet[], known) : nothing
   local differentiated = differentiatedEquations(s, partition, model.functions)
   local sets = DynamicSet[]
   trace === nothing || empty!(trace)

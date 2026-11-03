@@ -446,19 +446,21 @@ if-expressions share one variable (two zero-crossing callbacks of one condition 
 the other's parameter pinned). Stays inline: an if-expression in `noEvent` or of a condition
 whose relations all are (no events, MLS 8.5); of a record value (the variable is a Real); in
 the branches of a lifted one, one whose condition does not depend on time (a state-dependent
-condition crosses in both directions: its branches are evaluated as a continuous product).
-The when-equations (their code generation evaluates them in place) and algorithms are left.
+condition crosses in both directions: its branches are evaluated as a continuous product); in a
+for-equation (arrays kept), one that reads its iterator (the array code reads it inline; the scalar
+path takes such a model from the frontend's scalarized flatten). The when-equations (their code
+generation evaluates them in place) and algorithms are left.
 """
 function liftIfExpressions!(model::IR.Model)::IR.Model
   for (variables, p) in partitionsWithVariables(model)
     local lifter = IfExpressionLifter(variables, Dict{Any, IR.CREF}(), IR.Equation[], Ref(0))
     for eq in p.equations
       (eq isa IR.WHEN_EQUATION && eq.kind !== IR.STRUCTURAL_WHEN) && continue
-      #= for-equations come here only with the arrays kept (index reduction in array form), which then
-         declines: the lifted if-equation would read the iterator outside its loop (MSL RobotR3.oneAxis's
-         `moving[i] = if abs(q_end[i] - q_begin[i]) > eps then ...`, a free `i` in the generated code) =#
-      (eq isa IR.FOR_EQUATION && ifReadsIterator(eq)) &&
-        throw(IndexReduction.NotHandled("an if-expression that reads a for-equation's iterator"))
+      #= for-equations come here only with the arrays kept: an if-expression that reads the iterator stays inline
+         (lifted, its if-equation would read the iterator outside its loop: MSL RobotR3.oneAxis's
+         `moving[i] = if abs(q_end[i] - q_begin[i]) > eps then ...`, a free `i` in the generated code); the array
+         code and index reduction read it there =#
+      (eq isa IR.FOR_EQUATION && ifReadsIterator(eq)) && continue
       mapRoots!(e -> lift(lifter, e, false), eq)
     end
     append!(p.equations, lifter.equations)
