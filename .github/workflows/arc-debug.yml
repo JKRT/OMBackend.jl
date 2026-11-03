@@ -1,0 +1,85 @@
+# Throwaway diagnostics for OpenModelica/OMBackend.jl#96 (arcSwitchTests fails on the Linux and macOS CI runners, passes
+# locally): only the arc switch test, as CI.yml sets it up, with the generated code dumped and the event iteration
+# traced, uploaded as artifacts. Runs on pushes to this branch only (branch arc-debug of the JKRT fork).
+name: arc-debug
+on:
+  push:
+    branches: [arc-debug]
+jobs:
+  arc:
+    name: arc ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x64
+          - os: macos-latest
+            arch: arm64
+    env:
+      JULIA_PROJECT: OMBackend.jl
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: OMBackend.jl
+      - uses: JKRT/OM.jl/.github/actions/checkout-siblings@master
+        with:
+          packages: Absyn DAE ImmutableList ListUtil MetaModelica OMFrontend OMParser OMRuntimeExternalC SCode
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.13'
+          arch: ${{ matrix.arch }}
+      - uses: julia-actions/cache@v2
+        with:
+          cache-name: arc-debug
+          include-matrix: true
+      - name: Add OpenModelica Julia registry
+        shell: julia --color=yes {0}
+        run: |
+          import Pkg
+          Pkg.Registry.add("General")
+          Pkg.Registry.add(Pkg.RegistrySpec(url = "https://github.com/OpenModelica/OpenModelicaRegistry.git"))
+      - name: Develop the sibling checkouts
+        shell: julia --color=yes --project=OMBackend.jl {0}
+        run: |
+          import Pkg
+          Pkg.develop([Pkg.PackageSpec(path = p) for p in
+                       ("Absyn.jl", "DAE.jl", "ImmutableList.jl", "ListUtil.jl", "MetaModelica.jl",
+                        "OMFrontend.jl", "OMParser.jl", "OMRuntimeExternalC.jl", "SCode.jl")])
+      - uses: julia-actions/julia-buildpkg@v1
+        with:
+          project: OMBackend.jl
+      - name: Versions
+        shell: bash
+        run: |
+          julia --version
+          for d in *.jl; do echo "$d $(git -C $d rev-parse --short HEAD) $(git -C $d rev-parse --abbrev-ref HEAD)"; done
+          julia --project=OMBackend.jl -e 'import Pkg; Pkg.status(["OrdinaryDiffEqCore", "OrdinaryDiffEqBDF", "OrdinaryDiffEqRosenbrock", "ModelingToolkit", "DiffEqBase", "SciMLBase", "NonlinearSolve", "LinearSolve", "Symbolics", "SymbolicUtils"])'
+      - name: Arc switch test, code dump and event trace
+        shell: bash
+        continue-on-error: true
+        env:
+          OMBACKEND_CODE_DUMP_DIR: ${{ github.workspace }}/dump
+          OMBACKEND_EVENT_TRACE: "true"
+        run: |
+          mkdir -p dump
+          cd OMBackend.jl/test
+          julia --project=.. --color=no -e 'include("arcSwitchTests.jl")' > ../../arc-test.log 2>&1 || true
+          grep -E "Test Summary|Test Failed|Evaluated|did not settle|codeHash" ../../arc-test.log | head -30
+      - name: Arc switch test with coverage (as the Linux CI job)
+        if: runner.os == 'Linux'
+        shell: bash
+        continue-on-error: true
+        run: |
+          cd OMBackend.jl/test
+          julia --project=.. --code-coverage=user --color=no -e 'include("arcSwitchTests.jl")' > ../../arc-test-coverage.log 2>&1 || true
+          grep -E "Test Summary|Test Failed|Evaluated|did not settle|codeHash" ../../arc-test-coverage.log | head -30
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: arc-debug-${{ matrix.os }}
+          path: |
+            dump
+            arc-test*.log
