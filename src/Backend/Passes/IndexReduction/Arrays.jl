@@ -107,22 +107,17 @@ function rowMajorIndex(index::Vector{Int}, sizes::Vector{Int})::Int
   return k + 1
 end
 
-"`\$DER.` and the variable a backend-made variable (`\$DER.x`, `\$STATEDER.x`) is made of."
-const DERIVED_NAME = r"^(\$[A-Z]+\.)(.+)$"
-
 """
-    derivedFrom(v, variables) -> Union{Nothing, Tuple{String, Symbol}}
+    derivedFrom(v, variables) -> Union{Nothing, Tuple{IR.CrefPart, Symbol}}
 
-Of a backend-made array of one part (`\$DER.c.T`), its prefix and the array it is made of (`\$DER.`, `c.T`);
-`nothing` for another variable.
+Of a derivative array (`\$DER.c.T`, `\$STATEDER.x`: `IR.isDerivativeCref`), its operator part and the array it is the
+derivative of (`\$DER`, `c.T`: `IR.operand`); `nothing` for another variable.
 """
-function derivedFrom(v::IR.Variable, variables::IR.VariableSet)::Union{Nothing, Tuple{String, Symbol}}
-  length(v.cref.parts) == 1 || return nothing
-  local m = match(DERIVED_NAME, String(v.name))
-  m === nothing && return nothing
-  local of = get(variables, Symbol(m.captures[2]), nothing)
+function derivedFrom(v::IR.Variable, variables::IR.VariableSet)::Union{Nothing, Tuple{IR.CrefPart, Symbol}}
+  IR.isDerivativeCref(v.cref) || return nothing
+  local of::Union{Nothing, IR.Variable} = get(variables, (IR.operand(v.cref)::IR.ComponentRef).name, nothing)
   (of !== nothing && of.ty isa IR.T_ARRAY) || return nothing
-  return (String(m.captures[1]), of.name)
+  return (v.cref.parts[1], of.name)
 end
 
 """
@@ -153,17 +148,17 @@ end
     elements(variables) -> Elements
 
 The element variables of the array variables of `variables`, by their scalarized names (`Elements`): a model
-array's by its reference (`modelElementCref`), a backend-made one's (`\$DER.x`) by its prefix and the elements of
-the array it is made of (`\$DER.x[2]`, of one part), after that array's. Not an array whose elements are variables
+array's by its reference (`modelElementCref`), a derivative array's (`\$DER.x`) by its operator part before the
+elements of the array it is the derivative of (`\$DER.x[2]`, `\$DER.c[2].T`), after that array's. Not an array whose elements are variables
 already (a record field array of a parameter, `expandRecordFieldArrays`).
 """
 function elements(variables::IR.VariableSet)::Elements
   local E = Elements(Dict{Symbol, Vector{Symbol}}(), Dict{Symbol, Vector{Int}}(), Dict{Symbol, Tuple{Symbol, Vector{Int}}}(),
                      Dict{Symbol, IR.ComponentRef}())
-  local derived = Tuple{IR.Variable, String, Symbol}[]
+  local derived::Vector{Tuple{IR.Variable, IR.CrefPart, Symbol}} = Tuple{IR.Variable, IR.CrefPart, Symbol}[]
   #= the arrays of rolled components first (their elements may be another array's, kept beside them: rollComponents!) =#
-  local rolledFirst::Vector{IR.Variable} = IR.Variable[v for v in variables if v.cref.parts[1].ty isa IR.T_COMPONENTS]
-  append!(rolledFirst, IR.Variable[v for v in variables if !(v.cref.parts[1].ty isa IR.T_COMPONENTS)])
+  local rolledFirst::Vector{IR.Variable} = IR.Variable[v for v in variables if IR.isRolled(v.cref.parts[1].ty)]
+  append!(rolledFirst, IR.Variable[v for v in variables if !IR.isRolled(v.cref.parts[1].ty)])
   for v in rolledFirst
     v.ty isa IR.T_ARRAY || continue
     local from = derivedFrom(v, variables)
@@ -186,26 +181,25 @@ function elements(variables::IR.VariableSet)::Elements
 end
 
 """
-    addDerivedElements!(E, v, prefix, of)
+    addDerivedElements!(E, v, operator, of)
 
-The elements of the backend-made array `v` (of one part, `\$DER.x`) into `E`: named by `prefix` and the elements of
-the array `of` it is made of (`\$DER.x[2]`), which `E` has.
+The elements of the derivative array `v` (`\$DER.x`) into `E`: the part `operator` before the references of the
+elements of the array `of` it is the derivative of (`\$DER.x[2]`), which `E` has.
 """
-function addDerivedElements!(E::Elements, v::IR.Variable, prefix::String, of::Symbol)::Nothing
+function addDerivedElements!(E::Elements, v::IR.Variable, operator::IR.CrefPart, of::Symbol)::Nothing
   local sizes = knownSizes(v.ty, "the array $(v.name)")
   sizes == E.sizes[of] || throw(NotHandled("the array $(v.name) of other dimensions than $(of)'s"))
-  local element = IR.elementType(v.ty)
-  addElements!(E, v, sizes, IR.ComponentRef[IR.ComponentRef(Symbol(prefix, e), element) for e in E.elements[of]])
+  addElements!(E, v, sizes, IR.ComponentRef[IR.withOperator(operator, E.crefs[e]) for e in E.elements[of]])
   return nothing
 end
 
-"The backend-made arrays `derived` (each with its prefix and the array it is made of) into `E`, each after the array it is made of (`\$DER.\$DER.x` after `\$DER.x`)."
-function addDerivedArrays!(E::Elements, derived::Vector{Tuple{IR.Variable, String, Symbol}})::Nothing
+"The derivative arrays `derived` (each with its operator part and the array it is the derivative of) into `E`, each after the array it is the derivative of (`\$DER.\$DER.x` after `\$DER.x`)."
+function addDerivedArrays!(E::Elements, derived::Vector{Tuple{IR.Variable, IR.CrefPart, Symbol}})::Nothing
   while !isempty(derived)
     local ready = findfirst(d -> haskey(E.elements, d[3]), derived)
     ready === nothing && throw(NotHandled("the arrays $(join((d[1].name for d in derived), ", ")), made of arrays not known"))
-    local (v, prefix, of) = popat!(derived, ready)
-    addDerivedElements!(E, v, prefix, of)
+    local (v::IR.Variable, operator::IR.CrefPart, of::Symbol) = popat!(derived, ready)
+    addDerivedElements!(E, v, operator, of)
   end
   return nothing
 end
@@ -218,7 +212,7 @@ made of), a new `Elements`; `E` not changed. NotHandled for an added array that 
 """
 function extendedElements(E::Elements, added::Vector{IR.Variable}, variables::IR.VariableSet)::Elements
   local out = Elements(copy(E.elements), copy(E.sizes), copy(E.array), copy(E.crefs))
-  local derived = Tuple{IR.Variable, String, Symbol}[]
+  local derived::Vector{Tuple{IR.Variable, IR.CrefPart, Symbol}} = Tuple{IR.Variable, IR.CrefPart, Symbol}[]
   for v in added
     v.ty isa IR.T_ARRAY || continue
     local from = derivedFrom(v, variables)
@@ -302,7 +296,7 @@ A reference in `e` to an array that the scalarized model has as elements only, b
 function danglingReference(e::IR.Expression, E::Elements)::Union{Nothing, Symbol}
   local found = Ref{Union{Nothing, Symbol}}(nothing)
   IR.foreachExp(e) do x
-    (found[] === nothing && x isa IR.CREF && IR.hasSubscripts(x.cref) && literalIndices(allSubscripts(x.cref)) === nothing &&
+    (found[] === nothing && x isa IR.CREF && IR.hasSubscripts(x.cref) && IR.literalIndices(allSubscripts(x.cref)) === nothing &&
      haskey(E.sizes, unsubscriptedName(x.cref))) && (found[] = x.cref.name)
     nothing
   end
@@ -345,7 +339,7 @@ end
 subscript in turn; `cos({a, b})[2]` is `cos(b)`, an element-wise built-in); subscripted where it is not.
 """
 function pickElement(e::IR.Expression, subscripts::Vector{IR.Subscript}, ty::IR.ModelicaType, E::Elements)::IR.Expression
-  local index = literalIndices(subscripts)
+  local index::Union{Nothing, Vector{Int}} = IR.literalIndices(subscripts)
   if e isa IR.ARRAY_CONSTRUCTOR && index !== nothing
     local body = constructorElement(e, index[1])
     if body !== nothing
@@ -374,12 +368,12 @@ subscripts are literals (`pickElement`).
 function scalarExpression(e::IR.Expression, values::Dict{Symbol, Int}, E::Elements)::IR.Expression
   #= an element of an array literal (a table of pivots, a binding) picked before its other elements are mapped =#
   local pruned = IR.mapExpTopDown(withIterators(e, values)) do x
-    (x isa IR.SUBSCRIPTED && x.exp isa IR.ARRAY && literalIndices(x.subscripts) !== nothing) || return (x, true)
+    (x isa IR.SUBSCRIPTED && x.exp isa IR.ARRAY && IR.literalIndices(x.subscripts) !== nothing) || return (x, true)
     return (selectElement(x.exp, x.subscripts, x.ty), true)
   end
   return IR.mapExp(pruned) do x
     x isa IR.CREF && return elementReference(x, E)
-    (x isa IR.SUBSCRIPTED && literalIndices(x.subscripts) !== nothing) && return pickElement(x.exp, x.subscripts, x.ty, E)
+    (x isa IR.SUBSCRIPTED && IR.literalIndices(x.subscripts) !== nothing) && return pickElement(x.exp, x.subscripts, x.ty, E)
     (x isa IR.BINARY && x.op == IR.SCALAR_PRODUCT) && return expandedScalarProduct(x, E)
     return x
   end
@@ -551,15 +545,8 @@ end
 The kind of the element `index` of an array of kind `kind`: the variables it names (a state's derivative, a
 derivative's state) by their elements at `index`.
 """
-elementKind(kind::IR.STATE, index::Vector{Int}, E::Elements)::IR.VariableKind =
-  IR.STATE(kind.index, kind.derivative === nothing ? nothing : elementName(kind.derivative, index, E), kind.natural)
-elementKind(kind::IR.STATE_DER, index::Vector{Int}, E::Elements)::IR.VariableKind = IR.STATE_DER(elementName(kind.state, index, E))
-elementKind(kind::IR.DUMMY_DER, index::Vector{Int}, E::Elements)::IR.VariableKind = IR.DUMMY_DER(elementName(kind.dummyState, index, E))
-elementKind(kind::IR.DUMMY_STATE, index::Vector{Int}, E::Elements)::IR.VariableKind =
-  IR.DUMMY_STATE(elementName(kind.dummyDerivative, index, E))
-elementKind(kind::IR.CLOCKED_STATE, index::Vector{Int}, E::Elements)::IR.VariableKind =
-  IR.CLOCKED_STATE(elementName(kind.previous, index, E), kind.isStartFixed)
-elementKind(kind::IR.VariableKind, ::Vector{Int}, ::Elements)::IR.VariableKind = kind
+elementKind(kind::IR.VariableKind, index::Vector{Int}, E::Elements)::IR.VariableKind =
+  IR.mapKindNames((x::Symbol) -> elementName(x, index, E), kind)
 
 "An optional expression scalarized (`scalarExpression`)."
 scalarOptional(::Nothing, ::Elements)::Nothing = nothing
@@ -605,7 +592,7 @@ function scalarVariables(variables::IR.VariableSet, E::Elements)::IR.VariableSet
 end
 
 "An equation's attributes `a` without the link to its derivative (an equation of the array model)."
-unlinked(a::IR.EquationAttributes)::IR.EquationAttributes = IR.EquationAttributes(a.kind, a.differentiated, nothing)
+unlinked(a::IR.EquationAttributes)::IR.EquationAttributes = IR.EquationAttributes(a.kind, a.differentiated, nothing, a.derivativeLink)
 
 """
     scalarEquations!(out, origins, eq, origin, values, E)
@@ -833,7 +820,7 @@ readsContinuousArray(e::IR.Expression, variables::IR.VariableSet)::Bool =
   IR.anyExp(x -> x isa IR.CREF && isContinuousArray(get(variables, unsubscriptedName(x.cref), nothing)), e)
 
 isContinuousArray(::Nothing)::Bool = false
-isContinuousArray(v::IR.Variable)::Bool = v.ty isa IR.T_ARRAY && v.kind isa Union{IR.STATE, IR.STATE_DER, IR.ALGEBRAIC}
+isContinuousArray(v::IR.Variable)::Bool = v.ty isa IR.T_ARRAY && v.kind isa Union{IR.STATE, IR.STATE_DER, IR.ALGEBRAIC, IR.ALGEBRAIC_DER}
 
 """
     elementAt(e, subscripts, element, variables) -> Expression

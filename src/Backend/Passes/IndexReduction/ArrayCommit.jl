@@ -59,7 +59,7 @@ end
 
 The kind of each structure variable of the element view whose kind the plan changes (`plannedKind`), the selected
 states linked to their derivatives as `linkStateDerivative!` links them: a state's derivative `\$STATEDER.x`
-(STATE_DER), the derivative variable it read algebraic unless it is a state itself.
+(STATE_DER), the derivative variable it read an algebraic unknown (ALGEBRAIC_DER) unless it is a state itself.
 """
 function plannedKinds(s::Structure, dummies::Set{Int})::Dict{Symbol, IR.VariableKind}
   local kinds = Dict{Symbol, IR.VariableKind}()
@@ -69,10 +69,10 @@ function plannedKinds(s::Structure, dummies::Set{Int})::Dict{Symbol, IR.Variable
   end
   for v in selectedStates(s, dummies)
     local (state, derivative) = (s.variables[v], s.variables[s.derivative[v]])
-    local link = stateDerivativeName(state)
+    local link::Symbol = IR.stateDerivativeCref(s.crefs[v]).name
     kinds[state] = IR.STATE(1, link, true)
     kinds[link] = IR.STATE_DER(state)
-    get(kinds, derivative, nothing) isa IR.STATE || (kinds[derivative] = IR.ALGEBRAIC())
+    get(kinds, derivative, nothing) isa IR.STATE || (kinds[derivative] = IR.ALGEBRAIC_DER(state))
   end
   return kinds
 end
@@ -81,18 +81,23 @@ end
     arrayElementRef(name, E, variables) -> ComponentRef
 
 The element variable `name` of the element view as a reference into its array in the arrays-kept model
-(`x[2]`, `c[2].T`; `\$DER.x[2]` as the element 2 of the array `\$DER.x`); a scalar variable by its own reference.
+(`x[2]`, `c[2].T`; `\$DER.x[2]` as the element 2 of the derivative array `\$DER.x`, `IR.withLastSubscripts`); a scalar
+variable by its own reference; NotHandled for a name of neither.
 """
 function arrayElementRef(name::Symbol, E::Elements, variables::IR.VariableSet)::IR.ComponentRef
   local element = get(E.array, name, nothing)
   if element === nothing
-    local v = get(variables, name, nothing)
-    return v === nothing ? IR.ComponentRef(name, IR.T_REAL()) : v.cref
+    local v::Union{Nothing, IR.Variable} = get(variables, name, nothing)
+    v === nothing && throw(NotHandled("the element view's variable $(name), of no array and not of the model"))
+    return v.cref
   end
+  local (array::Symbol, index::Vector{Int}) = element
+  local arrayVariable::Union{Nothing, IR.Variable} = get(variables, array, nothing)
+  (arrayVariable !== nothing && IR.isDerivativeCref(arrayVariable.cref)) &&
+    return IR.withLastSubscripts(arrayVariable.cref, IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index])
   local cref = E.crefs[name]
   IR.hasSubscripts(cref) && return cref
-  #= a backend-made array, its elements named by flat names: the element of its one part =#
-  local (array, index) = element
+  #= another backend-made array of one part, its elements named by flat names: the element of its one part =#
   local part = variables[array].cref.parts[1]
   return IR.ComponentRef(IR.CrefPart[IR.CrefPart(part.name, IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index], part.ty)])
 end
@@ -164,6 +169,7 @@ end
 "The variable a kind names: a state's derivative, a derivative's state, a dummy's counterpart."
 kindVariable(k::IR.STATE)::Symbol = k.derivative
 kindVariable(k::IR.STATE_DER)::Symbol = k.state
+kindVariable(k::IR.ALGEBRAIC_DER)::Symbol = k.state
 kindVariable(k::IR.DUMMY_DER)::Symbol = k.dummyState
 kindVariable(k::IR.DUMMY_STATE)::Symbol = k.dummyDerivative
 
@@ -180,8 +186,9 @@ function newArrays(names::Vector{Symbol}, s::Structure, E::Elements, model::IR.M
   local arrayOf = copy(E.array)
   local elementsOf = copy(E.elements)
   local dimensionsOf = Dict{Symbol, Vector{IR.Dimension}}(v.name => v.ty.dimensions for v in model.variables if v.ty isa IR.T_ARRAY)
-  #= a new derivative array's array of the model (to split for slicing: `x` of `\$DER.x`) =#
+  #= a new derivative array's array of the model (to split for slicing: `x` of `\$DER.x`), and its reference =#
   local rootOf::Dict{Symbol, Symbol} = Dict{Symbol, Symbol}()
+  local crefOf::Dict{Symbol, IR.ComponentRef} = Dict{Symbol, IR.ComponentRef}()
   #= every array derived for some of its elements only, collected: split together =#
   local partial::Vector{Symbol} = Symbol[]
   local firstPartial::String = ""
@@ -192,22 +199,26 @@ function newArrays(names::Vector{Symbol}, s::Structure, E::Elements, model::IR.M
     for name in byOrder[order]
       local element = get(arrayOf, s.variables[s.antiderivative[s.index[name]]], nothing)
       if element === nothing
-        push!(out, IR.Variable(name, IR.T_REAL(), IR.ALGEBRAIC(), nothing, IR.NO_ATTRIBUTES, IR.NO_DIRECTION,
+        push!(out, IR.Variable(s.crefs[s.index[name]], IR.T_REAL(), IR.ALGEBRAIC(), nothing, IR.NO_ATTRIBUTES, IR.NO_DIRECTION,
                                false, IR.NOT_CONNECTOR, IR.NO_SOURCE, :indexReduction))
       else
         push!(get!(() -> Symbol[], byArray, element[1]), name)
       end
     end
     for (array, derived) in sort!(collect(byArray); by = first)
-      local expected = Symbol[IR.derivativeName(e) for e in elementsOf[array]]
-      if Set(derived) != Set(expected)
-        isempty(partial) && (firstPartial = "the derivatives of $(length(derived)) of the $(length(expected)) elements of the array $(array)")
+      #= each element's derivative among those derived (the structure's antiderivative of each), in the elements' order =#
+      local derivativeOf::Dict{Symbol, Symbol} = Dict{Symbol, Symbol}(s.variables[s.antiderivative[s.index[d]]] => d for d in derived)
+      if length(derived) != length(elementsOf[array]) || !all(e::Symbol -> haskey(derivativeOf, e), elementsOf[array])
+        isempty(partial) && (firstPartial = "the derivatives of $(length(derived)) of the $(length(elementsOf[array])) elements of the array $(array)")
         push!(partial, get(rootOf, array, array))
         continue
       end
-      local name = IR.derivativeName(array)
+      local expected::Vector{Symbol} = Symbol[derivativeOf[e] for e in elementsOf[array]]
+      local cref::IR.ComponentRef = IR.derivativeCref(haskey(crefOf, array) ? crefOf[array] : model.variables[array].cref)
+      local name::Symbol = cref.name
       haskey(model.variables, name) && throw(NotHandled("a derivative array $(name) that exists"))
-      push!(out, IR.Variable(name, IR.T_ARRAY(IR.T_REAL(), dimensionsOf[array]), IR.ALGEBRAIC(), nothing, IR.NO_ATTRIBUTES,
+      crefOf[name] = cref
+      push!(out, IR.Variable(cref, IR.T_ARRAY(IR.T_REAL(), dimensionsOf[array]), IR.ALGEBRAIC(), nothing, IR.NO_ATTRIBUTES,
                              IR.NO_DIRECTION, false, IR.NOT_CONNECTOR, IR.NO_SOURCE, :indexReduction))
       dimensionsOf[name] = dimensionsOf[array]
       elementsOf[name] = expected
@@ -299,7 +310,7 @@ function differentiatedForEquation(eq::IR.FOR_EQUATION, chains::Dict{Vector{Int}
     end
   end
   isempty(body) && return nothing
-  return IR.FOR_EQUATION(eq.iterator, body, eq.source, IR.EquationAttributes(eq.attributes.kind, true, nothing))
+  return IR.FOR_EQUATION(eq.iterator, body, eq.source, IR.EquationAttributes(eq.attributes.kind, true, nothing, false))
 end
 
 "The scalar equation `eq` of the arrays-kept model at the iterator `values`, in the element view's form (`equationExpression`)."
@@ -376,12 +387,12 @@ function linkEquation(link::IR.Variable, derivative::IR.Variable, sizes::Vector{
   local subscripts = iteratorSubscripts(sizes)
   local element = v::IR.Variable -> IR.CREF(distributedCref(v, subscripts), IR.T_REAL())
   return nestedFor(IR.Equation[IR.SCALAR_EQUATION(element(link), element(derivative), IR.T_REAL(), IR.NO_SOURCE,
-                                                  IR.DEFAULT_ATTRIBUTES)], sizes)
+                                                  IR.DERIVATIVE_LINK_ATTRIBUTES)], sizes)
 end
 
 "A variable the array form of a plan adds, of no attributes."
-newVariable(name::Symbol, ty::IR.ModelicaType)::IR.Variable =
-  IR.Variable(name, ty, IR.ALGEBRAIC(), nothing, IR.NO_ATTRIBUTES, IR.NO_DIRECTION, false, IR.NOT_CONNECTOR, IR.NO_SOURCE, :indexReduction)
+newVariable(cref::IR.ComponentRef, ty::IR.ModelicaType)::IR.Variable =
+  IR.Variable(cref, ty, IR.ALGEBRAIC(), nothing, IR.NO_ATTRIBUTES, IR.NO_DIRECTION, false, IR.NOT_CONNECTOR, IR.NO_SOURCE, :indexReduction)
 
 """
     stateLinks(s, dummies, E, derivatives, variables) -> Tuple{Vector{IR.Variable}, Vector{IR.Equation}}
@@ -407,18 +418,18 @@ function stateLinks(s::Structure, dummies::Set{Int}, E::Elements, derivatives::D
                        Symbol[array], Int[]))
     local derivative = get(derivatives, array, nothing)
     derivative === nothing && throw(NotHandled("the states of the array $(array), their derivatives not one array"))
-    local link = newVariable(stateDerivativeName(array), variables[array].ty)
+    local link::IR.Variable = newVariable(IR.stateDerivativeCref(variables[array].cref), variables[array].ty)
     push!(links, link)
     push!(variables, link)
     push!(equations, linkEquation(link, variables[derivative], E.sizes[array]))
   end
   for x in scalars
     local derivative = variables[s.variables[s.derivative[s.index[x]]]]
-    local link = newVariable(stateDerivativeName(x), IR.T_REAL())
+    local link::IR.Variable = newVariable(IR.stateDerivativeCref(variables[x].cref), IR.T_REAL())
     push!(links, link)
     push!(variables, link)
     push!(equations, IR.SCALAR_EQUATION(IR.CREF(link.cref, IR.T_REAL()), IR.CREF(derivative.cref, IR.T_REAL()), IR.T_REAL(),
-                                        IR.NO_SOURCE, IR.DEFAULT_ATTRIBUTES))
+                                        IR.NO_SOURCE, IR.DERIVATIVE_LINK_ATTRIBUTES))
   end
   return (links, equations)
 end

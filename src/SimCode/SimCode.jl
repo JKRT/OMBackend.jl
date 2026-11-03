@@ -82,5 +82,6 @@ include("Passes/outputOnly.jl")
 include("Passes/runner.jl")
 include("Passes/pipeline.jl")
 include("check.jl")
+include("codeView.jl")
 
 end # module SimCode

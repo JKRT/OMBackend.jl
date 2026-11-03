@@ -91,7 +91,7 @@ function equationKey(eq::IR.Equation, h::UInt = zero(UInt))::UInt
         foreach(e -> (h = equationKey(e, h)), b.equations)
       end
     elseif x isa IR.EquationAttributes
-      h = hash((x.kind, x.differentiated), h)
+      h = hash((x.kind, x.differentiated, x.derivativeLink), h)
     else
       h = hash(x, h)
     end
@@ -151,7 +151,7 @@ end
 function addBindingEquations!(variables::IR.VariableSet, partition::IR.Partition)::Nothing
   for v in variables
     v.binding === nothing && continue
-    local continuous = v.kind isa Union{IR.STATE, IR.ALGEBRAIC}
+    local continuous = v.kind isa Union{IR.STATE, IR.ALGEBRAIC, IR.ALGEBRAIC_DER}
     local discrete = continuous || v.kind isa IR.DISCRETE
     local lhs = IR.CREF(v.cref, v.ty)
     if continuous && v.ty isa IR.T_REAL

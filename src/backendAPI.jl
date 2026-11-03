@@ -401,6 +401,9 @@ function translate(fm::OMFrontend.Frontend.FlatModel;
   try
     delete!(ARRAY_ODE_MODELS, canonicalName(fm.name))
     omjlir === nothing && delete!(ARRAY_REDUCED_MODELS, canonicalName(fm.name))
+    #= an attempt with the arrays kept records its own reasons (as translateArrays); a scalarized translate after it, or
+       the reduced model's (`omjlir`), keeps them for OM's report =#
+    (scalarized || omjlir !== nothing) || delete!(ARRAY_PATH_REASONS, canonicalName(fm.name))
     if !scalarized && ARRAY_ODE_GENERATION[]
       local arrayResult = @BACKEND_PERFLOG "[backendAPI] generateArrayODECode" generateArrayODETargetCode(fm; functionList)
       arrayResult === nothing || return arrayResult
@@ -425,7 +428,7 @@ function translate(fm::OMFrontend.Frontend.FlatModel;
         #= Direct DifferentialEquations.jl path: a subset of the MTK path's SimCode passes (not,
            e.g., the Complex lowering, the function evaluation, the folds, the initial values),
            no observed-equation work, the DE emitter. =#
-        local simCode = SimCode.deSimulationCode(model)
+        local simCode = SimCode.codeView(SimCode.deSimulationCode(model))
         (SimCode.hasStructuralTransitions(simCode) || SimCode.hasSubModels(simCode)) &&
           error("DEMode does not support structural transitions / VSS at this time. Re-run with mode = OMBackend.MTK_MODE.")
         _checkSimCodeBeforeCodegen(simCode, checkSimCode)
@@ -469,20 +472,17 @@ function knownValues(model::OMJLIR.Model)::Dict{Symbol, OMJLIR.Expression}
     _fallback(err, :knownValues)
     return out
   end
-  #= OMJLIR's names by SimCode's (dots as underscores); a name two variables would share is left out =#
-  local byName = Dict{String, Symbol}()
-  local shared = Set{String}()
+  #= OMJLIR's names by SimCode's keys (the references' flat names: the same) =#
+  local byName::Dict{String, Symbol} = Dict{String, Symbol}()
   for v in model.variables
-    v.kind isa OMJLIR.ALGEBRAIC || continue
-    local n = replace(String(v.name), "." => "_")
-    haskey(byName, n) ? push!(shared, n) : (byName[n] = v.name)
+    v.kind isa Union{OMJLIR.ALGEBRAIC, OMJLIR.ALGEBRAIC_DER} && (byName[String(v.name)] = v.name)
   end
   #= `v - c`: eliminated, or a residual a later pass would eliminate =#
   for eq in Iterators.flatten((sc.eliminatedEquations, sc.residualEquations))
     local e = eq.exp
     (e isa SimCode.BINARY && e.op === SimCode.OP_SUB && e.exp1 isa SimCode.EXP_CREF && e.exp2 isa SimCode.RCONST) || continue
-    local n = SimCode.crefName(e.exp1.cref)
-    (haskey(byName, n) && !(n in shared)) || continue
+    local n::String = SimCode.crefName(e.exp1.cref)
+    haskey(byName, n) || continue
     out[byName[n]] = OMJLIR.REAL(e.exp2.value)
   end
   return out
@@ -718,13 +718,14 @@ end
     mtkSimCode(model; eliminateNonDynamic = nothing, observedFilter = nothing) -> SimCode.SIM_CODE
 
 The simulation code the MTK and IMTK paths generate code from: the OMJLIR model `model` through
-the SimCode passes (SimCode.simulationCode). A translate's, and that of a model recompiled
-during its simulation (Runtime.translateToSimCode).
+the SimCode passes (SimCode.simulationCode), renamed to the generated code's identifiers
+(SimCode.codeView). A translate's, and that of a model recompiled during its simulation
+(Runtime.translateToSimCode).
 """
 mtkSimCode(model::OMJLIR.Model; eliminateNonDynamic::Union{Nothing, Bool, SimCode.EliminationOptions} = nothing,
            observedFilter::Union{Nothing, Vector{String}, Vector{Regex}} = nothing)::SimCode.SIM_CODE =
-  SimCode.simulationCode(model; eliminateNonDynamic,
-                         observedFilter = observedFilter === nothing ? nothing : _observedFilterStrings(observedFilter))
+  SimCode.codeView(SimCode.simulationCode(model; eliminateNonDynamic,
+                                          observedFilter = observedFilter === nothing ? nothing : _observedFilterStrings(observedFilter)))
 
 function _translationResult(result::Tuple{String, Expr})::Tuple{String, Expr}
   dumpGeneratedCode(result[1], result[2])
@@ -733,21 +734,22 @@ end
 
 """
 The simulation code checked before the code generation (SimCode.check): a reference that
-resolves to no variable, eliminated variable or builtin aborts it with the located reason (the
-code generation would otherwise throw a bare UndefVarError deep in MTK); the other violations
-are reported.
+resolves to no variable, eliminated variable or builtin (the code generation would otherwise
+throw a bare UndefVarError deep in MTK), and a variable or reference without its IR reference or
+with structure in a part's name (`checkReferences`: the passes would answer structural questions
+on it wrongly), abort it with the located reasons; the other violations are reported.
 """
 function _checkSimCodeBeforeCodegen(simCode::SimCode.SIM_CODE, checkSimCode::Bool)::Nothing
   checkSimCode || return nothing
   local result = SimCode.check(simCode)
-  local blocking = filter(v -> v.severity === :error && v.rule === :cref_resolution, result.violations)
+  local blocking = filter(v -> v.severity === :error && v.rule in (:cref_resolution, :references), result.violations)
   if !isempty(blocking)
-    local details = join([string("  - ", v.where, ": ", v.detail) for v in blocking], "\n")
+    local details = join([string("  - ", v.rule, " @ ", v.where, ": ", v.detail) for v in blocking], "\n")
     throw(SimCode.SimCodeCheckError(
       string("Code generation aborted for ", simCode.name, ": ", length(blocking),
-             " unresolved component reference(s). These references do not resolve ",
-             "against the simulation variable table, the eliminated-variable set, or ",
-             "the builtin set, so code generation would raise an undefined-variable error.\n", details)))
+             " violation(s) of the simulation code's references: a component reference that resolves ",
+             "to no simulation variable, eliminated variable or builtin (code generation would raise an ",
+             "undefined-variable error), or one without its IR reference.\n", details)))
   end
   SimCode.report(stderr, result; modelName = simCode.name)
   return nothing
@@ -797,13 +799,16 @@ function generateIMTKTargetCode(simCode::SimCode.SIM_CODE)::Tuple{String, Expr}
      loaded module is already fresh: record changeDetected = false so a later
      MTK-mode simulate on this model does not needlessly re-eval the module. A
      structural model's module is evaluated at its first simulate (simulateIMTK):
-     changed until then. =#
+     changed until then. So is the module of a failed build: the failure freed its
+     external objects (forgetBuild), and the module's own simulate read the freed
+     tables ("... was freed with the build it belonged to") instead of failing on
+     the build's error (MSL FullRobot with an observed filter). =#
   (modelName::String, modelCode::Expr) = IMTKGen.generateIMTKCode(simCode)
   local codeHash = hash(modelCode)
   @info "[IMTK GEN] generated target code" model=modelName codeHash=codeHash
-  local structural = SimCode.hasStructuralTransitions(simCode) || SimCode.hasSubModels(simCode)
-  COMPILED_MODELS_MTK[modelName] = (modelCode, structural, codeHash)
   local cname = canonicalName(modelName)
+  local structural::Bool = SimCode.hasStructuralTransitions(simCode) || SimCode.hasSubModels(simCode)
+  COMPILED_MODELS_MTK[modelName] = (modelCode, structural || !haskey(IMTKGen.BUILT, cname), codeHash)
   Cache.store!(cname, Cache.sizeOf((modelCode, get(IMTKGen.BUILT, cname, nothing), get(IMTKGen.PRISTINE_P, cname, nothing))))
   return (modelName, modelCode)
 end

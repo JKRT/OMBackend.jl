@@ -42,14 +42,12 @@
     isDerivativeUnknown(v) -> Bool
 
 Whether `v` is a derivative unknown of a reduced partition: a dummy derivative, or a state's
-derivative variable `\$DER.x` that its link `\$STATEDER.x = \$DER.x` made algebraic.
+derivative variable that its link `\$STATEDER.x = \$DER.x` made algebraic (ALGEBRAIC_DER).
 """
-isDerivativeUnknown(v::IR.Variable)::Bool =
-  v.kind isa IR.DUMMY_DER || (v.kind isa IR.ALGEBRAIC && startswith(String(v.name), "\$DER."))
+isDerivativeUnknown(v::IR.Variable)::Bool = v.kind isa Union{IR.DUMMY_DER, IR.ALGEBRAIC_DER}
 
-"Whether `eq` is a state's derivative link `\$STATEDER.x = \$DER.x`: the state's differential row, which determines no derivative unknown."
-isDerivativeLink(eq::IR.Equation)::Bool =
-  eq isa IR.SCALAR_EQUATION && eq.lhs isa IR.CREF && startswith(String(eq.lhs.cref.name), "\$STATEDER.")
+"Whether `eq` is a state's derivative link `\$STATEDER.x = \$DER.x` (its attributes' `derivativeLink`): the state's differential row, which determines no derivative unknown."
+isDerivativeLink(eq::IR.Equation)::Bool = eq isa IR.SCALAR_EQUATION && eq.attributes.derivativeLink
 
 "Whether `e` reads no unknown (only parameters, constants and literals; not `time`): a coefficient the code generators solve through."
 function readsNoUnknown(e::IR.Expression, variables::IR.VariableSet)::Bool
@@ -411,7 +409,7 @@ evaluate the coefficients (`derivativeEdges`). The unknowns so solved for, in or
 function solveDerivatives!(model::IR.Model, partition::IR.Partition;
                            known::Dict{Symbol, IR.Expression} = Dict{Symbol, IR.Expression}())::Vector{Symbol}
   local solution::Union{Nothing, DerivativeSolution} = derivativeSolution(model, partition; known)
-  return solution === nothing ? Symbol[] : substituteDerivatives!(partition, solution)
+  return solution === nothing ? Symbol[] : substituteDerivatives!(partition, solution, model.variables)
 end
 
 """
@@ -461,19 +459,19 @@ function derivativeSolution(model::IR.Model, partition::IR.Partition;
 end
 
 """
-    substituteDerivatives!(partition, solution) -> Vector{Symbol}
+    substituteDerivatives!(partition, solution, variables) -> Vector{Symbol}
 
-The solved derivatives of `solution` substituted into the partition: each one's equation `d = value`, its value in
-the other equations; the unknowns so solved for, in order.
+The solved derivatives of `solution` substituted into the partition: each one's equation `d = value` (`d` by its
+reference in `variables`), its value in the other equations; the unknowns so solved for, in order.
 """
-function substituteDerivatives!(partition::IR.Partition, solution::DerivativeSolution)::Vector{Symbol}
+function substituteDerivatives!(partition::IR.Partition, solution::DerivativeSolution, variables::IR.VariableSet)::Vector{Symbol}
   local resolved::Dict{Symbol, IR.Expression} = solution.resolved
   local definitions::Dict{Int, Symbol} = Dict{Int, Symbol}(solution.equationOf[d] => d for d in keys(resolved))
   local substitute = x -> (x isa IR.CREF && haskey(resolved, x.cref.name)) ? substitutable(x, resolved[x.cref.name]) : x
   for (i, eq) in enumerate(partition.equations)
     local d = get(definitions, i, nothing)
     partition.equations[i] = d === nothing ? IR.mapEquation!(substitute, eq) :
-      IR.SCALAR_EQUATION(IR.CREF(IR.ComponentRef(d, IR.T_REAL()), IR.T_REAL()), resolved[d], IR.T_REAL(), eq.source, eq.attributes)
+      IR.SCALAR_EQUATION(IR.CREF(variables[d].cref, IR.T_REAL()), resolved[d], IR.T_REAL(), eq.source, eq.attributes)
   end
   return sort(collect(keys(resolved)))
 end

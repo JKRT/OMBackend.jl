@@ -198,12 +198,7 @@ The name of the array the previous backend took an element to be of: its name up
 first subscript, of an element whose last part has subscripts (`x[2]` of `x`, `a.x[2]` of
 `a.x`, `a[1].x[2]` of `a`); the reference's own name otherwise.
 """
-function elementBase(cref::IR.ComponentRef)::Symbol
-  isempty(IR.subscripts(cref)) && return cref.name
-  local k = findfirst(p -> !isempty(p.subscripts), cref.parts)
-  local parts = IR.CrefPart[cref.parts[1:k-1]..., IR.CrefPart(cref.parts[k].name, IR.Subscript[], cref.parts[k].ty)]
-  return IR.ComponentRef(parts).name
-end
+elementBase(cref::IR.ComponentRef)::Symbol = isempty(IR.subscripts(cref)) ? cref.name : IR.upToFirstSubscripted(cref).name
 
 """
     addAssignedNames!(names, body, candidates; nested)
@@ -276,13 +271,13 @@ end
     lowerHigherOrderDerivatives!(model)
 
 A derivative of a derivative as the first derivative of an auxiliary variable:
-`der(der(x))` is `der(der_x)` with the variable `der_x` and the equation `der_x = der(x)`
-(after the others; once per variable), recursively for higher ones. In the equations of the
+`der(der(x))` is `der(der.x)` with the variable `der.x` (`IR.auxiliaryDerivativeCref`, `der_x` in the code) and the
+equation `der.x = der(x)` (after the others; once per variable), recursively for higher ones. In the equations of the
 continuous-time partitions and the structural modes.
 """
 function lowerHigherOrderDerivatives!(model::IR.Model)::IR.Model
   for (variables, p) in partitionsWithVariables(model)
-    local auxiliaries = Dict{String, IR.ComponentRef}()
+    local auxiliaries = Dict{IR.ComponentRef, IR.ComponentRef}()
     local equations = IR.Equation[]
     local g = e -> IR.mapExp(x -> lowerNestedDer(x, variables, auxiliaries, equations), e)
     foreach(eq -> mapRoots!(g, eq), p.equations)
@@ -296,7 +291,7 @@ isDerOf(e::IR.Expression)::Bool = IR.isBuiltinCall(e, :der) && length(e.argument
 "Whether `e` is `der(...der(x)...)` of a reference `x`."
 endsInReference(e::IR.Expression)::Bool = e isa IR.CREF || (isDerOf(e) && endsInReference(e.arguments[1]))
 
-function lowerNestedDer(e::IR.Expression, variables::IR.VariableSet, auxiliaries::Dict{String, IR.ComponentRef},
+function lowerNestedDer(e::IR.Expression, variables::IR.VariableSet, auxiliaries::Dict{IR.ComponentRef, IR.ComponentRef},
                         equations::Vector{IR.Equation})::IR.Expression
   (isDerOf(e) && isDerOf(e.arguments[1]) && endsInReference(e.arguments[1].arguments[1])) || return e
   local aux = derivativeVariable(e.arguments[1], e.attributes, variables, auxiliaries, equations)
@@ -306,23 +301,22 @@ end
 """
     derivativeVariable(d, attributes, variables, auxiliaries, equations)
 
-The auxiliary variable equal to the derivative `d = der(a)`: `der_<a>` (of `a` lowered first
-if itself a derivative), with its equation `der_<a> = der(a)`; one per variable.
+The auxiliary variable equal to the derivative `d = der(a)`: `der.a` (`IR.auxiliaryDerivativeCref`, of `a` lowered
+first if itself a derivative), with its equation `der.a = der(a)`; one per variable (`auxiliaries`, by `a`).
 """
 function derivativeVariable(d::IR.CALL, attributes::IR.CallAttributes, variables::IR.VariableSet,
-                            auxiliaries::Dict{String, IR.ComponentRef}, equations::Vector{IR.Equation})::IR.ComponentRef
-  local arg = d.arguments[1]
-  local base = arg isa IR.CREF ? arg.cref : derivativeVariable(arg, attributes, variables, auxiliaries, equations)
-  local baseName = legacyName(base)
-  local existing = get(auxiliaries, baseName, nothing)
+                            auxiliaries::Dict{IR.ComponentRef, IR.ComponentRef}, equations::Vector{IR.Equation})::IR.ComponentRef
+  local arg::IR.Expression = d.arguments[1]
+  local base::IR.ComponentRef = arg isa IR.CREF ? arg.cref : derivativeVariable(arg, attributes, variables, auxiliaries, equations)
+  local existing::Union{Nothing, IR.ComponentRef} = get(auxiliaries, base, nothing)
   existing === nothing || return existing
-  local aux = IR.ComponentRef(Symbol("der_", baseName), IR.T_REAL())
+  local aux::IR.ComponentRef = IR.auxiliaryDerivativeCref(base)
   push!(variables, IR.Variable(aux, IR.T_REAL(), IR.ALGEBRAIC(), nothing, IR.NO_ATTRIBUTES, IR.NO_DIRECTION,
                                false, IR.NOT_CONNECTOR, IR.NO_SOURCE, :lowerHigherOrderDerivatives))
   push!(equations, IR.SCALAR_EQUATION(IR.CREF(aux, IR.T_REAL()),
                                       IR.CALL(:der, IR.Expression[IR.CREF(base, IR.T_REAL())], IR.T_REAL(), attributes),
                                       IR.T_REAL(), IR.NO_SOURCE, IR.DEFAULT_ATTRIBUTES))
-  auxiliaries[baseName] = aux
+  auxiliaries[base] = aux
   return aux
 end
 
@@ -385,9 +379,7 @@ function runtimeIndexChoice(e::IR.Expression, iterators::Set{Symbol})::IR.Expres
   (ty isa IR.T_ARRAY && length(ty.dimensions) == 1 && ty.dimensions[1] isa IR.DIM_SIZE) || return e
   local n = ty.dimensions[1].size
   n > 0 || return e
-  local element = k -> IR.CREF(IR.ComponentRef(IR.CrefPart[e.cref.parts[1:end-1]...,
-                                                           IR.CrefPart(last.name, IR.Subscript[IR.INDEX(IR.INTEGER(k))], ty)]),
-                               ty.elementType)
+  local element::Function = (k::Int) -> IR.CREF(IR.withLastSubscripts(e.cref, IR.Subscript[IR.INDEX(IR.INTEGER(k))]), ty.elementType)
   local choice::IR.Expression = element(n)
   for k in n-1:-1:1
     choice = IR.IF_EXPRESSION(IR.RELATION(index, IR.EQUAL, IR.INTEGER(k), 0), element(k), choice, ty.elementType)
@@ -422,7 +414,7 @@ function resolveBindingReferences!(variables::IR.VariableSet)::Nothing
     local changed = false
     for v in variables
       v.binding isa IR.CREF || continue
-      local target = legacyName(withoutLastSubscripts(v.binding.cref))
+      local target::String = legacyName(IR.withoutLastSubscripts(v.binding.cref))
       isTunableParameter(target) && continue
       local b::Union{Nothing, IR.Expression} = get(bindings, target, nothing)
       (b === nothing || b isa IR.CREF) && continue
@@ -438,9 +430,6 @@ function resolveBindingReferences!(variables::IR.VariableSet)::Nothing
   @warn "resolveBindingReferences!: no fixed point after 100 rounds (circular parameter bindings?)"
   return nothing
 end
-
-withoutLastSubscripts(cref::IR.ComponentRef)::IR.ComponentRef =
-  IR.ComponentRef(IR.CrefPart[cref.parts[1:end-1]..., IR.CrefPart(cref.parts[end].name, IR.Subscript[], cref.parts[end].ty)])
 
 #= ==================================================================================== =#
 #= If-expressions                                                                       =#
@@ -600,10 +589,10 @@ function expandRecordFieldArrays!(variables::IR.VariableSet)::Nothing
       push!(out, v)
     elseif !isempty(v.cref.parts[end].subscripts)
       push!(out, v)
-      local array = withoutLastSubscripts(v.cref)
+      local array::IR.ComponentRef = IR.withoutLastSubscripts(v.cref)
       (IR.isKnown(v) && all(d -> d isa IR.DIM_SIZE, array.parts[end].ty.dimensions)) || continue
       local (_, _, elements) = get!(groups, legacyName(array), (array, v, Dict{Vector{Int}, IR.Expression}()))
-      local index = literalIndices(v.cref.parts[end].subscripts)
+      local index::Union{Nothing, Vector{Int}} = IR.literalIndices(v.cref.parts[end].subscripts)
       (index === nothing || v.binding === nothing) || (elements[index] = v.binding)
     else
       append!(out, recordFieldArrayElements(v))
@@ -622,15 +611,12 @@ function expandRecordFieldArrays!(variables::IR.VariableSet)::Nothing
   return nothing
 end
 
-"Whether `cref` is an array field of a record: its last part of an array type, the one before of a record type."
+"""
+Whether `cref` is an array field of a record: its last part of an array type, the one before of a record type; not a
+derivative's (`IR.isDerivativeCref`: `\$DER.r.f` stays one variable).
+"""
 isRecordFieldArray(cref::IR.ComponentRef)::Bool =
-  length(cref.parts) >= 2 && cref.parts[end].ty isa IR.T_ARRAY && cref.parts[end-1].ty isa IR.T_RECORD
-
-"The literal Integer indices of `subscripts`; `nothing` if one is not."
-function literalIndices(subscripts::Vector{IR.Subscript})::Union{Nothing, Vector{Int}}
-  all(s -> s isa IR.INDEX && s.exp isa IR.INTEGER, subscripts) || return nothing
-  return Int[s.exp.value for s in subscripts]
-end
+  length(cref.parts) >= 2 && cref.parts[end].ty isa IR.T_ARRAY && cref.parts[end-1].ty isa IR.T_RECORD && !IR.isDerivativeCref(cref)
 
 """
     assembledBinding(sizes, elements, name)
@@ -671,8 +657,7 @@ function recordFieldArrayElements(v::IR.Variable)::Vector{IR.Variable}
   local out = IR.isKnown(v) ? IR.Variable[v] : IR.Variable[]
   for i in CartesianIndices(Tuple(d.size for d in ty.dimensions))
     local index = collect(Tuple(i))
-    local cref = IR.ComponentRef(IR.CrefPart[v.cref.parts[1:end-1]...,
-                                             IR.CrefPart(last.name, IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index], ty)])
+    local cref::IR.ComponentRef = IR.withLastSubscripts(v.cref, IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index])
     local binding = v.binding === nothing ? nothing : bindingElement(v.binding, index)
     push!(out, IR.Variable(cref, ty.elementType, v.kind, binding, v.attributes, v.direction, v.isProtected, v.connector,
                            v.source, :expandRecordFieldArrays))
@@ -823,9 +808,7 @@ function elementOf(e::IR.Expression, index::Vector{Int})::IR.Expression
   local subs = IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index]
   local ty = elementTypeOf(IR.typeOf(e), length(index))
   if e isa IR.CREF
-    local last = e.cref.parts[end]
-    local parts = IR.CrefPart[e.cref.parts[1:end-1]..., IR.CrefPart(last.name, vcat(last.subscripts, subs), last.ty)]
-    return IR.CREF(IR.ComponentRef(parts), ty)
+    return IR.CREF(IR.appendSubscripts(e.cref, subs), ty)
   end
   local recordTy = IR.typeOf(e)
   (recordTy isa IR.T_RECORD && length(index) == 1 && index[1] <= length(recordTy.fields)) && return fieldByIndex(e, index[1])

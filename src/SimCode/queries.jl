@@ -58,10 +58,21 @@ withBinding(k::ARRAY, b::Union{Nothing, Exp})::SimVarType = ARRAY(k.dimensions, 
 withBinding(k::ARRAY_PARAMETER, b::Union{Nothing, Exp})::SimVarType = ARRAY_PARAMETER(k.dimensions, b)
 withBinding(k::SimVarType, ::Union{Nothing, Exp})::SimVarType = k
 
+"The keys of the states' derivative entries by the states' keys (`STATE_DERIVATIVE`, `createIndices`)."
+derivativeKeys(ht::HT)::Dict{String, String} =
+  Dict{String, String}(v.varKind.varName => k for (k, (_, v)) in ht if v.varKind isa STATE_DERIVATIVE)
+
 "A variable with another category."
-withKind(v::SIMVAR, k::SimVarType)::SIMVAR = SIMVAR(v.name, v.index, k, v.attributes, v.elementType)
+withKind(v::SIMVAR, k::SimVarType)::SIMVAR = SIMVAR(v.name, v.index, k, v.attributes, v.elementType, v.irKind, v.irOrigin, v.ref)
 "A variable with the index `index` (and the category `k`)."
-withIndex(v::SIMVAR, index::Int, k::SimVarType = v.varKind)::SIMVAR = SIMVAR(v.name, index, k, v.attributes, v.elementType)
+withIndex(v::SIMVAR, index::Int, k::SimVarType = v.varKind)::SIMVAR =
+  SIMVAR(v.name, index, k, v.attributes, v.elementType, v.irKind, v.irOrigin, v.ref)
+"A variable with the IR reference `cref`."
+withCref(v::SIMVAR, cref::Union{Nothing, IR.ComponentRef})::SIMVAR =
+  SIMVAR(v.name, v.index, v.varKind, v.attributes, v.elementType, v.irKind, v.irOrigin, cref)
+"A variable with the attributes `a`."
+withAttributes(v::SIMVAR, a::SimVarAttributes)::SIMVAR =
+  SIMVAR(v.name, v.index, v.varKind, a, v.elementType, v.irKind, v.irOrigin, v.ref)
 
 hasStructuralTransitions(sc::SIM_CODE)::Bool = !isempty(sc.structuralTransitions)
 hasSubModels(sc::SIM_CODE)::Bool = !isempty(sc.subModels)
@@ -80,24 +91,25 @@ end
 crefNameOf(e::Exp)::Union{Nothing, String} = e isa EXP_CREF ? crefName(e.cref) : nothing
 
 """
-    complexFieldNames!(names, equations, ht)
+    complexFieldNames!(names, equations, simCode)
 
 For each reference of a record type in the equations, the names of its fields' variables
-(`r_f`; of a reference whose `r_re` and `r_im` are variables, those): the code generation
-flattens a record reference into its fields, which must stay.
+(`r_f`: the variables of its reference's fields, `keyOf`; of a reference whose `r_re` and `r_im`
+are variables, those): the code generation flattens a record reference into its fields, which must stay.
 """
-function complexFieldNames!(names::OrderedSet{String}, equations::AbstractVector{<:Equation}, ht::HT)::OrderedSet{String}
-  local visit = x -> begin
+function complexFieldNames!(names::OrderedSet{String}, equations::AbstractVector{<:Equation}, simCode::SIM_CODE)::OrderedSet{String}
+  local ht::HT = simCode.stringToSimVarHT
+  local fieldKey::Function = (x::EXP_CREF, f::String) -> x.cref.ref === nothing ? nothing : keyOf(simCode, fieldCref(x.cref.ref, f))
+  local visit::Function = (x::Exp) -> begin
     x isa EXP_CREF || return
-    local base = crefName(x.cref)
     if x.ty isa TYPE_COMPLEX
       for f in x.ty.fieldNames
-        local n = string(base, "_", f)
-        haskey(ht, n) && push!(names, n)
+        local n::Union{Nothing, String} = fieldKey(x, f)
+        (n !== nothing && haskey(ht, n)) && push!(names, n)
       end
     else
-      local (re, im) = (string(base, "_re"), string(base, "_im"))
-      (haskey(ht, re) && haskey(ht, im)) && push!(names, re, im)
+      local (re::Union{Nothing, String}, im::Union{Nothing, String}) = (fieldKey(x, "re"), fieldKey(x, "im"))
+      (re !== nothing && im !== nothing && haskey(ht, re) && haskey(ht, im)) && push!(names, re, im)
     end
   end
   for eq in equations
@@ -106,6 +118,23 @@ function complexFieldNames!(names::OrderedSet{String}, equations::AbstractVector
     end
   end
   return names
+end
+
+"""
+The reference of the field `f` of the record reference `ref` (`r.f`), its part of the field's type
+in the record type (of a subscripted part the element's, as `recordFieldExp`); `T_UNKNOWN` if the
+record type is not known.
+"""
+function fieldCref(ref::IR.ComponentRef, f::AbstractString)::IR.ComponentRef
+  local name::Symbol = Symbol(f)
+  local last::IR.CrefPart = ref.parts[end]
+  local record::IR.ModelicaType = isempty(last.subscripts) ? last.ty : IR.elementType(last.ty)
+  local ty::IR.ModelicaType = IR.T_UNKNOWN()
+  if record isa IR.T_RECORD
+    local i::Union{Nothing, Int} = findfirst(fl::IR.Field -> fl.name === name, record.fields)
+    i === nothing || (ty = record.fields[i].ty)
+  end
+  return IR.withField(ref, name, ty)
 end
 
 "The expressions of an equation (its sides; a residual's expression)."
@@ -117,77 +146,77 @@ equationExps(eq::Equation)::Vector{Exp} = Exp[]
 """
     whenCrefNames!(names, w)
 
-The references of a when-clause: its condition's, its statements' (an assignment's sides, a
-reinit's state and value, a call's, an assert's condition and message), its elsewhen arms'.
+The references of a when-clause: its condition's, its statements' (`statementCrefNames!`: an
+assignment's sides, a reinit's state and value, a call's, an assert's, a terminate's message,
+nested statements'), its elsewhen arms'.
 """
-function whenCrefNames!(names::OrderedSet{String}, w::WHEN_STMTS)::OrderedSet{String}
-  crefNames!(names, w.condition)
-  for s in w.body
-    if s isa ASSIGN
-      crefNames!(names, s.left); crefNames!(names, s.right)
-    elseif s isa REINIT
-      push!(names, crefName(s.stateVar)); crefNames!(names, s.value)
-    elseif s isa NORETCALL
-      crefNames!(names, s.exp)
-    elseif s isa ASSERT
-      crefNames!(names, s.condition); crefNames!(names, s.message)
-    end
-  end
-  w.elsewhenPart === nothing || whenCrefNames!(names, w.elsewhenPart)
+function whenCrefNames!(names::OrderedSet{String}, w::WHEN_STMTS; dynamic::Union{Nothing, Set{Symbol}} = nothing)::OrderedSet{String}
+  crefNames!(names, w.condition; dynamic)
+  statementCrefNames!(names, w.body; dynamic)
+  w.elsewhenPart === nothing || whenCrefNames!(names, w.elsewhenPart; dynamic)
   return names
 end
 
-"A name without its subscripts (`a[1][2]`: `a`)."
-baseName(name::AbstractString)::String = String(first(split(name, '['; limit = 2)))
+"""
+    arrayBase(ref) -> Symbol
+
+The name of the array the reference `ref` is an element of, as the scalarized model names its elements: `ref` up to
+its first part with subscripts, without them (`x` of `x[1,2]`, `c` of `c[2].T`); a rolled component's member by its
+literal index (`cylinder3`) is a name there, not a subscript; `ref`'s own name where it has none.
+"""
+arrayBase(ref::IR.ComponentRef)::Symbol = IR.upToFirstSubscripted(ref).name
+
+"Whether the reference names an element of an array (`arrayBase` is not its own name)."
+isElementCref(ref::IR.ComponentRef)::Bool = arrayBase(ref) !== ref.name
+
+"Whether the reference names the field `re` or `im` of a record (a Complex's part: its part before of a record type)."
+isComplexPartCref(ref::IR.ComponentRef)::Bool =
+  length(ref.parts) >= 2 && ref.parts[end].name in (:re, :im) && IR.elementType(ref.parts[end - 1].ty) isa IR.T_RECORD
 
 """
-    derivedStateNames(simCode)
+    elementIndex(ref, array) -> Union{Nothing, Vector{Int}}
 
-The variables under der() (a residual, an eliminated or initial equation, an if-branch, a
+The Integer subscripts by which the reference `ref` is an element of the array reference `array`: `array`'s parts, its
+last part subscripted (`A[1,2]` of `A`, `a.b[3]` of `a.b`); `nothing` for another reference.
+"""
+function elementIndex(ref::IR.ComponentRef, array::IR.ComponentRef)::Union{Nothing, Vector{Int}}
+  local n::Int = length(array.parts)
+  (length(ref.parts) == n && isempty(array.parts[n].subscripts) && ref.parts[n].name === array.parts[n].name &&
+   !isempty(ref.parts[n].subscripts)) || return nothing
+  (n == 1 || IR.ComponentRef(ref.parts[1:n - 1]) == IR.ComponentRef(array.parts[1:n - 1])) || return nothing
+  return IR.literalIndices(ref.parts[n].subscripts)
+end
+
+"""
+    derivedStateCrefs(simCode)
+
+The references under der() (a residual, an eliminated or initial equation, an if-branch, a
 when-equation, an initial algorithm, an assert) and those a reinit() sets: the states with
 dynamics.
 """
-function derivedStateNames(simCode::SIM_CODE)::OrderedSet{String}
-  local derived = OrderedSet{String}()
-  local visit = e::Exp -> foreachExp(e) do x
-    x isa DER && push!(derived, crefName(x.cref))
-    (isBuiltin(x, :der) && first(x.args) isa EXP_CREF) && push!(derived, crefName(first(x.args).cref))
+function derivedStateCrefs(simCode::SIM_CODE)::OrderedSet{SimCref}
+  local derived::OrderedSet{SimCref} = OrderedSet{SimCref}()
+  local visit::Function = (e::Exp) -> foreachExp(e) do x::Exp
+    x isa DER && push!(derived, x.cref)
+    (isBuiltin(x, :der) && first(x.args) isa EXP_CREF) && push!(derived, first(x.args).cref)
   end
-  local visitStatement = s::Statement -> begin
-    s isa REINIT && push!(derived, crefName(s.stateVar))
-    mapStatementExps(e -> (visit(e); e), s)
-  end
-  foreach(eq -> visit(eq.exp), simCode.residualEquations)
-  foreach(eq -> visit(eq.exp), simCode.eliminatedEquations)
-  foreach(eq -> foreach(visit, equationExps(eq)), simCode.initialEquations)
-  for ifEq in simCode.ifEquations, b in ifEq.branches
-    visit(b.condition)
-    foreach(eq -> visit(eq.exp), b.residualEquations)
-  end
-  for w in simCode.whenEquations
-    local stmts = w.whenEquation
-    while stmts !== nothing
-      visit(stmts.condition)
-      foreach(visitStatement, stmts.body)
-      stmts = stmts.elsewhenPart
-    end
-  end
-  foreach(a -> foreach(visitStatement, a.statements), simCode.initialAlgorithms)
-  foreach(a -> (visit(a.condition); visit(a.message)), simCode.asserts)
+  foreachEquationExp((_::Tuple{Symbol, Int}, e::Exp) -> visit(e), simCode; eliminated = true,
+                     statement = (_::Tuple{Symbol, Int}, s::Statement) -> (s isa REINIT && push!(derived, s.stateVar); nothing))
   return derived
 end
 
 """
     deadStateNames(simCode)
 
-The states without dynamics: none of `derivedStateNames` (an array element's by its array's
-name too).
+The states without dynamics: none of `derivedStateCrefs` (an array element's by its array,
+`arrayBase` of the references).
 """
 function deadStateNames(simCode::SIM_CODE)::Vector{String}
-  local derived = derivedStateNames(simCode)
-  local derivedBases = Set{String}(baseName(n) for n in derived)
+  local derived::OrderedSet{SimCref} = derivedStateCrefs(simCode)
+  local names::Set{String} = Set{String}(crefName(c) for c in derived)
+  local bases::Set{Symbol} = Set{Symbol}(arrayBase(c.ref) for c in derived if c.ref !== nothing)
   return String[v.name for (_, (_, v)) in simCode.stringToSimVarHT
-                if v.varKind isa STATE && !(v.name in derived) && !(baseName(v.name) in derivedBases)]
+                if v.varKind isa STATE && !(v.name in names) && !(v.ref !== nothing && something(elementArray(simCode, v.name), v.ref.name) in bases)]
 end
 
 """
@@ -196,26 +225,14 @@ end
 The references of statements: their expressions' (an assert's level too), a reinit's state,
 of the nested statements.
 """
-function statementCrefNames!(names::OrderedSet{String}, body::Vector{Statement})::OrderedSet{String}
-  for s in body
-    statementCrefNames!(names, s)
-  end
+function statementCrefNames!(names::OrderedSet{String}, body::Vector{Statement}; dynamic::Union{Nothing, Set{Symbol}} = nothing)::OrderedSet{String}
+  foreachStatementExp((e::Exp) -> crefNames!(names, e; dynamic), body,
+                      (s::Statement) -> (s isa REINIT && push!(names, crefName(s.stateVar)); nothing))
   return names
 end
 
-statementCrefNames!(names::OrderedSet{String}, s::ASSIGN) = (crefNames!(names, s.left); crefNames!(names, s.right))
-statementCrefNames!(names::OrderedSet{String}, s::REINIT) = (push!(names, crefName(s.stateVar)); crefNames!(names, s.value))
-statementCrefNames!(names::OrderedSet{String}, s::NORETCALL) = crefNames!(names, s.exp)
-statementCrefNames!(names::OrderedSet{String}, s::ASSERT) =
-  (crefNames!(names, s.condition); crefNames!(names, s.message); crefNames!(names, s.level))
-statementCrefNames!(names::OrderedSet{String}, s::TERMINATE) = crefNames!(names, s.message)
-statementCrefNames!(names::OrderedSet{String}, s::Union{IF, WHEN}) =
-  (foreach(b -> (crefNames!(names, b.condition); statementCrefNames!(names, b.body)), s.branches);
-   s isa IF && statementCrefNames!(names, s.elseBody); names)
-statementCrefNames!(names::OrderedSet{String}, s::FOR) = (crefNames!(names, s.iterator.range); statementCrefNames!(names, s.body))
-statementCrefNames!(names::OrderedSet{String}, s::WHILE) = (crefNames!(names, s.condition); statementCrefNames!(names, s.body))
-statementCrefNames!(names::OrderedSet{String}, s::RECOMPILATION) = crefNames!(names, s.newValue)
-statementCrefNames!(names::OrderedSet{String}, ::Statement) = names
+statementCrefNames!(names::OrderedSet{String}, s::Statement; dynamic::Union{Nothing, Set{Symbol}} = nothing)::OrderedSet{String} =
+  statementCrefNames!(names, Statement[s]; dynamic)
 
 #= ==================================================================================== =#
 #= The types of expressions                                                             =#

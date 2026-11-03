@@ -39,6 +39,22 @@
 const HT = OrderedDict{String, Tuple{Int, SIMVAR}}
 
 """
+    simKind(k, variables, names) -> IR.VariableKind
+
+The OMJLIR kind `k` of a variable as the simulation code keeps it (`SIMVAR.irKind`): the variables it names (a
+state's derivative, a derivative's state, a dummy's counterpart, a clocked state's previous value) by their keys
+(of a model's variables their IR names; `codeView` renames them with the rest).
+"""
+function simKind(k::IR.VariableKind, variables::IR.VariableSet, names::Names)::IR.VariableKind
+  local sim::Function = (x::Symbol) -> begin
+    local v::Union{Nothing, IR.Variable} = get(variables, x, nothing)
+    v === nothing && return x
+    return Symbol(simName(names, v.cref))
+  end
+  return IR.mapKindNames(sim, k)
+end
+
+"""
     simVarKind(v, names)
 
 The category of the variable `v` in the simulation code:
@@ -55,7 +71,7 @@ function simVarKind(v::IR.Variable, names::Names)::SimVarType
   local binding = () -> v.binding === nothing ? nothing : simExp(names, v.binding)
   local known = k isa Union{IR.PARAMETER, IR.CONSTANT}
   k isa IR.STATE && return STATE()
-  (k isa IR.ALGEBRAIC && ty isa IR.T_REAL) && return ALG_VARIABLE(0)
+  (k isa Union{IR.ALGEBRAIC, IR.ALGEBRAIC_DER} && ty isa IR.T_REAL) && return ALG_VARIABLE(0)
   #= index reduction's dummy states and dummy derivatives (OMBACKEND_INDEX_REDUCTION) are algebraic =#
   (k isa Union{IR.DUMMY_STATE, IR.DUMMY_DER} && ty isa IR.T_REAL) && return ALG_VARIABLE(0)
   (known && ty isa Union{IR.T_RECORD, IR.T_CLASS, IR.T_EXTERNAL_OBJECT}) && return DATA_STRUCTURE(binding())
@@ -95,16 +111,17 @@ function simVarAttributes(v::IR.Variable, names::Names)::SimVarAttributes
 end
 
 """
-    createIndices(simVars)
+    createIndices(simVars, derivativeRefs = Dict())
 
 The table of the simulation variables by name, each with its index (1-based, per category):
-the states from 1, each followed by its derivative `der(x)` (the state's index); the
+the states from 1, each followed by its derivative `der(x)` (the state's index; its reference
+`derivativeRefs[x]`, `lowerSystem`'s `derivativeReferences`); the
 parameters and the module-level bindings from 1, in the variables' order with the states; then
 the array parameters; the discrete variables (and the Strings) after the states; the algebraic
 and array variables after the discretes, the algebraic ones with their sort index (after the
 states) for the structural analysis.
 """
-function createIndices(simVars::Vector{SIMVAR})::OrderedDict{String, Tuple{Int, SIMVAR}}
+function createIndices(simVars::Vector{SIMVAR}, derivativeRefs::Dict{String, IR.ComponentRef} = Dict{String, IR.ComponentRef}())::OrderedDict{String, Tuple{Int, SIMVAR}}
   local ht = OrderedDict{String, Tuple{Int, SIMVAR}}()
   local (stateCounter, parameterCounter) = (0, 0)
   local discretes = SIMVAR[]
@@ -115,7 +132,10 @@ function createIndices(simVars::Vector{SIMVAR})::OrderedDict{String, Tuple{Int, 
       stateCounter += 1
       local state = withIndex(v, stateCounter)
       ht[v.name] = (stateCounter, state)
-      ht["der($(v.name))"] = (stateCounter, withIndex(v, stateCounter, STATE_DERIVATIVE(v.name)))
+      local derivative::Union{Nothing, IR.ComponentRef} = get(derivativeRefs, v.name, nothing)
+      #= keyed by the derivative's reference; without one (a test's variables) as `der(x)` =#
+      ht[derivative === nothing ? "der($(v.name))" : refKey(derivative)] =
+        (stateCounter, withCref(withIndex(v, stateCounter, STATE_DERIVATIVE(v.name)), derivative))
     elseif k isa Union{PARAMETER, DATA_STRUCTURE}
       parameterCounter += 1
       ht[v.name] = (parameterCounter, v)

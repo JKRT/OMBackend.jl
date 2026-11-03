@@ -79,7 +79,6 @@ _elementSubscripts(name::AbstractString)::String =
    is a directory. =#
 const ENV_SWITCHES = Dict{String, Tuple{Bool, String}}(
   #= Kill switches =#
-  "OMBACKEND_ALIAS_INDEX" => (true, "alias start values through an index of the alias equations (off: scan every equation's text)"),
   "OMBACKEND_DEMOTE_CONDTARGETS" => (true, "demote a discrete that an if-equation relay defines"),
   "OMBACKEND_DISCRETE_PRE_MEMORY" => (true, "discrete clusters with event iteration for every model (off: MTK affects where no mode FSM, table or switch cluster needs them)"),
   "OMBACKEND_INIT_ANCHOR" => (true, "initialization phase 2 anchored to the entry guesses (the nearest root)"),

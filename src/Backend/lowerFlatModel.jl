@@ -765,7 +765,7 @@ end
 function assignedCrefs(statements::Vector{IR.Statement})::Vector{IR.ComponentRef}
   local out = IR.ComponentRef[]
   local seen = Set{Symbol}()
-  local visit(s::IR.ASSIGNMENT) = foreach(t -> (t isa IR.CREF && !(t.cref.name in seen)) && (push!(seen, t.cref.name); push!(out, IR.ComponentRef(t.cref.name))),
+  local visit(s::IR.ASSIGNMENT) = foreach(t -> (t isa IR.CREF && !(t.cref.name in seen)) && (push!(seen, t.cref.name); push!(out, t.cref)),
                                          s.lhs isa IR.TUPLE ? s.lhs.elements : IR.Expression[s.lhs])
   local visit(s::Union{IR.IF_STATEMENT, IR.WHEN_STATEMENT}) =
     (foreach(b -> foreach(visit, b.body), s.branches); s isa IR.IF_STATEMENT && foreach(visit, s.elseBody))

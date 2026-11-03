@@ -56,7 +56,6 @@ import ..CodeGeneration: lowerKnownSymbolicFunctionCall
 import ..MTKDump: dumpPreStructuralSimplifyExpr
 
 import ...@BACKEND_LOGGING
-import ...COMPONENT_SEPARATOR
 
 import Symbolics
 import Symbolics.RuntimeGeneratedFunctions
@@ -351,10 +350,10 @@ function expToJuliaExpMTK(e::SC.EXP_CREF, simCode::SC.SIM_CODE)::Expr
   (e.cref.sym === :time && e.ty isa SC.TYPE_REAL) && return quote t end
   e.ty isa SC.TYPE_ARRAY && return _wholeArrayExpr(e, simCode)
   if !isempty(e.cref.subs)
-    local element = _arrayElementExpr(String(e.cref.sym), Any[s for s in e.cref.subs], simCode)
+    local element = _arrayElementExpr(e.cref, simCode)
     element === nothing || return element
   end
-  return _variableExpr(SC.crefName(e.cref), simCode)
+  return _variableExpr(e.cref, simCode)
 end
 
 "`der(x)`: `D(x)`."
@@ -554,13 +553,14 @@ expToJuliaExpMTK(e::SC.Exp, ::SC.SIM_CODE)::Expr = OMBackend.unsupported("expres
 #= ==================================================================================== =#
 
 """
-    _variableExpr(name, simCode)
+    _variableExpr(c, simCode)
 
-The variable `name`: its symbol in the table; an eliminated alias's representative (the
-substitution missed the reference); an element by a variable subscript from its array's table
-(`_dynamicSubscriptLookup`); else the name itself.
+The variable the reference `c` reads: its symbol in the table; an eliminated alias's
+representative (the substitution missed the reference); an element by a variable subscript from
+its array's table (`_dynamicSubscriptLookup` of its IR reference); else its name itself.
 """
-function _variableExpr(name::String, simCode::SC.SIM_CODE)::Expr
+function _variableExpr(c::SC.SimCref, simCode::SC.SIM_CODE)::Expr
+  local name::String = SC.crefName(c)
   local entry = get(simCode.stringToSimVarHT, name, nothing)
   entry === nothing || return quote $(Symbol(last(entry).name)) end
   local (aliasResolved, aliasExpr) = resolveAliasedCref(name, simCode)
@@ -568,7 +568,7 @@ function _variableExpr(name::String, simCode::SC.SIM_CODE)::Expr
     @warn "expToJuliaExpMTK: resolved alias-eliminated cref via fallback" name
     return aliasExpr
   end
-  local dynamic = _dynamicSubscriptLookup(name, simCode)
+  local dynamic::Union{Nothing, Expr} = c.ref === nothing ? nothing : _dynamicSubscriptLookup(c.ref, simCode)
   dynamic === nothing || return dynamic
   return quote $(Symbol(name)) end
 end
@@ -585,8 +585,8 @@ function _wholeArrayExpr(e::SC.EXP_CREF, simCode::SC.SIM_CODE)::Expr
   local ty = e.ty::SC.TYPE_ARRAY
   any(==(0), ty.dims) && return _emptyArrayExpr(ty)
   any(<(0), ty.dims) && OMBackend.unsupported("array dimension", e)
-  local name = SC.crefName(e.cref)
-  local lastElement = name * join("[$(d)]" for d in ty.dims)
+  local name::String = SC.crefName(e.cref)
+  local lastElement::String = SC.crefName(e.cref, ty.dims)
   haskey(simCode.stringToSimVarHT, lastElement) && return quote $(Symbol(name)) end
   local (aliasResolved, aliasExpr) = resolveAliasedCref(lastElement, simCode)
   if aliasResolved
@@ -594,10 +594,14 @@ function _wholeArrayExpr(e::SC.EXP_CREF, simCode::SC.SIM_CODE)::Expr
     return aliasExpr
   end
   length(ty.dims) <= 2 || OMBackend.unsupported("an array of more than two dimensions without variables", name)
-  local element = idx::Vector{Int} -> expToJuliaExpMTK(SC.EXP_CREF(SC.SimCref(Symbol(name), idx), ty.elementType), simCode)
-  length(ty.dims) == 1 && return Expr(:vect, (element([i]) for i in 1:ty.dims[1])...)
-  return Expr(:vcat, (Expr(:row, (element([i, j]) for j in 1:ty.dims[2])...) for i in 1:ty.dims[1])...)
+  length(ty.dims) == 1 && return Expr(:vect, (_wholeArrayElement(e, name, [i], simCode) for i in 1:ty.dims[1])...)
+  return Expr(:vcat, (Expr(:row, (_wholeArrayElement(e, name, [i, j], simCode) for j in 1:ty.dims[2])...) for i in 1:ty.dims[1])...)
 end
+
+"The element `idx` of the whole array `e` (named `name`: its identifier and subscripts), its reference the array's element's."
+_wholeArrayElement(e::SC.EXP_CREF, name::String, idx::Vector{Int}, simCode::SC.SIM_CODE)::Expr =
+  expToJuliaExpMTK(SC.EXP_CREF(SC.SimCref(Symbol(name), idx, e.cref.ref === nothing ? nothing : SC.IR.elementCref(e.cref.ref, idx)),
+                               (e.ty::SC.TYPE_ARRAY).elementType), simCode)
 
 function _emptyArrayExpr(ty::SC.TYPE_ARRAY)::Expr
   local elementType = ty.elementType isa SC.TYPE_INTEGER ? :Int : ty.elementType isa SC.TYPE_BOOL ? :Bool : :Float64
@@ -605,33 +609,32 @@ function _emptyArrayExpr(ty::SC.TYPE_ARRAY)::Expr
 end
 
 """
-    _arrayElementExpr(base, subs, simCode)
+    _arrayElementExpr(c, simCode)
 
-An element of the array variable `base` (one kept as an array) by its lowered subscripts:
-with literal subscripts, the element of its binding (an array literal) or its scalar variable
-(`R_T[1][2]`: a record's field array has both, the parent's binding is empty where equations
-give the values); else `base[subs...]`. `nothing` for a `base` that is no array variable.
+The element `c` (its literal subscripts `c.subs`) of an array variable kept as an array (`c.sym`): the element of its
+binding (an array literal), else its scalar variable (`crefName(c)`: `R_T[1][2]`; a record's field array has both, the
+parent's binding is empty where equations give the values), else `base[subs...]`. `nothing` for an array that is no
+array variable.
 """
-function _arrayElementExpr(base::String, subs::Vector{Any}, simCode::SC.SIM_CODE)::Union{Nothing, Expr}
-  local ht = simCode.stringToSimVarHT
-  local entry = get(ht, base, nothing)
+function _arrayElementExpr(c::SC.SimCref, simCode::SC.SIM_CODE)::Union{Nothing, Expr}
+  local ht::SC.HT = simCode.stringToSimVarHT
+  local base::String = String(c.sym)
+  local entry::Union{Nothing, Tuple{Int, SC.SIMVAR}} = get(ht, base, nothing)
   (entry !== nothing && last(entry).varKind isa Union{SC.ARRAY, SC.ARRAY_PARAMETER}) || return nothing
-  if all(s -> s isa Integer, subs)
-    local binding = last(entry).varKind.bindExp
-    if binding isa SC.ARRAY_EXP
-      local element = binding
-      for i in subs
-        element isa SC.ARRAY_EXP || OMBackend.unsupported("a binding row that is not an array literal", element)
-        element = element.elements[i]
-      end
-      return expToJuliaExpMTK(element, simCode)
+  local binding::Union{Nothing, SC.Exp} = last(entry).varKind.bindExp
+  if binding isa SC.ARRAY_EXP
+    local element::SC.Exp = binding
+    for i in c.subs
+      element isa SC.ARRAY_EXP || OMBackend.unsupported("a binding row that is not an array literal", element)
+      element = element.elements[i]
     end
-    local scalar = get(ht, base * join("[$(i)]" for i in subs), nothing)
-    scalar === nothing || return quote $(Symbol(last(scalar).name)) end
+    return expToJuliaExpMTK(element, simCode)
   end
+  local scalar::Union{Nothing, Tuple{Int, SC.SIMVAR}} = get(ht, SC.crefName(c), nothing)
+  scalar === nothing || return quote $(Symbol(last(scalar).name)) end
   return quote
     $(LineNumberNode(@__LINE__, "Array subscript: $base"))
-    $(Symbol(base))[$(subs...)]
+    $(Symbol(base))[$(c.subs...)]
   end
 end
 
@@ -641,11 +644,6 @@ function _subscriptExpr(s::SC.Exp, simCode::SC.SIM_CODE)
   s isa SC.WHOLE_DIMENSION && return :(:)
   return expToJuliaExpMTK(s, simCode)
 end
-
-"""
-A subscript as the flattened names write it (`2`, `idx`); `?` for another expression.
-"""
-_subscriptText(s::SC.Exp)::String = s isa SC.ICONST ? string(s.value) : s isa SC.EXP_CREF ? SC.crefName(s.cref) : "?"
 
 """
 `exp[subs...]`. With literal subscripts: an element of an array output of a call
@@ -660,8 +658,8 @@ function expToJuliaExpMTK(e::SC.ASUB, simCode::SC.SIM_CODE)::Expr
   local subs = Any[_subscriptExpr(s, simCode) for s in e.subs]
   all(s -> s isa Integer, subs) && return _literalSubscriptExpr(e, Int[s for s in subs], simCode)
   local inner = e.exp
-  if inner isa SC.EXP_CREF
-    local table = _dynamicSubscriptLookup(SC.crefName(inner.cref) * join("[" * _subscriptText(s) * "]" for s in e.subs), simCode)
+  if inner isa SC.EXP_CREF && inner.cref.ref !== nothing
+    local table::Union{Nothing, Expr} = _dynamicSubscriptLookup(inner.cref.ref, e.subs, simCode)
     table === nothing || return table
   end
   if inner isa SC.ARRAY_EXP && length(subs) == 1
@@ -687,7 +685,7 @@ function _literalSubscriptExpr(e::SC.ASUB, subs::Vector{Int}, simCode::SC.SIM_CO
                                                          $(_modelicaFunctionCallArgs(call.args, simCode)...)))
   end
   if inner isa SC.EXP_CREF && isempty(inner.cref.subs)
-    local entry = get(simCode.stringToSimVarHT, SC.crefName(inner.cref) * join("[$(i)]" for i in subs), nothing)
+    local entry = get(simCode.stringToSimVarHT, SC.crefName(inner.cref, subs), nothing)
     entry === nothing || return quote $(Symbol(last(entry).name)) end
   end
   #= An element of a function's result (an output of several, an element of an array output:
@@ -752,56 +750,100 @@ function _selectionChain(symbols::Vector{Symbol}, index)
 end
 
 """
-    _dynamicSubscriptLookup(name, simCode)
+    _dynamicSubscriptLookup(ref, simCode)
 
-`base[idx][2]`, a flattened name whose subscript is a variable (the array crefs the backend
-flattened: CDL's Integer TimeTable `y[:] = val[idx, :]`, idx a discrete; its elements kept): the
-lookup of the table of base's elements, all known at the build (the dimensions from the names
-in the table), indexed at run time; for elements not known at the build (`fixed = false`
-parameters the initialization computes, variables: Buildings' DX coils' `uacp[stage].UAcp`),
-one subscript a variable, the element the index selects among their variables; nothing
+The reference `ref` with a subscript that reads a variable, `base[idx, 2]` (the array references the backend
+flattened: CDL's Integer TimeTable `y[:] = val[idx, :]`, idx a discrete; its elements kept): its first subscripted
+part's subscripts (literal Integers and variables, one at least a variable), literal subscripts only in the parts
+after it (a record array's field, Buildings' DX coils' `uacp[stage].UAcp`): `_dynamicElementLookup`; nothing
 otherwise.
 """
-function _dynamicSubscriptLookup(name::String, simCode::SC.SIM_CODE)::Union{Expr, Nothing}
-  #= a record array's field after the subscripts (`uacp[stage]_UAcp`): literal subscripts only there =#
-  local m = match(r"^([^\[\]]+)((?:\[[^\[\]]+\])+)((?:[^\[\]]|\[[0-9]+\])*)$", name)
-  m === nothing && return nothing
-  local base = String(m.captures[1])
-  local suffix = String(m.captures[3])
-  local subs = String[String(x.captures[1]) for x in eachmatch(r"\[([^\[\]]+)\]", m.captures[2])]
-  all(s -> tryparse(Int, s) !== nothing, subs) && return nothing
-  local ht = simCode.stringToSimVarHT
-  local index = Any[]
-  for s in subs
-    local i = tryparse(Int, s)
-    if i !== nothing
-      push!(index, i)
-    else
-      local entry = get(ht, s, nothing)
+function _dynamicSubscriptLookup(ref::SC.IR.ComponentRef, simCode::SC.SIM_CODE)::Union{Expr, Nothing}
+  local k::Union{Nothing, Int} = findfirst(p::SC.IR.CrefPart -> !isempty(p.subscripts), ref.parts)
+  k === nothing && return nothing
+  for p::SC.IR.CrefPart in ref.parts[k + 1:end]
+    SC.IR.literalIndices(p.subscripts) === nothing && return nothing
+  end
+  local index::Vector{Union{Int, Symbol}} = Union{Int, Symbol}[]
+  for s::SC.IR.Subscript in ref.parts[k].subscripts
+    local i::Union{Nothing, Int, Symbol} = _dynamicIndex(s, simCode)
+    i === nothing && return nothing
+    push!(index, i)
+  end
+  return _dynamicElementLookup(SC.IR.upToFirstSubscripted(ref), index, ref.parts[k + 1:end], simCode)
+end
+
+"""
+    _dynamicSubscriptLookup(ref, subs, simCode)
+
+The array reference `ref` subscripted by the expressions `subs` (an `ASUB`'s: literal Integers and variables), after
+the literal subscripts of its last part (no other part subscripted): `_dynamicElementLookup`; nothing otherwise.
+"""
+function _dynamicSubscriptLookup(ref::SC.IR.ComponentRef, subs::Vector{SC.Exp}, simCode::SC.SIM_CODE)::Union{Expr, Nothing}
+  local array::SC.IR.ComponentRef = SC.IR.upToFirstSubscripted(ref)
+  length(array.parts) == length(ref.parts) || return nothing
+  local own::Union{Nothing, Vector{Int}} = SC.IR.literalIndices(SC.IR.subscripts(ref))
+  own === nothing && return nothing
+  local index::Vector{Union{Int, Symbol}} = Union{Int, Symbol}[own...]
+  for s::SC.Exp in subs
+    if s isa SC.ICONST
+      push!(index, s.value)
+    elseif s isa SC.EXP_CREF
+      local entry::Union{Nothing, Tuple{Int, SC.SIMVAR}} = get(simCode.stringToSimVarHT, SC.crefName(s.cref), nothing)
       entry === nothing && return nothing
       push!(index, Symbol(last(entry).name))
+    else
+      return nothing
     end
   end
+  return _dynamicElementLookup(array, index, SC.IR.CrefPart[], simCode)
+end
+
+"The identifier of the element `index` of the array reference `array` followed by the parts `fields` (`identifierOf`)."
+_elementIdentifier(simCode::SC.SIM_CODE, array::SC.IR.ComponentRef, index::Vector{Int}, fields::Vector{SC.IR.CrefPart})::String =
+  SC.identifierOf(simCode, SC.IR.ComponentRef(SC.IR.CrefPart[SC.IR.elementCref(array, index).parts; fields]))
+
+"A subscript as `_dynamicElementLookup`'s index: a literal Integer's value, a variable's symbol; nothing for another."
+function _dynamicIndex(s::SC.IR.Subscript, simCode::SC.SIM_CODE)::Union{Nothing, Int, Symbol}
+  local i::Union{Nothing, Int} = SC.IR.literalIndex(s)
+  i === nothing || return i
+  (s isa SC.IR.INDEX && s.exp isa SC.IR.CREF) || return nothing
+  local entry::Union{Nothing, Tuple{Int, SC.SIMVAR}} = get(simCode.stringToSimVarHT, SC.identifierOf(simCode, s.exp.cref), nothing)
+  return entry === nothing ? nothing : Symbol(last(entry).name)
+end
+
+"""
+    _dynamicElementLookup(array, index, fields, simCode)
+
+The element `index` (literal Integers and variables' symbols, one at least a variable) of the array reference
+`array`, followed by the parts `fields`: the lookup of the table of the array's elements, all known at the build (the
+extent of each dimension from the element variables), indexed at run time; for elements not known at the build
+(`fixed = false` parameters the initialization computes, variables), one subscript a variable, the element the index
+selects among their variables; nothing otherwise. The elements by their references' identifiers (`identifierOf`).
+"""
+function _dynamicElementLookup(array::SC.IR.ComponentRef, index::Vector{Union{Int, Symbol}}, fields::Vector{SC.IR.CrefPart},
+                               simCode::SC.SIM_CODE)::Union{Expr, Nothing}
+  all(i -> i isa Int, index) && return nothing
+  local ht::SC.HT = simCode.stringToSimVarHT
   #= the extent of each dimension: the elements along it from 1 =#
-  local key = (d::Int, k::Int) -> base * join("[" * string(j == d ? k : 1) * "]" for j in eachindex(subs)) * suffix
-  local dims = Int[]
-  for d in eachindex(subs)
-    local n = 0
-    while haskey(ht, key(d, n + 1))
+  local dims::Vector{Int} = Int[]
+  for d in eachindex(index)
+    local n::Int = 0
+    while haskey(ht, _elementIdentifier(simCode, array, Int[j == d ? n + 1 : 1 for j in eachindex(index)], fields))
       n += 1
     end
     n == 0 && return nothing
     push!(dims, n)
   end
-  local names = map(I -> base * join("[" * string(i) * "]" for i in Tuple(I)) * suffix, CartesianIndices(Tuple(dims)))
-  local table = _knownValues(names, simCode)
+  local names::Array{String} = map(I::CartesianIndex -> _elementIdentifier(simCode, array, collect(Int, Tuple(I)), fields), CartesianIndices(Tuple(dims)))
+  local table::Union{Nothing, Array{Float64}} = _knownValues(names, simCode)
   table === nothing || return :(OMBackend.CodeGeneration.constTableLookup($(table), $(index...)))
-  local dynamic = findall(s -> tryparse(Int, s) === nothing, subs)
+  local dynamic::Vector{Int} = findall(i -> !(i isa Int), index)
   length(dynamic) == 1 || return nothing
-  local d = only(dynamic)
-  local symbols = Symbol[]
+  local d::Int = only(dynamic)
+  local symbols::Vector{Symbol} = Symbol[]
   for k in 1:dims[d]
-    local entry = get(ht, base * join("[" * (j == d ? string(k) : subs[j]) * "]" for j in eachindex(subs)) * suffix, nothing)
+    local entry::Union{Nothing, Tuple{Int, SC.SIMVAR}} = get(ht, _elementIdentifier(simCode, array, Int[j == d ? k : index[j]::Int for j in eachindex(index)], fields), nothing)
     entry === nothing && return nothing
     push!(symbols, Symbol(last(entry).name))
   end
@@ -1043,11 +1085,11 @@ function _recordArrayElementCallArgs(arg::SC.Exp, simCode::SC.SIM_CODE)::Vector{
   end
   (elemTy isa SC.TYPE_COMPLEX && elemTy.isRecord) || return Any[]
   (nDims == 0 || length(arg.subs) == nDims) || return Any[]
-  local base = SC.crefName(arg.exp.cref)
-  occursin('[', base) && return Any[]
+  local array::Union{Nothing, SC.IR.ComponentRef} = arg.exp.cref.ref
+  (array === nothing || !isempty(arg.exp.cref.subs) || SC.IR.upToFirstSubscripted(array) !== array) && return Any[]
   any(s -> s isa Union{SC.RANGE, SC.ARRAY_EXP, SC.WHOLE_DIMENSION}, arg.subs) && return Any[]
   local idx = Any[expToJuliaExpMTK(s, simCode) for s in arg.subs]
-  return Any[Expr(:ref, Symbol(base * COMPONENT_SEPARATOR * f), idx...) for f in elemTy.fieldNames]
+  return Any[Expr(:ref, Symbol(SC.identifierOf(simCode, SC.fieldCref(array, f))), idx...) for f in elemTy.fieldNames]
 end
 
 """
@@ -1129,7 +1171,7 @@ bindings of the parameters it reads.
 function _readsTunableParameter(e::SC.Exp, simCode::SC.SIM_CODE)::Bool
   isempty(OMBackend.TUNABLE_PARAMETERS[]) && return false
   local resolved = _substituteBoundParameters(e, simCode; keepTunable = true)
-  return any(OMBackend.isTunableParameter, SC.crefNames!(OrderedSet{String}(), resolved))
+  return any(OMBackend.isTunableParameter, SC.identifierNames!(OrderedSet{String}(), resolved))
 end
 
 """
@@ -1876,7 +1918,7 @@ limitsAtInit` never held).
 """
 function _ifConditionAllDiscreteOrParameter(condition::SC.Exp, simCode::SC.SIM_CODE)::Bool
   _hasInitialCall(condition) && return false
-  local refs = SC.crefNames!(OrderedSet{String}(), condition)
+  local refs = SC.identifierNames!(OrderedSet{String}(), condition)
   isempty(refs) && return false
   local ht = simCode.stringToSimVarHT
   for name in refs
@@ -2046,7 +2088,7 @@ end
 The structural simplification of `firstOrderSystem` into `reducedSystem` (tearing only for a
 system OMBackend reduced, `indexReduced`); with an observed
 filter, the observed equations kept those whose variable a pattern matches, with the observed
-variables they read and the system's and the initialization equations read. With
+variables they read and the system's, the initialization equations' and the events' read. With
 ENABLE_BACKEND_LOGGING, the system before is dumped to `backend/codeGen/preStructuralSimplify.log`
 (the path taken at codegen time, in the model's run directory).
 """
@@ -2069,16 +2111,17 @@ function performStructuralSimplify(; observedFilter::Union{Nothing, Vector{Strin
   local patternStrings = observedFilter isa Vector{Regex} ? [p.pattern for p in observedFilter] : observedFilter
   return quote
     $simplifyExpr
-    local _obsPatterns = [Regex(p) for p in $(patternStrings)]
-    local _allObs = ModelingToolkit.observed(reducedSystem)
-    local _nBefore = length(_allObs)
+    local _obsPatterns::Vector{Regex} = Regex[Regex(p) for p in $(patternStrings)]
+    local _allObs::AbstractVector{Symbolics.Equation} = ModelingToolkit.observed(reducedSystem)
+    local _nBefore::Int = length(_allObs)
     #= Keep matched observed equations AND the transitive closure of observed
        variables their RHS references; dropping a dependency leaves it
-       referenced-but-undefined in the residual/init build_function. =#
-    local _obsByLhs = Dict(string(eq.lhs) => eq for eq in _allObs)
-    local _keepNames = OrderedSet{String}()
-    local _stack = String[string(eq.lhs) for eq in _allObs
-                          if any(p -> occursin(p, string(eq.lhs)), _obsPatterns)]
+       referenced-but-undefined in the residual/init build_function. By the
+       left-hand side's symbol; a pattern matches the variable's name. =#
+    local _obsByLhs::Dict{Any, Any} = Dict{Any, Any}(eq.lhs => eq for eq in _allObs)
+    local _keep::OrderedSet{Any} = OrderedSet{Any}()
+    local _stack::Vector{Any} = Any[eq.lhs for eq in _allObs
+                       if any(p -> occursin(p, something(OMBackend.CodeGeneration.variableName(eq.lhs), "")), _obsPatterns)]
     #= Also seed from observed vars referenced by the system equations and the
        initialization equations: the residual / init build_function references them
        (the initialization rows are inlined to the states through the observed
@@ -2088,28 +2131,78 @@ function performStructuralSimplify(; observedFilter::Union{Nothing, Vector{Strin
                                    ModelingToolkit.initialization_equations(reducedSystem)))
       for _side in (_seq.lhs, _seq.rhs)
         for _v in Symbolics.get_variables(_side)
-          local _vn = string(_v)
-          haskey(_obsByLhs, _vn) && push!(_stack, _vn)
+          haskey(_obsByLhs, _v) && push!(_stack, _v)
         end
       end
     end
-    while !isempty(_stack)
-      local _nm = pop!(_stack)
-      (_nm in _keepNames) && continue
-      push!(_keepNames, _nm)
-      local _eq = get(_obsByLhs, _nm, nothing)
-      _eq === nothing && continue
-      for _v in Symbolics.get_variables(_eq.rhs)
-        local _vn = string(_v)
-        (haskey(_obsByLhs, _vn) && !(_vn in _keepNames)) && push!(_stack, _vn)
+    #= And from the observations injected after this (the alias and eliminated variables', the filter's already): an
+       alias reads a variable MTK made observed, which no pattern matches (MSL IMC_DCBraking's `imc.is[1] =
+       imc_spacePhasorS_i[1]`: dropped, the alias read an undefined name). =#
+    if @isdefined(observedEqs)
+      for _oeq in observedEqs, _v in Symbolics.get_variables(_oeq.rhs)
+        haskey(_obsByLhs, _v) && push!(_stack, _v)
       end
     end
-    local _filteredObs = filter(eq -> string(eq.lhs) in _keepNames, _allObs)
+    #= And from the events: process_events builds their conditions and affects from the observed equations (MSL
+       FullRobot's path planning relations read `pathPlanning_path_sd_max_inv`: dropped, its build failed). =#
+    for _v in OMBackend.CodeGeneration.MTK_CodeGenerationUtil.eventReadVariables(reducedSystem)
+      haskey(_obsByLhs, _v) && push!(_stack, _v)
+    end
+    while !isempty(_stack)
+      local _lhs::Any = pop!(_stack)
+      (_lhs in _keep) && continue
+      push!(_keep, _lhs)
+      local _eq::Union{Nothing, Symbolics.Equation} = get(_obsByLhs, _lhs, nothing)
+      _eq === nothing && continue
+      for _v in Symbolics.get_variables(_eq.rhs)
+        (haskey(_obsByLhs, _v) && !(_v in _keep)) && push!(_stack, _v)
+      end
+    end
+    local _filteredObs::AbstractVector{Symbolics.Equation} = filter(eq -> eq.lhs in _keep, _allObs)
     if length(_filteredObs) < _nBefore
       @debug "[MTK GEN: observed] observedFilter: kept $(length(_filteredObs)) of $(_nBefore) MTK observed equations"
       reducedSystem = Setfield.set(reducedSystem, Setfield.PropertyLens{:observed}(), _filteredObs)
     end
   end
+end
+
+"""
+    eventReadVariables(sys) -> Vector{Any}
+
+The variables the continuous and discrete events of `sys` read: their conditions and their imperative affects'
+observed and modified expressions (performStructuralSimplify's observed filter keeps their observed equations).
+"""
+function eventReadVariables(sys::ModelingToolkit.AbstractSystem)::Vector{Any}
+  local out::Vector{Any} = Any[]
+  for cb in Iterators.flatten((ModelingToolkit.continuous_events(sys), ModelingToolkit.discrete_events(sys)))
+    _symbolicReads!(out, cb.conditions)
+    for f in (:affect, :affect_neg, :initialize, :finalize)
+      hasfield(typeof(cb), f) && _symbolicReads!(out, getfield(cb, f))
+    end
+  end
+  return out
+end
+
+"""
+The variables an event's part reads, added to `out`: an equation's, an expression's, an imperative affect's observed
+and modified expressions; nothing for another part (no affect, a periodic discrete event's time).
+"""
+_symbolicReads!(out::Vector{Any}, @nospecialize(x))::Nothing = nothing
+_symbolicReads!(out::Vector{Any}, eq::Symbolics.Equation)::Nothing = (_symbolicReads!(out, eq.lhs); _symbolicReads!(out, eq.rhs))
+_symbolicReads!(out::Vector{Any}, x::Union{Symbolics.Num, SymbolicUtils.BasicSymbolic})::Nothing =
+  (append!(out, Symbolics.get_variables(x)); nothing)
+function _symbolicReads!(out::Vector{Any}, xs::Union{AbstractVector, Tuple, NamedTuple})::Nothing
+  foreach(x -> _symbolicReads!(out, x), xs)
+  return nothing
+end
+_symbolicReads!(out::Vector{Any}, a::ModelingToolkit.ImperativeAffect)::Nothing =
+  (_symbolicReads!(out, a.obs); _symbolicReads!(out, a.modified))
+"An equation affect: its equations and observed equations, and the unknowns of the system it reads or writes."
+function _symbolicReads!(out::Vector{Any}, a::ModelingToolkit.AffectSystem)::Nothing
+  _symbolicReads!(out, ModelingToolkit.equations(a.system))
+  _symbolicReads!(out, ModelingToolkit.observed(a.system))
+  append!(out, a.unknowns)
+  return nothing
 end
 
 """

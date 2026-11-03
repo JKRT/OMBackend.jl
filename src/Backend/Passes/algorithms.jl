@@ -70,7 +70,7 @@ function liftAlgorithms!(variables::IR.VariableSet, partition::IR.Partition)::No
   append!(equations, initialWhensOfAlgorithms(algorithms))
   append!(equations, initialAlgorithmWhens(initialAlgorithms))
   if !isempty(algorithms)
-    local constrained = constrainedNames(equations)
+    local constrained::Constrained = constrainedBy(equations)
     local known = knownNames(variables)
     local (whens, whenLifted) = liftAlgorithmWhens(algorithms, known)
     append!(equations, whens)
@@ -108,16 +108,34 @@ initialAlgorithmWhens(algorithms::Vector{IR.ALGORITHM})::Vector{IR.Equation} =
   IR.Equation[initialWhen(alg.statements, alg.source; kind = IR.INITIAL_SECTION) for alg in algorithms if !isempty(alg.statements)]
 
 """
-    constrainedNames(equations)
+    Constrained(names, arrays)
 
-The names of the variables the equations constrain, for the residual lifter: it lifts an
-algorithm's assignment only of a variable no equation defines. An alias `a = b` between two
+What the equations constrain, for the residual lifter (`constrainedBy`): the names of the variables they read, and of
+the arrays an element of which they read (`x` of `x[2]`, `c` of `c[1].T`: a reference up to a part with subscripts,
+without them).
+"""
+struct Constrained
+  names::Set{Symbol}
+  arrays::Set{Symbol}
+end
+
+"""
+    constrainedBy(equations) -> Constrained
+
+The variables the equations constrain, for the residual lifter: it lifts an algorithm's
+assignment only of a variable no equation defines. An alias `a = b` between two
 variables (a connection) defines neither (the MSL Digital Set source `y := x`, connected to a
 flip-flop's inputs, left them at 0, an invalid logic value).
 """
-function constrainedNames(equations::Vector{IR.Equation})::Set{Symbol}
-  local names = Set{Symbol}()
-  local add = e -> foreach(c -> push!(names, c.name), IR.crefsOf(e))
+function constrainedBy(equations::Vector{IR.Equation})::Constrained
+  local names::Set{Symbol} = Set{Symbol}()
+  local arrays::Set{Symbol} = Set{Symbol}()
+  local add::Function = (e::IR.Expression) -> foreach(IR.crefsOf(e)) do c::IR.ComponentRef
+    push!(names, c.name)
+    for (k, p) in enumerate(c.parts)
+      IR.isSubscripted(p) && push!(arrays, IR.ComponentRef(IR.CrefPart[c.parts[1:k - 1]; IR.unsubscriptedPart(p)]).name)
+    end
+  end
   for eq in equations
     if eq isa IR.SCALAR_EQUATION
       (eq.lhs isa IR.CREF && eq.rhs isa IR.CREF) && continue
@@ -126,7 +144,7 @@ function constrainedNames(equations::Vector{IR.Equation})::Set{Symbol}
       add(eq.lhs); add(eq.rhs)
     end
   end
-  return names
+  return Constrained(names, arrays)
 end
 
 "The start values of the Real variables that have one: where an algorithm's Real targets start."
@@ -296,12 +314,6 @@ variables' names carry them), else the integer.
 """
 indexOf(d::IR.Dimension, k::Int)::IR.Expression = d isa IR.DIM_ENUM ? IR.dimensionIndex(d, k) : IR.INTEGER(k)
 
-isLiteralIndex(s::IR.Subscript)::Bool = s isa IR.INDEX && (s.exp isa IR.INTEGER || s.exp isa IR.ENUM_LITERAL)
-
-"`cref` with the subscripts of its last part replaced by `subs`."
-withLastSubscripts(cref::IR.ComponentRef, subs::Vector{IR.Subscript})::IR.ComponentRef =
-  IR.ComponentRef(IR.CrefPart[cref.parts[1:end - 1]..., IR.CrefPart(cref.parts[end].name, subs, cref.parts[end].ty)])
-
 """
 The subscripts of the last part of `cref` padded with whole dimensions to the dimensions of
 its component's type, and those dimensions; `nothing` for a scalar.
@@ -331,7 +343,7 @@ function scalarTargets(lhs::IR.CREF)::Vector{Tuple{IR.CREF, Union{Nothing, IR.Ex
   local visit
   visit = (pos, newSubs, guard, rhsIndices) -> begin
     if pos > length(dims)
-      push!(out, (IR.CREF(withLastSubscripts(lhs.cref, newSubs), elementTy), guard, copy(rhsIndices)))
+      push!(out, (IR.CREF(IR.withLastSubscripts(lhs.cref, newSubs), elementTy), guard, copy(rhsIndices)))
       return true
     end
     local n = IR.dimensionSize(dims[pos])
@@ -341,7 +353,7 @@ function scalarTargets(lhs::IR.CREF)::Vector{Tuple{IR.CREF, Union{Nothing, IR.Ex
       for k in 1:n
         visit(pos + 1, IR.Subscript[newSubs..., IR.INDEX(indexOf(dims[pos], k))], guard, Int[rhsIndices..., k]) || return false
       end
-    elseif isLiteralIndex(sub)
+    elseif IR.isLiteralSubscript(sub)
       visit(pos + 1, IR.Subscript[newSubs..., sub], guard, rhsIndices) || return false
     elseif sub isa IR.INDEX
       n === nothing && return false
@@ -385,14 +397,14 @@ function scalarizedCref(e::IR.CREF, rhsIndices::Vector{Int}, fallback::IR.Expres
   local visit
   visit = (pos, rhsPos, newSubs, guard) -> begin
     if pos > length(dims)
-      push!(candidates, (guard, IR.CREF(withLastSubscripts(e.cref, newSubs), elementTy)))
+      push!(candidates, (guard, IR.CREF(IR.withLastSubscripts(e.cref, newSubs), elementTy)))
       return
     end
     local sub = subs[pos]
     if sub isa IR.WHOLE
       rhsPos <= length(rhsIndices) || return
       visit(pos + 1, rhsPos + 1, IR.Subscript[newSubs..., IR.INDEX(indexOf(dims[pos], rhsIndices[rhsPos]))], guard)
-    elseif isLiteralIndex(sub)
+    elseif IR.isLiteralSubscript(sub)
       visit(pos + 1, rhsPos, IR.Subscript[newSubs..., sub], guard)
     elseif sub isa IR.INDEX
       local n = IR.dimensionSize(dims[pos])
@@ -423,7 +435,7 @@ element (an array, a record), cannot be last: not supported. A record output is 
 assignment per field (a generated `f` returns its fields in place).
 """
 function tupleAssignElements(targets::Vector{IR.Expression}, rhs::IR.Expression)::Vector{Tuple{IR.Expression, IR.Expression}}
-  local read = namesReadOutsidePre(rhs)
+  local read::Vector{IR.ComponentRef} = crefsReadOutsidePre(rhs)
   local outputTypes = rhs isa IR.CALL && rhs.ty isa IR.T_TUPLE ? rhs.ty.types : nothing
   local elements = Tuple{IR.Expression, IR.Expression}[]
   local pos = 0
@@ -446,7 +458,7 @@ function tupleAssignElements(targets::Vector{IR.Expression}, rhs::IR.Expression)
   local readBack = Tuple{IR.Expression, IR.Expression}[]
   for element in elements
     local name = first(element).cref.name
-    if any(r -> namesOverlap(r, name), read)
+    if any(r::IR.ComponentRef -> IR.crefsOverlap(r, first(element).cref), read)
       local ty = IR.typeOf(first(element))
       (ty isa IR.T_ARRAY || ty isa IR.T_RECORD) &&
         unsupported("a tuple assignment whose function reads the array or record target $(name)", rhs)
@@ -739,7 +751,7 @@ assignment (others have order-sensitive semantics a flat list of residuals does 
 OneWayClutch, most Digital gates) as the residual `v = e` of its discrete target, unless an
 equation constrains `v` or the when lifter assigns it.
 """
-function residualsOfAlgorithms(algorithms::Vector{IR.ALGORITHM}, constrained::Set{Symbol}, whenLifted::Set{Symbol},
+function residualsOfAlgorithms(algorithms::Vector{IR.ALGORITHM}, constrained::Constrained, whenLifted::Set{Symbol},
                                realStarts::Dict{Symbol, IR.Expression})::Vector{IR.Equation}
   local out = IR.Equation[]
   for alg in algorithms
@@ -755,18 +767,18 @@ function residualsOfAlgorithms(algorithms::Vector{IR.ALGORITHM}, constrained::Se
 end
 
 "A dynamic equation: already classified, not one for the discrete synthesis."
-const DYNAMIC = IR.EquationAttributes(IR.EQ_CONTINUOUS, false, nothing)
+const DYNAMIC = IR.EquationAttributes(IR.EQ_CONTINUOUS, false, nothing, false)
 
 """
 The residuals of `v := e` for a discrete `v`: `v = e`; of an array `v`, one per element
 (`v[k] = e[k]`), each unless an equation constrains it or the when lifter assigns it.
 """
-function residualsOfAssignment!(out::Vector{IR.Equation}, s::IR.ASSIGNMENT, constrained::Set{Symbol}, whenLifted::Set{Symbol})::Nothing
+function residualsOfAssignment!(out::Vector{IR.Equation}, s::IR.ASSIGNMENT, constrained::Constrained, whenLifted::Set{Symbol})::Nothing
   local ty = IR.typeOf(s.lhs)
   isDiscreteType(ty) || return nothing
   local lhs = s.lhs
   if !(ty isa IR.T_ARRAY)
-    lhs isa IR.CREF && (lhs.cref.name in constrained || lhs.cref.name in whenLifted) && return nothing
+    lhs isa IR.CREF && (lhs.cref.name in constrained.names || lhs.cref.name in whenLifted) && return nothing
     push!(out, IR.SCALAR_EQUATION(lhs, s.rhs, ty, s.source, DYNAMIC))
     return nothing
   end
@@ -775,17 +787,15 @@ function residualsOfAssignment!(out::Vector{IR.Equation}, s::IR.ASSIGNMENT, cons
   if !(lhs isa IR.CREF) || n === nothing || n <= 0
     #= Unknown shape: not if an equation constrains the variable or one of its elements. =#
     if lhs isa IR.CREF
-      local name = String(lhs.cref.name)
-      lhs.cref.name in constrained && return nothing
-      any(c -> startswith(String(c), name * "["), constrained) && return nothing
+      (lhs.cref.name in constrained.names || lhs.cref.name in constrained.arrays) && return nothing
     end
     push!(out, IR.SCALAR_EQUATION(lhs, s.rhs, ty, s.source, DYNAMIC))
     return nothing
   end
   local elementTy = IR.elementType(ty)
   for k in 1:n
-    local cref = withLastSubscripts(lhs.cref, IR.Subscript[IR.subscripts(lhs.cref)..., IR.INDEX(IR.INTEGER(k))])
-    (cref.name in constrained || cref.name in whenLifted) && continue
+    local cref::IR.ComponentRef = IR.appendSubscripts(lhs.cref, IR.Subscript[IR.INDEX(IR.INTEGER(k))])
+    (cref.name in constrained.names || cref.name in whenLifted) && continue
     local rhsK = IR.SUBSCRIPTED(s.rhs, IR.Subscript[IR.INDEX(IR.INTEGER(k))], elementTy)
     push!(out, IR.SCALAR_EQUATION(IR.CREF(cref, elementTy), rhsK, elementTy, s.source, DYNAMIC))
   end
@@ -807,15 +817,33 @@ struct AlgorithmRun
   readAsVariable::Set{Symbol}
 end
 
-function AlgorithmRun(assigned::Vector{Symbol}, realStarts::Dict{Symbol, IR.Expression})
-  local wholes = Set{Symbol}()
-  for name in assigned
-    local s = String(name)
-    for i in eachindex(s)
-      s[i] in ('[', '.') && push!(wholes, Symbol(s[1:prevind(s, i)]))
-    end
+"""
+    AlgorithmRun(ops, assigned, realStarts)
+
+The run of the lowered statements `ops` (their assignments' targets `assigned`): the wholes of each target's
+reference (`wholesOf`).
+"""
+function AlgorithmRun(ops::Vector{IR.Statement}, assigned::Vector{Symbol}, realStarts::Dict{Symbol, IR.Expression})
+  local wholes::Set{Symbol} = Set{Symbol}()
+  for op in ops
+    op isa IR.ASSIGNMENT && union!(wholes, wholesOf((op.lhs::IR.CREF).cref))
   end
   return AlgorithmRun(Dict{Symbol, IR.Expression}(), Set{Symbol}(assigned), wholes, realStarts, Set{Symbol}())
+end
+
+"""
+    wholesOf(cref) -> Vector{Symbol}
+
+The names of the wholes a reference is a part of, by its parts: each part with subscripts without them (`r.a` of
+`r.a[2]`, `x` of `x[2]`), each part before the last as it is (`r` of `r.a`, `r.a[2]` of `r.a[2].b`).
+"""
+function wholesOf(cref::IR.ComponentRef)::Vector{Symbol}
+  local out::Vector{Symbol} = Symbol[]
+  for (k, p) in enumerate(cref.parts)
+    IR.isSubscripted(p) && push!(out, IR.ComponentRef(IR.CrefPart[cref.parts[1:k - 1]; IR.unsubscriptedPart(p)]).name)
+    k < length(cref.parts) && push!(out, IR.ComponentRef(cref.parts[1:k]).name)
+  end
+  return out
 end
 
 "Above this many nodes a value is not built: `if v[i] > m then m := v[i]` doubles it each time."
@@ -849,9 +877,9 @@ function algorithmValue(e::IR.Expression, run::AlgorithmRun)::IR.Expression
       return (preCall(IR.CREF(cref, x.ty)), false)
     end
     name in run.wholes && unsupported("a read of a whole array or record that an algorithm section assigns part by part", x)
-    #= x[j]: one of the elements the section assigns, chosen by the index =#
-    local base = Symbol(first(split(String(name), '[')))
-    if base !== name && base in run.wholes && any(s -> !isLiteralIndex(s), IR.subscripts(cref))
+    #= x[j]: one of the elements the section assigns, chosen by the index (its array by its parts, `elementBase`) =#
+    local base::Symbol = elementBase(cref)
+    if base !== name && base in run.wholes && any(s -> !IR.isLiteralSubscript(s), IR.subscripts(cref))
       local elements = scalarizedCref(IR.CREF(cref, x.ty), Int[], x)
       elements isa IR.IF_EXPRESSION || unsupported("this read of an array an algorithm section assigns", x)
       return (elementValues(elements, x, run), false)
@@ -903,7 +931,7 @@ function realAssignmentEquations(stmts::Vector{IR.Statement}, source::IR.Source,
     return IR.Equation[]
   end
   local (ops, assigned) = bodyStatements(body, BodyLowering(false, true, "an algorithm section with Real targets"))
-  local run = AlgorithmRun(assigned, realStarts)
+  local run::AlgorithmRun = AlgorithmRun(ops, assigned, realStarts)
   local values = Tuple{Symbol, IR.CREF}[]
   local out = IR.Equation[]
   for op in ops
@@ -912,7 +940,7 @@ function realAssignmentEquations(stmts::Vector{IR.Statement}, source::IR.Source,
       name in run.readAsVariable &&
         unsupported("an algorithm section assigning $(name) after reading it in der(), edge() or change()", op.lhs)
       run.values[name] = algorithmValue(op.rhs, run)
-      op.lhs.ty isa IR.T_RECORD && assignFields!(run, name, run.values[name], op.lhs.ty)
+      op.lhs.ty isa IR.T_RECORD && assignFields!(run, op.lhs.cref, run.values[name], op.lhs.ty)
       any(v -> first(v) === name, values) || push!(values, (name, op.lhs))
     elseif op isa IR.ASSERT
       push!(out, IR.ASSERT_EQUATION(algorithmValue(op.condition, run), algorithmValue(op.message, run), op.level, op.source))
@@ -925,26 +953,27 @@ function realAssignmentEquations(stmts::Vector{IR.Statement}, source::IR.Source,
       name in whenLifted && unsupported("a Real variable an algorithm section assigns both in a when and outside one", lhs)
       push!(out, IR.SCALAR_EQUATION(lhs, run.values[name], lhs.ty, source, DYNAMIC))
     elseif lhs.ty isa IR.T_RECORD
-      append!(out, recordValueEquations(lhs, run.values[name], Set{Symbol}(first.(values)), source))
+      append!(out, recordValueEquations(lhs, run.values[name], IR.ComponentRef[last(v).cref for v in values], source))
     end
   end
   return out
 end
 
 """
-    assignFields!(run, name, value, ty)
+    assignFields!(run, cref, value, ty)
 
-After the whole record `name := value`: each of its fields the section also assigns by itself
+After the whole record `cref := value`: each of its fields the section also assigns by itself
 its field of `value`, until that assignment (`vp := init(rp, lp)` then `vp.m_dConduct := ...`,
 MSL Spice3's semiconductor resistor: a read in between is `init(rp, lp)[4]`).
 """
-function assignFields!(run::AlgorithmRun, name::Symbol, value::IR.Expression, ty::IR.T_RECORD)::Nothing
+function assignFields!(run::AlgorithmRun, cref::IR.ComponentRef, value::IR.Expression, ty::IR.T_RECORD)::Nothing
   for (k, field) in enumerate(ty.fields)
-    local fieldName = Symbol(String(name), ".", field.name)
+    local fieldCref::IR.ComponentRef = IR.withField(cref, field.name, field.ty)
+    local fieldName::Symbol = fieldCref.name
     local fieldValue = fieldByIndex(value, k)
     fieldName in run.assigned && (run.values[fieldName] = fieldValue)
     fieldName in run.wholes || continue
-    field.ty isa IR.T_RECORD ? assignFields!(run, fieldName, fieldValue, field.ty) :
+    field.ty isa IR.T_RECORD ? assignFields!(run, fieldCref, fieldValue, field.ty) :
       unsupported("an algorithm section assigning elements of an array field of a record it assigns whole", fieldName)
   end
   return nothing
@@ -955,19 +984,19 @@ end
 
 The equations of a record variable an algorithm section assigns whole, `lhs = value`: as a
 record equation of the flat model (one of a call stays whole); without the fields the section
-also assigns by themselves (`own`, whose equations are their own: their values at the end),
+also assigns by themselves (`own`, the targets' references, whose equations are their own: their values at the end),
 field by field.
 """
-function recordValueEquations(lhs::IR.CREF, value::IR.Expression, own::Set{Symbol}, source::IR.Source)::Vector{IR.Equation}
-  local prefix = String(lhs.cref.name) * "."
-  if !any(n -> startswith(String(n), prefix), own)
+function recordValueEquations(lhs::IR.CREF, value::IR.Expression, own::Vector{IR.ComponentRef}, source::IR.Source)::Vector{IR.Equation}
+  local n::Int = length(lhs.cref.parts)
+  if !any(c::IR.ComponentRef -> length(c.parts) > n && IR.ComponentRef(c.parts[1:n]) == lhs.cref, own)
     return value isa IR.CALL ? IR.Equation[IR.RECORD_EQUATION(lhs, value, lhs.ty, length(lhs.ty.fields), source, IR.DEFAULT_ATTRIBUTES)] :
                                recordEquations(lhs, value, source)
   end
   local out = IR.Equation[]
   for (k, field) in enumerate(lhs.ty.fields)
     local l = fieldExpression(lhs, field.name, field.ty)::IR.CREF
-    l.cref.name in own && continue
+    any(c::IR.ComponentRef -> c == l.cref, own) && continue
     local r = fieldByIndex(value, k)
     if field.ty isa IR.T_RECORD
       append!(out, recordValueEquations(l, r, own, source))
