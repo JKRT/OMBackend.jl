@@ -279,7 +279,7 @@ end
   parameter names and returns the resulting vector. Results are concatenated.
 
   After chunking, parameter symbols are eval'd into module scope so that
-  pars Dict closures and ARRAY_PARAMETERS code can reference them by name.
+  pars Dict closures and the array parameters' code can reference them by name.
   `unassigned` (unassignedParameters) are also bound as locals.
 """
 function decomposeParametersDeclaration(parVariablesSym; unassigned::Set{Symbol}, chunkSize = CHUNK_SIZE[])

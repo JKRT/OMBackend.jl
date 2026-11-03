@@ -691,7 +691,12 @@ struct SUBSCRIPTED <: Expression
   ty::ModelicaType
 end
 
-"Output `index` of the tuple `exp`."
+"""
+    TUPLE_ELEMENT(exp, index, ty)
+
+Element `index` of the tuple a call `exp` returns: its position in the function's result as generated, a record
+output's fields in place (`Passes.tupleAssignElements`: `(r, q) := f(x)` assigns `r.a`, `r.b`, `q` elements 1, 2, 3).
+"""
 struct TUPLE_ELEMENT <: Expression
   exp::Expression
   index::Int
@@ -1051,8 +1056,20 @@ end
 "A variable of type Clock."
 struct CLOCK_VARIABLE <: VariableKind end
 
-"A parameter."
-struct PARAMETER <: VariableKind end
+"""
+    PARAMETER(structural = false)
+
+A parameter; `structural`: the frontend evaluated it for the model's structure (an array size, a folded if-equation's
+condition: its STRUCTURAL_PARAMETER), so the generated code holds its translated value.
+"""
+struct PARAMETER <: VariableKind
+  structural::Bool
+end
+
+PARAMETER() = PARAMETER(false)
+
+"Printed as its constructor call, `PARAMETER()` for one not structural (as before the flag: generated code texts)."
+Base.show(io::IO, p::PARAMETER) = print(io, typeof(p), p.structural ? "(true)" : "()")
 
 "A constant."
 struct CONSTANT <: VariableKind end

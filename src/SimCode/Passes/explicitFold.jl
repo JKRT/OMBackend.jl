@@ -123,7 +123,7 @@ function foldExplicitOnce(simCode::SIM_CODE, kept::OrderedSet{String})::Union{No
   foreach(a -> statementCrefNames!(read, a.statements), initialAlgorithms)
   for (_, (_, v)) in ht
     local b = bindingOf(v.varKind)
-    (v.varKind isa Union{PARAMETER, ARRAY_PARAMETER, DATA_STRUCTURE} && b !== nothing) && crefNames!(read, b)
+    (v.varKind isa Union{PARAMETER, DATA_STRUCTURE} && b !== nothing) && crefNames!(read, b)
   end
   any(n -> n in read, keys(folded)) && return nothing
   local newHT = copy(ht)

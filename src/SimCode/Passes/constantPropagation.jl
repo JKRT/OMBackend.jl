@@ -57,7 +57,7 @@ end
 "Whether `c` names a parameter of `ht`."
 function isParameter(ht::HT, c::SimCref)::Bool
   local entry = get(ht, crefName(c), nothing)
-  return entry !== nothing && isParameter(last(entry))
+  return entry !== nothing && isScalarParameter(last(entry))
 end
 
 """

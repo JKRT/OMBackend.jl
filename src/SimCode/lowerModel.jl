@@ -114,7 +114,8 @@ function lowerSystem(model::IR.Model, variables::IR.VariableSet, partition::IR.P
   local vars = IR.Variable[v for v in variables if !(v.kind isa IR.STATE_DER)]
   local names = systemNames(vars, model.name)
   local simVars = SIMVAR[SIMVAR(simName(names, v.cref), nothing, simVarKind(v, names), simVarAttributes(v, names),
-                                simType(IR.elementType(v.ty)), simKind(v.kind, variables, names), v.origin, v.cref) for v in vars]
+                                simType(IR.elementType(v.ty)), arrayDimensions(v), simKind(v.kind, variables, names), v.origin,
+                                v.cref) for v in vars]
   local ht = createIndices(simVars, derivativeReferences(vars, variables, names))
   local eqs = classifyEquations(partition.equations)
   local initialAlgorithms = INITIAL_ALGORITHM[INITIAL_ALGORITHM(simStatements(names, w.branches[1].body), w.kind === IR.INITIAL_SECTION)
@@ -140,7 +141,7 @@ function lowerSystem(model::IR.Model, variables::IR.VariableSet, partition::IR.P
                   functions, any(f -> f isa EXTERNAL_MODELICA_FUNCTION, functions),
                   RESIDUAL_EQUATION[], String[], AliasEntry[], nothing, initialAlgorithms, asserts, String[],
                   any(v -> v.kind isa Union{IR.DUMMY_STATE, IR.DUMMY_DER}, vars),
-                  ReferenceIndex(ht, String[simName(names, v.cref) for v in vars], model.name))
+                  ReferenceIndex(ht, String[simName(names, v.cref) for v in vars], model.name), Equation[], Equation[])
 end
 
 """
@@ -150,14 +151,15 @@ The reference index of the variables `ht` (`ReferenceIndex`): their references (
 (`referenceKeys`), the arrays of the elements (`elementArrays`), the identifiers (`codeIdentifiers`, `order` the
 variables' order in the IR, `modelName` for a renamed `t`).
 """
-function ReferenceIndex(ht::HT, order::Vector{String}, modelName::String)::ReferenceIndex
+function ReferenceIndex(ht::HT, order::Vector{String}, modelName::String;
+                        elementNames::Dict{String, Vector{String}} = Dict{String, Vector{String}}())::ReferenceIndex
   local references::Dict{String, IR.ComponentRef} = Dict{String, IR.ComponentRef}()
   for (key::String, entry::Tuple{Int, SIMVAR}) in ht
     local ref::Union{Nothing, IR.ComponentRef} = last(entry).ref
     ref === nothing || (references[key] = ref)
   end
   return ReferenceIndex(references, referenceKeys(references), elementArrays(references),
-                        codeIdentifiers(order, references, ht, modelName))
+                        codeIdentifiers(order, references, ht, modelName), elementNames)
 end
 
 """
@@ -402,7 +404,7 @@ function splitTupleEquation(eq::EQUATION, ht::HT)::Union{Nothing, Vector{Equatio
   local types = eq.rhs.ty.types
   local targets = eq.lhs.elements
   length(types) >= length(targets) || return nothing
-  local isVariable = e -> e isa EXP_CREF && (local entry = get(ht, crefName(e.cref), nothing); entry !== nothing && !(last(entry).varKind isa PARAMETER))
+  local isVariable = e -> e isa EXP_CREF && (local entry = get(ht, crefName(e.cref), nothing); entry !== nothing && !isScalarParameter(last(entry)))
   local eqs = Equation[]
   for (k, target) in enumerate(targets)
     target isa WILD && continue
@@ -445,7 +447,7 @@ function lowerAsserts(names::Names, ht::OrderedDict{String, Tuple{Int, SIMVAR}},
       push!(initial, INITIAL_ALGORITHM(Statement[NORETCALL(a.condition, a.source)], false))
       continue
     end
-    local onVariables = any(n -> (local entry = get(ht, n, nothing); entry !== nothing && !(last(entry).varKind isa PARAMETER)),
+    local onVariables = any(n -> (local entry = get(ht, n, nothing); entry !== nothing && !isScalarParameter(last(entry))),
                             crefNames!(crefNames!(OrderedSet{String}(), a.condition), a.message))
     if !onVariables
       push!(out, a)
@@ -493,7 +495,7 @@ function inlineParameters(e::Exp, ht::OrderedDict{String, Tuple{Int, SIMVAR}}, n
     local entry = get(ht, name, nothing)
     if entry !== nothing
       local k = last(entry).varKind
-      local bind = k isa Union{PARAMETER, ARRAY_PARAMETER} ? k.bindExp : nothing
+      local bind = k isa PARAMETER ? k.bindExp : nothing
       (bind === nothing || (keepCalls && anyExp(y -> y isa CALL && y.kind !== CALL_BUILTIN, bind))) && return x
       return bind
     end
@@ -524,7 +526,7 @@ function scalarizedArrayParameter(x::EXP_CREF, ht::OrderedDict{String, Tuple{Int
     sv.ref === nothing && continue
     local index::Union{Nothing, Vector{Int}} = elementIndex(sv.ref, array)
     index === nothing && continue
-    (sv.varKind isa PARAMETER && sv.varKind.bindExp !== nothing) || continue
+    hasBindingExp(sv) || continue
     push!(entries, (index, sv.varKind.bindExp))
   end
   isempty(entries) && return nothing
@@ -597,9 +599,15 @@ function substituteSampleTriggers(whens::Vector{IR.WHEN_EQUATION}, equations::Ve
     x isa IR.CREF && return (get(defs, x.cref.name, x), false)
     return (x, true)
   end
-  local bodyStatement = s -> s isa IR.ASSIGNMENT ? IR.ASSIGNMENT(s.lhs, inBody(s.rhs), s.source) :
-                             s isa IR.REINIT ? IR.REINIT(s.state, inBody(s.value), s.source) :
-                             s isa IR.ASSERT ? IR.ASSERT(inBody(s.condition), s.message, s.level, s.source) : s
+  local bodyStatement
+  bodyStatement = s -> s isa IR.ASSIGNMENT ? IR.ASSIGNMENT(s.lhs, inBody(s.rhs), s.source) :
+                       s isa IR.REINIT ? IR.REINIT(s.state, inBody(s.value), s.source) :
+                       s isa IR.ASSERT ? IR.ASSERT(inBody(s.condition), s.message, s.level, s.source) :
+                       s isa IR.NORETCALL ? IR.NORETCALL(inBody(s.exp), s.source) :
+                       s isa IR.TERMINATE ? IR.TERMINATE(inBody(s.message), s.source) :
+                       s isa IR.IF_STATEMENT ? IR.IF_STATEMENT(IR.StatementBranch[IR.StatementBranch(inBody(b.condition), IR.Statement[bodyStatement(x) for x in b.body])
+                                                                                   for b in s.branches],
+                                                                IR.Statement[bodyStatement(x) for x in s.elseBody], s.source) : s
   return IR.WHEN_EQUATION[IR.WHEN_EQUATION(IR.WhenBranch[IR.WhenBranch(IR.Expression[subst(t) for t in b.triggers],
                                                                       b.atInitial, b.atTerminal,
                                                                       IR.Statement[bodyStatement(s) for s in whenOperators(b.body)])
@@ -685,16 +693,22 @@ end
 A when-equation's body without if-statements (MLS 8.3.5: their branches assign the same
 variables): one assignment per variable of `if c1 then e1 elseif ... else en`, a branch
 without one keeping the value; a `reinit` likewise (to the state itself); an assert under its
-branch's condition. A call for its effects in a branch is not made.
+branch's condition; a call for its effects and a `terminate()` in an if-statement of their own, under the branch's
+condition.
 """
 function whenOperators(body::Vector{IR.Statement})::Vector{IR.Statement}
-  any(s -> s isa IR.IF_STATEMENT, body) || return body
+  any(s -> s isa IR.IF_STATEMENT && !isEffectIf(s), body) || return body
   local out = IR.Statement[]
   for s in body
-    s isa IR.IF_STATEMENT ? append!(out, ifStatementOperators(s)) : push!(out, s)
+    (s isa IR.IF_STATEMENT && !isEffectIf(s)) ? append!(out, ifStatementOperators(s)) : push!(out, s)
   end
   return out
 end
+
+"An if-statement of calls for their effects and `terminate()` only (`whenOperators` keeps it)."
+isEffectIf(s::IR.Statement)::Bool =
+  s isa IR.IF_STATEMENT &&
+  all(x -> x isa Union{IR.NORETCALL, IR.TERMINATE} || isEffectIf(x), Iterators.flatten((Iterators.flatten(b.body for b in s.branches), s.elseBody)))
 
 function ifStatementOperators(s::IR.IF_STATEMENT)::Vector{IR.Statement}
   local bodies = vcat([whenOperators(b.body) for b in s.branches], [whenOperators(s.elseBody)])
@@ -708,7 +722,7 @@ function ifStatementOperators(s::IR.IF_STATEMENT)::Vector{IR.Statement}
   push!(guards, before === nothing ? IR.BOOLEAN(true) : before)
   local targets = OrderedDict{Tuple{Symbol, IR.Expression}, IR.Expression}()
   local values = [Dict{Tuple{Symbol, IR.Expression}, IR.Expression}() for _ in bodies]
-  local asserts = IR.Statement[]
+  local effects = IR.Statement[]
   for (k, ops) in enumerate(bodies), op in ops
     if op isa IR.ASSIGNMENT
       targets[(:assign, op.lhs)] = op.lhs
@@ -718,8 +732,11 @@ function ifStatementOperators(s::IR.IF_STATEMENT)::Vector{IR.Statement}
       targets[(:reinit, state)] = state
       values[k][(:reinit, state)] = op.value
     elseif op isa IR.ASSERT
-      push!(asserts, IR.ASSERT(IR.LBINARY(IR.LUNARY(IR.NOT, guards[k]), IR.OR, op.condition), op.message, op.level, op.source))
-    elseif !(op isa IR.NORETCALL)
+      push!(effects, IR.ASSERT(IR.LBINARY(IR.LUNARY(IR.NOT, guards[k]), IR.OR, op.condition), op.message, op.level, op.source))
+    elseif op isa Union{IR.NORETCALL, IR.TERMINATE, IR.IF_STATEMENT}
+      #= an if-statement here is one of these (the branch's own, made above) =#
+      push!(effects, IR.IF_STATEMENT(IR.StatementBranch[IR.StatementBranch(guards[k], IR.Statement[op])], IR.Statement[], s.source))
+    else
       unsupported("this statement in an if-equation in a when-equation", IR.toString(op))
     end
   end
@@ -732,7 +749,7 @@ function ifStatementOperators(s::IR.IF_STATEMENT)::Vector{IR.Statement}
     end
     push!(out, kind === :assign ? IR.ASSIGNMENT(target, value, s.source) : IR.REINIT(target.cref, value, s.source))
   end
-  return vcat(out, asserts)
+  return vcat(out, effects)
 end
 
 """

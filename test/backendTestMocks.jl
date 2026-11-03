@@ -29,7 +29,9 @@ function mockSimCode(variables::Vector{SC.SIMVAR} = SC.SIMVAR[]; name::String = 
                      SC.SIM_CODE[], String[], String[], SC.Equation[], name, nothing, String[], SC.ModelicaFunction[], false,
                      SC.RESIDUAL_EQUATION[], String[], SC.AliasEntry[], nothing, SC.INITIAL_ALGORITHM[], SC.ASSERT_EQUATION[],
                      String[], false, SC.ReferenceIndex(Dict{String, OMBackend.OMJLIR.ComponentRef}(), Dict{Symbol, String}(),
-                                                        Dict{String, Symbol}(), Dict{String, String}()))
+                                                        Dict{String, Symbol}(), Dict{String, String}(),
+                                                        Dict{String, Vector{String}}()),
+                     SC.Equation[], SC.Equation[])
 end
 
 end # module BackendTestMocks

@@ -243,6 +243,30 @@ hasContinuousOperand(rel::IR.Expression, known::Set{Symbol})::Bool =
 knownNames(variables::IR.VariableSet)::Set{Symbol} = Set{Symbol}(v.name for v in variables if IR.isKnown(v))
 
 """
+The built-ins whose value jumps where their argument crosses an integer: outside when-clauses and `noEvent()` they
+make events (MLS, "Event Triggering Mathematical Functions").
+"""
+const EVENT_FUNCTIONS = (:integer, :floor, :ceil, :div, :mod, :rem)
+
+"""
+    readsContinuousTime(e, variables, known)
+
+Whether `e` reads, outside `pre()`, `time` or a Real variable that is no parameter or constant (`known`) and no
+discrete one of `variables`: an event function of it makes events.
+"""
+function readsContinuousTime(e::IR.Expression, variables::IR.VariableSet, known::Set{Symbol})::Bool
+  local hit::Base.RefValue{Bool} = Ref(false)
+  IR.mapExpTopDown(e) do x::IR.Expression
+    IR.isBuiltinCall(x, :pre) && return (x, false)
+    if x isa IR.CREF && isRealType(x.ty) && !(x.cref.name in known)
+      (haskey(variables, x.cref.name) && variables[x.cref.name].kind isa IR.DISCRETE) || (hit[] = true)
+    end
+    return (x, !hit[])
+  end
+  return hit[]
+end
+
+"""
     legacyName(cref)
 
 The previous backend's name of a reference (BDAE's `string` of a DAE reference): the parts

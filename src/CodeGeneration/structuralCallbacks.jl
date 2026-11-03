@@ -204,7 +204,7 @@ function createStructuralCallback(simCode::SC.SIM_CODE, structuralTransition::SC
     local newValueExp = recompilationDirective.newValue
     local newValue::Expr = if newValueExp isa SC.EXP_CREF
       local variableSpec = last(simCode.stringToSimVarHT[SC.crefName(newValueExp.cref)])
-      (variableSpec.varKind isa SC.PARAMETER && variableSpec.varKind.bindExp !== nothing) ||
+      SC.hasBindingExp(variableSpec) ||
         unsupported("a structural change to a variable other than a bound parameter", variableSpec.name)
       expToJuliaExpMTK(variableSpec.varKind.bindExp, simCode)
     else

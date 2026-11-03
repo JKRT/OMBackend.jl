@@ -102,8 +102,9 @@ categoryPriority(::STATE)::Int = 100
 categoryPriority(::STATE_DERIVATIVE)::Int = 90
 categoryPriority(::DISCRETE)::Int = 80
 categoryPriority(::ALG_VARIABLE)::Int = 20
-categoryPriority(::ARRAY)::Int = 10
 categoryPriority(::SimVarType)::Int = 0
+"The preference of a variable for the representative of its aliases by its category; an algebraic array's less."
+categoryPriority(v::SIMVAR)::Int = isArrayAlgebraic(v) ? 10 : categoryPriority(v.varKind)
 
 """
     representativePriority(name, v, irreducible)
@@ -114,7 +115,7 @@ start is kept).
 """
 function representativePriority(name::String, v::SIMVAR, irreducible::Set{String})::Int
   local hasStart = v.attributes.start !== nothing && v.elementType isa Union{TYPE_REAL, TYPE_INTEGER, TYPE_BOOL}
-  return categoryPriority(v.varKind) + (name in irreducible ? 60 : 0) + (hasStart ? 5 : 0)
+  return categoryPriority(v) + (name in irreducible ? 60 : 0) + (hasStart ? 5 : 0)
 end
 
 """
@@ -384,7 +385,8 @@ withAttributes(a::SimVarAttributes; start::Union{Nothing, Exp} = a.start, fixed:
                unit::Union{Nothing, Exp} = a.unit, displayUnit::Union{Nothing, Exp} = a.displayUnit,
                quantity::Union{Nothing, Exp} = a.quantity, stateSelect::Union{Nothing, Symbol} = a.stateSelect,
                isProtected::Bool = a.isProtected)::SimVarAttributes =
-  SimVarAttributes(start, fixed, nominal, min, max, unit, displayUnit, quantity, stateSelect, isProtected)
+  SimVarAttributes(start, fixed, nominal, min, max, unit, displayUnit, quantity, stateSelect, isProtected,
+                   start === a.start ? a.startExps : nothing)
 
 "An attribute's value negated, the literals folded; `nothing` for none."
 negatedValue(::Nothing)::Nothing = nothing
@@ -506,7 +508,7 @@ function eliminateRHSEquivalentEquations(simCode::SIM_CODE)::SIM_CODE
       local name = crefName(v.cref)
       name in claimed && continue
       local sv = last(ht[name])
-      local priority = categoryPriority(sv.varKind) + (name in irreducible ? 60 : 0) + (isStateSelectAlways(sv) ? 200 : 0)
+      local priority = categoryPriority(sv) + (name in irreducible ? 60 : 0) + (isStateSelectAlways(sv) ? 200 : 0)
       priority > bestPriority && ((best, bestPriority) = (j, priority))
     end
     best == 0 && continue

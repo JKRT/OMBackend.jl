@@ -182,7 +182,7 @@ function _ifConditionIsPureTimeEvent(condition::SC.Exp, simCode::SC.SIM_CODE)::B
     name == "time" && continue
     local entry = get(ht, name, nothing)
     entry === nothing && return false
-    (entry[2].varKind isa SC.PARAMETER) || return false
+    SC.isScalarParameter(entry[2]) || return false
   end
   return true
 end

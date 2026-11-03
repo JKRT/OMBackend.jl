@@ -67,3 +67,46 @@ end
   @test CG._update!(c, at(0.75))
   @test c.rel[1]
 end
+
+#= The array code's relation (`ArrayODEGen._relationAt`, mode = an event pass): a false relation becomes true at an exact
+   zero where it holds (an operand that jumped onto its threshold: `(if x > 0.5 then 5 else 0) >= 5.0`), a strict one and a
+   true one are not changed there (a true one is not turned off at an exact zero: chatter), a landing inside the
+   hysteresis band but not exact stays as it was (an operand held between events compares literally by construction,
+   `Rel` is made only for continuous ones). =#
+@testset "Array relations at an exact zero" begin
+  local relAt = OMBackend.CodeGeneration.ArrayODEGen._relationAt
+  local H = 1.0e-6
+  local run = (old::Bool, op, x::Real, y::Real; mode::Bool = true, H::Float64 = H) -> begin
+    local p = (rel = [old],)
+    local z = [0.0]
+    local v = relAt(z, p, mode, 1, x, y, op, H)
+    return (v, p.rel[1], z[1])
+  end
+  #= exact zero, positive H: false stays false for a strict relation, becomes true for a closed one; true stays true =#
+  @test run(false, >=, 5.0, 5.0)[1]
+  @test !run(false, >, 5.0, 5.0)[1]
+  @test run(false, <=, 5.0, 5.0)[1]
+  @test !run(false, <, 5.0, 5.0)[1]
+  @test all(op -> run(true, op, 5.0, 5.0)[1], (>=, >, <=, <))
+  #= its crossing function is shifted away from the new value (z uses the old one) =#
+  local (v, r, z) = run(false, >=, 5.0, 5.0)
+  @test v && r && z == H * 6.0
+  #= clearly beyond the band: as before; clearly short of it too =#
+  @test run(false, >=, 6.0, 5.0)[1] && !run(false, >=, 4.0, 5.0)[1]
+  @test !run(true, >=, 4.0, 5.0)[1] && run(true, >=, 5.0 + 1.0e-9, 5.0)[1]
+  #= inside the band, not exact: unchanged (false stays false, true stays true) =#
+  @test !run(false, >=, 5.0 + 1.0e-9, 5.0)[1] && !run(false, >=, 5.0 - 1.0e-9, 5.0)[1]
+  @test run(true, >=, 5.0 - 1.0e-9, 5.0)[1]
+  #= not in an event pass: the stored value =#
+  @test !run(false, >=, 5.0, 5.0; mode = false)[1] && run(true, >=, 4.0, 5.0; mode = false)[1]
+  #= native Integer operands (an opaque function's result): the difference of 6e18 and -6e18 does not wrap around =#
+  local big = 6_000_000_000_000_000_000
+  @test !run(false, >=, -big, 4_000_000_000_000_000_000)[1] && run(false, >=, big, 4_000_000_000_000_000_000)[1]
+  @test run(false, >=, 5, 5)[1] && !run(false, >, 5, 5)[1]
+  #= the smallest Integer on both sides: the width is not negative (abs(typemin(Int)) stays negative) =#
+  local lo = typemin(Int)
+  @test run(false, <=, lo, lo)[1] && run(true, <=, lo, lo)[1] && !run(false, <, lo, lo)[1]
+  @test run(false, <=, lo, lo)[3] == H * (1 + 2.0^63)
+  #= at the initialization (H = 0): literal =#
+  @test run(false, >=, 5.0, 5.0; H = 0.0)[1] && !run(false, >, 5.0, 5.0; H = 0.0)[1] && !run(true, >, 5.0, 5.0; H = 0.0)[1]
+end

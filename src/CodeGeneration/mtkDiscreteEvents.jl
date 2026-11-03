@@ -587,7 +587,7 @@ function _discreteStartValue(sv::SC.SIMVAR, simCode::SC.SIM_CODE)::Union{Float64
   local entry = get(simCode.stringToSimVarHT, SC.crefName(start.cref), nothing)
   entry === nothing && return nothing
   local k = last(entry).varKind
-  (k isa SC.PARAMETER && k.bindExp !== nothing) || return nothing
+  SC.hasBindingExp(last(entry)) || return nothing
   return _foldParameterBindStatic(k.bindExp, simCode)
 end
 
@@ -667,7 +667,7 @@ function freeParametersDecl(simCode::SC.SIM_CODE)::Expr
   local names = String[]
   local assignedNames = String[]
   for (key, (_, sv)) in simCode.stringToSimVarHT
-    (SC.isParameter(sv) && !SC.hasBindingExp(sv)) || continue
+    (SC.isScalarParameter(sv) && !SC.hasBindingExp(sv)) || continue
     if key in assigned
       push!(assignedNames, sv.name)
     elseif sv.elementType isa SC.TYPE_REAL && sv.attributes.fixed == SC.BCONST(false)
@@ -719,7 +719,7 @@ function userPinsDecl(simCode::SC.SIM_CODE, relayAliases::AbstractDict)::Expr
     #= A parameter right side (a tunable one stays a reference) is a pin too; a conflict with a
        fixed start is then checked at the build and per run (DirectRHSGeneration's
        _collectHardInitializationValues), here only a literal's. =#
-    (rhs isa Number || (rhsEntry !== nothing && SC.isParameter(last(rhsEntry)))) || continue
+    (rhs isa Number || (rhsEntry !== nothing && SC.isScalarParameter(last(rhsEntry)))) || continue
     #= A fixed start and an initial equation that give one variable two values (`x(start = 1,
        fixed = true)` and `x = 2`): the initialization took the equation's without a word;
        OpenModelica refuses it. =#
@@ -799,7 +799,7 @@ function _modelHasSwitchClusters(simCode::SC.SIM_CODE)::Bool
   local ht = simCode.stringToSimVarHT
   local names = (exps...) -> (local ns = OrderedSet{String}(); foreach(e -> SC.identifierNames!(ns, e), exps); ns)
   local isAlgebraic = name -> haskey(ht, name) && last(ht[name]).varKind isa SC.ALG_VARIABLE
-  local isUnknown = name -> haskey(ht, name) && !SC.isParameter(last(ht[name]))
+  local isUnknown = name -> haskey(ht, name) && !SC.isScalarParameter(last(ht[name]))
   local ifConds = [names((b.condition for b in ifEq.branches)...) for ifEq in simCode.ifEquations]
   #= Per candidate operand: the names that make an equation the cluster's own. =#
   local own = Dict{String, Set{String}}()
@@ -927,7 +927,8 @@ table residual's pre(x) lowers to x, omc's state between events: the table's lef
 t >= x, the new segment after this affect. `atInit` lowers `initial()` to true for the run at
 the start of a solve. The state before the instant is taken before the affect writes (pre()
 of what it sets, read by a when it triggers at the same instant: `e = edge(b)` with b set
-here stayed false).
+here stayed false). A variable assigned twice (a lifted body's start `x := pre(x)`, then its value) is set once, to
+its last value (MSL Interaction1's `timeTable.last`: a field of the named tuple twice did not parse).
 """
 function _selfSchedAffectParts(weq::SC.WHEN_EQUATION, simCode::SC.SIM_CODE; atInit::Bool = false)
   local obsAcc = Dict{Symbol, Symbol}()
@@ -942,7 +943,12 @@ function _selfSchedAffectParts(weq::SC.WHEN_EQUATION, simCode::SC.SIM_CODE; atIn
     local xn = SC.crefName(st.left.cref)
     local xsym = Symbol(xn)
     local vsym = Symbol("_v_", xn)
-    push!(stmts, :(local $(vsym) = $(_affectValue(st.right, obsAcc, simCode; initVal = atInit, subst))))
+    local value = _affectValue(st.right, obsAcc, simCode; initVal = atInit, subst)
+    if xsym in modNames
+      push!(stmts, :($(vsym) = $(value)))
+      continue
+    end
+    push!(stmts, :(local $(vsym) = $(value)))
     push!(retKws, Expr(:kw, xsym, vsym))
     push!(modNames, xsym)
     subst[xsym] = vsym
@@ -1055,7 +1061,7 @@ function emitAssertCallback(simCode::SC.SIM_CODE)::Expr
     local msg = _assertMessageExpr(a.message, obsAcc, simCode)
     local timeVarying = _exprMentions(cond, :integrator) || any(keys(obsAcc)) do k
       local e = get(simCode.stringToSimVarHT, string(k), nothing)
-      e === nothing || !(last(e).varKind isa Union{SC.PARAMETER, SC.ARRAY_PARAMETER})
+      e === nothing || !(last(e).varKind isa SC.PARAMETER)
     end
     local obsNT = Expr(:tuple, Expr(:parameters, [Expr(:kw, k, QuoteNode(v)) for (k, v) in obsAcc]...))
     push!(entries, :(OMBackend.CodeGeneration.ModelicaAssert($(obsNT),
@@ -1066,7 +1072,9 @@ function emitAssertCallback(simCode::SC.SIM_CODE)::Expr
                                                              $(Expr(:tuple, (:((observed, integrator) -> $(c)) for c in crossings)...)))))
   end
   isempty(entries) && return Expr(:block)
-  return :(callbacks = OMBackend.CodeGeneration.withAssertCallback(callbacks, problem, [$(entries...)]))
+  #= the discrete variables: within a step that ends at an event their values are the step's (asserts.jl) =#
+  local discrete::Vector{Symbol} = sort!(Symbol[Symbol(n) for (n, (_, v)) in simCode.stringToSimVarHT if v.varKind isa SC.DISCRETE])
+  return :(callbacks = OMBackend.CodeGeneration.withAssertCallback(callbacks, problem, [$(entries...)]; discrete = $(discrete)))
 end
 
 _isEffectCall(e::SC.Exp)::Bool = e isa SC.CALL && e.ty isa SC.TYPE_NORETCALL
@@ -1181,7 +1189,7 @@ function _withoutContinuousOperand(rel::SC.Exp, simCode::SC.SIM_CODE)::Bool
     name == "time" && continue
     local entry = get(simCode.stringToSimVarHT, name, nothing)
     entry === nothing && return false
-    (SC.isDiscrete(last(entry)) || SC.isParameter(last(entry))) || return false
+    (SC.isDiscrete(last(entry)) || SC.isScalarParameter(last(entry))) || return false
   end
   return true
 end
@@ -1233,7 +1241,7 @@ function _equationGraph(simCode::SC.SIM_CODE)::_EquationGraph
   end
   local fixed = Set{String}(["time"])
   for (n, (_, v)) in simCode.stringToSimVarHT
-    SC.isParameter(v) && push!(fixed, n)
+    SC.isScalarParameter(v) && push!(fixed, n)
   end
   union!(fixed, _collectWhenAssignedNames(simCode))
   return _EquationGraph(names, occurs, fixed)
@@ -1653,6 +1661,13 @@ _statementExps(s::SC.REINIT)::Vector{SC.Exp} = SC.Exp[s.value]
 _statementExps(s::SC.NORETCALL)::Vector{SC.Exp} = SC.Exp[s.exp]
 _statementExps(s::SC.ASSERT)::Vector{SC.Exp} = SC.Exp[s.condition, s.message, s.level]
 _statementExps(s::SC.TERMINATE)::Vector{SC.Exp} = SC.Exp[s.message]
+function _statementExps(s::SC.IF)::Vector{SC.Exp}
+  local out::Vector{SC.Exp} = SC.Exp[b.condition for b in s.branches]
+  for x in Iterators.flatten((Iterators.flatten(b.body for b in s.branches), s.elseBody))
+    append!(out, _statementExps(x))
+  end
+  return out
+end
 _statementExps(::SC.Statement)::Vector{SC.Exp} = SC.Exp[]
 
 """
@@ -1683,7 +1698,7 @@ function _createWhenStatementsMTK(statements::Vector{SC.Statement}, simCode::SC.
     elseif wStmt isa SC.ASSIGN
       local leftName = SC.crefNameOf(wStmt.left)
       leftName === nothing && unsupported("this assignment target in a when", wStmt.left)
-      push!(res, _stateAssignment(last(simCode.stringToSimVarHT[leftName]), expToJuliaExpMTK(wStmt.right, simCode)))
+      push!(res, _whenAssignmentMTK(last(simCode.stringToSimVarHT[leftName]), wStmt.right, simCode))
     elseif wStmt isa SC.REINIT
       local var = last(simCode.stringToSimVarHT[SC.crefName(wStmt.stateVar)])
       push!(res, quote
@@ -1712,11 +1727,52 @@ function _createWhenStatementsMTK(statements::Vector{SC.Statement}, simCode::SC.
                 $(violated)
               end
             end)
+    elseif wStmt isa SC.IF
+      push!(res, _whenIfMTK(wStmt, simCode))
     else
       unsupported("when-statement variant", wStmt)
     end
   end
   return res
+end
+
+"""
+An if-statement of a when body (calls and `terminate()` under their branch's condition, `SimCode.whenOperators`): the
+branches' statements under their conditions (a number where the lowering encoded and/or/not arithmetically).
+"""
+function _whenIfMTK(s::SC.IF, simCode::SC.SIM_CODE)::Expr
+  local chain::Expr = Expr(:block, _createWhenStatementsMTK(s.elseBody, simCode)...)
+  for b in Iterators.reverse(s.branches)
+    chain = Expr(:if, _whenConditionMTK(b.condition, simCode), Expr(:block, _createWhenStatementsMTK(b.body, simCode)...), chain)
+  end
+  return chain
+end
+
+"""
+A condition in a when body as a Julia Bool: and, or and not by short circuit (the arithmetic lowering evaluates both
+operands: `not (d < 0) and sqrt(d) > 0` took the square root of a negative d), another by its value, a number being true
+where it is not zero.
+"""
+function _whenConditionMTK(c::SC.Exp, simCode::SC.SIM_CODE)::Expr
+  if c isa SC.LBINARY
+    local a::Expr = _whenConditionMTK(c.exp1, simCode)
+    local b::Expr = _whenConditionMTK(c.exp2, simCode)
+    return c.op === SC.OP_AND ? :($a && $b) : :($a || $b)
+  elseif c isa SC.LUNARY
+    return :(!$(_whenConditionMTK(c.exp, simCode)))
+  end
+  return :(let _c = $(expToJuliaExpMTK(c, simCode)); _c isa Bool ? _c : _c != 0 end)
+end
+
+"""
+`var := e` in a when body: an if-expression as an `if` of its branches' assignments (the arithmetic lowering evaluates
+both branches: `if d > 0 then y := sqrt(d)` of a negative d threw, each `v := if c then e else v` an algorithm's when
+lowers to), another `e` by its value.
+"""
+function _whenAssignmentMTK(var::SC.SIMVAR, e::SC.Exp, simCode::SC.SIM_CODE)::Expr
+  e isa SC.IFEXP || return _stateAssignment(var, expToJuliaExpMTK(e, simCode))
+  return Expr(:if, _whenConditionMTK(e.cond, simCode), _whenAssignmentMTK(var, e.thenExp, simCode),
+              _whenAssignmentMTK(var, e.elseExp, simCode))
 end
 
 """
