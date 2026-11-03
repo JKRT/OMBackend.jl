@@ -665,7 +665,7 @@ end
       let (fm, functions) = _irArrayFlat("PendulumsFirstForceLaw")
         local reduced::_IRM.Model = OMBackend.reducedArrayModel(fm; functionList = functions)
         local names::Vector{Symbol} = Symbol[v.name for v in reduced.variables]
-        @test OMBackend.generateReducedArrayODETargetCode(fm, reduced; functionList = functions) === nothing
+        @test OMBackend.generateReducedArrayODETargetCode(fm, reduced) === nothing
         @test Symbol[v.name for v in reduced.variables] == names
       end
       local firstLaw::Vector{String} = ["x[1]", "y[1]", "x[2]", "F[1]", "F[3]"]

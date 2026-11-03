@@ -362,6 +362,7 @@ import .ExampleModels
 
   #= ── 19. Array-preserving code generation (no-scalarize models) ─ =#
   include("arrayPathTests.jl")
+  include("simCodeArraysTests.jl")
 
   #= ── 20. The initialization's one-unknown rows ──────────────────── =#
   include("initializationCausalRowsTests.jl")

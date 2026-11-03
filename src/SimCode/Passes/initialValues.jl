@@ -178,7 +178,7 @@ function propagateInitialValues(simCode::SIM_CODE)::SIM_CODE
   local env = OrderedDict{String, Float64}("time" => 0.0)
   local residuals = Exp[]
   for (name, (_, v)) in ht
-    if v.varKind isa PARAMETER && v.varKind.bindExp !== nothing
+    if hasBindingExp(v)
       push!(residuals, BINARY(EXP_CREF(SimCref(Symbol(name), Int[], v.ref), TYPE_REAL()), OP_SUB, v.varKind.bindExp))
     end
     if v.elementType isa TYPE_REAL && v.attributes.start !== nothing
@@ -207,7 +207,7 @@ function propagateInitialValues(simCode::SIM_CODE)::SIM_CODE
   for (name, value) in resolved
     haskey(ht, name) || continue
     local (index, v) = ht[name]
-    (v.varKind isa PARAMETER || v.attributes.start !== nothing) && continue
+    (isScalarParameter(v) || v.attributes.start !== nothing) && continue
     local a = withAttributes(v.attributes; start = RCONST(value),
                              fixed = v.elementType isa TYPE_REAL ? v.attributes.fixed : BCONST(false))
     newHT[name] = (index, withAttributes(v, a))

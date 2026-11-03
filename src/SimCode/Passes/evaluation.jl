@@ -46,7 +46,7 @@ function resolveIfExpInBindings!(simCode::SIM_CODE)::SIM_CODE
   local ht = simCode.stringToSimVarHT
   for (name, (index, sv)) in ht
     local k = sv.varKind
-    (k isa Union{PARAMETER, ARRAY_PARAMETER} && k.bindExp !== nothing) || continue
+    (k isa PARAMETER && k.bindExp !== nothing) || continue
     local b = resolveConstantIfExp(k.bindExp, simCode)
     b === k.bindExp || (ht[name] = (index, withKind(sv, withBinding(k, b))))
   end
@@ -276,7 +276,7 @@ function boundParameterExpression(e::Exp, simCode::SIM_CODE, seen::OrderedSet{St
   local entry = get(simCode.stringToSimVarHT, name, nothing)
   entry === nothing && return nothing
   local k = last(entry).varKind
-  (k isa Union{PARAMETER, ARRAY_PARAMETER, STRING} && k.bindExp !== nothing) || return nothing
+  (k isa Union{PARAMETER, STRING} && k.bindExp !== nothing) || return nothing
   return (name, k.bindExp)
 end
 

@@ -122,7 +122,7 @@ replaced the state vector `x`, a BoundsError). A parameter's, a constant's: its 
 function _preValueLookup(arg::SC.Exp, simCode::SC.SIM_CODE; cachedChange::Bool = false)
   arg isa SC.EXP_CREF || return expToJuliaExpMTK(arg, simCode)
   local entry = get(simCode.stringToSimVarHT, SC.crefName(arg.cref), nothing)
-  (entry === nothing || SC.isParameter(last(entry))) && return expToJuliaExpMTK(arg, simCode)
+  (entry === nothing || SC.isScalarParameter(last(entry))) && return expToJuliaExpMTK(arg, simCode)
   local name = last(entry).name
   cachedChange && return :(get(_changePreValues, Symbol($(name)), integrator.u[lookuptableStates[Symbol($(name))]]))
   return :(integrator.uprev[lookuptableStates[Symbol($(name))]])
@@ -366,7 +366,7 @@ iteration's sweep; else `x` (a callback reads its arguments before the affect ch
 function expToJuliaExpMTK(e::SC.PRE, simCode::SC.SIM_CODE)::Expr
   local name = SC.crefName(e.cref)
   local entry = get(simCode.stringToSimVarHT, name, nothing)
-  if PRE_FROM_SNAPSHOT[] && entry !== nothing && !SC.isParameter(last(entry))
+  if PRE_FROM_SNAPSHOT[] && entry !== nothing && !SC.isScalarParameter(last(entry))
     return :($(PRE_SNAPSHOT)[lookuptableStates[$(QuoteNode(Symbol(name)))]])
   end
   return quote $(Symbol(name)) end
@@ -620,8 +620,8 @@ function _arrayElementExpr(c::SC.SimCref, simCode::SC.SIM_CODE)::Union{Nothing, 
   local ht::SC.HT = simCode.stringToSimVarHT
   local base::String = String(c.sym)
   local entry::Union{Nothing, Tuple{Int, SC.SIMVAR}} = get(ht, base, nothing)
-  (entry !== nothing && last(entry).varKind isa Union{SC.ARRAY, SC.ARRAY_PARAMETER}) || return nothing
-  local binding::Union{Nothing, SC.Exp} = last(entry).varKind.bindExp
+  (entry !== nothing && (SC.isArrayParameter(last(entry)) || SC.isArrayAlgebraic(last(entry)))) || return nothing
+  local binding::Union{Nothing, SC.Exp} = SC.bindingOf(last(entry).varKind)
   if binding isa SC.ARRAY_EXP
     local element::SC.Exp = binding
     for i in c.subs
@@ -860,7 +860,7 @@ function _knownValues(names::AbstractArray{String}, simCode::SC.SIM_CODE)::Union
     local entry = get(ht, names[I], nothing)
     entry === nothing && return nothing
     local kind = last(entry).varKind
-    (kind isa SC.PARAMETER && kind.bindExp !== nothing) || return nothing
+    SC.hasBindingExp(last(entry)) || return nothing
     local b = kind.bindExp
     local v = SC.tryEvalNumeric(b, simCode)
     #= `integer(table[...][i, j])`: evaluated as the initial values are =#
@@ -891,7 +891,8 @@ end
 
 An array literal: of constants, the array evaluated at the build (rows stacked along the first
 dimension: a three-dimensional literal's rows are matrices, Buildings' Borefields
-TemporalSuperposition); with variables, a vector, a matrix by `hvcat` of its rows' elements.
+TemporalSuperposition); with variables, a vector, a matrix by `hvcat` of its rows' elements, more dimensions its rows
+stacked along the first (by `hvcat` a three-dimensional argument was packed into a matrix: Borefields' `transpose`).
 """
 function handleArrayExp(e::SC.ARRAY_EXP, simCode::SC.SIM_CODE)::Expr
   local dims = e.ty isa SC.TYPE_ARRAY ? e.ty.dims : Int[length(e.elements)]
@@ -914,7 +915,7 @@ function handleArrayExp(e::SC.ARRAY_EXP, simCode::SC.SIM_CODE)::Expr
   end
   length(dims) >= 2 || return quote [$(elemExprs...)] end
   local rows = e.elements[1:steps]
-  if all(r -> r isa SC.ARRAY_EXP, rows) && steps > 0
+  if length(dims) == 2 && all(r -> r isa SC.ARRAY_EXP, rows) && steps > 0
     local nCols = length(first(rows).elements)
     if nCols > 0
       local scalars = Expr[expToJuliaExpMTK(x, simCode) for r in rows for x in r.elements]
@@ -1131,7 +1132,7 @@ tNext)`), where the condition did not bind its own.
 function getIdxForLookupMTK(crefAsStr::String, simCode::SC.SIM_CODE)
   crefAsStr == "time" && return :t
   local simVar = last(simCode.stringToSimVarHT[crefAsStr])
-  if !SC.isParameter(simVar)
+  if !SC.isScalarParameter(simVar)
     return Expr(:call, getindex, :x, Expr(:call, :getindex, :lookuptableStates, :(Symbol($(crefAsStr)))))
   end
   return Expr(:call, getindex, :(integrator.p), Expr(:call, :getindex, :lookuptableParams, :(Symbol($(crefAsStr)))))
@@ -1391,7 +1392,7 @@ function _buildT0ValueMapAndExplicit(simCode::SC.SIM_CODE)::Tuple{Dict{Symbol, F
   local trusted = Set{Symbol}()
   for (key, (_, sv)) in simCode.stringToSimVarHT
     local sym = Symbol(key)
-    if sv.varKind isa SC.PARAMETER
+    if SC.isScalarParameter(sv)
       local bind = sv.varKind.bindExp
       local pval = _isEvaluableConstant(bind) ? _t0Number(() -> evalConstant(bind, simCode)) : nothing
       pval === nothing && (pval = _startNumber(sv, simCode))
@@ -1714,7 +1715,7 @@ function solveParametricInitialEquations!(simCode::SC.SIM_CODE)::Nothing
       local (ieqLhs, ieqRhs) = map(_timeAtBuildStart, equationSides(ieq))
       local freeParams = unique(String[n for side in (ieqLhs, ieqRhs) for n in _referenceNames(side)
                                        if (local entry = get(ht, n, nothing); entry !== nothing &&
-                                           SC.isParameter(last(entry)) && !SC.hasBindingExp(last(entry)))])
+                                           SC.isScalarParameter(last(entry)) && !SC.hasBindingExp(last(entry)))])
       if _bindTupleOfFreeParameters!(ieqLhs, ieqRhs, freeParams, simCode)
         append!(solvedNames, freeParams)
         solvedThisPass = true
@@ -1843,7 +1844,7 @@ function _solveCoupledParametricInitialEquations!(simCode::SC.SIM_CODE)::Nothing
   local ht = simCode.stringToSimVarHT
   local isFreeParam = key::String -> begin
     local entry = get(ht, key, nothing)
-    entry !== nothing && SC.isParameter(last(entry)) && !SC.hasBindingExp(last(entry))
+    entry !== nothing && SC.isScalarParameter(last(entry)) && !SC.hasBindingExp(last(entry))
   end
   local sides = Tuple{SC.Exp, SC.Exp}[]
   local free = OrderedSet{String}()
@@ -1925,7 +1926,7 @@ function _ifConditionAllDiscreteOrParameter(condition::SC.Exp, simCode::SC.SIM_C
     name == "time" && return false
     local entry = get(ht, name, nothing)
     entry === nothing && return false
-    last(entry).varKind isa Union{SC.DISCRETE, SC.PARAMETER} || return false
+    (last(entry).varKind isa SC.DISCRETE || SC.isScalarParameter(last(entry))) || return false
   end
   return true
 end
@@ -1957,7 +1958,7 @@ function _ifConditionLiteral(condition::SC.Exp, simCode::SC.SIM_CODE)::Bool
   end
   visit(condition)
   local ht = simCode.stringToSimVarHT
-  return all(n -> haskey(ht, n) && last(ht[n]).varKind isa Union{SC.DISCRETE, SC.PARAMETER}, outside)
+  return all(n -> haskey(ht, n) && (last(ht[n]).varKind isa SC.DISCRETE || SC.isScalarParameter(last(ht[n]))), outside)
 end
 
 """

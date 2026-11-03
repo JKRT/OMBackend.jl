@@ -50,7 +50,7 @@ function familyBase(name::Symbol, variables::IR.VariableSet)::Symbol
   while true
     local v::Union{Nothing, IR.Variable} = get(variables, current, nothing)
     v === nothing && return current
-    local from::Union{Nothing, Tuple{IR.CrefPart, Symbol}} = derivedFrom(v, variables)
+    local from::Union{Nothing, Tuple{Vector{IR.CrefPart}, Symbol}} = derivedFrom(v, variables)
     from === nothing && return current
     current = from[2]
   end

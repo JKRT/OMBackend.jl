@@ -394,7 +394,7 @@ end
   variable or a binding that is no constant.
 """
 function evalSimCodeParameter(v::SC.SIMVAR, simCode::SC.SIM_CODE)
-  (v.varKind isa SC.PARAMETER && v.varKind.bindExp !== nothing) ||
+  SC.hasBindingExp(v) ||
     OMBackend.unsupported("a constant value of a variable other than a bound parameter", v.name)
   return evalConstant(v.varKind.bindExp, simCode)
 end
@@ -426,7 +426,7 @@ function _substituteBoundParameters(exp::SC.Exp, simCode::SC.SIM_CODE;
       return e
     end
     local k = last(entry).varKind
-    local bindExp = k isa Union{SC.PARAMETER, SC.ARRAY_PARAMETER} ? k.bindExp : nothing
+    local bindExp = k isa SC.PARAMETER ? k.bindExp : nothing
     if bindExp === nothing || key in seen
       shouldEval[] = false
       return e
@@ -580,7 +580,7 @@ function isContinuousCondition(cond::SC.Exp, simCode::SC.SIM_CODE)::Bool
       continue
     end
     local v = last(ht[n])
-    continuous = continuous || (!SC.isDiscrete(v) && !SC.isParameter(v))
+    continuous = continuous || (!SC.isDiscrete(v) && !SC.isScalarParameter(v))
   end
   return continuous
 end
@@ -874,6 +874,14 @@ function collectCalledFunctionNames!(names::OrderedSet{String}, s::SC.ASSIGN)
 end
 collectCalledFunctionNames!(names::OrderedSet{String}, s::SC.REINIT) = collectCalledFunctionNames!(names, s.value)
 collectCalledFunctionNames!(names::OrderedSet{String}, s::SC.NORETCALL) = collectCalledFunctionNames!(names, s.exp)
+function collectCalledFunctionNames!(names::OrderedSet{String}, s::SC.IF)
+  for b in s.branches
+    collectCalledFunctionNames!(names, b.condition)
+    foreach(x -> collectCalledFunctionNames!(names, x), b.body)
+  end
+  foreach(x -> collectCalledFunctionNames!(names, x), s.elseBody)
+  return names
+end
 collectCalledFunctionNames!(names::OrderedSet{String}, ::Union{SC.Equation, SC.Statement}) = names
 
 function collectCalledFunctionNames!(names::OrderedSet{String}, simCode::SC.SIM_CODE)::OrderedSet{String}
@@ -895,13 +903,20 @@ end
 
 The names a when-clause's statement reads (the previous backend's order: the reverse of
 their first occurrence): an assignment's value, a reinit's value, a call's, an assert's
-condition, message and level, a terminate's message.
+condition, message and level, a terminate's message, an if-statement's conditions and statements.
 """
 getRHSVariables(s::SC.ASSIGN)::Vector{String} = SC.allCrefNames(s.right)
 getRHSVariables(s::SC.REINIT)::Vector{String} = SC.allCrefNames(s.value)
 getRHSVariables(s::SC.NORETCALL)::Vector{String} = SC.allCrefNames(s.exp)
 getRHSVariables(s::SC.ASSERT)::Vector{String} = vcat(SC.allCrefNames(s.condition), SC.allCrefNames(s.message), SC.allCrefNames(s.level))
 getRHSVariables(s::SC.TERMINATE)::Vector{String} = SC.allCrefNames(s.message)
+function getRHSVariables(s::SC.IF)::Vector{String}
+  local out::Vector{String} = String[n for b in s.branches for n in SC.allCrefNames(b.condition)]
+  for x in Iterators.flatten((Iterators.flatten(b.body for b in s.branches), s.elseBody))
+    append!(out, getRHSVariables(x))
+  end
+  return unique!(out)
+end
 getRHSVariables(::SC.Statement)::Vector{String} = String[]
 
 function _resolveModelicaCallTargets(expr)

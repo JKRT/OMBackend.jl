@@ -208,7 +208,7 @@ function _precompileWarmupArrayPath()::Nothing
   local AG = CodeGeneration.ArrayODEGen
   local p = AG.ArrayModelParameters(Float64[], Bool[], Float64[], Float64[], Bool[], Bool[], [false], [false], zeros(2),
                                     zeros(2), Bool[], Tuple{Float64, Vector{Float64}}[], Float64[], [0.0], [1.0], Float64[],
-                                    AG.BlockSolver[], OMBackend)
+                                    AG.BlockSolver[], AG.ArrayRuntimeState(0, String[]), OMBackend)
   local sys = AG.ArraySystem(Dict{Symbol, Int}(), Symbol[], Dict{Symbol, Tuple{Symbol, Int}}(), OMBackend)
   local jac = CodeGeneration.Symbolics.SparseArrays.sparse([1, 2], [1, 2], ones(2), 2, 2)
   #= the time gradient wrapped as the array code wraps it (one type for every array model) =#
@@ -244,7 +244,8 @@ function _precompileWarmupArraysKept()::Nothing
       local reduced::Union{Nothing, OMJLIR.Model} = reducedArrayModel(fm; functionList = functions)
       reduced === nothing && error("$(name) not lowered in array form: $(scalarizedFallbackReason(cn))")
       local (solved::OMJLIR.Model, _) = Passes.IndexReduction.solvedInArrays(reduced)
-      local code::Tuple = CodeGeneration.ArrayODEGen.generateArrayODECode(solved, cn; functions)
+      Passes.arrayCodeForm!(solved)
+      local code::Tuple = CodeGeneration.ArrayODEGen.generateArrayODECode(SimCode.lowerArraySystem(solved), cn)
       code[1] === nothing && error("$(name): no array code ($(code[2]))")
     finally
       delete!(ARRAY_PATH_REASONS, cn)

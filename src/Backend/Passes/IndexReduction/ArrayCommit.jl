@@ -653,7 +653,10 @@ function commitArrayPlan!(model::IR.Model, view::Scalarized, written::Plan)::Boo
   commitArrays!(model, model.continuous[1], c)
   #= the derivative unknowns solved for, as on the scalarized path (`reduceIndex!`): left algebraic unknowns, MSL
      R134a2's der(p) of its volumes jumped at the dew line and the steps fell to 1e-16 =#
-  local solved = envSwitch("OMBACKEND_SOLVE_DERIVATIVES") ? solveDerivatives!(model, model.continuous[1]) : Symbol[]
+  #= a coefficient of parameters stays an expression (the array code's parameters can be overridden: `c * der(x) = 1`
+     with c overridden kept c's translated value) =#
+  local solved = envSwitch("OMBACKEND_SOLVE_DERIVATIVES") ?
+    solveDerivatives!(model, model.continuous[1]; literalCoefficients = false) : Symbol[]
   local states = sort!([String(n) for (n, k) in c.kinds if k isa IR.STATE])
   local stateText = isempty(states) ? "" : ", states $(join(first(states, 8), ", "))"
   local setText = c.sets == 0 ? "" : ", $(c.sets) dynamic state set$(c.sets == 1 ? "" : "s")"

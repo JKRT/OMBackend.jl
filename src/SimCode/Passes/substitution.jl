@@ -154,8 +154,9 @@ end
 function substitute(s::REINIT, rs::Replacements)::Statement
   local r = get(rs, crefName(s.stateVar), nothing)
   local value = substitute(s.value, rs)
-  r === nothing && return REINIT(s.stateVar, value, s.source)
-  return REINIT(replacementCref(r), negatedIf(value, r.negated), s.source)
+  local subscripts = Exp[substitute(x, rs) for x in s.subscripts]
+  r === nothing && return REINIT(s.stateVar, value, s.source, subscripts)
+  return REINIT(replacementCref(r), negatedIf(value, r.negated), s.source, subscripts)
 end
 
 substitute(body::Vector{Statement}, rs::Replacements)::Vector{Statement} = Statement[substitute(s, rs) for s in body]

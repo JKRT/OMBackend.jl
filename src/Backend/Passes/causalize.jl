@@ -444,18 +444,21 @@ others): `if c then a else b` is the Real `ifEq_tmp<k>` with
 chain (an else-branch that is an if-expression with events) is one if-equation. Equal
 if-expressions share one variable (two zero-crossing callbacks of one condition in MTK leave
 the other's parameter pinned). Stays inline: an if-expression in `noEvent` or of a condition
-whose relations all are (no events, MLS 8.5); of a record value (the variable is a Real); in
+whose relations all are (no events, MLS 8.5); of a record value (the variable is a Real); with a call without a
+result in a branch (a hoisted call equation, an assert's condition: `isNoResultCall`); in
 the branches of a lifted one, one whose condition does not depend on time (a state-dependent
 condition crosses in both directions: its branches are evaluated as a continuous product); in a
 for-equation (arrays kept), one that reads its iterator (the array code reads it inline; the scalar
 path takes such a model from the frontend's scalarized flatten). The when-equations (their code
-generation evaluates them in place) and algorithms are left.
+generation evaluates them in place), the asserts (checked where they are, not in the right-hand side: a Boolean
+if-expression of a condition lifted as a Real variable was read as a Boolean) and algorithms are left.
 """
 function liftIfExpressions!(model::IR.Model)::IR.Model
   for (variables, p) in partitionsWithVariables(model)
     local lifter = IfExpressionLifter(variables, Dict{Any, IR.CREF}(), IR.Equation[], Ref(0))
     for eq in p.equations
       (eq isa IR.WHEN_EQUATION && eq.kind !== IR.STRUCTURAL_WHEN) && continue
+      eq isa IR.ASSERT_EQUATION && continue
       #= for-equations come here only with the arrays kept: an if-expression that reads the iterator stays inline
          (lifted, its if-equation would read the iterator outside its loop: MSL RobotR3.oneAxis's
          `moving[i] = if abs(q_end[i] - q_begin[i]) > eps then ...`, a free `i` in the generated code); the array
@@ -489,6 +492,12 @@ function ifReadsIterator(eq::IR.FOR_EQUATION, scope::Set{Symbol} = Set{Symbol}()
   return false
 end
 
+"""
+A call without a result (`hoistIfEquationAsserts!`'s call equation under its branch's condition, `if c then f() else
+true`, an assert's condition): a statement, not a value a Real variable could take.
+"""
+isNoResultCall(e::IR.Expression)::Bool = e isa IR.CALL && e.ty isa IR.T_NORETCALL
+
 "The state of the lifting in a partition: the lifted if-expressions' variables (by shape), their equations, the next number."
 struct IfExpressionLifter
   variables::IR.VariableSet
@@ -507,7 +516,7 @@ function lift(lifter::IfExpressionLifter, e::IR.Expression, timeDependentOnly::B
   e isa IR.IF_EXPRESSION || return IR.mapChildren(x -> lift(lifter, x, timeDependentOnly), e)
   local inner = x -> lift(lifter, x, true)
   if (timeDependentOnly && !dependsOnTime(e.condition)) || relationsAllInNoEvent(e.condition) ||
-     isRecordValued(e.thenExp) || isRecordValued(e.elseExp)
+     isRecordValued(e.thenExp) || isRecordValued(e.elseExp) || isNoResultCall(e.thenExp) || isNoResultCall(e.elseExp)
     return IR.IF_EXPRESSION(inner(e.condition), inner(e.thenExp), inner(e.elseExp), e.ty)
   end
   local conditions = IR.Expression[inner(e.condition)]
@@ -865,7 +874,7 @@ function unrollAt(e::IR.Expression)::IR.Expression
   if e isa IR.CALL && e.attributes.builtin && e.name in FOLDED_REDUCERS && length(e.arguments) == 1
     local arg = e.arguments[1]
     local elements = arg isa IR.ARRAY_CONSTRUCTOR ? reductionElements(arg.body, arg.iterators) :
-                     arg isa IR.ARRAY ? copy(arg.elements) : nothing
+                     arg isa IR.ARRAY ? literalElements!(IR.Expression[], arg) : nothing
     elements === nothing && return e
     return something(foldReduction(e.name, elements, e.ty, e.attributes), e)
   elseif e isa IR.REDUCTION && e.reducer in FOLDED_REDUCERS
@@ -899,6 +908,31 @@ function reductionElements(body::IR.Expression, iterators::Vector{IR.Iterator}):
   values === nothing && return nothing
   local name = iterators[1].name
   return IR.Expression[substituteIterators(body, Dict(name => k)) for k in values]
+end
+
+"""
+The elements of an array literal, of its nested literals and of its array variables of known sizes in turn
+(`max({{v[1], v[2]}, {w[1], w[2]}})`, `max({v, w})` with the arrays kept, reduce over the four: folded over the two
+rows it was `max` of two arrays).
+"""
+function literalElements!(out::Vector{IR.Expression}, e::IR.ARRAY)::Vector{IR.Expression}
+  for x in e.elements
+    x isa IR.ARRAY ? literalElements!(out, x) : arrayElements!(out, x)
+  end
+  return out
+end
+
+"The elements of `x`, row-major, where it is a reference to an array of known sizes (`v` of Real[2]: `v[1]`, `v[2]`); else `x`."
+function arrayElements!(out::Vector{IR.Expression}, x::IR.Expression)::Vector{IR.Expression}
+  local ty::IR.ModelicaType = IR.typeOf(x)
+  (x isa IR.CREF && ty isa IR.T_ARRAY) || return push!(out, x)
+  local n::Union{Nothing, Int} = IR.dimensionSize(first(ty.dimensions))
+  n === nothing && return push!(out, x)
+  local inner::IR.ModelicaType = length(ty.dimensions) == 1 ? ty.elementType : IR.T_ARRAY(ty.elementType, ty.dimensions[2:end])
+  for k in 1:n
+    arrayElements!(out, IR.CREF(IR.appendSubscripts(x.cref, IR.Subscript[IR.INDEX(IR.INTEGER(k))]), inner))
+  end
+  return out
 end
 
 """

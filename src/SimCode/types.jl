@@ -326,7 +326,12 @@ struct ASUB <: Exp
   subs::Vector{Exp}
 end
 
-"Output `index` of the tuple `exp`."
+"""
+    TSUB(exp, index, ty)
+
+Element `index` of the tuple a call `exp` returns: its position in the function's result as generated, a record
+output's fields in place (`Passes.tupleAssignElements`: `(r, q) := f(x)` assigns `r.a`, `r.b`, `q` elements 1, 2, 3).
+"""
 struct TSUB <: Exp
   exp::Exp
   index::Int
@@ -466,12 +471,21 @@ struct TERMINATE <: Statement
   source::Source
 end
 
-"`reinit(stateVar, value)`."
+"""
+    REINIT(stateVar, value, source, subscripts)
+
+`reinit(stateVar, value)`; of an element of an array state of a model with its arrays kept (`lowerArraySystem`) the
+state variable and the element's subscripts (an iterator's, `x[i]`), none otherwise.
+"""
 struct REINIT <: Statement
   stateVar::SimCref
   value::Exp
   source::Source
+  subscripts::Vector{Exp}
 end
+
+"`reinit(stateVar, value)` of a state, no subscripts."
+REINIT(stateVar::SimCref, value::Exp, source::Source) = REINIT(stateVar, value, source, Exp[])
 
 "A call without outputs as a statement."
 struct NORETCALL <: Statement
@@ -507,15 +521,22 @@ end
 #= ==================================================================================== =#
 
 """
-    EQ_ATTR(differentiated, alsoInitial)
+    EQ_ATTR(differentiated, alsoInitial, everyEvent = false)
 
 `differentiated`: the equation is the derivative of another (index reduction). `alsoInitial`:
-a when-equation's runtime arm whose condition had `initial()` too.
+a when-equation's runtime arm whose condition had `initial()` too. `everyEvent`: a when-equation
+of discrete equations (a lifted cluster, OMJLIR's `EQ_DISCRETE`) that the array code runs
+where it runs the discrete equations in event mode, at every pass of every event and of the
+start's iteration, its conditions the events' sources (OpenModelica's discrete equations: held
+between events, pre() the initial values after the initialization).
 """
 struct EQ_ATTR <: Node
   differentiated::Bool
   alsoInitial::Bool
+  everyEvent::Bool
 end
+
+EQ_ATTR(differentiated::Bool, alsoInitial::Bool) = EQ_ATTR(differentiated, alsoInitial, false)
 
 const EQ_ATTR_DEFAULT = EQ_ATTR(false, false)
 
@@ -542,6 +563,19 @@ struct ARRAY_EQUATION <: Equation
   dimSize::Vector{Int}
   left::Exp
   right::Exp
+  source::Source
+  attr::EQ_ATTR
+end
+
+"""
+    FOR_EQUATION(iterator, body, source, attr)
+
+`for iterator loop body end for`: the equations of `body` for each value of the iterator's range, which they read
+as an `EXP_CREF` of its name (of no IR reference); a model with its arrays kept (`SIM_CODE.arrayEquations`).
+"""
+struct FOR_EQUATION <: Equation
+  iterator::Iterator
+  body::Vector{Equation}
   source::Source
   attr::EQ_ATTR
 end
@@ -593,6 +627,19 @@ struct INLINE_IF_EQUATION <: Equation
   attr::EQ_ATTR
 end
 
+"""
+    UNLOWERED_EQUATION(what, construct, source)
+
+An equation of a branch of an if-equation the lowering of a model with its arrays kept (`lowerArraySystem`) could not
+express (UnsupportedLowering: what, and the construct's text): the branch may never be taken (a parameter's condition),
+so the code generators refuse it only where they reach it, with the reason.
+"""
+struct UNLOWERED_EQUATION <: Equation
+  what::String
+  construct::String
+  source::Source
+end
+
 "`assert(condition, message, level)` outside a when-clause: checked after each step."
 struct ASSERT_EQUATION <: Equation
   condition::Exp
@@ -637,32 +684,31 @@ struct DATA_STRUCTURE <: SimVarType
   bindExp::Union{Nothing, Exp}
 end
 
-"An array variable kept as an array: its dimensions and binding."
-struct ARRAY <: SimVarType
-  dimensions::Vector{Int}
-  bindExp::Union{Nothing, Exp}
-end
+"""
+    PARAMETER(bindExp, value = nothing)
 
-"A parameter, with its binding."
+A parameter (an array parameter, `SIMVAR.dims`, too), with its binding and its value where the lowering evaluated it (a
+model with its arrays kept: `lowerArraySystem`, by OMJLIR's Evaluation; a constant, an array one an array literal);
+`nothing` otherwise, and once its binding changes (`withBinding`).
+"""
 struct PARAMETER <: SimVarType
   bindExp::Union{Nothing, Exp}
+  value::Union{Nothing, Exp}
 end
 
-"An array parameter: its dimensions and binding."
-struct ARRAY_PARAMETER <: SimVarType
-  dimensions::Vector{Int}
-  bindExp::Union{Nothing, Exp}
-end
+PARAMETER(bindExp::Union{Nothing, Exp}) = PARAMETER(bindExp, nothing)
 
 "A discrete-time variable."
 struct DISCRETE <: SimVarType end
 
 """
     SimVarAttributes(start, fixed, nominal, min, max, unit, displayUnit, quantity, stateSelect,
-                     isProtected)
+                     isProtected, startExps = nothing)
 
 A variable's built-in attributes the code generators read: an expression for each one given,
-`nothing` for one not; `isProtected` for a protected variable.
+`nothing` for one not; `isProtected` for a protected variable. `startExps`: the start of each
+element (row-major) as written, where one reads a parameter (the array code's `start` is the
+evaluated constants; it computes these again from overridden parameters); `nothing` otherwise.
 """
 struct SimVarAttributes <: Node
   start::Union{Nothing, Exp}
@@ -675,18 +721,24 @@ struct SimVarAttributes <: Node
   quantity::Union{Nothing, Exp}
   stateSelect::Union{Nothing, Symbol}
   isProtected::Bool
+  startExps::Union{Nothing, Vector{Exp}}
 end
+
+SimVarAttributes(start, fixed, nominal, min, max, unit, displayUnit, quantity, stateSelect, isProtected::Bool) =
+  SimVarAttributes(start, fixed, nominal, min, max, unit, displayUnit, quantity, stateSelect, isProtected, nothing)
 
 const NO_ATTRIBUTES = SimVarAttributes(nothing, nothing, nothing, nothing, nothing, nothing, nothing,
                                        nothing, nothing, false)
 
 """
-    SIMVAR(name, index, varKind, attributes, elementType, irKind = nothing, irOrigin = nothing, cref = nothing)
+    SIMVAR(name, index, varKind, attributes, elementType, dims, irKind, irOrigin, ref)
+    SIMVAR(name, index, varKind, attributes, elementType)
 
 A simulation variable: its name, index (1-based, per category; `nothing` before indexing),
 category, attributes, the type of its scalars (of an array variable, of its elements):
-what the code generators read to declare an Integer, Boolean or enumeration variable, and
-its kind in OMJLIR (`IR.VariableKind`: a state, a state's derivative as an algebraic
+what the code generators read to declare an Integer, Boolean or enumeration variable; its
+dimensions (an array variable's sizes, outermost first; none for a scalar): its shape, apart
+from its category (an array state is a `STATE`, an array parameter a `PARAMETER`); its kind in OMJLIR (`IR.VariableKind`: a state, a state's derivative as an algebraic
 unknown, index reduction's dummy derivative or dummy state, ...), the variables it names
 by their simulation names (`simKind`), its origin there (`:model` for one of the flat
 model, else the pass that introduced it) and its reference there (`ref`: its parts, from which its
@@ -699,13 +751,15 @@ struct SIMVAR <: Node
   varKind::SimVarType
   attributes::SimVarAttributes
   elementType::SType
+  dims::Vector{Int}
   irKind::Union{Nothing, IR.VariableKind}
   irOrigin::Union{Nothing, Symbol}
   ref::Union{Nothing, IR.ComponentRef}
 end
 
+"A scalar variable of no IR kind, origin and reference: tests."
 SIMVAR(name::String, index::Union{Nothing, Int}, varKind::SimVarType, attributes::SimVarAttributes, elementType::SType) =
-  SIMVAR(name, index, varKind, attributes, elementType, nothing, nothing, nothing)
+  SIMVAR(name, index, varKind, attributes, elementType, Int[], nothing, nothing, nothing)
 
 #= ==================================================================================== =#
 #= Functions and initial algorithms                                                     =#
@@ -871,8 +925,8 @@ struct AliasEntry
 end
 
 """
-    ReferenceIndex(references, keyByReference, arrayOf, codeNames)
-    ReferenceIndex(ht, order, modelName)
+    ReferenceIndex(references, keyByReference, arrayOf, codeNames, elementNames)
+    ReferenceIndex(ht, order, modelName; elementNames)
 
 The simulation code's variables by their IR references and the names derived from them, built together from the
 variables' references once at lowering (`ReferenceIndex(ht, order, modelName)`) and renamed together (`codeView`):
@@ -889,6 +943,8 @@ struct ReferenceIndex
   keyByReference::Dict{Symbol, String}
   arrayOf::Dict{String, Symbol}
   codeNames::Dict{String, String}
+  "An array variable's element names (row-major), by its key: a model with its arrays kept (`lowerArraySystem`)."
+  elementNames::Dict{String, Vector{String}}
 end
 
 """
@@ -933,6 +989,15 @@ struct SIM_CODE
   passes match user-given names against them.
   """
   referenceIndex::ReferenceIndex
+  """
+  The equations of a model lowered with its arrays kept (`lowerArraySystem`), in their order: scalar ones as written
+  (`EQUATION`, a tuple's too), for-equations (`FOR_EQUATION`), if-equations (`INLINE_IF_EQUATION`), asserts, when-
+  equations (`WHEN_EQUATION`, the initial ones `INITIAL_WHEN_EQUATION`). Empty for a scalar model, whose equations
+  are in the fields above; no pass of the scalar model's reads them.
+  """
+  arrayEquations::Vector{Equation}
+  "The initial equations of a model lowered with its arrays kept, in their order (as `arrayEquations`)."
+  arrayInitialEquations::Vector{Equation}
 end
 
 """

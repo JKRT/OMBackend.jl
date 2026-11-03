@@ -245,7 +245,7 @@ function eliminateOutputOnlyVariables(simCode::SIM_CODE, options::EliminationOpt
   for i in 1:length(residuals)
     (i in essential || !haskey(variableOf, i)) && continue
     local name = variableOf[i]
-    (haskey(ht, name) && last(ht[name]).varKind isa Union{ALG_VARIABLE, ARRAY}) || continue
+    (haskey(ht, name) && last(ht[name]).varKind isa ALG_VARIABLE) || continue
     #= the patterns are the user's, on the identifiers (`codeName`) =#
     local id::String = codeName(simCode, name)
     (options.reachability || any(p -> occursin(p, id), options.patterns)) || continue

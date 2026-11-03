@@ -40,22 +40,81 @@ isState(v::SIMVAR)::Bool = v.varKind isa STATE
 isAlgebraic(v::SIMVAR)::Bool = v.varKind isa ALG_VARIABLE
 isStateOrAlgebraic(v::SIMVAR)::Bool = isAlgebraic(v) || isState(v)
 isDiscrete(v::SIMVAR)::Bool = v.varKind isa DISCRETE
+"The value type of a type's elements (an array's): `:real`, `:int` (Integer, enumerations), `:bool`, or `:other`."
+function valueType(ty::SType)::Symbol
+  local el::SType = ty isa TYPE_ARRAY ? ty.elementType : ty
+  el isa TYPE_REAL && return :real
+  el isa Union{TYPE_INTEGER, TYPE_ENUM} && return :int
+  el isa TYPE_BOOL && return :bool
+  return :other
+end
+
+"An array variable: of dimensions (`SIMVAR.dims`)."
+isArray(v::SIMVAR)::Bool = !isempty(v.dims)
+"A parameter, a scalar or an array."
 isParameter(v::SIMVAR)::Bool = v.varKind isa PARAMETER
-"A parameter with a binding."
-hasBindingExp(v::SIMVAR)::Bool = v.varKind isa PARAMETER && v.varKind.bindExp !== nothing
+"A scalar parameter."
+isScalarParameter(v::SIMVAR)::Bool = v.varKind isa PARAMETER && !isArray(v)
+"An array parameter."
+isArrayParameter(v::SIMVAR)::Bool = v.varKind isa PARAMETER && isArray(v)
+"An algebraic array variable."
+isArrayAlgebraic(v::SIMVAR)::Bool = v.varKind isa ALG_VARIABLE && isArray(v)
+"A scalar parameter with a binding."
+hasBindingExp(v::SIMVAR)::Bool = isScalarParameter(v) && v.varKind.bindExp !== nothing
 
-"An unknown: a state, a state derivative, an algebraic, an array or a discrete variable (not a parameter or a constant)."
-isUnknownVarKind(k::SimVarType)::Bool = k isa Union{STATE, STATE_DERIVATIVE, ALG_VARIABLE, ARRAY, DISCRETE}
+"""
+    outputPosition(ty, k) -> Int
 
-"The binding of a variable category that has one (a parameter's, a data structure's, an array's, a String's)."
+The position of output `k` of a call of the tuple type `ty` in the function's result as generated (`TSUB`'s index): a
+record output before it is its fields (a generated function returns them in place); `k` for another type. For a tuple of
+one target per output (the array route's tuple equations, `Domains._tupleAssignments`); the scalar route's tuples have
+a record target's fields in place already (`expandRecordArguments`) and number their targets by position.
+"""
+outputPosition(ty::SType, k::Int)::Int =
+  ty isa TYPE_TUPLE ? 1 + sum((t isa TYPE_COMPLEX && t.isRecord ? length(t.fieldNames) : 1 for t in ty.types[1:k - 1]); init = 0) : k
+
+"""
+    irCategory(v) -> Symbol
+
+What `v` is by the kind it was lowered from (`SIMVAR.irKind`), as a model with its arrays kept lays its variables out
+(`Domains.domainSystem`): `:known` (a parameter or a constant), `:state`, `:discrete`, `:algebraic`, `:derivative` (an
+algebraic variable's derivative, index reduction's dummy derivative), `:dummyState` (index reduction's), `:none` for
+another kind or none.
+"""
+function irCategory(v::SIMVAR)::Symbol
+  local k::Union{Nothing, IR.VariableKind} = v.irKind
+  k isa Union{IR.PARAMETER, IR.CONSTANT} && return :known
+  k isa IR.STATE && return :state
+  k isa IR.DISCRETE && return :discrete
+  k isa IR.ALGEBRAIC && return :algebraic
+  k isa Union{IR.ALGEBRAIC_DER, IR.DUMMY_DER} && return :derivative
+  k isa IR.DUMMY_STATE && return :dummyState
+  return :none
+end
+
+"The name of the kind `v` was lowered from (`SIMVAR.irKind`), `none` for none: a message's."
+irKindName(v::SIMVAR)::String = v.irKind === nothing ? "none" : String(nameof(typeof(v.irKind)))
+
+"""
+    isOwnArray(v) -> Bool
+
+Whether `v` is an array state or algebraic variable of the model's own: not a member of a component array the index
+reduction rolled (`IR.isRolled` on a part of its reference).
+"""
+isOwnArray(v::SIMVAR)::Bool =
+  isArray(v) && v.irKind isa Union{IR.STATE, IR.ALGEBRAIC, IR.ALGEBRAIC_DER} && v.ref !== nothing &&
+  !any((p::IR.CrefPart) -> IR.isRolled(p.ty), v.ref.parts)
+
+"An unknown: a state, a state derivative, an algebraic or a discrete variable, a scalar or an array (not a parameter or a constant)."
+isUnknownVarKind(k::SimVarType)::Bool = k isa Union{STATE, STATE_DERIVATIVE, ALG_VARIABLE, DISCRETE}
+
+"The binding of a variable category that has one (a parameter's, a data structure's, a String's)."
 bindingOf(k::SimVarType)::Union{Nothing, Exp} = hasproperty(k, :bindExp) ? k.bindExp : nothing
 
 "A variable category with its binding replaced by `b` (of one that has a binding)."
 withBinding(k::PARAMETER, b::Union{Nothing, Exp})::SimVarType = PARAMETER(b)
 withBinding(k::DATA_STRUCTURE, b::Union{Nothing, Exp})::SimVarType = DATA_STRUCTURE(b)
 withBinding(k::STRING, b::Union{Nothing, Exp})::SimVarType = STRING(b)
-withBinding(k::ARRAY, b::Union{Nothing, Exp})::SimVarType = ARRAY(k.dimensions, b)
-withBinding(k::ARRAY_PARAMETER, b::Union{Nothing, Exp})::SimVarType = ARRAY_PARAMETER(k.dimensions, b)
 withBinding(k::SimVarType, ::Union{Nothing, Exp})::SimVarType = k
 
 "The keys of the states' derivative entries by the states' keys (`STATE_DERIVATIVE`, `createIndices`)."
@@ -63,16 +122,16 @@ derivativeKeys(ht::HT)::Dict{String, String} =
   Dict{String, String}(v.varKind.varName => k for (k, (_, v)) in ht if v.varKind isa STATE_DERIVATIVE)
 
 "A variable with another category."
-withKind(v::SIMVAR, k::SimVarType)::SIMVAR = SIMVAR(v.name, v.index, k, v.attributes, v.elementType, v.irKind, v.irOrigin, v.ref)
+withKind(v::SIMVAR, k::SimVarType)::SIMVAR = SIMVAR(v.name, v.index, k, v.attributes, v.elementType, v.dims, v.irKind, v.irOrigin, v.ref)
 "A variable with the index `index` (and the category `k`)."
 withIndex(v::SIMVAR, index::Int, k::SimVarType = v.varKind)::SIMVAR =
-  SIMVAR(v.name, index, k, v.attributes, v.elementType, v.irKind, v.irOrigin, v.ref)
+  SIMVAR(v.name, index, k, v.attributes, v.elementType, v.dims, v.irKind, v.irOrigin, v.ref)
 "A variable with the IR reference `cref`."
 withCref(v::SIMVAR, cref::Union{Nothing, IR.ComponentRef})::SIMVAR =
-  SIMVAR(v.name, v.index, v.varKind, v.attributes, v.elementType, v.irKind, v.irOrigin, cref)
+  SIMVAR(v.name, v.index, v.varKind, v.attributes, v.elementType, v.dims, v.irKind, v.irOrigin, cref)
 "A variable with the attributes `a`."
 withAttributes(v::SIMVAR, a::SimVarAttributes)::SIMVAR =
-  SIMVAR(v.name, v.index, v.varKind, a, v.elementType, v.irKind, v.irOrigin, v.ref)
+  SIMVAR(v.name, v.index, v.varKind, a, v.elementType, v.dims, v.irKind, v.irOrigin, v.ref)
 
 hasStructuralTransitions(sc::SIM_CODE)::Bool = !isempty(sc.structuralTransitions)
 hasSubModels(sc::SIM_CODE)::Bool = !isempty(sc.subModels)

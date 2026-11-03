@@ -52,7 +52,8 @@ function renamed(rn::Renaming, ri::ReferenceIndex)::ReferenceIndex
   return ReferenceIndex(Dict{String, IR.ComponentRef}(name(k) => r for (k, r) in ri.references),
                         Dict{Symbol, String}(r => name(k) for (r, k) in ri.keyByReference),
                         Dict{String, Symbol}(name(k) => a for (k, a) in ri.arrayOf),
-                        Dict{String, String}(id => id for id in values(ri.codeNames)))
+                        Dict{String, String}(id => id for id in values(ri.codeNames)),
+                        Dict{String, Vector{String}}(name(k) => n for (k, n) in ri.elementNames))
 end
 
 """
@@ -77,7 +78,8 @@ _renamedNode(::Renaming, e::Exp)::Exp = e
 
 "A statement with its expressions, nested statements and targets (`reinit`'s, the structural changes') renamed."
 renamed(rn::Renaming, s::Statement)::Statement = first(traverseFields(s, rn, nothing))
-renamed(rn::Renaming, s::REINIT)::Statement = REINIT(renamed(rn, s.stateVar), renamed(rn, s.value), s.source)
+renamed(rn::Renaming, s::REINIT)::Statement =
+  REINIT(renamed(rn, s.stateVar), renamed(rn, s.value), s.source, Exp[renamed(rn, x) for x in s.subscripts])
 renamed(rn::Renaming, s::RECOMPILATION)::Statement = RECOMPILATION(renamed(rn, s.componentToChange), renamed(rn, s.newValue))
 renamed(rn::Renaming, s::AGENTIC_RECOMPILATION)::Statement =
   AGENTIC_RECOMPILATION(SimCref[renamed(rn, c) for c in s.componentsToChange], s.prompt, s.initialEquations)
@@ -95,7 +97,7 @@ function renamed(rn::Renaming, v::SIMVAR)::SIMVAR
   local attributes::SimVarAttributes = SimVarAttributes(e(a.start), e(a.fixed), e(a.nominal), e(a.min), e(a.max), e(a.unit),
                                                         e(a.displayUnit), e(a.quantity), a.stateSelect, a.isProtected)
   local irKind::Union{Nothing, IR.VariableKind} = v.irKind === nothing ? nothing : IR.mapKindNames((x::Symbol) -> Symbol(name(String(x))), v.irKind)
-  return SIMVAR(name(v.name), v.index, renamedKind(rn, v.varKind), attributes, v.elementType, irKind, v.irOrigin, v.ref)
+  return SIMVAR(name(v.name), v.index, renamedKind(rn, v.varKind), attributes, v.elementType, v.dims, irKind, v.irOrigin, v.ref)
 end
 
 "A variable's category with the names and expressions it holds renamed."

@@ -142,7 +142,7 @@ function _readsUnboundParameter(ieq::SC.Equation, simCode::SC.SIM_CODE)::Bool
   return any(equationSides(ieq)) do side
     any(SC.allCrefNames(side)) do c
       local entry = get(ht, c, nothing)
-      entry !== nothing && SC.isParameter(last(entry)) && !SC.hasBindingExp(last(entry))
+      entry !== nothing && SC.isScalarParameter(last(entry)) && !SC.hasBindingExp(last(entry))
     end
   end
 end
@@ -410,7 +410,7 @@ function _lateSections(simCode::SC.SIM_CODE)::Vector{SC.INITIAL_ALGORITHM}
     local determined = name -> begin
       (name == "time" || name in lhs || !haskey(ht, name)) && return false
       local sv = last(ht[name])
-      return !(sv.varKind isa Union{SC.PARAMETER, SC.ARRAY_PARAMETER, SC.STRING, SC.DATA_STRUCTURE}) && !_isFixedStart(sv)
+      return !(sv.varKind isa Union{SC.PARAMETER, SC.STRING, SC.DATA_STRUCTURE}) && !_isFixedStart(sv)
     end
     any(determined, rhs) && push!(late, ia)
   end
@@ -539,8 +539,8 @@ function _initAlgTargets(lhsNames, simCode::SC.SIM_CODE, iterators::Set{String} 
     end
     for (el, k) in elems
       local sv = last(ht[el])
-      parameters || !(sv.varKind isa Union{SC.PARAMETER, SC.ARRAY_PARAMETER}) || continue
-      sv.varKind isa SC.ARRAY_PARAMETER && OMBackend.unsupported("an initial algorithm assigning an array parameter", name)
+      parameters || !(sv.varKind isa SC.PARAMETER) || continue
+      SC.isArrayParameter(sv) && OMBackend.unsupported("an initial algorithm assigning an array parameter", name)
       push!(out, (name, el, k))
     end
   end
@@ -655,7 +655,8 @@ Symbolics bindings are needed at the initialization; initial() true and pre(v) v
 
 An assignment to a parameter and a reinit write `LATEST_PROBLEM`; an assignment to another
 variable is collected in `_hard`, which simulate turns into hard start values of the
-unknowns (`remake(prob; u0 = …)`). The function runs after the ODEProblem is constructed
+unknowns (`remake(prob; u0 = …)`). A `terminate()` (under its if-statement's condition) ends the solve at its start
+(`__TERMINATE_AT_START`, simulateFromBuild). The function runs after the ODEProblem is constructed
 (`simulate(...)` in the generated module), so LATEST_PROBLEM is in scope. Without this, the
 left side stayed at its default (0): `T_start := startTime + count*period` in the trapezoid
 signal source was dropped, breaking every model that relies on `initial algorithm` to seed
@@ -674,7 +675,7 @@ function _initialWhenOpToJulia(wStmt::SC.Statement, simCode::SC.SIM_CODE, rename
     name === nothing && return :($(lowerAlg(wStmt.right)); nothing)
     local sym = Symbol(name)
     local entry = get(simCode.stringToSimVarHT, name, nothing)
-    if entry !== nothing && last(entry).varKind isa Union{SC.PARAMETER, SC.ARRAY_PARAMETER}
+    if entry !== nothing && last(entry).varKind isa SC.PARAMETER
       return :($(sym) = $(lowerAlg(wStmt.right)); LATEST_PROBLEM.ps[$(QuoteNode(sym))] = $(sym); nothing)
     end
     return :($(sym) = $(lowerAlg(wStmt.right));
@@ -695,7 +696,15 @@ function _initialWhenOpToJulia(wStmt::SC.Statement, simCode::SC.SIM_CODE, rename
       :(throw(OMBackend.CodeGeneration.ModelicaAssertionError(LATEST_PROBLEM.tspan[1], string($(msg)), $(string(wStmt.condition)))))
     return :(if !($cond); $(violated); end; nothing)
   elseif wStmt isa SC.TERMINATE
-    return :(@info "Modelica terminate() during init" message=$(lowerAlg(wStmt.message)))
+    #= the solve ends at its start (simulateFromBuild), as OpenModelica's at the initialization =#
+    return :(__TERMINATE_AT_START[] === nothing && (__TERMINATE_AT_START[] = string($(lowerAlg(wStmt.message)))); nothing)
+  elseif wStmt isa SC.IF
+    local chain::Expr = Expr(:block, Expr[_initialWhenOpToJulia(x, simCode, renamedNames) for x in wStmt.elseBody]..., :nothing)
+    for b in Iterators.reverse(wStmt.branches)
+      local holds::Expr = :(let _c = $(lowerAlg(b.condition)); _c isa Bool ? _c : _c != 0 end)
+      chain = Expr(:if, holds, Expr(:block, Expr[_initialWhenOpToJulia(x, simCode, renamedNames) for x in b.body]..., :nothing), chain)
+    end
+    return chain
   end
   unsupported("initial when-statement variant", wStmt)
 end
@@ -815,14 +824,14 @@ function generateInitialAlgorithmEarlyFunction(simCode::SC.SIM_CODE)::Expr
       continue
     end
     local sv = last(ht[name])
-    if sv.varKind isa Union{SC.PARAMETER, SC.ARRAY_PARAMETER}
-      local paramLit = sv.varKind isa SC.PARAMETER && sv.varKind.bindExp !== nothing ?
+    if sv.varKind isa SC.PARAMETER
+      local paramLit = SC.hasBindingExp(sv) ?
         _foldParameterBindStatic(sv.varKind.bindExp, simCode) : nothing
       if paramLit === nothing
         #= A parameter the initialization computes (fixed = false, no binding): the section's
            results were dropped with the expected UndefVarError below (`s := k + 1`, k = x: s =
            0, OpenModelica 4). =#
-        inSection && sv.varKind isa SC.PARAMETER && !SC.hasBindingExp(sv) &&
+        inSection && SC.isScalarParameter(sv) && !SC.hasBindingExp(sv) &&
           OMBackend.unsupported("an initial algorithm reading a parameter the initialization computes", name)
         #= No static value (an array parameter, a binding that does not fold): no local, so a
            statement that reads it throws an UndefVarError, which the body's catch expects
@@ -922,6 +931,14 @@ function _collectBoolRhsCrefs!(names::OrderedSet{String}, op::SC.Statement)::Ord
   return names
 end
 
+"Whether the runtime initial algorithm (`generateInitialAlgorithmFunction`) has a `terminate()`."
+_initialTerminates(simCode::SC.SIM_CODE)::Bool =
+  any(ia -> (!ia.section || ia in _lateSections(simCode)) && any(_hasTerminate, ia.statements), simCode.initialAlgorithms)
+
+_hasTerminate(s::SC.Statement)::Bool =
+  s isa SC.TERMINATE ||
+  (s isa SC.IF && any(_hasTerminate, Iterators.flatten((Iterators.flatten(b.body for b in s.branches), s.elseBody))))
+
 """
     generateInitialAlgorithmFunction(simCode) -> Expr
 
@@ -929,7 +946,8 @@ Emit a `function __runInitialAlgorithm!(t0 = 0.0) ... end` whose body executes o
 the initialization: the initial arms of the when-equations (not the sections: the early pass
 emits control-flow-correct `initialization_eqs` for their left sides; but those of `_lateSections`). Parameter literals are
 in the bodies already (the SimCode lowering inlines them), so no module-scope parameter
-bindings are needed here. A no-op stub when the model has none.
+bindings are needed here. A no-op stub when the model has none. `__TERMINATE_AT_START` holds the message of a
+`terminate()` it reached (`_initialTerminates`).
 """
 function generateInitialAlgorithmFunction(simCode::SC.SIM_CODE)::Expr
   local noRuntimePass = quote
@@ -943,9 +961,16 @@ function generateInitialAlgorithmFunction(simCode::SC.SIM_CODE)::Expr
   local lhsNames = OrderedSet{String}()
   local rhsNames = OrderedSet{String}()
   local boolNames = OrderedSet{String}()
-  for ia in whenAlgorithms, op in ia.statements
-    _collectInitAlgNames!(lhsNames, rhsNames, op)
-    _collectBoolRhsCrefs!(boolNames, op)
+  #= the targets an arm reads itself (`n := n + 1`, a swap's temporaries) =#
+  local selfRead = OrderedSet{String}()
+  for ia in whenAlgorithms
+    local (armLhs, armRhs) = (OrderedSet{String}(), OrderedSet{String}())
+    _collectInitAlgNames!(armLhs, armRhs, ia)
+    union!(selfRead, intersect(armLhs, armRhs))
+    for op in ia.statements
+      _collectInitAlgNames!(lhsNames, rhsNames, op)
+      _collectBoolRhsCrefs!(boolNames, op)
+    end
   end
   local renamedNames = union(lhsNames, rhsNames)
   push!(renamedNames, "time")
@@ -963,11 +988,23 @@ function generateInitialAlgorithmFunction(simCode::SC.SIM_CODE)::Expr
     name == "time" && continue
     if haskey(ht, name)
       local sv = last(ht[name])
-      if sv.varKind isa Union{SC.PARAMETER, SC.ARRAY_PARAMETER}
+      if name in selfRead && !(sv.varKind isa Union{SC.PARAMETER, SC.DATA_STRUCTURE, SC.STRING}) &&
+         sv.attributes.start isa Union{Nothing, SC.RCONST, SC.ICONST, SC.BCONST}
+        #= a target an arm reads itself reads its pre() value, at the initialization its start (MLS 11.1.2): the
+           problem holds the early pass's results already (`when {initial(), sample(...)} then n := n + 1` gave 2);
+           a start that is no literal, the problem's value as before. Another arm's target read here is the
+           initialization's value (OnDelay's `delaySignal := u` of u's own arm read u's start, false) =#
+        local start::Float64 = _readStartAttributeAsLiteral(sv)
+        local initialValue::Any = sv.elementType isa SC.TYPE_INTEGER ? Int(round(start)) :
+          sv.elementType isa SC.TYPE_BOOL ? start != 0 : sv.elementType isa SC.TYPE_ENUM ? max(1, Int(round(start))) : start
+        push!(fetches, Expr(:local, Expr(:(=), Symbol(name), initialValue)))
+        continue
+      end
+      if sv.varKind isa SC.PARAMETER
         #= A parameter without a binding (fixed = false, set by the initialization: MSL 4
            DCPowerSupply's vLim from its initial algorithm) is no module global: its value is the
            problem's. =#
-        if sv.varKind isa SC.PARAMETER && sv.varKind.bindExp === nothing
+        if SC.isScalarParameter(sv) && sv.varKind.bindExp === nothing
           local psym = Symbol(name)
           push!(fetches, quote
             local $(psym)
@@ -1030,7 +1067,7 @@ function generateInitialAlgorithmFunction(simCode::SC.SIM_CODE)::Expr
      for each assignment to a non-parameter variable: simulate() passes it to `remake(prob;
      u0=…, initializealg=NoInit())` so MTK treats the values as hard initial conditions
      (Modelica §11.2), not guesses. =#
-  return quote
+  local fn::Expr = quote
     function __runInitialAlgorithm!(t0::Float64 = 0.0)
       local _hard = Dict{Any, Any}()
       local _unfetched = Symbol[]
@@ -1046,5 +1083,13 @@ function generateInitialAlgorithmFunction(simCode::SC.SIM_CODE)::Expr
       end
       return _hard
     end
+  end
+  _initialTerminates(simCode) || return fn
+  #= the message of a terminate() the initial algorithm reached (the solve ends at its start), cleared as it starts =#
+  local def::Expr = only(filter(x -> x isa Expr && x.head === :function, fn.args))
+  pushfirst!(def.args[2].args, :(__TERMINATE_AT_START[] = nothing))
+  return quote
+    const __TERMINATE_AT_START = Ref{Union{Nothing, String}}(nothing)
+    $fn
   end
 end

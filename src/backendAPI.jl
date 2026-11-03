@@ -408,7 +408,7 @@ function translate(fm::OMFrontend.Frontend.FlatModel;
     if arrayReduction
       local reduced::Union{Nothing, OMJLIR.Model} = @BACKEND_PERFLOG "[backendAPI] reducedArrayModel" reducedArrayModel(fm; functionList)
       if reduced !== nothing
-        local reducedResult::Union{Nothing, Tuple{String, Expr}} = @BACKEND_PERFLOG "[backendAPI] generateReducedArrayODECode" generateReducedArrayODETargetCode(fm, reduced; functionList)
+        local reducedResult::Union{Nothing, Tuple{String, Expr}} = @BACKEND_PERFLOG "[backendAPI] generateReducedArrayODECode" generateReducedArrayODETargetCode(fm, reduced)
         reducedResult === nothing || return reducedResult
         omjlir = scalarizedReducedModel(fm, reduced)
       end
@@ -610,6 +610,9 @@ function scalarizedReducedModel(fm::OMFrontend.Frontend.FlatModel, reduced::OMJL
   reduction.indexReduced(reduced) || return nothing
   local scalar::Union{Nothing, OMJLIR.Model} = _arrayReductionStep(fm, decline) do
     local s::OMJLIR.Model = reduction.scalarizeArrays(reduced).model
+    #= the parameter references as the scalar pipeline resolves them (the arrays-kept passes keep them for the array
+       code, whose parameters can all be overridden) =#
+    Passes.resolveBindingReferences!(s)
     envSwitch("OMBACKEND_SOLVE_DERIVATIVES") && reduction.solveDerivatives!(s, s.continuous[1])
     s
   end
@@ -640,18 +643,18 @@ function _arrayReductionStep(f::Function, fm::OMFrontend.Frontend.FlatModel, dec
 end
 
 """
-    generateReducedArrayODETargetCode(fm, reduced; functionList = nothing) -> Union{Nothing, Tuple{String, Expr}}
+    generateReducedArrayODETargetCode(fm, reduced) -> Union{Nothing, Tuple{String, Expr}}
 
 The array ODE module of a flat model whose index was reduced in array form (`reduced`,
 `reducedArrayModel`; not changed): its derivative unknowns solved in array form
-(`Passes.IndexReduction.solvedInArrays`), the OMJLIR front half of ArrayODEGen; cached as a DE-mode
+(`Passes.IndexReduction.solvedInArrays`), in the array code's form (`Passes.arrayCodeForm!`), lowered into its
+simulation code (`SimCode.lowerArraySystem`), from which ArrayODEGen generates it; cached as a DE-mode
 model (`_registerArrayODEModule!`), recorded in ARRAY_ODE_MODELS and ARRAY_REDUCED_MODELS.
 `nothing` where it is outside the array code's scope (ARRAY_ODE_GENERATION off, tunable parameters,
 an algebraic loop left, ...): the reason logged and recorded (`declineArrayPath!`, "array code after
 index reduction"), and the caller scalarizes the reduced model.
 """
-function generateReducedArrayODETargetCode(fm::OMFrontend.Frontend.FlatModel, reduced::OMJLIR.Model;
-                                           functionList::Union{Nothing, FunctionList} = nothing)::Union{Nothing, Tuple{String, Expr}}
+function generateReducedArrayODETargetCode(fm::OMFrontend.Frontend.FlatModel, reduced::OMJLIR.Model)::Union{Nothing, Tuple{String, Expr}}
   local name::String = canonicalName(fm.name)
   local decline::Function = (reason::String) -> begin
     @info "[backendAPI] array code after index reduction not taken for $(name): $(reason)"
@@ -668,10 +671,14 @@ function generateReducedArrayODETargetCode(fm::OMFrontend.Frontend.FlatModel, re
                                                reduced.clocked, reduced.baseClocks, reduced.functions, reduced.initialMode,
                                                reduced.modes, reduced.transitions, reduced.frontendModel)
     local (solved::OMJLIR.Model, _) = @BACKEND_PERFLOG "[backendAPI] solvedInArrays" reduction.solvedInArrays(working)
-    @BACKEND_PERFLOG "[backendAPI] array code (after index reduction)" CodeGeneration.ArrayODEGen.generateArrayODECode(solved, name; functions = functionList)
+    Passes.arrayCodeForm!(solved)
+    local sc::SimCode.SIM_CODE = @BACKEND_PERFLOG "[backendAPI] array simulation code" SimCode.lowerArraySystem(solved)
+    @BACKEND_PERFLOG "[backendAPI] array code (after index reduction)" CodeGeneration.ArrayODEGen.generateArrayODECode(sc, name)
   catch err
     isFatal(err) && rethrow()
     err isa reduction.NotHandled && return decline(sprint(showerror, err))
+    err isa UnsupportedLowering &&
+      return decline(err.construct === nothing ? err.what : string(err.what, ": ", SimCode.Domains._str(err.construct)))
     @warn "[backendAPI] array code after index reduction for $(name): an error ($(first(sprint(showerror, err), 300)))"
     return decline("an error: $(first(sprint(showerror, err), 300))")
   end
@@ -701,7 +708,7 @@ function translateReducedArrays(fm::OMFrontend.Frontend.FlatModel;
   local reduced::Union{Nothing, OMJLIR.Model} = @BACKEND_PERFLOG "[backendAPI] reducedArrayModel" reducedArrayModel(fm; functionList)
   reduced === nothing && return nothing
   local arrayCode::Union{Nothing, Tuple{String, Expr}} =
-    @BACKEND_PERFLOG "[backendAPI] generateReducedArrayODECode" generateReducedArrayODETargetCode(fm, reduced; functionList)
+    @BACKEND_PERFLOG "[backendAPI] generateReducedArrayODECode" generateReducedArrayODETargetCode(fm, reduced)
   arrayCode === nothing || return arrayCode
   local model::Union{Nothing, OMJLIR.Model} = scalarizedReducedModel(fm, reduced)
   model === nothing && return nothing
@@ -1125,7 +1132,10 @@ end
 Build the problem of an already-translated model without solving it. Call
 `OM.translate` first. Returns the tuple of the generated model function; its
 first two elements are the `ODEProblem` and the model's event callbacks,
-which a solve needs too.
+which a solve needs too. The problem is the one `simulate` solves: after the
+runtime initial algorithm (the initial arms of when-equations: their parameter
+assignments, their hard starts), and one that ends at its start where a
+`terminate()` was reached at the initialization.
 
 # Example
 ```julia
@@ -1150,9 +1160,15 @@ function getMTKProblem(modelName::String;
     CodeGeneration.registerModelFunctions!(_modelModule(Symbol(modelName)))
   end
   Base.invokelatest() do
-    local mod = getfield(OMBackend, Symbol(modelName))
+    local mod::Module = getfield(OMBackend, Symbol(modelName))
     local modelFn = getfield(mod, Symbol(string(modelName, "Model")))
-    modelFn(tspan)
+    local built::Tuple = modelFn(tspan)
+    (arrayModel || !isdefined(mod, :problemFromBuild)) && return built
+    #= the ModelingToolkit route's runtime initial algorithm, as simulate runs it =#
+    local prob::CodeGeneration.DiffEqBase.SciMLBase.AbstractODEProblem = first(mod.problemFromBuild(built, tspan))
+    (isdefined(mod, :__TERMINATE_AT_START) && mod.__TERMINATE_AT_START[] !== nothing) &&
+      (prob = CodeGeneration.DiffEqBase.remake(prob; tspan = (tspan[1], tspan[1])))
+    return (prob, Base.tail(built)...)
   end
 end
 

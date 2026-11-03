@@ -294,7 +294,7 @@ function eliminateConstantParameters(simCode::SIM_CODE)::SIM_CODE
   union!(kept, requestedNames(simCode))
   foreach(eq -> ifConditionNames!(kept, eq.exp; dynamic), simCode.residualEquations)
   for (_, (_, v)) in ht
-    v.varKind isa Union{PARAMETER, ARRAY_PARAMETER} && v.varKind.bindExp !== nothing && ifConditionNames!(kept, v.varKind.bindExp; dynamic)
+    v.varKind isa PARAMETER && v.varKind.bindExp !== nothing && ifConditionNames!(kept, v.varKind.bindExp; dynamic)
   end
   dataStructureArrayElements!(kept, simCode; dynamic)
   complexFieldNames!(kept, simCode.residualEquations, simCode)
@@ -312,7 +312,7 @@ function eliminateConstantParameters(simCode::SIM_CODE)::SIM_CODE
   end
   local values = OrderedDict{String, ParameterValue}()
   for (name, (_, v)) in ht
-    (name in kept || !(v.varKind isa PARAMETER) || v.varKind.bindExp === nothing) && continue
+    (name in kept || !isScalarParameter(v) || v.varKind.bindExp === nothing) && continue
     local x = v.elementType isa TYPE_ENUM ? enumerationValue(v.varKind.bindExp, simCode, OrderedSet{String}()) :
       tryEvalNumeric(v.varKind.bindExp, simCode)
     x === nothing || (values[name] = x)
@@ -322,7 +322,7 @@ function eliminateConstantParameters(simCode::SIM_CODE)::SIM_CODE
   while length(values) != before
     before = length(values)
     for (name, (_, v)) in ht
-      (name in kept || !(v.varKind isa ARRAY_PARAMETER) || v.varKind.bindExp === nothing) && continue
+      (name in kept || !isArrayParameter(v) || v.varKind.bindExp === nothing) && continue
       arrayElementValues!(values, name, v.varKind.bindExp, simCode, kept)
     end
   end
@@ -339,7 +339,7 @@ function eliminateConstantParameters(simCode::SIM_CODE)::SIM_CODE
   local newHT = copy(ht)
   for (name, (index, v)) in ht
     local b = bindingOf(v.varKind)
-    (v.varKind isa Union{PARAMETER, ARRAY_PARAMETER, STRING} && b !== nothing) || continue
+    (v.varKind isa Union{PARAMETER, STRING} && b !== nothing) || continue
     local nb = x(b)
     nb == b || (newHT[name] = (index, withKind(v, withBinding(v.varKind, nb))))
   end
@@ -391,7 +391,7 @@ goes next. Nothing for a model with modes or translated again at its structural 
 function dropObservationOnlyVariables(simCode::SIM_CODE)::SIM_CODE
   (hasSubModels(simCode) || hasFrontendModel(simCode)) && return simCode
   local ht = simCode.stringToSimVarHT
-  local droppable = v::SIMVAR -> v.attributes.isProtected && v.varKind isa Union{ALG_VARIABLE, ARRAY}
+  local droppable = v::SIMVAR -> v.attributes.isProtected && v.varKind isa ALG_VARIABLE
   any(((_, (_, v)),) -> droppable(v), ht) || return simCode
   local untouchable = requestedNames(simCode)
   initialEquationNames!(untouchable, simCode.initialEquations)
@@ -476,11 +476,11 @@ function eliminateDeadParameters(simCode::SIM_CODE)::SIM_CODE
   complexFieldNames!(read, simCode.initialEquations, simCode)
   for (_, (_, v)) in ht
     local b = bindingOf(v.varKind)
-    (v.varKind isa Union{PARAMETER, ARRAY_PARAMETER, DATA_STRUCTURE} && b !== nothing) && crefNames!(read, b; dynamic)
+    (v.varKind isa Union{PARAMETER, DATA_STRUCTURE} && b !== nothing) && crefNames!(read, b; dynamic)
   end
   dataStructureArrayElements!(read, simCode; dynamic)
   dynamicallyIndexedElements!(read, simCode, dynamic)
-  local dead = String[name for (name, (_, v)) in ht if v.varKind isa PARAMETER && !(name in read) && !isTunableParameter(codeName(simCode, name))]
+  local dead = String[name for (name, (_, v)) in ht if isScalarParameter(v) && !(name in read) && !isTunableParameter(codeName(simCode, name))]
   isempty(dead) && return simCode
   @debug "[SIMCODE: $(simCode.name): eliminateDeadParameters] dropped $(length(dead)) unread parameters"
   local newHT = copy(ht)
