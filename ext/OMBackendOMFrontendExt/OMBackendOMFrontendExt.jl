@@ -44,9 +44,20 @@ workload. OMBackend alone takes OMJLIR (`translate(::OMJLIR.Model)`; omc's front
 """
 module OMBackendOMFrontendExt
 
+#= Diagnostics of the Windows hang (branch diag/windows-ext-hang only): stage lines around the imports. =#
+include("diag.jl")
+diagProcess("ext: module top")
+diagLibraries("ext: before the imports")
+if haskey(ENV, "OMBACKEND_DIAG_BACKEND_FIRST")
+  import OMBackend
+  diagLibraries("ext: imported OMBackend (first)")
+end
 import MetaModelica
+diagStage("ext: imported MetaModelica")
 import OMFrontend
+diagLibraries("ext: imported OMFrontend")
 import OMBackend
+diagLibraries("ext: imported OMBackend")
 import OMBackend: OMJLIR, Passes, SimCode, IMTKGen, DEFAULT_BACKEND_MODE, IMTK_MODE, WARN_MISSING_START_VALUES,
   MODEL_RUN_DIRS, ARRAY_ODE_MODELS, ARRAY_REDUCED_MODELS, ARRAY_PATH_REASONS, COMPILED_MODELS_MTK, canonicalName,
   createLogRunId, resetFallbacks!, withLogRunDir, debugWrite, logPath, envSwitch, isFatal, declineArrayPath!,
@@ -65,6 +76,8 @@ include("recompilation.jl")
 "The file of a `modelica://` URI, where OMFrontend loaded the library from (OMFrontend.resolveModelicaURI)."
 resolveModelicaURI(uri::String)::String = OMFrontend.resolveModelicaURI(uri)
 
+diagStage("ext: sources included, the precompile workload next")
 include("precompile.jl")
+diagStage("ext: module end")
 
 end # module OMBackendOMFrontendExt

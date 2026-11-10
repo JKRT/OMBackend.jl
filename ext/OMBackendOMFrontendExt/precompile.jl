@@ -63,8 +63,10 @@ function _precompileTranslateAndSimulate(scode::OMFrontend.SCode.Program, name::
   simulate || return nothing
   _precompileTranslate(scode, name, mode)
   for solver in (defaultSolver(), daeFallbackSolver())
+    diagStage("workload: $(name): simulateModel with $(nameof(typeof(solver)))")
     simulateModel(name; MODE = mode, tspan = (0.0, 1.0), solver = solver, overwriteCache = false)
   end
+  diagStage("workload: $(name): simulated")
   return nothing
 end
 
@@ -75,16 +77,25 @@ OMJL's `translate` of the model `name` of `scode`: the frontend's flatten with t
 """
 function _precompileTranslate(scode::OMFrontend.SCode.Program, name::String,
                               mode::OMBackend.BackendMode)::Union{Nothing, Tuple{String, Expr}}
+  diagStage("workload: $(name): instantiateSCodeToFM (arrays kept)")
   local (fm::OMFrontend.Frontend.FlatModel, cache) = OMFrontend.instantiateSCodeToFM(name, scode; scalarize = false)
+  diagStage("workload: $(name): cacheToFunctionList")
+  local functions = OMFrontend.cacheToFunctionList(cache)
+  diagStage("workload: $(name): translateReducedArrays")
   local reduced::Union{Nothing, Tuple{String, Expr}} =
-    translateReducedArrays(fm; functionList = OMFrontend.cacheToFunctionList(cache), BackendMode = mode,
+    translateReducedArrays(fm; functionList = functions, BackendMode = mode,
                            warnMissingStartValues = nothing, eliminateNonDynamic = true, observedFilter = nothing,
                            checkSimCode = true)
+  diagStage("workload: $(name): translateReducedArrays returned $(reduced === nothing ? "nothing" : "code")")
   reduced === nothing || return reduced
   (fm, cache) = OMFrontend.instantiateSCodeToFM(name, scode; scalarize = true)
-  return translate(fm; functionList = OMFrontend.cacheToFunctionList(cache), BackendMode = mode,
-                   warnMissingStartValues = nothing, eliminateNonDynamic = true, observedFilter = nothing,
-                   checkSimCode = true, scalarized = true)
+  diagStage("workload: $(name): translate (scalarized)")
+  local scalarized::Tuple{String, Expr} =
+    translate(fm; functionList = OMFrontend.cacheToFunctionList(cache), BackendMode = mode,
+              warnMissingStartValues = nothing, eliminateNonDynamic = true, observedFilter = nothing,
+              checkSimCode = true, scalarized = true)
+  diagStage("workload: $(name): translate returned")
+  return scalarized
 end
 
 """
@@ -100,31 +111,43 @@ evaluation into OMBackend is allowed (a session; not while the extension's image
 then, `evaluationRejected`, and the models are only translated).
 """
 function _precompileWarmupTranslate(; simulate::Bool = !OMBackend.evaluationRejected(OMBackend))::Nothing
+  diagStage("workload: start (simulate = $(simulate)), registries")
   local registries::Vector{Pair{Any, Any}} = OMBackend._registries()
   try
     for (file, package, models) in ((TRANSLATE_WORKLOAD, "OMBackendTranslateWorkload",
                                      ("Drive" => false, "Thermostat" => true, "Rectifier" => false, "Pendulum" => false)),
                                     (ARRAYS_KEPT_WORKLOAD, "OMBackendWorkload",
                                      ("Chain" => true, "Volumes" => true, "LoopEvents" => true)))
-      local scode::OMFrontend.SCode.Program = OMFrontend.translateToSCode(OMFrontend.parseFile(file))
+      diagStage("workload: parseFile $(basename(file))")
+      local absyn = OMFrontend.parseFile(file)
+      diagStage("workload: translateToSCode $(basename(file))")
+      local scode::OMFrontend.SCode.Program = OMFrontend.translateToSCode(absyn)
       for (model, arrayCode) in models
         _precompileTranslateAndSimulate(scode, package * "." * model, arrayCode; simulate)
       end
     end
   finally
+    diagStage("workload: restoring the registries")
     OMBackend._restoreRegistries!(registries)
   end
+  diagStage("workload: end")
   return nothing
 end
 
 @setup_workload begin
   @compile_workload begin
     #= Escape hatch for fast dev precompiles; a workload failure must never break loading, but must be seen. =#
-    if !OMBackend.envSwitch("OMBACKEND_NO_PRECOMPILE_WORKLOAD")
+    if haskey(ENV, "OMBACKEND_DIAG_SKIP_EXT_WORKLOAD")
+      diagStage("workload: skipped (OMBACKEND_DIAG_SKIP_EXT_WORKLOAD)")
+    elseif !OMBackend.envSwitch("OMBACKEND_NO_PRECOMPILE_WORKLOAD")
+      diagWatchdog = diagWatchdogStart()
       try
         Base.CoreLogging.with_logger(_precompileWarmupTranslate, Base.CoreLogging.NullLogger())
       catch err
+        diagStage("workload: threw $(typeof(err))")
         @warn "[OMBackend] translate precompile warmup skipped" exception = (err, catch_backtrace())
+      finally
+        diagWatchdogStop(diagWatchdog)
       end
     end
   end

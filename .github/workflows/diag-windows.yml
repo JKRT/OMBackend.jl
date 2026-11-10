@@ -1,0 +1,248 @@
+# THROWAWAY diagnostic, branch diag/windows-ext-hang of JKRT/OMBackend.jl only (never merged): finds where the
+# Windows precompile of OMBackendOMFrontendExt hangs (OpenModelica/OMBackend.jl#99) and tries the candidate fix.
+# Runs on pushes to diag/** only. Scripts: .github/diag; stage lines: ext/OMBackendOMFrontendExt/diag.jl.
+name: diag-windows
+
+on:
+  push:
+    branches: ['diag/**']
+
+permissions:
+  contents: read
+  actions: write  # julia-actions/cache deletes the caches it replaces
+
+concurrency:
+  group: diag-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JULIA_PKG_PRECOMPILE_AUTO: 0
+  DIAG_DIR: ${{ github.workspace }}/diag-out
+
+jobs:
+  # The driver's stall path and the snapshot, on a process that stalls behind a message box: two minutes, so a
+  # broken snapshot script shows before the long job reaches its first stall.
+  selftest:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: OMBackend.jl
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.13'
+          arch: x64
+      - name: Stall behind a message box
+        shell: bash
+        env:
+          DIAG_SELFTEST_STALL: 1
+        run: |
+          code=0
+          julia --startup-file=no OMBackend.jl/.github/diag/driver.jl selftest 20 240 -- \
+            julia --startup-file=no OMBackend.jl/.github/diag/loadorder.jl || code=$?
+          echo "driver exit code $code (124 expected)"
+          ls -l "$DIAG_DIR"
+          test "$code" -eq 124 && test -s "$DIAG_DIR/selftest.snapshot.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diag-selftest
+          path: diag-out
+          if-no-files-found: warn
+
+  hang:
+    runs-on: windows-latest
+    timeout-minutes: 170
+    env:
+      JULIA_PROJECT: ${{ github.workspace }}/diagenv
+    steps:
+      - name: Checkout OMBackend.jl
+        uses: actions/checkout@v4
+        with:
+          path: OMBackend.jl
+
+      # The siblings of OpenModelica/OMBackend.jl#99: the omparser-absyn branches of the JKRT forks.
+      - name: Checkout the siblings (JKRT forks, omparser-absyn)
+        uses: JKRT/OM.jl/.github/actions/checkout-siblings@master
+        with:
+          packages: ArrayUtil ImmutableList ListUtil MetaModelica OMFrontend OMParser
+          siblings-owner: JKRT
+          line: omparser-absyn
+
+      - name: Checkout OMRuntimeExternalC (OpenModelica master)
+        uses: JKRT/OM.jl/.github/actions/checkout-siblings@master
+        with:
+          packages: OMRuntimeExternalC
+          line: master
+
+      - name: Sibling commits
+        shell: bash
+        run: |
+          for d in OMBackend ArrayUtil ImmutableList ListUtil MetaModelica OMFrontend OMParser OMRuntimeExternalC; do
+            echo "$d $(git -C "$d.jl" log -1 --format='%h %D %s')"
+          done
+
+      - name: Set up Julia 1.13
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.13'
+          arch: x64
+
+      - name: Cache Julia depot
+        uses: julia-actions/cache@v2
+        with:
+          cache-name: ombackend-diag-windows
+
+      - name: Add OpenModelica Julia registry
+        shell: julia --color=yes --startup-file=no {0}
+        run: |
+          import Pkg
+          Pkg.Registry.add("General")
+          Pkg.Registry.add(Pkg.RegistrySpec(url = "https://github.com/OpenModelica/OpenModelicaRegistry.git"))
+
+      - name: Environment (OMBackend and the siblings developed, nothing precompiled)
+        shell: julia --color=yes --startup-file=no {0}
+        run: |
+          import Pkg
+          mkpath(ENV["JULIA_PROJECT"])
+          Pkg.activate(ENV["JULIA_PROJECT"])
+          Pkg.develop([Pkg.PackageSpec(path = joinpath(ENV["GITHUB_WORKSPACE"], p)) for p in
+                       ("OMBackend.jl", "ArrayUtil.jl", "ImmutableList.jl", "ListUtil.jl", "MetaModelica.jl",
+                        "OMFrontend.jl", "OMParser.jl", "OMRuntimeExternalC.jl")])
+          Pkg.build("OMRuntimeExternalC"; verbose = true)
+          Pkg.status()
+          try
+            Pkg.status(["Plots", "GR", "GR_jll", "Glib_jll", "Gettext_jll", "GettextRuntime_jll", "Libiconv_jll"];
+                       mode = Pkg.PKGMODE_MANIFEST)
+          catch err
+            println("manifest status: ", err)
+          end
+          import InteractiveUtils
+          InteractiveUtils.versioninfo()
+
+      # A: the hang as in CI, with stage lines. The stage file appears when the extension's worker starts; no
+      # new line for 8 minutes is a stall (snapshot, the worker is killed, Pkg prints what it wrote).
+      - name: "A: Pkg.precompile(), the extension as in the PR"
+        id: A
+        shell: bash
+        continue-on-error: true
+        env:
+          DIAG_FORGET_EXT: 1
+        run: |
+          julia --startup-file=no OMBackend.jl/.github/diag/driver.jl A 480 5400 -- \
+            julia --startup-file=no OMBackend.jl/.github/diag/precompile.jl
+
+      # F: the same with Windows' hard-error popups off: a library that fails to load is an error with its text.
+      - name: "F: the same, SetErrorMode(0x8003) before the imports"
+        id: F
+        if: steps.A.outputs.where == 'import'
+        shell: bash
+        continue-on-error: true
+        env:
+          DIAG_FORGET_EXT: 1
+          OMBACKEND_DIAG_ERROR_MODE: 1
+        run: |
+          taskkill //F //IM julia.exe //T || true
+          julia --startup-file=no OMBackend.jl/.github/diag/driver.jl F 480 1800 -- \
+            julia --startup-file=no OMBackend.jl/.github/diag/precompile.jl
+
+      # D: the candidate fix: the extension imports OMBackend (Plots, Glib's gettext) before OMFrontend
+      # (OMRuntimeExternalC's bundled gettext).
+      - name: "D: the extension imports OMBackend first"
+        id: D
+        shell: bash
+        continue-on-error: true
+        env:
+          DIAG_FORGET_EXT: 1
+          OMBACKEND_DIAG_BACKEND_FIRST: 1
+        run: |
+          taskkill //F //IM julia.exe //T || true
+          julia --startup-file=no OMBackend.jl/.github/diag/driver.jl D 480 2400 -- \
+            julia --startup-file=no OMBackend.jl/.github/diag/precompile.jl
+
+      # E: the load orders of a user's session, in normal processes.
+      - name: "E1: import OMBackend, then OMFrontend"
+        id: E1
+        shell: bash
+        continue-on-error: true
+        run: |
+          taskkill //F //IM julia.exe //T || true
+          julia --startup-file=no OMBackend.jl/.github/diag/driver.jl E1 300 1500 -- \
+            julia --startup-file=no OMBackend.jl/.github/diag/loadorder.jl OMBackend OMFrontend
+
+      - name: "E2: import OMFrontend, then OMBackend"
+        id: E2
+        shell: bash
+        continue-on-error: true
+        run: |
+          taskkill //F //IM julia.exe //T || true
+          julia --startup-file=no OMBackend.jl/.github/diag/driver.jl E2 300 1500 -- \
+            julia --startup-file=no OMBackend.jl/.github/diag/loadorder.jl OMFrontend OMBackend
+
+      - name: "E3: import OMFrontend, then OMBackend, SetErrorMode(0x8003) first"
+        id: E3
+        shell: bash
+        continue-on-error: true
+        env:
+          OMBACKEND_DIAG_ERROR_MODE: 1
+        run: |
+          taskkill //F //IM julia.exe //T || true
+          julia --startup-file=no OMBackend.jl/.github/diag/driver.jl E3 300 1500 -- \
+            julia --startup-file=no OMBackend.jl/.github/diag/loadorder.jl OMFrontend OMBackend
+
+      # Only when A stalled inside the workload (not at an import): the workload in a normal process and in a
+      # precompile worker, each with a second thread whose watchdog prints the backtraces of all tasks.
+      - name: "C: the workload in a normal process, with the watchdog"
+        id: C
+        if: steps.A.outputs.where == 'workload'
+        shell: bash
+        continue-on-error: true
+        env:
+          OMBACKEND_DIAG_SKIP_EXT_WORKLOAD: 1
+          OMBACKEND_DIAG_WATCHDOG: "420,600"
+        run: |
+          taskkill //F //IM julia.exe //T || true
+          julia --startup-file=no OMBackend.jl/.github/diag/driver.jl C 900 2400 -- \
+            julia --startup-file=no -t1,1 OMBackend.jl/.github/diag/workload.jl
+
+      - name: "B: Pkg.precompile() with -t1,1 workers and the watchdog"
+        id: B
+        if: steps.A.outputs.where == 'workload'
+        shell: bash
+        continue-on-error: true
+        env:
+          DIAG_FORGET_EXT: 1
+          DIAG_PRECOMPILE_TWO_THREADS: 1
+          OMBACKEND_DIAG_WATCHDOG: "420,600"
+        run: |
+          taskkill //F //IM julia.exe //T || true
+          julia --startup-file=no OMBackend.jl/.github/diag/driver.jl B 900 2400 -- \
+            julia --startup-file=no OMBackend.jl/.github/diag/precompile.jl
+
+      - name: Results
+        if: always()
+        shell: bash
+        run: |
+          taskkill //F //IM julia.exe //T || true
+          echo "A: ${{ steps.A.outcome }} where=${{ steps.A.outputs.where }} stalled=${{ steps.A.outputs.stalled }}"
+          echo "F: ${{ steps.F.outcome }} where=${{ steps.F.outputs.where }} stalled=${{ steps.F.outputs.stalled }}"
+          echo "D: ${{ steps.D.outcome }} where=${{ steps.D.outputs.where }} stalled=${{ steps.D.outputs.stalled }}"
+          echo "E1: ${{ steps.E1.outcome }} stalled=${{ steps.E1.outputs.stalled }}"
+          echo "E2: ${{ steps.E2.outcome }} stalled=${{ steps.E2.outputs.stalled }}"
+          echo "E3: ${{ steps.E3.outcome }} stalled=${{ steps.E3.outputs.stalled }}"
+          echo "C: ${{ steps.C.outcome }}  B: ${{ steps.B.outcome }}"
+          for f in "$DIAG_DIR"/*.stages.log "$DIAG_DIR"/*.snapshot.txt; do
+            [ -f "$f" ] || continue
+            echo "::group::$(basename "$f")"
+            cat "$f"
+            echo "::endgroup::"
+          done
+
+      - name: Upload the stage logs and snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diag-windows
+          path: diag-out
+          if-no-files-found: warn
