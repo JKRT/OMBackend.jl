@@ -294,7 +294,7 @@ function substituteRelayAliasesInWhens(simCode::SC.SIM_CODE, relayAliases::Dict{
   local wanted = OrderedSet{String}(string(k) for k in keys(relayAliases))
   #= The type of each name the whens read, for its representative's reference. =#
   local tyOf = Dict{String, SC.SType}()
-  local collectTy = e::SC.Exp -> SC.foreachExp(e) do x
+  local collectTy = (@nospecialize(e::SC.Exp)) -> SC.foreachExp(e) do @nospecialize(x::SC.Exp)
     x isa SC.EXP_CREF || return
     local nm = SC.crefName(x.cref)
     (nm in wanted && !haskey(tyOf, nm)) && (tyOf[nm] = x.ty)

@@ -1612,7 +1612,7 @@ end
 #= ==================================================================================== =#
 
 "The type of `e`."
-function typeOf(e::Expression)::ModelicaType
+function typeOf(@nospecialize(e::Expression))::ModelicaType
   return _typeOf(e)
 end
 _typeOf(::INTEGER)::ModelicaType = T_INTEGER()
@@ -1703,7 +1703,7 @@ end
 `e` with `g` applied to each of its direct subexpressions (the subscripts' expressions, the
 iterators' ranges and the clocks' arguments included), one level; `e` itself if none changed.
 """
-mapChildren(@nospecialize(g), e::Expression)::Expression = first(traverseFields(e, _Apply(g), nothing))
+mapChildren(@nospecialize(g), @nospecialize(e::Expression))::Expression = first(traverseFields(e, _Apply(g), nothing))
 
 "`g` as a traversal's `recur`: a child replaced by `g(child)`."
 mutable struct _Apply
@@ -1717,7 +1717,7 @@ end
 `e` with every subexpression `s` replaced by `f(s)`, bottom-up: `f` sees a node whose
 children are already mapped. The subscripts' expressions are mapped too.
 """
-mapExp(@nospecialize(f), e::Expression)::Expression = _mapExp(_MapExp(f), e)
+mapExp(@nospecialize(f), @nospecialize(e::Expression))::Expression = _mapExp(_MapExp(f), e)
 
 "`mapExp` of `f` as a traversal's `recur`: an expression mapped bottom-up, a statement or an equation field by field."
 mutable struct _MapExp
@@ -1755,14 +1755,14 @@ function _mapExpTopDown(m::_TopDown, @nospecialize(e::Expression))::Expression
 end
 
 "`e` with its children mapped top-down."
-_mapChildrenTopDown(m::_TopDown, e::Expression)::Expression = first(traverseFields(e, m, nothing))
+_mapChildrenTopDown(m::_TopDown, @nospecialize(e::Expression))::Expression = first(traverseFields(e, m, nothing))
 
 """
     foreachExp(f, e)
 
 Call `f` on `e` and on every subexpression, top-down (a node before its children).
 """
-foreachExp(@nospecialize(f), e::Expression)::Nothing = _foreachExp(_VisitChild(f), e)
+foreachExp(@nospecialize(f), @nospecialize(e::Expression))::Nothing = _foreachExp(_VisitChild(f), e)
 
 "`foreachExp` of `f` as a traversal's `recur`; as a function of an expression, for `foreachRootExp`."
 mutable struct _VisitChild
@@ -1784,7 +1784,7 @@ end
 Whether `p` holds for `e` or for one of its subexpressions; the children after the first that
 holds are not visited.
 """
-anyExp(@nospecialize(p), e::Expression)::Bool = _anyExp(_Any(p), e)
+anyExp(@nospecialize(p), @nospecialize(e::Expression))::Bool = _anyExp(_Any(p), e)
 
 "`anyExp` of `p` as a traversal's `recur`."
 mutable struct _Any
@@ -1799,7 +1799,7 @@ function _anyExp(s::_Any, e::Expression)::Bool
 end
 
 "The direct subexpressions of `e`, the subscripts' expressions included, in field order."
-children(e::Expression)::Vector{Expression} = last(traverseFields(e, _pushChild, Expression[]))
+children(@nospecialize(e::Expression))::Vector{Expression} = last(traverseFields(e, _pushChild, Expression[]))
 
 _pushChild(x::Expression, out::Vector{Expression})::Tuple{Expression, Vector{Expression}} = (push!(out, x); (x, out))
 
@@ -1811,7 +1811,7 @@ _pushChild(x::Expression, out::Vector{Expression})::Tuple{Expression, Vector{Exp
 `s` with `f` mapped (as by `mapExp`) over all its expressions, its targets and the subscripts
 of its references included.
 """
-mapStatement(@nospecialize(f), s::Statement)::Statement = _mapFields(_MapExp(f), s)
+mapStatement(@nospecialize(f), @nospecialize(s::Statement))::Statement = _mapFields(_MapExp(f), s)
 
 function mapStatements(@nospecialize(f), stmts::Vector{Statement})::Vector{Statement}
   local m::_MapExp = _MapExp(f)
@@ -1827,7 +1827,7 @@ mapCref(@nospecialize(f), cref::ComponentRef)::ComponentRef = first(Traversal.tr
 `eq` with `f` mapped (as by `mapExp`) over all its expressions, in place (equations are
 entities); the equations of its branches and bodies too. Returns `eq`.
 """
-mapEquation!(@nospecialize(f), eq::Equation)::Equation = _mapFields(_MapExp(f), eq)
+mapEquation!(@nospecialize(f), @nospecialize(eq::Equation))::Equation = _mapFields(_MapExp(f), eq)
 
 """
     foreachRootExp(f, x::Union{Statement, Equation})
@@ -1837,7 +1837,8 @@ triggers, ranges, arguments, the subscripts of its references) and of the equati
 statements in it, without descending into the expressions: for a visitor that decides itself
 where to descend. A reinit's state is a root expression, as a reference.
 """
-foreachRootExp(@nospecialize(f), x::Union{Statement, Equation})::Nothing = _foreachRootExp(_RootVisit(f), x)
+foreachRootExp(@nospecialize(f),
+               @nospecialize(x::Union{Statement, Equation}))::Nothing = _foreachRootExp(_RootVisit(f), x)
 
 "`foreachRootExp` of `f` as a traversal's `recur`."
 mutable struct _RootVisit
@@ -1856,7 +1857,8 @@ _foreachRootExp(v::_RootVisit, s::REINIT)::Nothing = (v.f(CREF(s.state, T_REAL()
 Call `f` on every expression of a statement or an equation (and of the equations and
 statements in it), each top-down.
 """
-foreachExp(@nospecialize(f), x::Union{Statement, Equation})::Nothing = _foreachRootExp(_RootVisit(_VisitChild(f)), x)
+foreachExp(@nospecialize(f),
+           @nospecialize(x::Union{Statement, Equation}))::Nothing = _foreachRootExp(_RootVisit(_VisitChild(f)), x)
 
 "The component references in `e`, in the order of a top-down traversal, with duplicates."
 function crefsOf(e::Expression)::Vector{ComponentRef}

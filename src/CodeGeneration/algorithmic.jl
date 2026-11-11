@@ -752,7 +752,7 @@ The value an assignment stores: an array variable read whole as a copy, as the d
 into PRea_new[m, k] changed PRea: Buildings' multipoleFluidTemperature saw no change after
 its first iteration and stopped.
 """
-function _algValue(exp::SC.Exp)::Expr
+function _algValue(@nospecialize(exp::SC.Exp))::Expr
   local rhs = expToJuliaExpAlg(exp)
   return _isWholeArrayVariable(exp) ? :(collect($rhs)) : rhs
 end
@@ -768,7 +768,7 @@ becomes per-field assignments; a record-valued call, a record literal and an if-
 choosing between records scatter their field tuple (a one-field record is its field). Another
 value of a record is refused.
 """
-function _recordAssignment(lhsExp::SC.Exp, rhsExp::SC.Exp)::Union{Nothing, Expr}
+function _recordAssignment(@nospecialize(lhsExp::SC.Exp), @nospecialize(rhsExp::SC.Exp))::Union{Nothing, Expr}
   local lhs = _recordCrefFields(lhsExp)
   #= An element of an array of records on either side (`r2 := r_2[1]`, `o[1] := f(...)`):
      field by field, each field array indexed alike. =#
@@ -807,7 +807,7 @@ end
 The fields of an element of an array of records, `u[k]`, as `u_re[k]`, `u_im[k]` (the flattened
 field arrays, indexed alike); `nothing` for another expression. Scalar fields only.
 """
-function _recordElementFieldExps(exp::SC.Exp)::Union{Nothing, Vector{SC.Exp}}
+function _recordElementFieldExps(@nospecialize(exp::SC.Exp))::Union{Nothing, Vector{SC.Exp}}
   local ty::SC.SType = if exp isa SC.EXP_CREF && !isempty(exp.cref.subs)
     exp.ty
   elseif exp isa SC.ASUB && exp.exp isa SC.EXP_CREF && isempty(exp.exp.cref.subs)
@@ -843,7 +843,7 @@ A record value as its field tuple: a record variable's flattened fields (it has 
 its own), an element of an array of records its fields' elements, an if-expression's
 branches each so, anything else as it lowers.
 """
-function _recordTupleExpr(exp::SC.Exp)
+function _recordTupleExpr(@nospecialize(exp::SC.Exp))
   local rec = _recordCrefFields(exp)
   rec === nothing || return Expr(:tuple, [_flatFieldSymbol(rec[1], f) for f in rec[2]]...)
   local element = _recordElementFieldExps(exp)

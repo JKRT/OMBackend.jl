@@ -228,7 +228,7 @@ One for each conditional variable created.
    if-equation relay target (key of the shared relay-t0 map): exactly the
    chained staged-trajectory case where a boundary crossing must re-evaluate
    sibling conditions live instead of applying static toggles. =#
-function _conditionReferencesRelayTarget(condition::SC.Exp, rT0::AbstractDict{Symbol, Float64})::Bool
+function _conditionReferencesRelayTarget(@nospecialize(condition::SC.Exp), rT0::AbstractDict{Symbol, Float64})::Bool
   isempty(rT0) && return false
   local refs::OrderedSet{String} = OrderedSet{String}()
   SC.identifierNames!(refs, condition)
