@@ -34,8 +34,42 @@
 */ =#
 
 #= Passes on the equations of the continuous-time partition (the previous backend's BDAECreate):
-   smooth() removed, duplicates removed, the bindings as equations, the asserts of if-equations
-   hoisted. =#
+   the equations of no elements removed, smooth() removed, duplicates removed, the bindings as equations, the asserts
+   of if-equations hoisted. =#
+
+"""
+    removeEmptyEquations!(model)
+
+The equations of no elements removed from every partition, its initial equations too: an array equation with a
+dimension of size 0, a for-equation over an empty range or with only such equations (MLS 10.1: an array with a
+dimension of size 0 has no elements). The scalarizing frontend leaves them out; with the arrays kept they came here,
+and the der() of a slice of size 0 stayed (no variable to introduce for it): MSL BatchPlant_StandardWater's media
+without substances (nXi = nC = 0), 7 equations, sent the model to the scalarized path and a second flatten.
+"""
+function removeEmptyEquations!(model::IR.Model)::IR.Model
+  for p in Iterators.flatten((model.continuous, model.clocked))
+    _removeEmpty!(p.equations)
+    _removeEmpty!(p.initialEquations)
+  end
+  return model
+end
+
+"`equations` without those of no elements (removeEmptyEquations!), the for-equations' bodies first."
+function _removeEmpty!(equations::Vector{IR.Equation})::Vector{IR.Equation}
+  for eq in equations
+    eq isa IR.FOR_EQUATION && _removeEmpty!(eq.body)
+  end
+  return filter!(eq -> !_hasNoElements(eq), equations)
+end
+
+"Whether an equation has no elements (removeEmptyEquations!); its body already without such equations."
+_hasNoElements(eq::IR.ARRAY_EQUATION)::Bool = _hasZeroDimension(eq.ty)
+_hasNoElements(eq::IR.FOR_EQUATION)::Bool =
+  isempty(eq.body) || (eq.iterator.range isa IR.RANGE && _hasZeroDimension(eq.iterator.range.ty))
+_hasNoElements(::IR.Equation)::Bool = false
+
+"Whether an array type has a dimension of size 0."
+_hasZeroDimension(ty::IR.T_ARRAY)::Bool = any(d -> d isa IR.DIM_SIZE && d.size == 0, ty.dimensions)
 
 """
     removeSmooth!(model)

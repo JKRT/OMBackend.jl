@@ -41,7 +41,8 @@ and initial equations, as the equations of their fields (the previous backend's
 decomposeComplexEquation), in place: `lhs = rhs` of a record type is one equation per field,
 an array field an array equation, a record field decomposed in turn. A record equation whose
 right-hand side is a call stays one (the call's result is assigned whole), as one whose left-hand
-side is neither a reference nor a record value.
+side is neither a reference nor a record value. A constant `Complex(re, im)` constructor call is
+the record value (`constantRecord`).
 """
 function decomposeRecordEquations!(model::IR.Model)::IR.Model
   for p in Iterators.flatten((model.continuous, (m.system for m in model.modes)))
@@ -55,11 +56,14 @@ function decomposeRecordEquations(equations::Vector{IR.Equation})::Vector{IR.Equ
   any(eq -> eq isa IR.RECORD_EQUATION, equations) || return equations
   local out = IR.Equation[]
   for eq in equations
-    if eq isa IR.RECORD_EQUATION && !(eq.rhs isa IR.CALL)
-      append!(out, recordEquations(eq.lhs, eq.rhs, eq.source))
-    else
-      push!(out, eq)
+    if eq isa IR.RECORD_EQUATION
+      local (lhs, rhs) = (constantRecord(eq.lhs), constantRecord(eq.rhs))
+      if !(rhs isa IR.CALL)
+        append!(out, recordEquations(lhs, rhs, eq.source))
+        continue
+      end
     end
+    push!(out, eq)
   end
   return out
 end
@@ -102,6 +106,20 @@ end
 const COMPLEX_CONJ = (Symbol("Modelica.ComplexMath.conj"), :Modelica_ComplexMath_conj)
 const COMPLEX_FROM_REAL = (Symbol("Complex.'constructor'.fromReal"), Symbol("Complex_'constructor'_fromReal"),
                            :Complex_constructor_fromReal)
+
+"""
+    constantRecord(e)
+
+A call of Complex's constructor with literal arguments as the record value `Complex(re, im)`, as the frontend's
+constant evaluation writes it where it scalarizes; any other expression itself.
+"""
+function constantRecord(e::IR.Expression)::IR.Expression
+  (e isa IR.CALL && e.name in COMPLEX_FROM_REAL && e.ty isa IR.T_RECORD && length(e.ty.fields) == 2) || return e
+  (1 <= length(e.arguments) <= 2 && all(a -> a isa IR.REAL || a isa IR.INTEGER, e.arguments)) || return e
+  local re::IR.Expression = IR.REAL(Float64(e.arguments[1].value))
+  local im::IR.Expression = length(e.arguments) == 2 ? IR.REAL(Float64(e.arguments[2].value)) : IR.REAL(0.0)
+  return IR.RECORD(IR.Expression[re, im], e.ty)
+end
 
 """
     fieldExpression(e, name, ty)

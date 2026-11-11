@@ -287,12 +287,22 @@ The models (canonical names) the last translate lowered with their arrays kept u
 const ARRAY_REDUCED_MODELS = Set{String}()
 
 """
+The models (canonical names) whose last translate took the flat model with arrays kept and scalarized it in the
+backend (`backendScalarizedModel`; OMBACKEND_BACKEND_SCALARIZATION): the array form did not take them, and the
+frontend did not flatten them a second time.
+"""
+const BACKEND_SCALARIZED_MODELS = Set{String}()
+
+"""
 Why the arrays-kept paths did not take a model at its last translate (canonical name => path => reason): what OM's
 translate reports when it falls back to the scalarizing flatten (`scalarizedFallbackReason`).
 """
 const ARRAY_PATH_REASONS = Dict{String, Dict{String, String}}()
 
-"The arrays-kept path `path` (array code generation, array index reduction) did not take the model `name`, for `reason`."
+"The arrays-kept paths, in the order a translate tries them (`declineArrayPath!`, `scalarizedFallbackReason`)."
+const ARRAY_PATHS = ("array index reduction", "array code after index reduction", "backend scalarization")
+
+"The arrays-kept path `path` (one of ARRAY_PATHS) did not take the model `name`, for `reason`."
 function declineArrayPath!(name::String, path::String, reason::String)::Nothing
   get!(Dict{String, String}, ARRAY_PATH_REASONS, name)[path] = reason
   return nothing
@@ -302,12 +312,11 @@ end
     scalarizedFallbackReason(name) -> String
 
 Why the model `name` (canonical) goes through the scalarizing flatten: the reasons the arrays-kept
-paths gave at its last translate (array index reduction, then the array code after it).
+paths gave at its last translate (array index reduction, the array code after it, the backend's scalarization).
 """
 function scalarizedFallbackReason(name::String)::String
   local reasons = get(ARRAY_PATH_REASONS, name, Dict{String, String}())
-  local parts::Vector{String} = String["$(path): $(reasons[path])" for path in ("array index reduction", "array code after index reduction")
-                        if haskey(reasons, path)]
+  local parts::Vector{String} = String["$(path): $(reasons[path])" for path in ARRAY_PATHS if haskey(reasons, path)]
   return isempty(parts) ? "no reason recorded" : join(parts, "; ")
 end
 
@@ -568,21 +577,44 @@ function scalarizedReducedModel(name::String, reduced::OMJLIR.Model)::Union{Noth
 end
 
 """
-`f()`, a step of the array index reduction of the model `name` (canonical): a model it does not handle (NotHandled, UnsupportedLowering)
-logged and declined (`decline`), another error (the optional route fails where it should refuse) a warning and
-declined; `nothing` then.
+    backendScalarizedModel(lower::Function, name::String) -> Union{Nothing, OMJLIR.Model}
+
+The model `name` (canonical) that `lower()` lowers to OMJLIR with its arrays kept, scalarized by the backend's
+element view (`Passes.IndexReduction.scalarizeArrays`, the view for the scalar passes) and through the scalar
+passes with index reduction (`Passes.runPasses!`): what the frontend's scalarizing flatten, lowered and through the
+passes, gives, without flattening again. For the models the array form does not take (`reducedArrayModel`).
+`nothing` where the element view does not take the model (switched off, OMBACKEND_BACKEND_SCALARIZATION; what it
+does not handle: logged; another error: a warning), the reason recorded (`declineArrayPath!`, "backend
+scalarization"): the frontend scalarizes then.
 """
-function _arrayReductionStep(f::Function, name::String, decline::Function)::Union{Nothing, OMJLIR.Model}
+function backendScalarizedModel(lower::Function, name::String)::Union{Nothing, OMJLIR.Model}
+  local decline::Function = (reason::String) -> declineArrayPath!(name, "backend scalarization", reason)
+  if !envSwitch("OMBACKEND_BACKEND_SCALARIZATION")
+    decline("switched off (OMBACKEND_BACKEND_SCALARIZATION)")
+    return nothing
+  end
+  return _arrayReductionStep(name, decline; route = "the backend's scalarization") do
+    Passes.runPasses!(Passes.IndexReduction.scalarizeArrays(lower(); passesFollow = true).model)
+  end
+end
+
+"""
+`f()`, a step of the route `route` of the model `name` (canonical) with its arrays kept: a model it does not handle
+(NotHandled, UnsupportedLowering) logged and declined (`decline`), another error (the optional route fails where it
+should refuse) a warning and declined; `nothing` then.
+"""
+function _arrayReductionStep(f::Function, name::String, decline::Function;
+                             route::String = "the array form")::Union{Nothing, OMJLIR.Model}
   local reduction::Module = Passes.IndexReduction
   try
     return f()
   catch err
     isFatal(err) && rethrow()
     if err isa Union{reduction.NotHandled, UnsupportedLowering}
-      @info "[index reduction] $(name): arrays kept, $(sprint(showerror, err)); scalarized in the frontend"
+      @info "[index reduction] $(name): arrays kept, $(route) does not take it: $(sprint(showerror, err))"
       decline(sprint(showerror, err))
     else
-      @warn "[index reduction] $(name): arrays kept, an error ($(sprint(showerror, err))); scalarized in the frontend"
+      @warn "[index reduction] $(name): arrays kept, an error in $(route) ($(sprint(showerror, err)))"
       decline("an error: $(sprint(showerror, err))")
     end
     return nothing

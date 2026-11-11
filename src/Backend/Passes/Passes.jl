@@ -66,6 +66,7 @@ lowering's transformations), then clock partitioning and the clocked lowering, t
 Causalize passes (the derivative variables in the place of its detection of the states).
 """
 const PIPELINE = Pair{String, Base.Function}[
+  "removeEmptyEquations" => removeEmptyEquations!,
   "removeSmooth" => removeSmooth!,
   "decomposeRecordEquations" => decomposeRecordEquations!,
   "liftAlgorithms" => liftAlgorithms!,
