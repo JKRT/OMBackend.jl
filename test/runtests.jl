@@ -370,6 +370,7 @@ import .ExampleModels
 
   #= ── 20. The initialization's one-unknown rows ──────────────────── =#
   include("initializationCausalRowsTests.jl")
+  include("initGroupedDifferencesTests.jl")
 
   #= ── 20b. OMBackend's index reduction step by step ──────────────── =#
   include("indexReductionTests.jl")
