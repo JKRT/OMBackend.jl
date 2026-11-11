@@ -67,8 +67,7 @@ function derivativesOfDummyStates(simCode::SIM_CODE)::SIM_CODE
     replaced[] += 1
     return d
   end
-  local recur = (x, a) -> (x isa Exp ? mapExp(f, x) : x isa Statement ? mapStatement(f, x) : x, a)
-  local initialEquations = Equation[first(traverseFields(eq, recur, nothing)) for eq in simCode.initialEquations]
+  local initialEquations::Vector{Equation} = Equation[mapEquation(f, eq) for eq in simCode.initialEquations]
   replaced[] == 0 && return simCode
   @debug "[SIMCODE: $(simCode.name): derivativesOfDummyStates] $(replaced[]) der() of non-states replaced"
   return update(simCode; initialEquations)
