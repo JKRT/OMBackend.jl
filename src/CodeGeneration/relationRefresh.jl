@@ -621,6 +621,19 @@ end
 _compiledCondition(f::RuntimeGeneratedFunctions.RuntimeGeneratedFunction, shared::Tuple, x::AbstractVector, t::Real,
                    integrator, follow::Bool)::Bool = f(x, t, integrator, follow, shared...)
 
+"""
+    whenTrace(tag, t, value)
+
+A when callback's debug line (`JULIA_DEBUG=OMBackend`): `tag` names the callback and the point (`"[CB-DC5 cond]
+eval"`), `value` what it shows (the condition's value, the state after the affect, the names without a state).
+A call of a compiled function, not `@debug` in the generated code: each `@debug` expanded to 3.8 KB of logging code,
+and MSL BatchPlant's 220 took 0.16 s of lowering.
+"""
+function whenTrace(tag::String, t::Real, @nospecialize(value))::Nothing
+  @debug tag t value = value isa AbstractVector ? copy(value) : value
+  return nothing
+end
+
 const _NO_WHEN_INITIALIZE = (u, t, integrator) -> nothing
 
 """

@@ -432,7 +432,7 @@ function _emitElsewhenThresholdTimeWhen(elseArm::SC.WHEN_EQUATION, simCode::SC.S
       $(Symbol("affect$(callbacks)!")) = (integrator, $(MTK_CodeGenerationUtil.PRE_SNAPSHOT) = OMBackend.CodeGeneration.instantPre(integrator)) -> begin
         local t = integrator.t
         local x = integrator.u
-        @debug "[CB-EW$($(callbacks)) affect] firing" t=integrator.t
+        OMBackend.CodeGeneration.whenTrace($("[CB-EW$(callbacks) affect] firing"), integrator.t, nothing)
         $(_lookupTables(:_affCache))
         $(_whenLookupBindings(affBindCrefs, simCode)...)
         $(ewRefSym)[] = Float64($(expToJuliaExpMTK(thr, simCode)))
@@ -1010,7 +1010,7 @@ function _continuousWhenCondition(cond::SC.Exp, simCode::SC.SIM_CODE, callbacks:
           local indices = indexin(xs, OMBackend.CodeGeneration.getStatesAsSymbols(integrator.f))
           local params = OMBackend.CodeGeneration.getParametersAsSymbols(integrator.f)
           if $(unresolved)
-            @debug "[CB-CC$($(callbacks)) cond] no trigger (no state/param mapping)" t xs
+            OMBackend.CodeGeneration.whenTrace($("[CB-CC$(callbacks) cond] no trigger (no state/param mapping)"), t, xs)
             return 1.0
           end
           lookuptableStates = isempty(xs) ? Dict{Symbol, Union{Nothing, Int}}() : Dict(xs .=> indices)
@@ -1023,7 +1023,7 @@ function _continuousWhenCondition(cond::SC.Exp, simCode::SC.SIM_CODE, callbacks:
         end
         $(_whenLookupBindings(SC.allCrefNames(cond), simCode)...)
         local _result = $(expToJuliaExpMTK(cond, simCode))
-        @debug "[CB-CC$($(callbacks)) cond] eval" t value=_result
+        OMBackend.CodeGeneration.whenTrace($("[CB-CC$(callbacks) cond] eval"), t, _result)
         _result
       end
     end
@@ -1104,7 +1104,7 @@ function _continuousWhen(eq::SC.WHEN_EQUATION, cond::SC.Exp, simCode::SC.SIM_COD
         local $(MTK_CodeGenerationUtil.PRE_SNAPSHOT) = OMBackend.CodeGeneration.instantPre(integrator)
         local t = integrator.t + integrator.dt
         local x = integrator.u
-        @debug "[CB-CC$($(callbacks)) affect] firing" t=integrator.t
+        OMBackend.CodeGeneration.whenTrace($("[CB-CC$(callbacks) affect] firing"), integrator.t, nothing)
         $(_lookupTables(:_affCache))
         $(_whenLookupBindings(_bodyReads(wEq.body), simCode)...)
         if integrator.dt == 0.0
@@ -1112,7 +1112,7 @@ function _continuousWhen(eq::SC.WHEN_EQUATION, cond::SC.Exp, simCode::SC.SIM_COD
           fail()
         end
         $(whenStatements...)
-        @debug "[CB-CC$($(callbacks)) affect] done" t=integrator.t u=copy(integrator.u)
+        OMBackend.CodeGeneration.whenTrace($("[CB-CC$(callbacks) affect] done"), integrator.t, integrator.u)
       end
     end
     $(Symbol("cb$(callbacks)")) = ContinuousCallback($(Symbol("condition$(callbacks)")),
@@ -1327,7 +1327,7 @@ function _discreteWhen(eq::SC.WHEN_EQUATION, @nospecialize(condition::SC.Exp), @
       local xs = $(Symbol[Symbol(c) for c in condCrefs])
       local indices = indexin(xs, OMBackend.CodeGeneration.getStatesAsSymbols(integrator.f))
       if !isempty(xs) && all(isnothing, indices)
-        @debug "[CB-DC$($(callbacks)) cond] false (no state mapping)" t xs
+        OMBackend.CodeGeneration.whenTrace($("[CB-DC$(callbacks) cond] false (no state mapping)"), t, xs)
         return false
       end
       lookuptableStates = Dict{Symbol, Union{Nothing, Int}}((xs) .=> indices)
@@ -1346,7 +1346,7 @@ function _discreteWhen(eq::SC.WHEN_EQUATION, @nospecialize(condition::SC.Exp), @
       _changePreValues = _changeCache[]
     end
     local _result = $(condValue)
-    @debug "[CB-DC$($(callbacks)) cond] eval" t value=_result
+    OMBackend.CodeGeneration.whenTrace($("[CB-DC$(callbacks) cond] eval"), t, _result)
     $(useLatch ? :(_result || (_latch[] = false)) : :())
     local _fires = $(let f = useLatch ? :(_result && !_latch[]) : :_result
                        tickCalls === nothing ? f : :($f || $tickNow)
@@ -1376,7 +1376,7 @@ function _discreteWhen(eq::SC.WHEN_EQUATION, @nospecialize(condition::SC.Exp), @
       $(Symbol("affect$(callbacks)!")) = (integrator, $(MTK_CodeGenerationUtil.PRE_SNAPSHOT) = OMBackend.CodeGeneration.instantPre(integrator)) -> begin
         local t = integrator.t
         local x = integrator.u
-        @debug "[CB-DC$($(callbacks)) affect] firing" t=integrator.t
+        OMBackend.CodeGeneration.whenTrace($("[CB-DC$(callbacks) affect] firing"), integrator.t, nothing)
         $(tickCalls === nothing ? :() : :(_tickAt[] == integrator.t && (_tickTaken[] = integrator.t)))
         local lookuptableStates
         local lookuptableParams
@@ -1402,7 +1402,7 @@ function _discreteWhen(eq::SC.WHEN_EQUATION, @nospecialize(condition::SC.Exp), @
         #= On the state vector: the body bound the model's variables by name (a variable `x`
            replaced the state vector `x`: a BoundsError). =#
         $(useLatch ? :(_latch[] = let x = integrator.u; $(condValue) end) : :())
-        @debug "[CB-DC$($(callbacks)) affect] done" t=integrator.t u=copy(integrator.u)
+        OMBackend.CodeGeneration.whenTrace($("[CB-DC$(callbacks) affect] done"), integrator.t, integrator.u)
       end
       #= At the start of a solve: change()/edge() compare with the initialized values (pre() at
          the first event), not the start attributes: `when edge(off)` with off(start = true)
