@@ -1109,7 +1109,7 @@ function assertEntries(simCode::SC.SIM_CODE)::Vector{AssertCode}
                                                              (observed, integrator) -> $(msg),
                                                              $(AlgorithmicCodeGeneration.isWarningAssertionLevel(a.level)), $(timeVarying),
                                                              $(string(a.condition)),
-                                                             $(Expr(:tuple, (:((observed, integrator) -> $(c)) for c in crossings)...)))),
+                                                             $(Expr(:ref, :Function, (:((observed, integrator) -> $(c)) for c in crossings)...)))),
                               timeVarying, crossings))
   end
   return entries
