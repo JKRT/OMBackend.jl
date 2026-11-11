@@ -208,7 +208,12 @@ end
    generated code. A stiff model at a loose tolerance went from Success to
    Unstable or InitialFailure by process (MSL DifferenceAmplifier with QNDF
    at 1e-2, 4 of 52 verify runs). An RGF's type holds a hash of its body's
-   content (`id`), so the type identifies the function. =#
+   content (`id`), so its argument names and `id` identify the function. Not
+   the type's own hash: that includes its module's build id, random per
+   precompilation of OMBackend (`_RGF_TAG` is this module's type), so every
+   OMBackend build ordered the terms and rounded the right-hand side
+   differently (MSL BatchPlant_StandardWater: Success, Unstable or
+   InitialFailure by build, with the same model code). =#
 const _RGF_TAG = getfield(@__MODULE__, Symbol("#_RGF_ModTag"))
 
 """
@@ -325,8 +330,11 @@ function _freeExternalObject!(h::ExternalObjectHandle)::Nothing
   end
   return nothing
 end
-Base.hash(f::RuntimeGeneratedFunctions.RuntimeGeneratedFunction{<:Any, _RGF_TAG, _RGF_TAG}, h::UInt) = hash(typeof(f), h)
-Base.hash(w::ModelicaFunctionWrapper, h::UInt) = hash(typeof(w), hash(w.name, h))
+"By its argument names and its code's hash (`id`), not its type (see `_RGF_TAG`)."
+Base.hash(f::RuntimeGeneratedFunctions.RuntimeGeneratedFunction{A, _RGF_TAG, _RGF_TAG, ID}, h::UInt) where {A, ID} =
+  hash(ID, hash(A, hash(:RuntimeGeneratedFunction, h)))
+"By its name and arity, not its type (see `_RGF_TAG`)."
+Base.hash(w::ModelicaFunctionWrapper{N}, h::UInt) where {N} = hash(N, hash(w.name, hash(:ModelicaFunctionWrapper, h)))
 
 #= der() of a call of a function with a derivative annotation that stays a term (an
    if-statement on its input: Buildings' equalPercentage, DerivativeCheck): the partial
