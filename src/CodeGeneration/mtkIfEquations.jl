@@ -308,6 +308,23 @@ function _fixedPointInitialConditions(ifEq::SC.IF_EQUATION, simCode::SC.SIM_CODE
   return ivs
 end
 
+"""
+    IfCondToggle(name, value)
+
+An if-equation branch's crossing affect (an ImperativeAffect's function, `createIfEquation`): the modified ifConds
+unchanged but `name`, set to `value` (0.0 on the up-crossing, the condition turns false; 1.0 on the down-crossing).
+One type for all branches: as a closure each was a type of its own, and Julia's lowering of a function is quadratic
+in its closures (MSL BatchPlant: 43 branch callbacks, 129 closures in one function, 0.57 s).
+"""
+struct IfCondToggle <: Function
+  name::Symbol
+  value::Float64
+end
+
+function (a::IfCondToggle)(modified::NamedTuple{N}, observed, ctx, integrator) where {N}
+  return NamedTuple{N}(ntuple(j -> N[j] === a.name ? a.value : Float64(modified[j]), Val(length(N))))
+end
+
 function createIfEquation(stateVariables::Vector,
                           algebraicVariables::Vector,
                           ifEq::SC.IF_EQUATION,
@@ -386,12 +403,9 @@ function createIfEquation(stateVariables::Vector,
        each ifCond stands for its own condition only. =#
     local modifiedKws::Vector{Expr} = Expr[Expr(:kw, sym, sym) for sym in allIfCondSyms]
     local modifiedNT::Expr = Expr(:tuple, Expr(:parameters, modifiedKws...))
-    local upKws::Vector{Expr}   = Expr[Expr(:kw, sym, (j == i) ? 0.0 : :(modified.$(sym))) for (j, sym) in enumerate(allIfCondSyms)]
-    local downKws::Vector{Expr} = Expr[Expr(:kw, sym, (j == i) ? 1.0 : :(modified.$(sym))) for (j, sym) in enumerate(allIfCondSyms)]
-    local upFExpr::Expr   = :((modified, observed, ctx, integrator) -> $(Expr(:tuple, Expr(:parameters, upKws...))))
-    local downFExpr::Expr = :((modified, observed, ctx, integrator) -> $(Expr(:tuple, Expr(:parameters, downKws...))))
-    local affectTuple::Expr     = :(($(upFExpr), $(modifiedNT)))
-    local affectNegTuple::Expr  = :(($(downFExpr), $(modifiedNT)))
+    local own::QuoteNode = QuoteNode(allIfCondSyms[i])
+    local affectTuple::Expr    = :((OMBackend.CodeGeneration.IfCondToggle($(own), 0.0), $(modifiedNT)))
+    local affectNegTuple::Expr = :((OMBackend.CodeGeneration.IfCondToggle($(own), 1.0), $(modifiedNT)))
     #= Multi-branch chains whose conditions reference solved unknowns: a
        static toggle scrambles the selection when one boundary crossing
        hands over to a SIBLING branch (staged trajectories with computed
