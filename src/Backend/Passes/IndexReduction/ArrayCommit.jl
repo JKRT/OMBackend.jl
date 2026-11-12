@@ -565,7 +565,7 @@ function stateSets(model::IR.Model, p::Plan, E::Elements, variables::IR.Variable
   local (families, scalarSets) = setFamilies(p, E, variables)
   for (k, set) in enumerate(scalarSets)
     #= on the element view's variables: a state's guess is the start value of the element it selects =#
-    local (vs, eqs) = dynamicSetParts(viewVariables, p.structure, set, k)
+    local (vs, eqs) = dynamicSetParts(viewVariables, p.structure, set, k, p.carried.values)
     for v in vs
       local guess::Union{Nothing, IR.Expression} = v.attributes.start
       guess === nothing && continue
@@ -577,7 +577,8 @@ function stateSets(model::IR.Model, p::Plan, E::Elements, variables::IR.Variable
     append!(equations, IR.Equation[arrayEquation(eq, E, variables) for eq in eqs])
   end
   for (f, family) in enumerate(families)
-    local (vs, eqs) = familyParts(family, length(scalarSets) + f, p.structure, E, variables, viewVariables)
+    local (vs, eqs) = familyParts(family, length(scalarSets) + f, p.structure, E, variables, viewVariables,
+                                  p.carried.values)
     append!(newVariables, vs)
     append!(equations, eqs)
   end
@@ -700,6 +701,25 @@ function commitIndexOne!(model::IR.Model)::Bool
   return true
 end
 
+"""
+    applyCarriedArrays!(variables, E, carried) -> Nothing
+
+`applyCarried!` for the arrays that declare no start: a state array with elements of a carried start, and an array
+whose elements all have an alias that declares one, take the array of the carried values as their start (0 for an
+element without one).
+"""
+function applyCarriedArrays!(variables::IR.VariableSet, E::Elements, carried::CarriedStarts)::Nothing
+  for v in variables
+    (v.ty isa IR.T_ARRAY && v.attributes.start === nothing && haskey(E.elements, v.name)) || continue
+    local names::Vector{Symbol} = E.elements[v.name]
+    (v.kind isa IR.STATE || all(in(carried.aliased), names)) || continue
+    any(n::Symbol -> haskey(carried.values, n), names) || continue
+    local leaves::Vector{IR.Expression} = IR.Expression[IR.REAL(get(carried.values, n, 0.0)) for n in names]
+    v.attributes = withStart(v.attributes, nestedArray(E.sizes[v.name], IR.T_REAL(), leaves))
+  end
+  return nothing
+end
+
 "Whether index reduction reduced `model`: it has dummy derivatives (one for each differentiated equation)."
 indexReduced(model::IR.Model)::Bool = any(v::IR.Variable -> v.kind isa Union{IR.DUMMY_DER, IR.DUMMY_STATE}, model.variables)
 
@@ -716,6 +736,8 @@ function commitArrayPlan!(model::IR.Model, view::Scalarized, written::Plan)::Boo
   local reduced::Bool = !isempty(p.differentiated)
   local c = arrayCommit(model, model.continuous[1], view, p)
   commitArrays!(model, model.continuous[1], c)
+  applyCarried!(model.variables, p.carried)
+  applyCarriedArrays!(model.variables, view.elements, p.carried)
   #= the derivative unknowns solved for, as on the scalarized path (`reduceIndex!`): left algebraic unknowns, MSL
      R134a2's der(p) of its volumes jumped at the dew line and the steps fell to 1e-16 =#
   #= a coefficient of parameters stays an expression (the array code's parameters can be overridden: `c * der(x) = 1`

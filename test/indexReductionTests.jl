@@ -589,6 +589,12 @@ end
     @test withenv(() -> _IRd.reduceIndexArrays!(m), "OMBACKEND_DYNAMIC_STATE_SETS" => "true")
     @test [m.variables[Symbol("\$STATESET1.A[1,$(c)]")].attributes.start.value for c in 1:2] == [0, 1]
     @test m.variables[:s].kind isa _IRM.STATE && m.variables[:r].kind isa _IRM.DUMMY_STATE
+    #= a state without a start takes the start carried through the relations as its guess (`carriedStarts`:
+       s = length = |ra| = 0.5), not fixed; ra the start of its alias r, which the model gives; length, an estimate
+       of an algebraic variable, stays without one (a start reads as declared) =#
+    @test m.variables[:s].attributes.start == _IRM.REAL(0.5) && m.variables[:s].attributes.fixed === nothing
+    @test string(m.variables[:ra].attributes.start) == "{-0.5, 0.0}" && m.variables[:ra].attributes.fixed === nothing
+    @test m.variables[:length].attributes.start === nothing
     #= an if-expression that reads its for-equation's iterator: inline in the reduced arrays-kept model (the array
        code reads it there); on the scalarized form of the reduced model lifted per element, the equations of the
        other for-equations left (`liftIfExpressions!(model, selected)`, as `scalarizedReducedModel`) =#
@@ -671,7 +677,10 @@ end
                                   #= a set across the subscripts of one array (r[1], r[2]): a scalar set that reads
                                      the array, its state guessed by the start of the element it selects (r[2] = -0.6,
                                      not the constraint's other root) =#
-                                  ("PendulumVector", ["r[1]", "r[2]", "v[1]", "F"], 3.0))
+                                  ("PendulumVector", ["r[1]", "r[2]", "v[1]", "F"], 3.0),
+                                  #= a start on an alias: the guesses of s and of the set's state carried from it
+                                     (from 0 the initial system's residuals are not finite) =#
+                                  ("StartOnAlias", ["r[1]", "r[2]", "s", "v[2]"], 2.0))
         local scalarized = _irArraySimulate(name, names, stop; kept = false)
         #= the array code names a matrix element as Modelica writes it (x[1,2]), the scalar code x[1][2] =#
         local kept = _irArraySimulate(name, String[replace(n, "][" => ",") for n in names], stop; kept = true)

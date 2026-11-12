@@ -268,7 +268,7 @@ function nestedArray(sizes::Vector{Int}, ty::IR.ModelicaType, leaves::Vector{IR.
 end
 
 """
-    familyParts(f, k, s, E, variables, viewVariables) -> Tuple{Vector{IR.Variable}, Vector{IR.Equation}}
+    familyParts(f, k, s, E, variables, viewVariables, carried) -> Tuple{Vector{IR.Variable}, Vector{IR.Equation}}
 
 The family of dynamic state sets `f` as the `k`-th state set of the model, `dynamicSetParts` per element in array
 form: the selection matrices `\$STATESETk.A[i.., j, c]` (Integer, the start values' choice of each element), the
@@ -278,7 +278,8 @@ twice the dummy's. The states' start values guess the variables the start values
 element view's).
 """
 function familyParts(f::SetFamily, k::Int, s::Structure, E::Elements, variables::IR.VariableSet,
-                     viewVariables::IR.VariableSet)::Tuple{Vector{IR.Variable}, Vector{IR.Equation}}
+                     viewVariables::IR.VariableSet,
+                     carried::Dict{Symbol, Float64})::Tuple{Vector{IR.Variable}, Vector{IR.Equation}}
   local n = length(f.levels[1].variables)
   local sizes = f.sizes
   local at = iteratorSubscripts(sizes)
@@ -313,8 +314,10 @@ function familyParts(f::SetFamily, k::Int, s::Structure, E::Elements, variables:
     local guesses = IR.Expression[]
     for (set, start) in zip(f.sets, starts), j in 1:n-1
       local candidates = l == 1 ? set.candidates : set.linked[l - 1]
-      local v = get(viewVariables, s.variables[s.antiderivative[candidates[selects(start, j)]]], nothing)
-      push!(guesses, (v === nothing || v.attributes.start === nothing) ? IR.REAL(0.0) : arrayReferences(v.attributes.start, E, variables))
+      local selected::Symbol = s.variables[s.antiderivative[candidates[selects(start, j)]]]
+      local v = get(viewVariables, selected, nothing)
+      push!(guesses, (v === nothing || v.attributes.start === nothing) ? IR.REAL(get(carried, selected, 0.0)) :
+                     arrayReferences(v.attributes.start, E, variables))
     end
     local derivativeRef::IR.ComponentRef = IR.derivativeCref(cref)
     local x::IR.Variable = IR.Variable(cref, stateType, IR.STATE(1, derivativeRef.name, true), nothing,
