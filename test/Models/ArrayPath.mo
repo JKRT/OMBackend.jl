@@ -2344,4 +2344,65 @@ package ArrayPath
   model SlidingMassAligned "the slide along y at the start: R.T[2, 1] = 0 there; s = (g/2) cos(t) + (1 - g/2) cosh(t)"
     extends SlidingMass(phi0 = 0);
   end SlidingMassAligned;
+
+  function initialResidue "q - q0 per element, inlined (as MSL Frames.Quaternions.Orientation.equalityConstraint)"
+    input Real q[2];
+    input Real q0[2];
+    output Real r[2];
+  algorithm
+    r := {q[1] - q0[1], q[2] - q0[2]};
+    annotation(Inline = true);
+  end initialResidue;
+
+  function initialResidueLoop "initialResidue by a loop: not inlined, called per element"
+    input Real q[2];
+    input Real q0[2];
+    output Real r[2];
+  algorithm
+    for i in 1:2 loop
+      r[i] := q[i] - q0[i];
+    end for;
+  end initialResidueLoop;
+
+  model ArrayInitialRefs "an initial array equation of references: q(1) = q0 exp(-1)"
+    parameter Real q0[2] = {1, 2};
+    Real q[2];
+  initial equation
+    q = q0;
+  equation
+    der(q) = -q;
+  end ArrayInitialRefs;
+
+  model ArrayInitialCall "an initial array equation of an inlined call against a literal (MSL Body: zeros(3) = equalityConstraint(Q, Q_start))"
+    parameter Real q0[2] = {1, 2};
+    Real q[2];
+  initial equation
+    zeros(2) = initialResidue(q, q0);
+  equation
+    der(q) = -q;
+  end ArrayInitialCall;
+
+  model ArrayInitialLoopCall "ArrayInitialCall, the call's body a loop (not inlined)"
+    parameter Real q0[2] = {1, 2};
+    Real q[2];
+  initial equation
+    zeros(2) = initialResidueLoop(q, q0);
+  equation
+    der(q) = -q;
+  end ArrayInitialLoopCall;
+
+  model ArrayInitialFree "initial array equations that no residual solves: of a parameter array with fixed = false, of a discrete array (assignments of the initialization, per element)"
+    parameter Real p[2](each fixed = false, each start = 0);
+    discrete Real d[2];
+    Real q[2](each start = 1, each fixed = true);
+  initial equation
+    p = {1, 2};
+    d = {3, 4};
+  equation
+    der(q) = -p .* q;
+    when time > 0.5 then
+      d[1] = 2 * pre(d[1]);
+      d[2] = 2 * pre(d[2]);
+    end when;
+  end ArrayInitialFree;
 end ArrayPath;

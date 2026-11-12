@@ -47,6 +47,8 @@ code generation takes; of its first partition (a model of several the generation
   - the lifted discrete clusters the event iteration runs at every pass are their equations (`everyPassClusters!`);
   - the derivative variables that only their definitions read are dropped (`dropUnreadDerivatives!`);
   - the calls are inlined after index reduction (`inlineAfterIndexReduction!`);
+  - the array equations left (the initial ones, those in branches and bodies) are for-equations over their elements
+    (`rollLeftArrayEquations!`);
   - the for-equations that read the elements of what is no variable, or subscript an array literal by their iterator,
     are unrolled (`unrollElementLoops!`);
   - the for-ranges that fold to Integer literals are those literal ranges (`literalRanges!`);
@@ -59,6 +61,7 @@ function arrayCodeForm!(model::IR.Model)::IR.Model
   everyPassClusters!(model)
   dropUnreadDerivatives!(model)
   inlineAfterIndexReduction!(model)
+  rollLeftArrayEquations!(model)
   unrollElementLoops!(model)
   literalRanges!(model)
   elementForm!(model)
@@ -273,7 +276,7 @@ end
     inlinedEquation(eq, functions) -> Equation
 
 `eq` with its calls of `functions` inlined where their algorithms run into one expression (`IndexReduction.inlineCalls`;
-scalar, if- and for-equations, a for-equation's body): MultiBody's `planarRotation(e, phi, w)[1][2, 1]` as
+scalar, array, if- and for-equations, a for-equation's body): MultiBody's `planarRotation(e, phi, w)[1][2, 1]` as
 `e[2] * e[1] + (-(e[2] * e[1])) * cos(phi) - e[3] * sin(phi)`, no call and no array built per element (each element of
 a record result called the function again). Other kinds, and an equation without such a call, as they are (inlining
 also writes a subscripted reference on its parts: `observed.offset[\$i1]` of a record variable's array field, whose
@@ -286,7 +289,8 @@ function inlinedEquation(eq::IR.Equation, functions::Dict{Symbol, IR.ModelicaFun
     nothing
   end
   calls || return eq
-  (eq isa IR.SCALAR_EQUATION || eq isa IR.IF_EQUATION) && return IndexReduction.inlineEquation(eq, functions)
+  (eq isa IR.SCALAR_EQUATION || eq isa IR.ARRAY_EQUATION || eq isa IR.IF_EQUATION) &&
+    return IndexReduction.inlineEquation(eq, functions)
   eq isa IR.FOR_EQUATION &&
     return IR.FOR_EQUATION(eq.iterator, IR.Equation[inlinedEquation(e, functions) for e in eq.body], eq.source, eq.attributes)
   return eq
@@ -295,6 +299,68 @@ end
 #= ==================================================================================== =#
 #= For-equations over elements                                                          =#
 #= ==================================================================================== =#
+
+"""
+    rollLeftArrayEquations!(model) -> Model
+
+The array equations the first partition still has as for-equations over their elements (`IndexReduction.elementLoop`):
+the initial ones, which no pass before rolls or splits (MSL Body's `zeros(3) = equalityConstraint(Q, Q_start)`, a
+state's `x = x_start`), and those in an if-equation's branches or a for-equation's body that read no continuous
+array. The array code has classes over index domains and none for an array equation as a whole. An inlined call's
+array literal subscripted by the iterator is then unrolled (`unrollElementLoops!`). One of an unknown size stays.
+An initial one that reads no continuous array (of a discrete array, of a parameter array with fixed = false) is its
+element equations: no residual solves it, the initialization assigns it, an element at a time, the reference on the
+left (the lowering writes an array equality `rhs = lhs`).
+"""
+function rollLeftArrayEquations!(model::IR.Model)::IR.Model
+  local partition::IR.Partition = model.continuous[1]
+  local variables::IR.VariableSet = model.variables
+  partition.equations = IR.Equation[elementLoops(eq, variables, 0) for eq in partition.equations]
+  local initial::Vector{IR.Equation} = IR.Equation[]
+  for eq in partition.initialEquations
+    local rolled::IR.Equation = elementLoops(eq, variables, 0)
+    local assigned::Bool = eq isa IR.ARRAY_EQUATION && !IndexReduction.readsContinuousArray(eq.lhs, variables) &&
+                           !IndexReduction.readsContinuousArray(eq.rhs, variables)
+    assigned ? append!(initial, IR.Equation[referenceLeft(x) for x in unrolledWhole(rolled)]) : push!(initial, rolled)
+  end
+  partition.initialEquations = initial
+  return model
+end
+
+"A scalar equation `value = reference` as `reference = value`; another as it is."
+referenceLeft(eq::IR.Equation)::IR.Equation =
+  (eq isa IR.SCALAR_EQUATION && eq.rhs isa IR.CREF && !(eq.lhs isa IR.CREF)) ?
+    IR.SCALAR_EQUATION(eq.rhs, eq.lhs, eq.ty, eq.source, eq.attributes) : eq
+
+"The equations of the for-equation `eq` at every value of its iterators (nested ones too); of no literal range as it
+is."
+function unrolledWhole(eq::IR.Equation)::Vector{IR.Equation}
+  eq isa IR.FOR_EQUATION || return IR.Equation[eq]
+  local range::Union{Nothing, StepRange{Int, Int}} =
+    IndexReduction.literalRange(IndexReduction.foldTree(eq.iterator.range))
+  range === nothing && return IR.Equation[eq]
+  return IR.Equation[x for value in range for b in eq.body
+                     for x in unrolledWhole(withIterator(b, Dict{Symbol, Int}(eq.iterator.name => value)))]
+end
+
+"`eq` with its array equations as for-equations over their elements, by iterators after the enclosing ones (`used`)."
+function elementLoops(eq::IR.Equation, variables::IR.VariableSet, used::Int)::IR.Equation
+  eq isa IR.ARRAY_EQUATION && return IndexReduction.elementLoop(eq, variables, used)
+  local rolled::Function = (eqs::Vector{IR.Equation}, inner::Int) ->
+    IR.Equation[elementLoops(e, variables, inner) for e in eqs]
+  if eq isa IR.FOR_EQUATION
+    local inner::Int = max(used, IndexReduction.iteratorIndex(eq.iterator.name))
+    return IR.FOR_EQUATION(eq.iterator, rolled(eq.body, inner), eq.source, eq.attributes)
+  elseif eq isa IR.IF_EQUATION
+    #= branches of array equations of one size: one for-equation with the if-equation in its body =#
+    local whole::IR.Equation = IndexReduction.rolledEquation(eq, variables, used)
+    whole === eq || return whole
+    local branches::Vector{IR.EquationBranch} =
+      IR.EquationBranch[IR.EquationBranch(b.condition, rolled(b.equations, used)) for b in eq.branches]
+    return IR.IF_EQUATION(branches, rolled(eq.elseEquations, used), eq.source, eq.attributes)
+  end
+  return eq
+end
 
 """
     unrollElementLoops!(model) -> Model

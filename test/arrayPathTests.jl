@@ -143,6 +143,21 @@ end
     @test OMBackend.simulateModel(name; tspan = (0.0, 0.4)).retcode == ReturnCode.Success
   end
 
+  @testset "Initial array equations: for-equations over their elements (rollLeftArrayEquations!)" begin
+    #= of references, of an inlined call against a literal (MSL Body: zeros(3) = equalityConstraint(Q, Q_start)), of a
+       call that is not inlined (its result subscripted per element); q(1) = q0 exp(-1) =#
+    for m in ("ArrayPath.ArrayInitialRefs", "ArrayPath.ArrayInitialCall", "ArrayPath.ArrayInitialLoopCall")
+      local (s, a, _) = _bothWays(m, ["q[1]", "q[2]"]; reltol = 1e-9, abstol = 1e-9)
+      @test maximum(abs.(a .- [exp(-1), 2 * exp(-1)])) < 1e-6
+      @test maximum(abs.(s .- a)) < 1e-6
+    end
+    #= of a parameter array with fixed = false and of a discrete array: assignments of the initialization, an element
+       at a time (no residual solves them); q' = -p q, d doubled at 0.5 =#
+    local (s, a, sol) = _bothWays("ArrayPath.ArrayInitialFree", ["q[1]", "q[2]", "d[1]", "d[2]"]; reltol = 1e-9, abstol = 1e-9)
+    @test maximum(abs.(a .- [exp(-1), exp(-2), 6, 8])) < 1e-6 && maximum(abs.(s .- a)) < 1e-6
+    @test OMBackend.getVariableValues(sol, "d[2]")[1] == 4
+  end
+
   @testset "Initialization, sample, static if, discrete equations, algorithms" begin
     for (m, names, T) in (("ArrayPath.InitSteady", ["x", "y"], 1.0),
                           ("ArrayPath.SampleZOH", ["x", "u", "k"], 1.0),

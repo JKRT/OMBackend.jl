@@ -1241,17 +1241,30 @@ function rolledEquation(eq::IR.FOR_EQUATION, variables::IR.VariableSet, used::In
 end
 
 function rolledEquation(eq::IR.ARRAY_EQUATION, variables::IR.VariableSet, used::Int = 0)::IR.Equation
-  local sizes = Int[]
+  (readsContinuousArray(eq.lhs, variables) || readsContinuousArray(eq.rhs, variables)) || return eq
+  return elementLoop(eq, variables, used)
+end
+
+"""
+    elementLoop(eq, variables, used) -> Equation
+
+The array equation `eq` as a for-equation over its elements (`nestedFor`, `lhs[\$i1] = rhs[\$i1]` by `elementAt`),
+by iterators after the enclosing ones (`used`); of an unknown size, or of records (an element's equation is a record
+equation, `scalarEquations!`), as it is.
+"""
+function elementLoop(eq::IR.ARRAY_EQUATION, variables::IR.VariableSet, used::Int = 0)::IR.Equation
+  IR.elementType(eq.ty) isa IR.T_RECORD && return eq
+  local sizes::Vector{Int} = Int[]
   for d in eq.ty.dimensions
-    local n = IR.dimensionSize(d)
+    local n::Union{Nothing, Int} = IR.dimensionSize(d)
     n === nothing && return eq
     push!(sizes, n)
   end
-  (readsContinuousArray(eq.lhs, variables) || readsContinuousArray(eq.rhs, variables)) || return eq
-  local subscripts = iteratorSubscripts(sizes, used)
-  local element = IR.elementType(eq.ty)
-  local body = IR.SCALAR_EQUATION(elementAt(eq.lhs, subscripts, element, variables), elementAt(eq.rhs, subscripts, element, variables),
-                                  element, eq.source, eq.attributes)
+  local subscripts::Vector{IR.Subscript} = iteratorSubscripts(sizes, used)
+  local element::IR.ModelicaType = IR.elementType(eq.ty)
+  local body::IR.SCALAR_EQUATION =
+    IR.SCALAR_EQUATION(elementAt(eq.lhs, subscripts, element, variables),
+                       elementAt(eq.rhs, subscripts, element, variables), element, eq.source, eq.attributes)
   return nestedFor(IR.Equation[body], sizes, used)
 end
 

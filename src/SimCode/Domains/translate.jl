@@ -634,14 +634,17 @@ _eqText(@nospecialize(eq))::String = _str(eq)
 
 """
 Whether the initial equation `lhs = rhs` is an assignment, made once as an initial algorithm's (no unknown of the
-initialization's solve): a scalar discrete variable's initial value (`d = expr`, CDL Discrete's `y = y_start`, assigned
-after the solve), or a scalar parameter with fixed = false given the value of an expression of parameters (`p =
-expr`): MSL GlobalSeed's `id_impure = initializeImpureRandom(seed)`, an impure call the solve's Newton made at every
+initialization's solve): the initial value of a discrete variable, scalar or an array's element (`d = expr`, CDL
+Discrete's `y = y_start`, assigned after the solve), or such a parameter with fixed = false given the value of an
+expression of parameters (`p = expr`): MSL GlobalSeed's `id_impure = initializeImpureRandom(seed)`, an impure call the solve's Newton made at every
 evaluation, a new value each time (ImpureGenerator stalled). Not of free parameters the solve determines (a double
 exponential's `eta = exp(-T/tau1) - exp(-T/tau2)`); those an earlier such assignment gives are known.
 """
 function _initialAssignment(g::Gen, lhs::IR, rhs::IR)::Bool
-  (lhs isa Ref && !lhs.der && isempty(g.vars[lhs.name].dims)) || return false
+  (lhs isa Ref && !lhs.der) || return false
+  #= a scalar, or an element of an array by literal subscripts (an initial array equation, an element at a time) =#
+  local dims::Int = length(g.vars[lhs.name].dims)
+  (length(lhs.subs) == dims && all(x::IR -> x isa Lit, lhs.subs)) || return false
   local known::Function = (name::String) -> !(name in g.freeParams) ||
     any(a::AlgClass -> any(st::Stmt -> st isa SAssign && st.target.name == name, a.body), g.initAlgs)
   local reads::Vector{Ref} = accesses!(Ref[], rhs)
