@@ -589,6 +589,22 @@ end
     @test withenv(() -> _IRd.reduceIndexArrays!(m), "OMBACKEND_DYNAMIC_STATE_SETS" => "true")
     @test [m.variables[Symbol("\$STATESET1.A[1,$(c)]")].attributes.start.value for c in 1:2] == [0, 1]
     @test m.variables[:s].kind isa _IRM.STATE && m.variables[:r].kind isa _IRM.DUMMY_STATE
+    #= an if-expression that reads its for-equation's iterator: inline in the reduced arrays-kept model (the array
+       code reads it there); on the scalarized form of the reduced model lifted per element, the equations of the
+       other for-equations left (`liftIfExpressions!(model, selected)`, as `scalarizedReducedModel`) =#
+    m = _irArrayUnreduced("DampedArray")
+    @test _IRd.reduceIndexArrays!(m)
+    local inline::Vector{Int} = findall(eq -> eq isa _IRM.FOR_EQUATION && OMBackend.Passes.ifReadsIterator(eq),
+                                        m.continuous[1].equations)
+    @test length(inline) == 1
+    local dampedView::_IRd.Scalarized = _IRd.scalarizeArrays(m)
+    local before::Int = length(dampedView.model.continuous[1].equations)
+    OMBackend.Passes.liftIfExpressions!(dampedView.model, findall(o -> o.equation in inline, dampedView.origins))
+    local lifted::Vector{_IRM.Equation} = dampedView.model.continuous[1].equations[(before + 1):end]
+    @test length(lifted) == 3 && all(eq -> eq isa _IRM.IF_EQUATION, lifted)
+    @test [v.name for v in dampedView.model.variables if v.origin === :liftIfExpressions] ==
+          [:ifEq_tmp0, :ifEq_tmp1, :ifEq_tmp2]
+    @test occursin("w1[2] > (0.2 * ", string(lifted[2])) && !any(eq -> occursin("\$i", string(eq)), lifted)
     #= a differentiated body that reads a parameter: in array form the parameter stays symbolic =#
     m = _irArrayUnreduced("AngleArray")
     @test _IRd.reduceIndexArrays!(m)

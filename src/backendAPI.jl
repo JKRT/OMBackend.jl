@@ -557,15 +557,14 @@ function scalarizedReducedModel(name::String, reduced::OMJLIR.Model)::Union{Noth
   local decline::Function = (reason::String) -> declineArrayPath!(name, "array index reduction", reason)
   local reduction::Module = Passes.IndexReduction
   reduction.indexReduced(reduced) || return nothing
-  #= if-expressions that read a for-equation's iterator, which the passes left inline: the array code reads them, the
-     scalarized form of a reduced model would need them lifted =#
-  if any(eq::OMJLIR.Equation -> eq isa OMJLIR.FOR_EQUATION && Passes.ifReadsIterator(eq),
-         reduced.continuous[1].equations)
-    decline("an if-expression that reads a for-equation's iterator, in a model of index above one")
-    return nothing
-  end
+  #= if-expressions that read a for-equation's iterator, which the passes left inline (the array code reads them
+     there): lifted once their for-equations are unrolled, as the scalar passes lift the others =#
+  local inline::Set{Int} = Set{Int}(i for (i, eq) in enumerate(reduced.continuous[1].equations)
+                                    if eq isa OMJLIR.FOR_EQUATION && Passes.ifReadsIterator(eq))
   local scalar::Union{Nothing, OMJLIR.Model} = _arrayReductionStep(name, decline) do
-    local s::OMJLIR.Model = reduction.scalarizeArrays(reduced).model
+    local view::Passes.IndexReduction.Scalarized = reduction.scalarizeArrays(reduced)
+    local s::OMJLIR.Model = view.model
+    Passes.liftIfExpressions!(s, Int[j for (j, origin) in enumerate(view.origins) if origin.equation in inline])
     #= the parameter references as the scalar pipeline resolves them (the arrays-kept passes keep them for the array
        code, whose parameters can all be overridden) =#
     Passes.resolveBindingReferences!(s)

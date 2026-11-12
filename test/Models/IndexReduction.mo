@@ -543,6 +543,23 @@ package IndexReduction "Models for OMBackend's index reduction step by step (Pas
     phi1 = phi2;
   end InertiaArray;
 
+  model DampedArray "rigidly coupled pairs in a for-equation, each damped above its own threshold (w1[i] > 0.2 i): an if-expression that reads the iterator stays inline with the arrays kept (the array code reads it there); where the reduced model is scalarized it is lifted per element (ifEq_tmp<k>)"
+    parameter Integer N = 3;
+    Real phi1[N](each start = 0, each fixed = true);
+    Real w1[N](each start = 0, each fixed = true);
+    Real phi2[N];
+    Real w2[N];
+    Real tau[N];
+  equation
+    for i in 1:N loop
+      der(phi1[i]) = w1[i];
+      der(phi2[i]) = w2[i];
+      der(w1[i]) = i * sin(time) - tau[i] - 2 * (if w1[i] > 0.2 * i then 0.1 * (w1[i] - 0.2 * i) else 0);
+      2 * der(w2[i]) = tau[i];
+      phi1[i] = phi2[i];
+    end for;
+  end DampedArray;
+
   model BoundaryArray "the first two elements of x tied: their kinds differ from the third's, which the array form does not take (slicing); the frontend scalarizes"
     parameter Integer N = 3;
     Real x[N](start = {1, 1, 0.5}, fixed = {true, false, true});

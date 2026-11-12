@@ -450,14 +450,15 @@ whose relations all are (no events, MLS 8.5); of a record value (the variable is
 result in a branch (a hoisted call equation, an assert's condition: `isNoResultCall`); in
 the branches of a lifted one, one whose condition does not depend on time (a state-dependent
 condition crosses in both directions: its branches are evaluated as a continuous product); in a
-for-equation (arrays kept), one that reads its iterator (the array code reads it inline; the scalar
-path takes such a model from the frontend's scalarized flatten). The when-equations (their code
-generation evaluates them in place), the asserts (checked where they are, not in the right-hand side: a Boolean
-if-expression of a condition lifted as a Real variable was read as a Boolean) and algorithms are left.
+for-equation (arrays kept), one that reads its iterator (the array code reads it inline; where such a
+model is scalarized after its reduction, `liftIfExpressions!(model, selected)` lifts it then). The
+when-equations (their code generation evaluates them in place), the asserts (checked where they are, not in the
+right-hand side: a Boolean if-expression of a condition lifted as a Real variable was read as a Boolean) and
+algorithms are left.
 """
 function liftIfExpressions!(model::IR.Model)::IR.Model
   for (variables, p) in partitionsWithVariables(model)
-    local lifter = IfExpressionLifter(variables, Dict{Any, IR.CREF}(), IR.Equation[], Ref(0))
+    local lifter = IfExpressionLifter(variables)
     for eq in p.equations
       (eq isa IR.WHEN_EQUATION && eq.kind !== IR.STRUCTURAL_WHEN) && continue
       eq isa IR.ASSERT_EQUATION && continue
@@ -470,6 +471,24 @@ function liftIfExpressions!(model::IR.Model)::IR.Model
     end
     append!(p.equations, lifter.equations)
   end
+  return model
+end
+
+"""
+    liftIfExpressions!(model, selected) -> Model
+
+The if-expressions of the equations `selected` (their positions in the model's continuous partition) lifted as
+`liftIfExpressions!(model)` lifts them, the other equations left as they are: for the equations a model reduced with
+its arrays kept had in for-equations, whose if-expressions on the iterator stayed inline until it was scalarized.
+"""
+function liftIfExpressions!(model::IR.Model, selected::Vector{Int})::IR.Model
+  isempty(selected) && return model
+  local p::IR.Partition = only(model.continuous)
+  local lifter = IfExpressionLifter(model.variables)
+  for i in selected
+    mapRoots!((@nospecialize(e::IR.Expression)) -> lift(lifter, e, false), p.equations[i])
+  end
+  append!(p.equations, lifter.equations)
   return model
 end
 
@@ -506,6 +525,15 @@ struct IfExpressionLifter
   lifted::Dict{Any, IR.CREF}
   equations::Vector{IR.Equation}
   tick::Base.RefValue{Int}
+end
+
+"A lifter of `variables`, numbering after the lifted if-expressions they already have (`ifEq_tmp<k>`)."
+function IfExpressionLifter(variables::IR.VariableSet)::IfExpressionLifter
+  local next::Int = 0
+  while haskey(variables, Symbol("ifEq_tmp", next))
+    next += 1
+  end
+  return IfExpressionLifter(variables, Dict{Any, IR.CREF}(), IR.Equation[], Ref(next))
 end
 
 """
