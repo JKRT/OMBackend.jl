@@ -127,6 +127,8 @@ function runPassesKeepingArrays!(model::IR.Model)::IR.Model
     name == "expandEquations" && (model = IndexReduction.rollArrayEquations!(model))
     model = pass(model)
   end
+  #= the array form has Real values only: what is left of Complex ones is their projections =#
+  model = lowerComplexProjections!(model)
   return IndexReduction.splitStaticIfs!(model)
 end
 

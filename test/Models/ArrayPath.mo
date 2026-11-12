@@ -2534,4 +2534,77 @@ package ArrayPath
       (r, s) := nextPair(pre(s));
     end when;
   end PreArrayStart;
+
+  model RecordForBody "a Complex equation in a for body, arrays kept: z[k] = Complex(x[k], -x[k]); x' = -1.5 x"
+    parameter Integer m = 3;
+    Complex z[m];
+    Real x[m](each start = 1, each fixed = true);
+  equation
+    for k in 1:m loop
+      z[k] = Complex(x[k], -x[k]);
+      der(x[k]) = -z[k].re + 0.5 * z[k].im;
+    end for;
+  end RecordForBody;
+
+  model RecordForSum "Complex arithmetic in a for body: w = z + z j with z = x (1 + 2 j); x' = -(w.re + w.im) = -2 x"
+    parameter Integer m = 3;
+    Complex z[m];
+    Complex w[m];
+    Real x[m](each start = 1, each fixed = true);
+  equation
+    for k in 1:m loop
+      z[k] = Complex(x[k], 2 * x[k]);
+      w[k] = z[k] + z[k] * Complex(0, 1);
+      der(x[k]) = -w[k].re - w[k].im;
+    end for;
+  end RecordForSum;
+
+  model RecordForIf "a Complex equation in a for body with an if-expression on the iterator (MSL PlugToPin): i[2] = -i0, the others 0; x' = -x"
+    parameter Integer m = 3;
+    parameter Integer k0 = 2;
+    Complex i0;
+    Complex i[m];
+    Real x(start = 1, fixed = true);
+  equation
+    i0 = Complex(x, -x);
+    for j in 1:m loop
+      i[j] = if j == k0 then -i0 else Complex(0);
+    end for;
+    der(x) = i[2].re + i[1].im;
+  end RecordForIf;
+
+  model ComplexResistor "v = R i of Complex values"
+    Complex v;
+    Complex i;
+    parameter Real R = 2;
+  equation
+    v = R * i;
+  end ComplexResistor;
+
+  model RecordComponents "a component array with a Complex equation (a for-equation with the arrays kept); x' = -x (1 + 1/2 + 1/4)"
+    ComplexResistor r[3](R = {1, 2, 4});
+    Real x(start = 1, fixed = true);
+  equation
+    for k in 1:3 loop
+      r[k].v = Complex(x, 0);
+    end for;
+    der(x) = -(r[1].i.re + r[2].i.re + r[3].i.re);
+  end RecordComponents;
+
+  model ComplexArrays "array equations of Complex values: of two arrays (by their fields' arrays), of an array constructor (a for-equation of the parts), of the elements written out (an equation per element and part); i = u j, x' = -i.im = -x"
+    parameter Integer m = 3;
+    Complex v[m];
+    Complex u[m];
+    Complex i[m];
+    Complex s[m];
+    Real x[m](each start = 1, each fixed = true);
+  equation
+    v = {Complex(x[k], 0) for k in 1:m};
+    u = v;
+    i = {u[k] * Complex(0, 1) for k in 1:m};
+    s = {i[1] + u[1], i[2] + u[2], i[3] + u[3]};
+    for k in 1:m loop
+      der(x[k]) = -s[k].im;
+    end for;
+  end ComplexArrays;
 end ArrayPath;

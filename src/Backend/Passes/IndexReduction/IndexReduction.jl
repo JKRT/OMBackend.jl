@@ -83,7 +83,7 @@ module IndexReduction
 
 import ..OMJLIR
 import ..substituteIterators, ..foldSubscripts, ..expressionLargerThan, ..foldInteger, ..mapRoots, ..rowMajor,
-       ..unsubscriptedName, ..allSubscripts, ..recordEquations, ..constantRecord
+       ..unsubscriptedName, ..allSubscripts, ..recordEquations, ..constantRecord, ..bodyRecordEquations
 import ...envSwitch
 import ...LowerUtil: assignedCrefs
 import ..Evaluation: arithmetic, asRecord, divide, elementOf, evaluate, foldScalar, genericOffset,

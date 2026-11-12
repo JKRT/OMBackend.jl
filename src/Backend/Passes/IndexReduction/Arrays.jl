@@ -1310,9 +1310,59 @@ over their elements (`nestedFor`), before `expandEquations` would split them int
 """
 function rollArrayEquations!(model::IR.Model)::IR.Model
   for p in model.continuous
-    p.equations = IR.Equation[rolledEquation(eq, model.variables) for eq in p.equations]
+    local equations::Vector{IR.Equation} = IR.Equation[]
+    for eq in p.equations
+      local rolled::IR.Equation = rolledEquation(eq, model.variables)
+      local elements::Union{Nothing, Vector{IR.Equation}} =
+        rolled === eq && eq isa IR.ARRAY_EQUATION ? recordElementEquations(eq, model.variables) : nothing
+      elements === nothing ? push!(equations, rolled) : append!(equations, elements)
+    end
+    p.equations = equations
   end
   return model
+end
+
+"""
+The element of the array of records `e` at `subscripts`: of a reference the reference subscripted (an array of
+records is no variable, `elementAt` reads a variable's dimensions; its fields' arrays are), of another expression
+`elementAt`.
+"""
+function recordElementAt(e::IR.Expression, subscripts::Vector{IR.Subscript}, element::IR.ModelicaType,
+                         variables::IR.VariableSet)::IR.Expression
+  e isa IR.CREF && return IR.CREF(IR.appendSubscripts(e.cref, subscripts), element)
+  return elementAt(e, subscripts, element, variables)
+end
+
+"""
+    recordElementEquations(eq, variables) -> Union{Nothing, Vector{Equation}}
+
+The array equation `eq` of records that is no for-equation over its elements (`elementLoop`: a side is the array of
+its elements' values written out, `{i_p[1] + i_n[1], i_p[2] + i_n[2], ...}`, which has no element by an iterator)
+as the equations of each element's fields (`bodyRecordEquations`); `nothing` for another equation, an unknown size,
+or where a record equation is left. `expandEquations` wrote one equation of a record per element, one row for its
+two unknowns (MSL QuasiStatic Polyphase: 18 unknowns over the rows).
+"""
+function recordElementEquations(eq::IR.ARRAY_EQUATION, variables::IR.VariableSet)::Union{Nothing, Vector{IR.Equation}}
+  local element::IR.ModelicaType = IR.elementType(eq.ty)
+  element isa IR.T_RECORD || return nothing
+  local sizes::Vector{Int} = Int[]
+  for d in eq.ty.dimensions
+    local n::Union{Nothing, Int} = IR.dimensionSize(d)
+    n === nothing && return nothing
+    push!(sizes, n)
+  end
+  local out::Vector{IR.Equation} = IR.Equation[]
+  for index in rowMajor(sizes)
+    local subscripts::Vector{IR.Subscript} = IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index]
+    local elements::IR.RECORD_EQUATION =
+      IR.RECORD_EQUATION(recordElementAt(eq.lhs, subscripts, element, variables),
+                         recordElementAt(eq.rhs, subscripts, element, variables), element, length(element.fields),
+                         eq.source, eq.attributes)
+    local fields::Vector{IR.Equation} = bodyRecordEquations(IR.Equation[elements])
+    any(f -> f isa IR.RECORD_EQUATION, fields) && return nothing
+    append!(out, fields)
+  end
+  return out
 end
 
 rolledEquation(eq::IR.Equation, ::IR.VariableSet, used::Int = 0)::IR.Equation = eq
@@ -1329,7 +1379,9 @@ function rolledEquation(eq::IR.FOR_EQUATION, variables::IR.VariableSet, used::In
 end
 
 function rolledEquation(eq::IR.ARRAY_EQUATION, variables::IR.VariableSet, used::Int = 0)::IR.Equation
-  (readsContinuousArray(eq.lhs, variables) || readsContinuousArray(eq.rhs, variables)) || return eq
+  #= an array of records has no variable of its own (its fields' arrays are the variables) =#
+  (IR.elementType(eq.ty) isa IR.T_RECORD || readsContinuousArray(eq.lhs, variables) ||
+   readsContinuousArray(eq.rhs, variables)) || return eq
   return elementLoop(eq, variables, used)
 end
 
@@ -1337,11 +1389,11 @@ end
     elementLoop(eq, variables, used) -> Equation
 
 The array equation `eq` as a for-equation over its elements (`nestedFor`, `lhs[\$i1] = rhs[\$i1]` by `elementAt`),
-by iterators after the enclosing ones (`used`); of an unknown size, or of records (an element's equation is a record
-equation, `scalarEquations!`), as it is.
+by iterators after the enclosing ones (`used`); of an unknown size as it is. Of records: the elements' record
+equation by its fields in the body (`bodyRecordEquations`: a Complex one by its parts, `i_p[\$i1].re + i_n[\$i1].re
+= 0.0`), as it is where that leaves a record equation (a function's record result).
 """
 function elementLoop(eq::IR.ARRAY_EQUATION, variables::IR.VariableSet, used::Int = 0)::IR.Equation
-  IR.elementType(eq.ty) isa IR.T_RECORD && return eq
   local sizes::Vector{Int} = Int[]
   for d in eq.ty.dimensions
     local n::Union{Nothing, Int} = IR.dimensionSize(d)
@@ -1350,6 +1402,15 @@ function elementLoop(eq::IR.ARRAY_EQUATION, variables::IR.VariableSet, used::Int
   end
   local subscripts::Vector{IR.Subscript} = iteratorSubscripts(sizes, used)
   local element::IR.ModelicaType = IR.elementType(eq.ty)
+  if element isa IR.T_RECORD
+    local elements::IR.RECORD_EQUATION =
+      IR.RECORD_EQUATION(recordElementAt(eq.lhs, subscripts, element, variables),
+                         recordElementAt(eq.rhs, subscripts, element, variables), element, length(element.fields),
+                         eq.source, eq.attributes)
+    local fields::Vector{IR.Equation} = bodyRecordEquations(IR.Equation[elements])
+    any(f -> f isa IR.RECORD_EQUATION, fields) && return eq
+    return nestedFor(fields, sizes, used)
+  end
   local body::IR.SCALAR_EQUATION =
     IR.SCALAR_EQUATION(elementAt(eq.lhs, subscripts, element, variables),
                        elementAt(eq.rhs, subscripts, element, variables), element, eq.source, eq.attributes)

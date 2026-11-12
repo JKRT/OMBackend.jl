@@ -353,6 +353,35 @@ end
     end
   end
 
+  @testset "Complex values: record equations in for bodies, array equations of records" begin
+    #= a record equation in a for body is the equations of its fields (`bodyRecordEquations`), a Complex one its real
+       and imaginary parts with the operator calls taken apart (`complexParts`); an array equation of Complex values
+       a for-equation of the parts (`elementLoop`), by its fields' arrays (`recordArrayEquations`) or an equation per
+       element (`recordElementEquations`). The array form of index reduction refused each ("a RECORD_EQUATION with
+       arrays kept", 49 MSL 4.1.0 models); `(-i0).re` in a branch of an if-expression failed on every route =#
+    local tight::NamedTuple = (reltol = 1e-9, abstol = 1e-9)
+    for (model, name, expected) in (("ArrayPath.RecordForBody", "x[1]", exp(-1.5)),
+                                    ("ArrayPath.RecordForSum", "x[2]", exp(-2.0)),
+                                    ("ArrayPath.RecordForIf", "x", exp(-1.0)),
+                                    ("ArrayPath.RecordComponents", "x", exp(-1.75)),
+                                    ("ArrayPath.ComplexArrays", "x[3]", exp(-1.0)))
+      local (s, a, _) = _bothWays(model, [name]; tight...)
+      @test a[1] ≈ expected atol = 1e-7
+      @test s[1] ≈ expected atol = 1e-7
+    end
+    #= the parts of Complex operations, and the projections =#
+    local I::Module = OMBackend.OMJLIR
+    local complex::I.ModelicaType = I.T_RECORD(:Complex, I.Field[I.Field(:re, I.T_REAL()), I.Field(:im, I.T_REAL())])
+    local z::I.Expression = I.CREF(I.ComponentRef(:z, complex), complex)
+    local negated::I.Expression = I.CALL(Symbol("Complex.'-'.negate"), I.Expression[z], complex, I.FUNCTION_CALL)
+    local parts = OMBackend.Passes.complexParts(negated)
+    @test parts !== nothing && I.toString(parts[1]) == "(-z.re)" && I.toString(parts[2]) == "(-z.im)"
+    local magnitude::I.Expression =
+      I.CALL(Symbol("Modelica.ComplexMath.'abs'"), I.Expression[z], I.T_REAL(), I.FUNCTION_CALL)
+    @test I.toString(OMBackend.Passes.complexProjection(magnitude)) == "(((z.re ^ 2.0) + (z.im ^ 2.0)) ^ 0.5)"
+    @test OMBackend.Passes.complexParts(I.CALL(:f, I.Expression[z], complex, I.FUNCTION_CALL)) === nothing
+  end
+
   @testset "Scalarized by the backend: array targets of when-equations and of an algorithm's tuple" begin
     #= models the array code does not take stay in the backend (its element view, no second flatten): `d = 2 * pre(d)`
        in a when-equation is an assignment per element (`elementAssignments`), in the branches of an if too; the array
