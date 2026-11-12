@@ -444,6 +444,48 @@ const FULL = Base.Ref(true)
 const LAST_STATS = Base.Ref{Any}(nothing)
 
 """
+    ModelicaSubscriptError(name, index, size)
+
+A subscript computed from variable values that is outside its dimension. The generated functions run under
+`@inbounds`: such subscripts are checked (`_checkedSubscript`, `_checkedIndex`, `_checkedAssign!`). An error of the
+model, not of a step (it is not one of `_RHS_STEP_ERRORS`).
+"""
+struct ModelicaSubscriptError <: Exception
+  name::String
+  index::Int
+  size::Int
+end
+
+Base.showerror(io::IO, e::ModelicaSubscriptError) =
+  print(io, "ModelicaSubscriptError: subscript ", e.index, " of ", e.name, " is outside 1:", e.size)
+
+@noinline _subscriptError(i::Int, n::Int, name::String) = throw(ModelicaSubscriptError(name, i, n))
+
+@noinline function _indexError(a::AbstractArray, i::Tuple)
+  local k::Int = something(findfirst(d::Int -> !(1 <= i[d] <= size(a, d)), 1:length(i)), 1)
+  throw(ModelicaSubscriptError(string("an array of size ", size(a)), Int(i[k]), size(a, k)))
+end
+
+"The subscript `i` of a dimension of size `n` of the variable `name`, checked."
+@inline function _checkedSubscript(i::Integer, n::Int, name::String)::Int
+  (1 <= i <= n) || _subscriptError(Int(i), n, name)
+  return Int(i)
+end
+
+"`a[i...]` with subscripts computed from variable values, checked."
+@inline function _checkedIndex(a::AbstractArray, i::Vararg{Integer, N}) where {N}
+  checkbounds(Bool, a, i...) || _indexError(a, i)
+  return @inbounds a[i...]
+end
+
+"`a[i...] = v` with subscripts computed from variable values, checked."
+@inline function _checkedAssign!(a::AbstractArray, v, i::Vararg{Integer, N}) where {N}
+  checkbounds(Bool, a, i...) || _indexError(a, i)
+  @inbounds a[i...] = v
+  return v
+end
+
+"""
 String(...) of Modelica, as the MTK path formats it (resolved when called: that module
 may load after this one)
 """
@@ -662,6 +704,28 @@ function _discreteRead(info::VarInfo, loc)
   return loc
 end
 
+"Whether the subscript `x` is known without the variables' values: literals, loop slots, operations of those."
+_staticSubscript(x::IR)::Bool = x isa Lit || x isa Slot || (x isa Op && all(_staticSubscript, x.args))
+
+"""
+The code of the subscripts `subs` of the variable `name`: one computed from variable values (a table row chosen by a
+discrete variable) is checked against its dimension (`_checkedSubscript`), as the generated functions run under
+`@inbounds`; a start outside the range read memory outside the buffer (MSL Digital BUF3S).
+"""
+function _subscriptCode(g::Gen, info::VarInfo, name::String, subs::Vector{IR})::Vector{Any}
+  local idx::Vector{Any} = Any[]
+  for (k::Int, s::IR) in enumerate(subs)
+    local code::Any = jl(g, s)
+    if _staticSubscript(s)
+      push!(idx, code)
+    else
+      k <= length(info.dims) || ns("a subscript of $(name) beyond its dimensions")
+      push!(idx, Expr(:call, _checkedSubscript, code, info.dims[k], name))
+    end
+  end
+  return idx
+end
+
 function jl(g::Gen, x::IR)
   if x isa Lit
     return x.v
@@ -671,13 +735,16 @@ function jl(g::Gen, x::IR)
     return :t
   elseif x isa Ref
     local info = g.vars[x.name]
-    local idx = Any[jl(g, s) for s in x.subs]
     if info.kind == :param
       info.vtype == :other && ns("parameter $(x.name) of a type the array path does not pass")
       local v = _paramValue!(g, x.name)
-      v isa AbstractArray && return _discreteRead(info, Expr(:ref, g.paramSyms[x.name], idx...))
-      return g.paramSyms[x.name]
-    elseif info.kind == :state
+      v isa AbstractArray || return g.paramSyms[x.name]
+      local (psym, pidx) = (g.paramSyms[x.name], Any[jl(g, s) for s in x.subs])
+      return _discreteRead(info, all(_staticSubscript, x.subs) ? Expr(:ref, psym, pidx...) :
+                                                                 Expr(:call, _checkedIndex, psym, pidx...))
+    end
+    local idx = _subscriptCode(g, info, x.name, x.subs)
+    if info.kind == :state
       return x.der ? :(du[$(_linear(info, idx))]) : :(u[$(_linear(info, idx))])
     elseif info.kind == :discrete
       return _discreteRead(info, :(p.d[$(_linear(info, idx))]))
@@ -686,14 +753,15 @@ function jl(g::Gen, x::IR)
     end
   elseif x isa Pre
     local info = g.vars[x.ref.name]
-    local idx = Any[jl(g, s) for s in x.ref.subs]
+    info.kind == :param && return jl(g, x.ref)   #= pre of a parameter =#
+    local idx = _subscriptCode(g, info, x.ref.name, x.ref.subs)
     info.kind == :state && return :(p.upre[$(_linear(info, idx))])
     info.kind == :discrete && return _discreteRead(info, :(p.dpre[$(_linear(info, idx))]))
     #= An algebraic variable's value before the instant is not kept: its current value was
        read (`peak = pre(u)` at u's step took the value after it, OpenModelica the one
        before); the scalarized path keeps it. =#
     info.kind == :alg && ns("pre() of the algebraic variable $(x.ref.name)")
-    return jl(g, x.ref)   #= pre of a parameter =#
+    error("IR: pre() of $(x.ref.name)")
   elseif x isa Rel
     local k = :($(g.relBase) + (_col - 1) * $(g.relCount) + $(x.id))
     #= time and a parameter expression: a time event at its exact time =#
@@ -704,7 +772,9 @@ function jl(g::Gen, x::IR)
   elseif x isa Op
     local args = Any[jl(g, a) for a in x.args]
     x.op == :neg && return :(-$(args[1]))
-    x.op == :index && return Expr(:ref, args...)
+    #= a literal table: a subscript computed from variable values is checked (the code runs under @inbounds) =#
+    x.op == :index && return all(_staticSubscript, @view x.args[2:end]) ? Expr(:ref, args...) :
+                                                                         Expr(:call, _checkedIndex, args...)
     x.op == :vect && return Expr(:vect, args...)
     x.op == :if && return Expr(:if, args...)
     x.op == :&& && return Expr(:&&, args...)
@@ -744,14 +814,17 @@ function _stmtCode(g::Gen, stmts::Vector{Stmt}, condBase::Int, nwhen::Int; inWhe
   for st in stmts
     if st isa SAssign
       local info = g.vars[st.target.name]
-      local idx = Any[jl(g, s) for s in st.target.subs]
       if info.kind == :param
         #= a parameter with fixed = false, in an initial algorithm: its local (a view of
            p.values for an array; a scalar is written back after the algorithms) =#
         local sym = (_paramValue!(g, st.target.name); g.paramSyms[st.target.name])
-        push!(out, isempty(idx) ? :($sym = $(jl(g, st.value))) : :($sym[$(idx...)] = $(jl(g, st.value))))
+        local pidx = Any[jl(g, s) for s in st.target.subs]
+        push!(out, isempty(pidx) ? :($sym = $(jl(g, st.value))) :
+                   all(_staticSubscript, st.target.subs) ? :($sym[$(pidx...)] = $(jl(g, st.value))) :
+                   Expr(:call, _checkedAssign!, sym, jl(g, st.value), pidx...))
         continue
       end
+      local idx = _subscriptCode(g, info, st.target.name, st.target.subs)
       push!(out, info.kind == :discrete ? :(p.d[$(_linear(info, idx))] = Float64($(jl(g, st.value)))) :
                                           :(a[$(_linear(info, idx))] = $(jl(g, st.value))))
     elseif st isa SIf
@@ -919,7 +992,8 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
   local initAlgOuts::Set{String} = _initAlgAssigned(g)
   g.relBase = 0; g.relCount = 0
   local initAlgBody = Any[]
-  for ia in _initAlgOrder(g.initAlgs)
+  local (initAlgOrdered::Vector{AlgClass}, initAlgRefresh::BitVector) = _initAlgPlan(g)
+  for ia in initAlgOrdered
     local blk = Expr(:block, _stmtCode(g, ia.body, 0, 0)...)
     push!(initAlgBody, ia.nslots == 0 ? Expr(:let, :(_col = 1), blk) : _loopCode(ia.nslots, ia.domain, collect(1:size(ia.domain, 2)), blk))
   end
@@ -1094,7 +1168,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     g.relBase = relBases[ci]; g.relCount = c.nrel
     local tinfo = g.vars[target.name]
     local assign = tinfo.kind == :discrete ?
-      :(p.d[$(_linear(tinfo, Any[jl(g, s) for s in target.subs]))] = Float64($(jl(g, value)))) :
+      :(p.d[$(_linear(tinfo, _subscriptCode(g, tinfo, target.name, target.subs)))] = Float64($(jl(g, value)))) :
       :($(jl(g, target)) = $(jl(g, value)))
     emit!(c.nslots, c.domain, batch, assign)
   end
@@ -1136,7 +1210,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
         continue
       end
       local info = g.vars[target.name]
-      local idx = Any[jl(g, s) for s in target.subs]
+      local idx = _subscriptCode(g, info, target.name, target.subs)
       if kind == :reinit
         push!(stmtsOf[b], :(p.ureinit[$(_linear(info, idx))] = $(jl(g, value))))
       elseif _callOfParameters(g, value)
@@ -1296,6 +1370,14 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
   local initAlgWriteBack = Any[:(p.values[$(layoutOf[nm][1] + 1)] = $(g.paramSyms[nm]))
                                for nm in sort!(collect(initAlgOuts))
                                if nm in g.freeParams && haskey(layoutOf, nm) && !(g.params[nm] isa AbstractArray)]
+  #= the initial algorithms in their order; before one that reads what the equations compute from an earlier one's
+     assignments (`_initAlgPlan`), the equations again, with the parameters assigned so far =#
+  local initAlgCode = Any[]
+  for (k::Int, body::Any) in enumerate(initAlgBody)
+    initAlgRefresh[k] &&
+      push!(initAlgCode, Expr(:block, initAlgWriteBack..., :(equations!(du, a, u, p, t, nothing, true))))
+    push!(initAlgCode, body)
+  end
   local paramLocals = Any[]
   for nm in usedParams
     local info = g.vars[nm]
@@ -1798,8 +1880,9 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       return nothing
     end
 
-    #= The initial algorithms, once at the start (asserts checked); the algebraic variables
-       they read from the equations at the initial state. =#
+    #= The initial algorithms, once at the start (asserts checked); the variables they read that the equations
+       compute, from the equations at the initial state (evaluated again where an earlier algorithm's assignments
+       reach them). =#
     function initialAlgorithms!(u, p, t)
       $(paramLocals...)
       local du = similar(u); local a = similar(u, $nAlg)
@@ -1808,7 +1891,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       p.checking[1] = true
       try
         @inbounds begin
-          $(initAlgBody...)
+          $(initAlgCode...)
         end
         $(initAlgWriteBack...)
       finally
@@ -1919,6 +2002,34 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       return a
     end
 
+    #= One sweep at (u, t): passes with the same pre() until nothing changes (a fired body runs in each: with pre()
+       fixed it gives the same values). Returns whether they settled. =#
+    function _settle!(du, a, u, p, t, fire::Bool)
+      p.upre .= u; p.ureinit .= u
+      empty!(p.state.whenMemo)
+      for _ in 1:50
+        local relBefore = copy(p.rel); local dBefore = copy(p.d)
+        local rBefore = copy(p.ureinit); local wBefore = copy(p.wnew); local eBefore = copy(p.evv)
+        equations!(du, a, u, p, t, nothing, true, fire)
+        whens!(du, a, u, p, t, nothing, true, fire)
+        (relBefore == p.rel && dBefore == p.d && rBefore == p.ureinit && wBefore == p.wnew && eBefore == p.evv) &&
+          return true
+      end
+      return false
+    end
+
+    #= The initialization's solution at (u, t): the relations, the when-conditions and the discrete variables the
+       equations compute, with pre() the start values (OpenModelica: pre(v) = v.start for the discrete variables).
+       No when fires on its condition there, the conditions' values become pre() of the conditions; with fire
+       (initial() true) the bodies of the whens initial() turns true run. reinit() has no effect. =#
+    function startSolution!(u, p, t, fire::Bool)
+      local du = similar(u); local a = similar(u, $nAlg)
+      _settle!(du, a, u, p, t, fire) || return false
+      p.ureinit .= u
+      p.wcond .= p.wnew
+      return true
+    end
+
     #= Event iteration at (u, t), in sweeps as OpenModelica's updateDiscreteSystem (and the MTK
        path, relationRefresh.jl): within a sweep pre() keeps the values from before it, and the
        relations, equations and fired when bodies are evaluated again until they settle (an
@@ -1927,21 +2038,8 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     function eventIteration!(u, p, t, fire::Bool, sampleInstant::Bool = false)
       local du = similar(u); local a = similar(u, $nAlg)
       for _ in 1:50
-        p.dpre .= p.d; p.upre .= u; p.ureinit .= u
-        empty!(p.state.whenMemo)
-        #= passes with the same pre() until nothing changes (a fired body runs in each: with
-           pre() fixed it gives the same values) =#
-        local settled = false
-        for _ in 1:50
-          local relBefore = copy(p.rel); local dBefore = copy(p.d)
-          local rBefore = copy(p.ureinit); local wBefore = copy(p.wnew); local eBefore = copy(p.evv)
-          equations!(du, a, u, p, t, nothing, true, fire)
-          whens!(du, a, u, p, t, nothing, true, fire)
-          settled = relBefore == p.rel && dBefore == p.d && rBefore == p.ureinit && wBefore == p.wnew &&
-                    eBefore == p.evv
-          settled && break
-        end
-        settled || return false
+        p.dpre .= p.d
+        _settle!(du, a, u, p, t, fire) || return false
         #= at a sample instant the samples are true for the first pass only (OpenModelica's
            updateDiscreteSystem: functionDAE once, the samples off, then iterated) =#
         sampleInstant && fill!(p.sampleActive, false)
@@ -2168,19 +2266,21 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       $(isempty(initAlgBody) ? nothing : :(initialAlgorithms!(u0, p, tspan[1])))
       $(isempty(freeStartStmts) ? nothing : :(freeParameterStarts!(p)))
       N_SAMPLES == 0 || sampleSchedule!(p)
-      #= relations, when-conditions and the discrete variables equations compute at the start (no when fires there;
-         without events the only evaluation of those discrete variables) =#
-      (N_RELATIONS > 0 || N_WHENS > 0 || N_DISCRETE_UNKNOWNS > 0) &&
-        (eventIteration!(u0, p, tspan[1], false) || error("array model: the relations and discrete values at the start do not settle"))
-      if USES_INITIAL
-        #= when initial(): fire during initialization, then initial() is false again =#
-        p.initPhase[1] = true
-        eventIteration!(u0, p, tspan[1], true) || error("array model: the initial events do not settle")
-        p.initPhase[1] = false
-        local du = similar(u0); local a = similar(u0, $nAlg)
-        equations!(du, a, u0, p, tspan[1], nothing, true)
-        whens!(du, a, u0, p, tspan[1], nothing, true, false)
-        p.wcond .= p.wnew
+      if N_RELATIONS > 0 || N_WHENS > 0 || N_DISCRETE_UNKNOWNS > 0
+        #= the initialization's solution: pre() is the start values, no when fires on its condition =#
+        startSolution!(u0, p, tspan[1], false) ||
+          error("array model: the relations and discrete values at the start do not settle")
+        if USES_INITIAL
+          #= when initial(): its body runs in the initialization, then initial() is false again =#
+          p.initPhase[1] = true
+          startSolution!(u0, p, tspan[1], true) || error("array model: the initial events do not settle")
+          p.initPhase[1] = false
+          startSolution!(u0, p, tspan[1], false) || error("array model: the initial events do not settle")
+        end
+        #= the event iteration that follows the initialization: pre() takes the initialized values, and a when whose
+           condition that turns true fires (MSL Digital's gates: y = pre(auxiliary_n) leaves its start, the delay's
+           change(x) fires and schedules the output, as OpenModelica) =#
+        eventIteration!(u0, p, tspan[1], true) || error("array model: the events at the start do not settle")
       end
       _logDiscretes!(p, tspan[1])
       $(isempty(initAssertBody) ? nothing : :(checkInitialAsserts(u0, p, tspan[1])))
@@ -2317,64 +2417,168 @@ end
 _hasOp(x::IR, op::Symbol)::Bool = x isa Op && (x.op == op || any(a::IR -> _hasOp(a, op), x.args))
 
 """
-    _initAlgOrder(algs) -> Vector{AlgClass}
+    _initAlgPlan(g) -> (order, refresh)
 
-The initial algorithms in an order that runs each after those that assign what it reads (as written otherwise, and for
-a cycle), as the initialization solves them: an initial section reading another arm's target ran first and read its
-start (MSL OnDelay's `delaySignal := u` before `u := time >= 0`: false; the MTK code runs it late, true).
+The initial algorithms in an order that runs each after those whose assignments reach what it reads (as written
+otherwise, and for a cycle), as the initialization solves them: an initial section reading another arm's target ran
+first and read its start (MSL OnDelay's `delaySignal := u` before `u := time >= 0`: false; the MTK code runs it late,
+true). An assignment reaches a variable directly, or through the equations that compute it (a connection between two
+blocks: MSL Digital's gate reads `x`, equal to the source's `y` by a connect equation; before the source it read the
+start). `refresh[k]`: the equations are evaluated again before the k-th of the order, as an algorithm run since their
+last evaluation assigned what a variable it reads is computed from.
 """
-function _initAlgOrder(algs::Vector{AlgClass})::Vector{AlgClass}
-  length(algs) <= 1 && return algs
+function _initAlgPlan(g::Gen)::Tuple{Vector{AlgClass}, BitVector}
+  local algs::Vector{AlgClass} = g.initAlgs
+  local n::Int = length(algs)
+  n == 0 && return (algs, falses(0))
   local writes::Vector{Set{String}} = Set{String}[_stmtNames!(Set{String}(), a.body, false) for a in algs]
   local reads::Vector{Set{String}} = Set{String}[_stmtNames!(Set{String}(), a.body, true) for a in algs]
-  local done::BitVector = falses(length(algs))
-  local out::Vector{AlgClass} = AlgClass[]
-  while length(out) < length(algs)
-    local ready::Union{Nothing, Int} = findfirst(i::Int -> !done[i] &&
-      all(j::Int -> done[j] || j == i || isdisjoint(writes[j], reads[i]), eachindex(algs)), eachindex(algs))
+  local writeElements::Vector{ElementSets} = ElementSets[_stmtElements(a.body, false) for a in algs]
+  local readElements::Vector{ElementSets} = ElementSets[_stmtElements(a.body, true) for a in algs]
+  #= what the equations compute: the algebraic variables, the discrete ones that are unknowns of the equations =#
+  local computed::Set{String} = Set{String}()
+  for (nm::String, info::VarInfo) in g.vars
+    if info.kind == :alg || (info.kind == :discrete &&
+        any(k::Int -> haskey(g.discUnknown, info.offset + k), 1:(isempty(info.dims) ? 1 : prod(info.dims))))
+      push!(computed, nm)
+    end
+  end
+  #= the names of each equation and algorithm, and the equations of each name =#
+  local members::Vector{Set{String}} =
+    Set{String}[_readNames!(_readNames!(Set{String}(), c.lhs), c.rhs) for c in g.classes]
+  for a::AlgClass in g.algs
+    push!(members, _stmtNames!(_stmtNames!(Set{String}(), a.body, true), a.body, false))
+  end
+  local classesOf::Dict{String, Vector{Int}} = Dict{String, Vector{Int}}()
+  for (ci::Int, names::Set{String}) in enumerate(members), nm::String in names
+    push!(get!(() -> Int[], classesOf, nm), ci)
+  end
+  #= the computed variables each algorithm's assignments reach through the equations =#
+  local downstream::Vector{Set{String}} = Set{String}[]
+  for w::Set{String} in writes
+    local seen::Set{String} = Set{String}()
+    local visited::Set{Int} = Set{Int}()
+    local queue::Vector{String} = collect(w)
+    while !isempty(queue)
+      local nm::String = pop!(queue)
+      for ci::Int in get(classesOf, nm, Int[])
+        ci in visited && continue
+        push!(visited, ci)
+        for other::String in members[ci]
+          (other in computed && !(other in w) && !(other in seen)) || continue
+          push!(seen, other); push!(queue, other)
+        end
+      end
+    end
+    push!(downstream, seen)
+  end
+  #= the algorithms each one waits for: those that assign what it reads, or reach it through the equations. An
+     assignment by element where the subscripts are literals: the sections of the instances of a component array
+     assign and read the same names, each its own elements, and do not wait for one another (MSL Digital's delay in
+     two tristate buffers: as a cycle its `y := y_auxiliary` ran before the sections that assign y_auxiliary) =#
+  local assigning::Dict{String, Vector{Int}} = Dict{String, Vector{Int}}()
+  local reaching::Dict{String, Vector{Int}} = Dict{String, Vector{Int}}()
+  for j::Int in 1:n
+    foreach(nm::String -> push!(get!(() -> Int[], assigning, nm), j), writes[j])
+    foreach(nm::String -> push!(get!(() -> Int[], reaching, nm), j), downstream[j])
+  end
+  local waitsFor::Vector{Set{Int}} = Set{Int}[Set{Int}() for _ in 1:n]
+  for i::Int in 1:n, nm::String in reads[i]
+    for j::Int in get(assigning, nm, Int[])
+      (j != i && _elementsMeet(readElements[i][nm], writeElements[j][nm])) && push!(waitsFor[i], j)
+    end
+    for j::Int in get(reaching, nm, Int[])
+      j == i || push!(waitsFor[i], j)
+    end
+  end
+  local done::BitVector = falses(n)
+  local order::Vector{AlgClass} = AlgClass[]
+  local refresh::BitVector = falses(n)
+  local stale::Set{String} = Set{String}()
+  while length(order) < n
+    local ready::Union{Nothing, Int} = findfirst(i::Int -> !done[i] && all(j::Int -> done[j], waitsFor[i]), 1:n)
     local k::Int = ready === nothing ? findfirst(!, done) : ready
     done[k] = true
-    push!(out, algs[k])
+    push!(order, algs[k])
+    if !isdisjoint(reads[k], stale)
+      refresh[length(order)] = true
+      empty!(stale)
+    end
+    union!(stale, downstream[k])
   end
-  return out
+  return (order, refresh)
 end
 
-"The names the statements read outside pre() (`reads`) or assign, into `out`."
-function _stmtNames!(out::Set{String}, stmts::Vector{Stmt}, reads::Bool)::Set{String}
-  local exp!::Function = (x::IR) -> reads && _readNames!(out, x)
+"`f(ref)` for each reference the statements read outside pre() (`reads`) or assign."
+function _eachStmtRef(f::F, stmts::Vector{Stmt}, reads::Bool)::Nothing where {F <: Function}
+  local exp!::Function = (x::IR) -> (reads && _eachRead(f, x); nothing)
   for st in stmts
     if st isa SAssign
-      reads ? (exp!(st.value); foreach(exp!, st.target.subs)) : push!(out, st.target.name)
+      reads ? (exp!(st.value); foreach(exp!, st.target.subs)) : f(st.target)
     elseif st isa Union{SIf, SWhen}
-      foreach(b::Tuple{IR, Vector{Stmt}} -> (exp!(b[1]); _stmtNames!(out, b[2], reads)), st.branches)
+      foreach(b::Tuple{IR, Vector{Stmt}} -> (exp!(b[1]); _eachStmtRef(f, b[2], reads)), st.branches)
     elseif st isa SFor
-      _stmtNames!(out, st.body, reads)
+      _eachStmtRef(f, st.body, reads)
     elseif st isa SWhile
       exp!(st.cond)
-      _stmtNames!(out, st.body, reads)
+      _eachStmtRef(f, st.body, reads)
     elseif st isa SCall
       exp!(st.call)
     elseif st isa SAssert
       exp!(st.cond); exp!(st.msg)
     end
   end
+  return nothing
+end
+
+"`f(ref)` for each reference `x` reads outside pre() (a reference's subscripts too)."
+function _eachRead(f::F, x::IR)::Nothing where {F <: Function}
+  if x isa Ref
+    f(x)
+    foreach(s::IR -> _eachRead(f, s), x.subs)
+  elseif x isa Rel
+    _eachRead(f, x.lhs); _eachRead(f, x.rhs)
+  elseif x isa Op
+    foreach(a::IR -> _eachRead(f, a), x.args)
+  elseif x isa EvFn
+    _eachRead(f, x.arg)
+  end
+  return nothing
+end
+
+"The names the statements read outside pre() (`reads`) or assign, into `out`."
+function _stmtNames!(out::Set{String}, stmts::Vector{Stmt}, reads::Bool)::Set{String}
+  _eachStmtRef((r::Ref) -> push!(out, r.name), stmts, reads)
   return out
 end
 
 "The names `x` reads outside pre() (a reference's subscripts too), into `out`."
 function _readNames!(out::Set{String}, x::IR)::Set{String}
-  if x isa Ref
-    push!(out, x.name)
-    foreach(s::IR -> _readNames!(out, s), x.subs)
-  elseif x isa Rel
-    _readNames!(out, x.lhs); _readNames!(out, x.rhs)
-  elseif x isa Op
-    foreach(a::IR -> _readNames!(out, a), x.args)
-  elseif x isa EvFn
-    _readNames!(out, x.arg)
+  _eachRead((r::Ref) -> push!(out, r.name), x)
+  return out
+end
+
+"The elements of one name: those of literal subscripts, or `nothing`, the whole array (another subscript, none)."
+const Elements = Union{Nothing, Set{Vector{Int}}}
+"The elements by name."
+const ElementSets = Dict{String, Elements}
+
+"The elements the statements read outside pre() (`reads`) or assign, by name."
+function _stmtElements(stmts::Vector{Stmt}, reads::Bool)::ElementSets
+  local out::ElementSets = ElementSets()
+  _eachStmtRef(stmts, reads) do r::Ref
+    if isempty(r.subs) || !all(s::IR -> s isa Lit && s.v isa Integer && !(s.v isa Bool), r.subs)
+      out[r.name] = nothing
+    else
+      local known::Elements = get!(() -> Set{Vector{Int}}(), out, r.name)
+      known === nothing || push!(known, Int[Int((s::Lit).v) for s in r.subs])
+    end
   end
   return out
 end
+
+"Whether the elements `a` and `b` of one name have one in common."
+_elementsMeet(a::Elements, b::Elements)::Bool = a === nothing || b === nothing || !isdisjoint(a, b)
 
 "Whether the statement `st` has an operation `op` (`_hasOp`)."
 function _stmtHasOp(st::Stmt, op::Symbol)::Bool

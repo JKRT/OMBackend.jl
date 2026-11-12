@@ -743,8 +743,26 @@ function _addEquation!(g::Gen, eq::SC.Equation, iterNames::Vector{String}, idom:
   ns("$(nameof(typeof(eq))) in the simulation code: $(_str(eq))")
 end
 
-"The triggers of a when-branch's condition (`SimCode.lowerArraySystem`: the vector of several, none the empty one; one itself)."
-_triggers(c::SC.Exp)::Vector{SC.Exp} = c isa SC.ARRAY_EXP ? c.elements : SC.Exp[c]
+"""
+The triggers of a when-branch's condition (`SimCode.lowerArraySystem`: the vector of several, none the empty one; one
+itself): an or of `change()` calls its terms (the condition of a lifted discrete cluster or algorithm with several
+relations, `Passes.changeCondition`: each change holds at its own event only, so the or rises where one of them does).
+"""
+function _triggers(c::SC.Exp)::Vector{SC.Exp}
+  c isa SC.ARRAY_EXP && return c.elements
+  local terms::Vector{SC.Exp} = SC.Exp[]
+  return c isa SC.LBINARY && _changeTerms!(terms, c) ? terms : SC.Exp[c]
+end
+
+"The terms of an or of `change()` calls, in order, into `terms`; false where `c` is no such or (`terms` then unused)."
+function _changeTerms!(terms::Vector{SC.Exp}, c::SC.Exp)::Bool
+  if c isa SC.CALL
+    (c.kind == SC.CALL_BUILTIN && c.name === :change) || return false
+    push!(terms, c)
+    return true
+  end
+  return c isa SC.LBINARY && c.op == SC.OP_OR && _changeTerms!(terms, c.exp1) && _changeTerms!(terms, c.exp2)
+end
 
 "Whether `e` is a reference: a variable, `der` of a state (an element of one too), as it is; no expression of it."
 _isReference(e::SC.Exp)::Bool = e isa Union{SC.EXP_CREF, SC.DER} || (e isa SC.ASUB && e.exp isa Union{SC.EXP_CREF, SC.DER})
@@ -1149,7 +1167,10 @@ function domainSystem(sc::SC.SIM_CODE)::DomainSystem
     length(elementNames) == n || ns("the elements of $(nm)")
     local vtype::Symbol = SC.valueType(sv.elementType)
     local perPart::Vector{Int} = Int[length(dims)]
-    local startOf::Function = () -> Float64[Float64(x) for x in _attributeValues(sv.attributes.start, n, 0.0, "start", elementNames[1])]
+    #= without a start attribute: 0, an enumeration its first literal (MLS 4.9.5) =#
+    local defaultStart::Float64 = sv.elementType isa SC.TYPE_ENUM ? 1.0 : 0.0
+    local startOf::Function = () -> Float64[Float64(x) for x in
+      _attributeValues(sv.attributes.start, n, defaultStart, "start", elementNames[1])]
     local fixedOf::Function = (default::Bool) -> Bool[x for x in _attributeValues(sv.attributes.fixed, n, default, "fixed attribute", elementNames[1])]
     local startOrRule::Function = () -> try
       startOf()

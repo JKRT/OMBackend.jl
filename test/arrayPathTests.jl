@@ -740,4 +740,42 @@ end
       @test at(vs, "x[1]", T5) == [1.0, 12.0, 12.0, 32.0, 32.0] && at(vs, "x[2]", T5) == [2.0, 2.0, 22.0, 22.0, 42.0]
     end
   end
+
+  @testset "slices of component arrays, a start solution that fires whens, checked subscripts, enumeration starts" begin
+    local run = (model::String, scalarized::Bool) -> begin
+      local n = _arrayPathTranslate("ArrayPath." * model; scalarized)
+      scalarized || @test _arrayPathTaken(n)
+      return OMBackend.simulateModel(n; tspan = (0.0, 1.0))
+    end
+    local at = (sol, var::String, ts::Vector{Float64}) -> begin
+      local v::Vector{Float64} = OMBackend.getVariableValues(sol, var)
+      return [v[findlast(<=(t + 1e-12), sol.t)] for t in ts]
+    end
+    #= a field of a connector array and of a model array through a whole slice (ac.pin[:].i, c[:].x) =#
+    local R = [1.0, 2.0, 4.0]
+    @test _values(run("SliceConnectors", false), ["load.q[1]", "load.q[2]", "load.q[3]"]) ≈
+      [(cos(k) - cos(k + 1)) / R[k] for k in 1:3] atol = 1e-6
+    @test _values(run("SliceCells", false), ["s"]) ≈ [2 * sum((1 - exp(-k)) / k for k in 1:3)] atol = 1e-6
+    #= pre() is the start at the initialization and no when fires on its condition there; the event iteration after it
+       fires them: the change of x from its start (omc). Initial sections of two instances, merged to arrays, run in
+       the order of what they read through the equation between them (d2.x = d1.y). The scalarized route misses the
+       first change (open) =#
+    local T = [0.0, 0.05, 0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 1.0]
+    local dp = run("DelayPair", false)
+    @test at(dp, "d1.y", T) == [1.0, 1.0, 2.0, 2.0, 2.0, 3.0, 3.0, 3.0, 3.0]
+    @test at(dp, "d2.y", T) == [1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 3.0, 3.0]
+    #= a run-time subscript outside its array is an error (omc: an assertion), not a read outside it =#
+    local err = try
+      run("SubscriptOutside", false)
+      nothing
+    catch e
+      e
+    end
+    @test err isa OMBackend.CodeGeneration.ArrayODEGen.ModelicaSubscriptError && err.index == 3 && err.size == 2
+    #= an enumeration without a start starts at its first literal (MLS 4.9.5; omc 1.27.1: 0, an assertion) =#
+    for scalarized in (true, false)
+      local ed = run("EnumDefaultStart", scalarized)
+      @test at(ed, "i[1]", [0.1, 0.7]) == [10.0, 30.0] && at(ed, "i[2]", [0.1, 0.7]) == [10.0, 20.0]
+    end
+  end
 end

@@ -583,10 +583,8 @@ function subscriptedForm(e::IR.SUBSCRIPTED, cx::ElementContext)::IR.Expression
   base === picked.exp || return elementFormExp(IR.SUBSCRIPTED(base, picked.subscripts, e.ty), cx)
   local subscripts::Vector{IR.Subscript} = IR.Subscript[IR.INDEX(elementFormExp((s::IR.INDEX).exp, cx)) for s in picked.subscripts]
   if base isa IR.CREF
-    local last::IR.CrefPart = base.cref.parts[end]
-    local composed::Union{Nothing, Vector{IR.Subscript}} = composedSubscripts(last.subscripts, picked.subscripts)
-    composed === nothing && return e
-    local parts::Vector{IR.CrefPart} = IR.CrefPart[base.cref.parts[1:end - 1]..., IR.CrefPart(last.name, composed, last.ty)]
+    local parts::Union{Nothing, Vector{IR.CrefPart}} = composedParts(base.cref.parts, picked.subscripts)
+    parts === nothing && return e
     return crefForm(IR.CREF(IR.ComponentRef(parts), e.ty), cx)
   elseif base isa IR.ARRAY
     return IR.SUBSCRIPTED(IR.ARRAY(IR.Expression[elementFormExp(x, cx) for x in base.elements], base.ty), subscripts, e.ty)
@@ -628,6 +626,38 @@ function fieldOf(a::IR.Expression, k::Int, f::IR.Field)::IR.Expression
   a isa IR.RECORD && return a.elements[k]
   a isa IR.CREF && return IR.CREF(IR.ComponentRef(IR.CrefPart[a.cref.parts..., IR.CrefPart(f.name, IR.Subscript[], f.ty)]), f.ty)
   return IR.RECORD_ELEMENT(a, k, f.name, f.ty)
+end
+
+"""
+The parts of a reference subscripted again by `inner`: the slices and whole dimensions of each part before the last
+indexed by the next inner subscripts in order (`ac.pin[:].i` by `[k]` is `ac.pin[k].i`: a field of every component of
+an array), the last part's by those left, the rest appended to it (`composedSubscripts`). `nothing` where a part's
+subscripts do not compose, where the inner subscripts end inside a part before the last, and where an array part
+without subscripts stands before a sliced one (its dimension comes first, and it has no subscript to take it).
+"""
+function composedParts(parts::Vector{IR.CrefPart}, inner::Vector{IR.Subscript})::Union{Nothing, Vector{IR.CrefPart}}
+  local out::Vector{IR.CrefPart} = IR.CrefPart[]
+  local next::Int = 1
+  local unsubscriptedArray::Bool = false
+  for k in 1:length(parts) - 1
+    local p::IR.CrefPart = parts[k]
+    local open::Int = count((s::IR.Subscript) -> !(s isa IR.INDEX), p.subscripts)
+    if open == 0
+      unsubscriptedArray |= isempty(p.subscripts) && p.ty isa Union{IR.T_ARRAY, IR.T_COMPONENTS}
+      push!(out, p)
+      continue
+    end
+    (unsubscriptedArray || next + open - 1 > length(inner)) && return nothing
+    local composed::Union{Nothing, Vector{IR.Subscript}} = composedSubscripts(p.subscripts, inner[next:next + open - 1])
+    composed === nothing && return nothing
+    push!(out, IR.CrefPart(p.name, composed, p.ty))
+    next += open
+  end
+  local last::IR.CrefPart = parts[end]
+  local rest::Union{Nothing, Vector{IR.Subscript}} = composedSubscripts(last.subscripts, inner[next:end])
+  rest === nothing && return nothing
+  push!(out, IR.CrefPart(last.name, rest, last.ty))
+  return out
 end
 
 """

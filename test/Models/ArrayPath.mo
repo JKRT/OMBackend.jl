@@ -2106,4 +2106,110 @@ package ArrayPath
     der(x) = 10 * time;
     n = integer(der(x));
   end StepOfDer;
+  connector SlicePin
+    Real v;
+    flow Real i;
+  end SlicePin;
+  connector SlicePlug
+    parameter Integer m = 3;
+    SlicePin pin[m];
+  end SlicePlug;
+  model SliceSource
+    parameter Integer m = 3;
+    SlicePlug plug(m = m);
+  equation
+    plug.pin.v = {sin(time + k) for k in 1:m};
+  end SliceSource;
+  model SliceLoad
+    parameter Integer m = 3;
+    parameter Real R[m] = {1.0, 2.0, 4.0};
+    SlicePlug ac(m = m);
+    Real vAC[m] = ac.pin[:].v;
+    Real iAC[m] = ac.pin[:].i;
+    Real q[m](each start = 0.0, each fixed = true);
+  equation
+    vAC = R .* iAC;
+    der(q) = iAC;
+  end SliceLoad;
+  model SliceConnectors "ac.pin[:].i, a field of a connector array: q[k] = (cos(k) - cos(k + 1)) / R[k] at 1"
+    SliceSource source;
+    SliceLoad load;
+  equation
+    connect(source.plug, load.ac);
+  end SliceConnectors;
+  model SliceCell
+    parameter Real k = 1.0;
+    Real x(start = 1.0, fixed = true);
+  equation
+    der(x) = -k * x;
+  end SliceCell;
+  model SliceCells "a field of a model array through a whole slice (c[:].x): s = 2 sum((1 - exp(-k)) / k) at 1"
+    parameter Integer n = 3;
+    SliceCell c[n](k = {1.0, 2.0, 3.0});
+    Real y[n];
+    Real s(start = 0.0, fixed = true);
+  equation
+    y = 2.0 * c[:].x;
+    der(s) = sum(y);
+  end SliceCells;
+  model DelayCell "MSL InertialDelaySensitive, reduced: an initial() arm, a change() arm, an assignment after"
+    input Integer x(start = 1, fixed = true);
+    output Integer y(start = y0, fixed = true);
+    parameter Real tD = 0.1;
+    parameter Integer y0 = 1;
+  protected
+    Integer y_aux(start = y0, fixed = true);
+    Integer y_old(start = y0, fixed = true);
+    discrete Real t_next;
+  algorithm
+    when {initial(), change(x) and not initial()} then
+      y_old := if initial() or pre(y) == 1 then y0 else pre(y);
+      t_next := time + (if x > y_old then tD else 0.0);
+      if x <= y_old then
+        y_aux := x;
+      end if;
+    elsewhen time >= t_next then
+      y_aux := x;
+    end when;
+    y := y_aux;
+  end DelayCell;
+  model DelayPair "two instances chained by an equation: x's change from its start fires after the initialization"
+    DelayCell d1(tD = 0.1);
+    DelayCell d2(tD = 0.2);
+    Integer u = if time < 0.3 then 2 else 3;
+    Real z(start = 0, fixed = true);
+  equation
+    der(z) = 1;
+    d1.x = u;
+    d2.x = d1.y;
+  end DelayPair;
+  model SubscriptOutside "a run-time subscript leaving its table at 0.6: an error, not a read outside it"
+    constant Integer tab[2] = {5, 7};
+    Real v(start = 0, fixed = true);
+    discrete Integer k(start = 1, fixed = true);
+    discrete Integer x(start = 0, fixed = true);
+  equation
+    der(v) = 1;
+  algorithm
+    when sample(0.1, 0.25) then
+      x := tab[k];
+      k := k + 1;
+    end when;
+  end SubscriptOutside;
+  model EnumDefaultStart "an enumeration without a start: its first literal, a table's subscript (i = 10, 30)"
+    constant Integer tab[SwapEnum] = {10, 20, 30};
+    discrete SwapEnum e[2];
+    Integer i[2];
+    Real x(start = 0, fixed = true);
+  equation
+    der(x) = 1;
+    when time > 0.5 then
+      e[1] = SwapEnum.three;
+      e[2] = SwapEnum.two;
+    end when;
+  algorithm
+    for j in 1:2 loop
+      i[j] := tab[e[j]];
+    end for;
+  end EnumDefaultStart;
 end ArrayPath;
