@@ -423,6 +423,12 @@ end
     local determined = Dict(:a => [edge(1, false, [:b])], :b => [edge(1, false, [:a]), edge(3, true, Symbol[])])
     local m = _IRd.matchDerivatives(determined)
     @test m[:b].equation == 3 && m[:a].equation == 1
+    #= a through a coefficient that reads unknowns in two equations (which one is not 0 changes): not solved =#
+    local moving = Dict(:a => [edge(1, false, Symbol[]), edge(2, false, Symbol[])])
+    @test isempty(_IRd.matchDerivatives(moving))
+    #= with a constant coefficient in a third: through that one =#
+    push!(moving[:a], edge(3, true, Symbol[]))
+    @test _IRd.matchDerivatives(moving)[:a].equation == 3
   end
 
   @testset "review regressions: if-equation positions, recursion, array locals, Integer inputs, zero pivots" begin

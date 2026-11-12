@@ -214,7 +214,11 @@ coefficient that reads unknowns only for an unknown no constant one can determin
 equation whose other derivative unknowns the first matching determined (not a block of
 derivatives coupled through such coefficients: a quaternion's `w = angularVelocity2(Q, der(Q))`
 divided one equation at a time by components that pass 0; such a block stays the solver's);
-those tried by their magnitude at the start values, the largest first (pivoting).
+those tried by their magnitude at the start values, the largest first (pivoting). An unknown
+with such a coefficient in more than one equation is not solved through any of them
+(`pivotsMove`): which one is not 0 changes during the simulation (a mass that slides along a
+turning axis, `T[2, i] * der(der(s))` in the three force equations, `T[2, :]` a row of a
+rotation: every component passes 0); it stays an unknown of the solver's linear system.
 """
 function matchDerivatives(edges::Dict{Symbol, Vector{DerivativeEdge}})::Dict{Symbol, DerivativeEdge}
   local unknownOf = Dict{Int, Symbol}()
@@ -222,22 +226,27 @@ function matchDerivatives(edges::Dict{Symbol, Vector{DerivativeEdge}})::Dict{Sym
   local determined = Set{Symbol}()
   foreach(list -> sort!(list; by = e -> -e.pivot), values(edges))
   local order = sort(collect(keys(edges)))
-  foreach(d -> augmentDerivative!(d, edges, unknownOf, matched, determined, true), order)
+  local pivotsMove = Set{Symbol}(d for (d, list) in edges if count(e -> !e.constant, list) > 1)
+  foreach(d -> augmentDerivative!(d, edges, unknownOf, matched, determined, pivotsMove, true), order)
   union!(determined, keys(matched))
-  foreach(d -> haskey(matched, d) || augmentDerivative!(d, edges, unknownOf, matched, determined, false), order)
+  foreach(d -> haskey(matched, d) || augmentDerivative!(d, edges, unknownOf, matched, determined, pivotsMove, false),
+          order)
   return matched
 end
 
 """
-    augmentDerivative!(d, edges, unknownOf, matched, determined, constantOnly) -> Bool
+    augmentDerivative!(d, edges, unknownOf, matched, determined, pivotsMove, constantOnly) -> Bool
 
 An augmenting path from the unknown `d` (depth first, with an explicit stack: alias chains can be
-long), over constant edges only or over the edges `matchDerivatives` allows; the matching
+long), over constant edges only or over the edges `matchDerivatives` allows (of an unknown in
+`pivotsMove` the constant ones); the matching
 (`unknownOf`, `matched`) flipped along it. Whether one was found.
 """
 function augmentDerivative!(d::Symbol, edges::Dict{Symbol, Vector{DerivativeEdge}}, unknownOf::Dict{Int, Symbol},
-                            matched::Dict{Symbol, DerivativeEdge}, determined::Set{Symbol}, constantOnly::Bool)::Bool
-  local allowed = e::DerivativeEdge -> (!constantOnly || e.constant) && (e.constant || all(in(determined), e.others))
+                            matched::Dict{Symbol, DerivativeEdge}, determined::Set{Symbol}, pivotsMove::Set{Symbol},
+                            constantOnly::Bool)::Bool
+  local allowed = (u::Symbol, e::DerivativeEdge) ->
+    e.constant || (!constantOnly && !(u in pivotsMove) && all(in(determined), e.others))
   local visited = Set{Int}()
   local stack = Tuple{Symbol, Int}[(d, 1)]
   local path = Tuple{Symbol, DerivativeEdge}[]
@@ -248,7 +257,7 @@ function augmentDerivative!(d::Symbol, edges::Dict{Symbol, Vector{DerivativeEdge
     while k <= length(list)
       local e = list[k]
       k += 1
-      (allowed(e) && !(e.equation in visited)) || continue
+      (allowed(u, e) && !(e.equation in visited)) || continue
       push!(visited, e.equation)
       stack[end] = (u, k)
       push!(path, (u, e))

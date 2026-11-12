@@ -742,10 +742,10 @@ end
   end
 
   @testset "slices of component arrays, a start solution that fires whens, checked subscripts, enumeration starts" begin
-    local run = (model::String, scalarized::Bool) -> begin
+    local run = (model::String, scalarized::Bool; stop::Float64 = 1.0) -> begin
       local n = _arrayPathTranslate("ArrayPath." * model; scalarized)
       scalarized || @test _arrayPathTaken(n)
-      return OMBackend.simulateModel(n; tspan = (0.0, 1.0))
+      return OMBackend.simulateModel(n; tspan = (0.0, stop))
     end
     local at = (sol, var::String, ts::Vector{Float64}) -> begin
       local v::Vector{Float64} = OMBackend.getVariableValues(sol, var)
@@ -777,6 +777,13 @@ end
        reads none of them =#
     @test _values(run("SlidingMass", false), ["s"]) ≈
           [9.81 / 2 * (cos(1.5) + sin(0.5) * sinh(1)) + (1 - 9.81 / 2 * cos(0.5)) * cosh(1)] atol = 1e-5
+    #= the slide's acceleration has a coefficient in each of the three force equations, R.T[2, i], every one 0 at
+       some angle (R.T[2, 1] at the start): not divided by, an unknown of the solver's linear system; to t = 4, past
+       the zeros of all of them =#
+    for scalarized in (true, false)
+      @test _values(run("SlidingMassAligned", scalarized; stop = 4.0), ["s"]) ≈
+            [9.81 / 2 * cos(4) + (1 - 9.81 / 2) * cosh(4)] rtol = 1e-4
+    end
     #= an if-equation in a branch of an if-equation on a variable condition: one class `y[i] = if ... (if ...)` =#
     @test _values(run("NestedIf", false), ["y[1]", "y[2]"]) ≈ [2 * exp(-1), 4 * exp(-1)] atol = 1e-5
     #= pre() is the start at the initialization and no when fires on its condition there; the event iteration after it

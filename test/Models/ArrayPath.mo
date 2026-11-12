@@ -2325,13 +2325,14 @@ package ArrayPath
   model SlidingMass "a mass on a turning slide: R.T[1, i] and R.T[3, i] times parameters known as zero (e[1], e[3])"
     parameter Real e[3] = {0, 1, 0} "the slide's axis, in the turning frame";
     parameter Real g = 9.81;
+    parameter Real phi0 = 0.5;
     Real phi;
     Turned R "the frame, turned by phi about z";
     Real s(start = 1, fixed = true) "s = (g/2) (cos(phi) + sin(1/2) sinh(t)) + (1 - (g/2) cos(1/2)) cosh(t)";
     Real v(start = 0, fixed = true);
     Real r[3], vr[3], f[3];
   equation
-    phi = time + 0.5;
+    phi = time + phi0;
     R = Turned(T = {{cos(phi), sin(phi), 0}, {-sin(phi), cos(phi), 0}, {0, 0, 1}}, w = {0, 0, der(phi)});
     r = resolveBack(R, e * s);
     v = der(s);
@@ -2339,4 +2340,8 @@ package ArrayPath
     der(vr) = f + {0, -g, 0};
     R.T[2, 1] * f[1] + R.T[2, 2] * f[2] + R.T[2, 3] * f[3] = 0;
   end SlidingMass;
+
+  model SlidingMassAligned "the slide along y at the start: R.T[2, 1] = 0 there; s = (g/2) cos(t) + (1 - g/2) cosh(t)"
+    extends SlidingMass(phi0 = 0);
+  end SlidingMassAligned;
 end ArrayPath;
