@@ -99,10 +99,19 @@ include("ArrayBlockSolve.jl")
    solver is compiled once), the discrete state (relation values, discrete variables and their
    pre values, when-condition values, state values before the event) and the generated module. =#
 """
-    ArrayStartState(discrete, wcond, wnew, ndlog, upre, ureinit)
+    RootLogEntry
+
+The algebraic loops' roots at a time of a run (`ArrayRuntimeState.rootLog`): the time, each loop family's guesses
+(`ArrayModelParameters.loops`) and each large block's (`BlockSolver.y`) as the last solve left them.
+"""
+const RootLogEntry = Tuple{Float64, Vector{Matrix{Float64}}, Vector{Vector{Float64}}}
+
+"""
+    ArrayStartState(discrete, wcond, wnew, ndlog, upre, ureinit, loops, blocks, nRootLog)
 
 A problem's state after its initialization (`ArrayRuntimeState.atStart`): the discrete state (`_discreteState`), the
-when-conditions, the length of the event log, the pre() and reinit buffers of the states.
+when-conditions, the length of the event log, the pre() and reinit buffers of the states, the loops' roots (the
+families' and the large blocks' guesses) and the length of their log.
 """
 struct ArrayStartState
   discrete::Tuple{Vector{Float64}, Vector{Float64}, Vector{Bool}, Vector{Float64}}
@@ -111,6 +120,9 @@ struct ArrayStartState
   ndlog::Int
   upre::Vector{Float64}
   ureinit::Vector{Float64}
+  loops::Vector{Matrix{Float64}}
+  blocks::Vector{Vector{Float64}}
+  nRootLog::Int
 end
 
 """
@@ -123,7 +135,9 @@ the asserts' probe (`_violated!`), an assert crossing to decide (`pending`: its 
 terminate() reached, the discrete state at the start of the current step (`stepStart`, `_discreteState`: within a step
 that ends at an event the asserts read it), the String parameters' values (`Gen.strings`, with their overrides), the
 state just before the last event (`leftLimit`: its time and state, a reinit moved it after), the problem's state after
-its initialization (`atStart`, `ArrayStartState`: a solve of the problem starts from it again).
+its initialization (`atStart`, `ArrayStartState`: a solve of the problem starts from it again), the loops' roots at
+the start and at each accepted step (`rootLog`, `_logRoots!`: a loop with several roots, a quaternion's
+`Q * Q = 1`, is read after the run on the root the run was on at that time, `_rootsAt`).
 """
 mutable struct ArrayRuntimeState
   sampleStart::Vector{Float64}
@@ -139,10 +153,12 @@ mutable struct ArrayRuntimeState
   strings::Vector{String}
   leftLimit::Tuple{Float64, Vector{Float64}}
   atStart::Union{Nothing, ArrayStartState}
+  rootLog::Vector{RootLogEntry}
 end
 ArrayRuntimeState(nSamples::Int, strings::Vector{String}) =
   ArrayRuntimeState(zeros(nSamples), zeros(nSamples), Float64[], Dict{Tuple{Int, Int, Int}, Any}(), Set{Any}(), false, false,
-                    (NaN, Float64[]), nothing, (Float64[], Float64[], Bool[], Float64[]), strings, (NaN, Float64[]), nothing)
+                    (NaN, Float64[]), nothing, (Float64[], Float64[], Bool[], Float64[]), strings, (NaN, Float64[]),
+                    nothing, RootLogEntry[])
 
 struct ArrayModelParameters
   values::Vector{Float64}
@@ -187,13 +203,48 @@ _discreteState(p::ArrayModelParameters)::Tuple{Vector{Float64}, Vector{Float64},
 
 "The state of `p` after its initialization (`ArrayStartState`)."
 _startState(p::ArrayModelParameters)::ArrayStartState =
-  ArrayStartState(_discreteState(p), copy(p.wcond), copy(p.wnew), length(p.dlog), copy(p.upre), copy(p.ureinit))
+  ArrayStartState(_discreteState(p), copy(p.wcond), copy(p.wnew), length(p.dlog), copy(p.upre), copy(p.ureinit),
+                  map(copy, p.loops), Vector{Float64}[copy(b.y) for b in p.blocks], length(p.state.rootLog))
+
+"""
+    _logRoots!(p, t)
+
+The loops' roots of the run at time `t` logged (`ArrayRuntimeState.rootLog`): after the initialization and at each
+accepted step. Nothing for a model without algebraic loops.
+"""
+function _logRoots!(p::ArrayModelParameters, t::Real)::Nothing
+  (isempty(p.loops) && isempty(p.blocks)) && return nothing
+  push!(p.state.rootLog, (Float64(t), map(copy, p.loops), Vector{Float64}[copy(b.y) for b in p.blocks]))
+  return nothing
+end
+
+"""
+    _rootsAt(p, t, right) -> Vector{Matrix{Float64}}
+
+The loop families' guesses for a read of the solution at time `t`: the roots logged at the last step before `t`
+(`_logRoots!`; the left limit, as the states' interpolation: an entry at `t` itself may be the one after an event
+there), with `right` those at the last step at or before `t` (the second of a saved pair); the large blocks'
+guesses set to that entry's too; the current ones where nothing is logged. A read after the run started every loop
+from the run's last roots: at t = 0, after a run that ended on the other side of a quaternion's `Q * Q = 1`, on the
+other root.
+"""
+function _rootsAt(p::ArrayModelParameters, t::Real, right::Bool)::Vector{Matrix{Float64}}
+  local log::Vector{RootLogEntry} = p.state.rootLog
+  isempty(log) && return map(copy, p.loops)
+  local at::Int = right ? searchsortedlast(log, (Float64(t),); by = first) :
+                          searchsortedfirst(log, (Float64(t),); by = first) - 1
+  local entry::RootLogEntry = log[clamp(at, 1, length(log))]
+  for (b, y) in zip(p.blocks, entry[3])
+    b.y .= y
+  end
+  return map(copy, entry[2])
+end
 
 """
     _restoreStart!(p)
 
 `p` as after its initialization again (`ArrayRuntimeState.atStart`), at the start of a solve: a second solve of the
-problem started from the first one's end (its discrete values, the event log).
+problem started from the first one's end (its discrete values, the event log, its loops' roots).
 """
 function _restoreStart!(p::ArrayModelParameters)::Nothing
   local s::Union{Nothing, ArrayStartState} = p.state.atStart
@@ -201,6 +252,13 @@ function _restoreStart!(p::ArrayModelParameters)::Nothing
   p.d .= s.discrete[1]; p.dpre .= s.discrete[2]; p.rel .= s.discrete[3]; p.evv .= s.discrete[4]
   p.wcond .= s.wcond; p.wnew .= s.wnew; p.upre .= s.upre; p.ureinit .= s.ureinit
   resize!(p.dlog, s.ndlog)
+  for (G, start) in zip(p.loops, s.loops)
+    G .= start
+  end
+  for (b, y) in zip(p.blocks, s.blocks)
+    b.y .= y
+  end
+  resize!(p.state.rootLog, s.nRootLog)
   fill!(p.sampleActive, false)
   p.state.pending = (NaN, Float64[]); p.state.leftLimit = (NaN, Float64[]); p.state.terminated = nothing
   empty!(p.state.whenMemo)
@@ -2004,7 +2062,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
 
     #= The algebraic variables at a point (u, t) of a solution: the discrete, relation and
        event-function values of that time from the event log (after a solve p holds the final
-       ones), on a copy of the discrete state. =#
+       ones), on a copy of the discrete state; the loops started from the run's roots of that time (_rootsAt). =#
     function algebraics(u, p, t, right::Bool = false)
       local a = similar(u, $nAlg)
       local times = first.(p.dlog)
@@ -2015,7 +2073,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       local evv = entry[(nD + nR + 1):end]
       local q = $(paramsType)(p.values, rel, d, copy(d), copy(p.wcond), copy(p.sampleActive),
                               [false], [false], copy(p.upre), copy(p.ureinit), copy(p.wnew), p.dlog, evv, copy(p.hyst), copy(p.tend),
-                              zeros($nAlg), p.blocks, map(copy, p.loops), p.state, p.model)
+                              zeros($nAlg), p.blocks, $(_rootsAt)(p, t, right), p.state, p.model)
       equations!(similar(u), a, u, q, t, nothing, false)
       return a
     end
@@ -2099,6 +2157,20 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     #= at the start of a solve: the relations' hysteresis for its tolerance and span =#
     function _startHysteresis!(c, u, t, integrator)
       integrator.p.hyst[1] = $(_hysteresis)(integrator)
+      return nothing
+    end
+
+    #= The loops' roots at the end of an accepted step, logged (_logRoots!). After an event at that time p holds
+       the roots of the event iteration's passes (the states before the reinit with the new discrete values): the
+       right-hand side at the state the next step starts from gives the roots the run goes on with. =#
+    function logStepRoots!(integrator)
+      local p = integrator.p
+      local t = integrator.t
+      if p.state.leftLimit[1] == t
+        local u = integrator.u
+        equations!(similar(u), similar(u, $nAlg), u, p, t, nothing, false)
+      end
+      $(_logRoots!)(p, t)
       return nothing
     end
 
@@ -2302,6 +2374,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
         eventIteration!(u0, p, tspan[1], true) || error("array model: the events at the start do not settle")
       end
       _logDiscretes!(p, tspan[1])
+      $(_logRoots!)(p, tspan[1])
       $(isempty(initAssertBody) ? nothing : :(checkInitialAsserts(u0, p, tspan[1])))
       invariants!(p.abuf, p)
       #= a domain error or an assert in the right-hand side rejects the step (the solver retries smaller), as in the
@@ -2340,6 +2413,11 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       end
       #= a solve of the problem starts from its state after the initialization (again, where it is solved again) =#
       p.state.atStart = $(_startState)(p)
+      #= after the others, its condition at each accepted step: the loops' roots of that time, for the reads after
+         the run =#
+      (isempty(p.loops) && isempty(p.blocks)) ||
+        push!(cbs, DiscreteCallback((u, t, integrator) -> (logStepRoots!(integrator); false), integrator -> nothing;
+                                    save_positions = (false, false)))
       pushfirst!(cbs, DiscreteCallback((u, t, integrator) -> false, integrator -> nothing;
                                        initialize = (c, u, t, integrator) -> $(_restoreStart!)(integrator.p),
                                        save_positions = (false, false)))

@@ -714,6 +714,21 @@ end
            (a set's switch: the selection and the states at once) =#
         @test cn in OMBackend.ARRAY_ODE_MODELS
       end
+      #= a loop with two roots read after the run: Q solved from the set's states and Q * Q = 1 (Q[4] = +-sqrt). The
+         run ends at Q[4] < 0; a read at t = 0 starts its Newton from the roots logged there (`_rootsAt`), not from
+         the run's last ones: Q[4](0) = 1, continuous over the saved points, the set's switch (an event) included =#
+      let (fm, functions) = _irArrayFlat("QuaternionFreeRotation")
+        OMBackend.translate(fm; functionList = functions, scalarized = false)
+        local sol::OMBackend.DifferentialEquations.SciMLBase.AbstractODESolution =
+          OMBackend.simulateModel(OMBackend.canonicalName("IndexReduction.QuaternionFreeRotation"); tspan = (0.0, 3.0),
+                                  reltol = 1e-8, abstol = 1e-8)
+        local Q::Vector{Vector{Float64}} = Vector{Float64}[OMBackend.getVariableValues(sol, "Q[$(k)]") for k in 1:4]
+        @test Q[4][1] == 1.0 && Q[4][end] < 0
+        @test maximum(abs.(diff(Q[4]))) < 0.1
+        @test maximum(abs(sum(Q[k][i]^2 for k in 1:4) - 1) for i in eachindex(sol.t)) < 1e-10
+        @test sol(0.0; idxs = Symbol("Q[4]")) == 1.0
+        @test any(i -> sol.t[i] == sol.t[i - 1] && sol.t[i] > 0, 2:length(sol.t))
+      end
       #= `each start = sum(m)`: every element's start the sum, not m's elements (on the element view: sum of an
          array literal) =#
       @test _irArraySimulate("EachStartArray", ["phi1[1]", "phi1[3]", "phi2[2]"], 1.0; kept = true) ≈ fill(0.6, 3)
