@@ -894,6 +894,11 @@ end
 function scalarEquations!(out::Vector{IR.Equation}, origins::Vector{EquationOrigin}, eq::IR.ARRAY_EQUATION,
                           origin::EquationOrigin, values::Dict{Symbol, Int}, E::Elements)::Nothing
   local (lhs, rhs) = (equationExpression(eq.lhs, values, E), equationExpression(eq.rhs, values, E))
+  #= As lowered, an array equation is `rhs = lhs` of its source (LowerFlatModel's `lowerEquation`); its elements for
+     the scalar passes are `lhs[i] = rhs[i]` again, as the frontend's scalarization writes them: the initialization
+     takes `pre(x) = value` as the start of `pre(x)` in that orientation only (MSL Noise's `pre(state) =
+     initialState(...)`: with the sides swapped the model did not build, "DAE init: residual 2e9") =#
+  E.passesFollow && ((lhs, rhs) = (rhs, lhs))
   local element = IR.elementType(eq.ty)
   for index in rowMajor(knownSizes(eq.ty, "an array equation"))
     local subscripts = IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index]

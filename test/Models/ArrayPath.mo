@@ -2500,4 +2500,38 @@ package ArrayPath
       (r, s) := swapStep(pre(s));
     end when;
   end TupleArrayTarget;
+
+  function seedPair "a start for a pair of states from a seed (large, as a random generator's)"
+    input Integer seed;
+    output Integer s[2];
+  algorithm
+    for k in 1:2 loop
+      s[k] := seed + k - 1;
+    end for;
+    s[2] := s[2] + 2000000000;
+  end seedPair;
+
+  function nextPair "two outputs, the second an Integer array"
+    input Integer s[2];
+    output Real r;
+    output Integer t[2];
+  algorithm
+    r := s[1] + s[2];
+    t := {s[2], s[1] + 1};
+  end nextPair;
+
+  model PreArrayStart "the start of pre() of an array by an initial array equation (MSL Noise: pre(state) = initialState(...)); its elements pre(s[k]) = seedPair(seed)[k] in this orientation for the initialization"
+    parameter Integer seed = 1;
+    discrete Integer s[2];
+    discrete Real r(start = 0, fixed = true);
+    Real x(start = 0, fixed = true);
+  initial equation
+    pre(s) = seedPair(seed);
+  equation
+    der(x) = 1;
+  algorithm
+    when sample(0.25, 0.25) then
+      (r, s) := nextPair(pre(s));
+    end when;
+  end PreArrayStart;
 end ArrayPath;

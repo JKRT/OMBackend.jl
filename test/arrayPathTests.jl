@@ -357,10 +357,14 @@ end
     #= models the array code does not take stay in the backend (its element view, no second flatten): `d = 2 * pre(d)`
        in a when-equation is an assignment per element (`elementAssignments`), in the branches of an if too; the array
        target of an algorithm's tuple stays its reference (`wholeTargets`). The element view gave both the array of
-       the elements as the target, which the when's and the tuple's translation refused =#
+       the elements as the target, which the when's and the tuple's translation refused. An initial array equation
+       `pre(s) = seedPair(seed)` has its elements in that orientation (as lowered it is `rhs = lhs`): with
+       `seedPair(seed)[k] = pre(s[k])` the scalarized model did not build =#
     for (model, names, T, expected) in (("ArrayPath.WhenArrayTarget", ["d[1]", "d[2]"], 1.0, [6.0, 8.0]),
                                         ("ArrayPath.WhenIfArrayTarget", ["d[1]", "d[2]"], 1.0, [8.0, 10.0]),
-                                        ("ArrayPath.TupleArrayTarget", ["r", "s[1]", "s[2]"], 0.9, [5.0, 3.0, 3.0]))
+                                        ("ArrayPath.TupleArrayTarget", ["r", "s[1]", "s[2]"], 0.9, [5.0, 3.0, 3.0]),
+                                        ("ArrayPath.PreArrayStart", ["r", "s[1]", "s[2]"], 0.9,
+                                         [2.000000005e9, 2.000000003e9, 3.0]))
       #= the route of OM's translate (`translateReducedArrays`: `nothing` is its caller's second flatten) =#
       local name::String = _arrayPathTranslate(model; scalarized = false)
       local (fm, cache) = OMFrontend.instantiateSCodeToFM(model, _ARRAY_PATH_SCODE[]; scalarize = false)
