@@ -382,6 +382,22 @@ end
     @test OMBackend.Passes.complexParts(I.CALL(:f, I.Expression[z], complex, I.FUNCTION_CALL)) === nothing
   end
 
+  @testset "Derivatives solved with the value of another put in; the sum of an element-wise power" begin
+    #= der(is) and der(psi) read each other: the element view solves one from its equation with the other's value put
+       in (`solveThroughSolved!`), the array form from the body with the other's template put in
+       (`withTemplateValues`). Refused before ("derivatives solved through the values of others": 57 MSL 4.1.0 models
+       behind it, the Machines among them) =#
+    local tight::NamedTuple = (reltol = 1e-9, abstol = 1e-9)
+    local a::Float64 = 2 / 1.1
+    local (s, v, _) = _bothWays("ArrayPath.DerivativeTwoCycle", ["is[1]", "psi[2]"]; tight...)
+    @test v[1] ≈ (a * sin(1.0) - cos(1.0) + exp(-a)) / (1.1 * (1 + a^2)) atol = 1e-7
+    @test maximum(abs.(s .- v)) < 1e-7
+    #= sum(i .^ 2 / m): an element of an element-wise power is the element's power (`scalarElement`) =#
+    local (sp, vp, _) = _bothWays("ArrayPath.ElementwisePowerSum", ["x"]; tight...)
+    @test vp[1] ≈ exp(-sqrt(14 / 3)) atol = 1e-7
+    @test sp[1] ≈ vp[1] atol = 1e-7
+  end
+
   @testset "Scalarized by the backend: array targets of when-equations and of an algorithm's tuple" begin
     #= models the array code does not take stay in the backend (its element view, no second flatten): `d = 2 * pre(d)`
        in a when-equation is an assignment per element (`elementAssignments`), in the branches of an if too; the array

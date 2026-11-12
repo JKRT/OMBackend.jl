@@ -168,6 +168,11 @@ function scalarElement(e::IR.Expression, subscripts::Vector{IR.Subscript}, ty::I
     e.op in (IR.SUB, IR.SUB_EW) && return minus(pick(e.exp1), pick(e.exp2))
     e.op === IR.MUL_EW && return times(pick(e.exp1), pick(e.exp2))
     e.op === IR.DIV_EW && return divide(pick(e.exp1), pick(e.exp2))
+    e.op === IR.DIV_SCALAR_ARRAY && return divide(e.exp1, pick(e.exp2))
+    #= element-wise powers (`i .^ 2`: MSL Machines' quasiRMS, `sqrt(sum(i .^ 2 / m))`) =#
+    e.op === IR.POW_EW && return IR.BINARY(pick(e.exp1), IR.POW, pick(e.exp2), ty)
+    e.op === IR.POW_ARRAY_SCALAR && return IR.BINARY(pick(e.exp1), IR.POW, e.exp2, ty)
+    e.op === IR.POW_SCALAR_ARRAY && return IR.BINARY(e.exp1, IR.POW, pick(e.exp2), ty)
     #= `*`, `/` of an array result whose operands are arrays of its rank or scalars: element-wise (the lowering's
        `{1, 0.5, 2} .* w`) =#
     if e.op in (IR.MUL, IR.DIV) && e.ty isa IR.T_ARRAY

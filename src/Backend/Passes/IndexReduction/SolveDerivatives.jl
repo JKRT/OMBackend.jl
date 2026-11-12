@@ -351,11 +351,14 @@ from a free equation. MSL Media's lumped volumes with p and h the states (StateS
 specific internal energy reads der(p), der(p) from the density's derivative (`rho_ph_der`, linear in its derivative
 inputs: `derivativeFunctionCall`) reads der(h); left the solver's, der(p) of R134a2's volumes jumped at the dew line
 (rho_ph_der's two branches) and the steps fell to 1e-16. Not where a branch of the coefficient is 0
-(`isPiecewise`), nor where it is 0 or does not evaluate at the start.
+(`isPiecewise`), nor where it is 0 or does not evaluate at the start. Returns the unknowns so solved, each with
+the unknowns whose values were put into its equation (their values as matched, `solved` at that time).
 """
 function solveThroughSolved!(solved::Dict{Symbol, IR.Expression}, equationOf::Dict{Symbol, Int},
                              edges::Dict{Symbol, Vector{DerivativeEdge}}, partition::IR.Partition, unknowns::Set{Symbol},
-                             functions::Dict{Symbol, IR.ModelicaFunction}, variables::IR.VariableSet, start::StartValues)::Nothing
+                             functions::Dict{Symbol, IR.ModelicaFunction}, variables::IR.VariableSet,
+                             start::StartValues)::Dict{Symbol, Set{Symbol}}
+  local through::Dict{Symbol, Set{Symbol}} = Dict{Symbol, Set{Symbol}}()
   local readsOf = v -> (local r = Set{Symbol}(); IR.foreachExp(x -> (x isa IR.CREF && x.cref.name in unknowns && push!(r, x.cref.name); nothing), v); r)
   #= `d` from equation `i` with the values of `others` put in: its value, or nothing =#
   local solveFrom = (d, i, others) -> begin
@@ -383,6 +386,7 @@ function solveThroughSolved!(solved::Dict{Symbol, IR.Expression}, equationOf::Di
       local value = solveFrom(a, equationOf[a], Set([b]))
       value === nothing && continue
       solved[a] = value
+      through[a] = Set{Symbol}([b])
       break
     end
   end
@@ -394,12 +398,13 @@ function solveThroughSolved!(solved::Dict{Symbol, IR.Expression}, equationOf::Di
       local value = solveFrom(d, e.equation, Set(e.others))
       value === nothing && continue
       solved[d] = value
+      through[d] = Set{Symbol}(e.others)
       equationOf[d] = e.equation
       push!(used, e.equation)
       break
     end
   end
-  return nothing
+  return through
 end
 
 """
@@ -478,16 +483,16 @@ function readsFreeParameter(e::IR.Expression, variables::IR.VariableSet, seen::S
 end
 
 """
-    DerivativeSolution(resolved, equationOf, throughSolved)
+    DerivativeSolution(resolved, equationOf, through)
 
 What `solveDerivatives!` substitutes: each solved derivative unknown's value (`resolvedValues`), the equation it is
 solved from (its index in the partition), and the unknowns `solveThroughSolved!` solved, or solved again, from an
-equation with the values of others put in.
+equation with the values of others put in, each with those others.
 """
 struct DerivativeSolution
   resolved::Dict{Symbol, IR.Expression}
   equationOf::Dict{Symbol, Int}
-  throughSolved::Set{Symbol}
+  through::Dict{Symbol, Set{Symbol}}
 end
 
 """
@@ -516,13 +521,12 @@ function derivativeSolution(model::IR.Model, partition::IR.Partition;
     solved[d] = solvedValue(partition.equations[e.equation]::IR.SCALAR_EQUATION, d, coefficient(e.coefficient))
     equationOf[d] = e.equation
   end
-  local matchedValues::Dict{Symbol, IR.Expression} = copy(solved)
-  solveThroughSolved!(solved, equationOf, edges, partition, unknowns, functions, model.variables, start)
+  local through::Dict{Symbol, Set{Symbol}} =
+    solveThroughSolved!(solved, equationOf, edges, partition, unknowns, functions, model.variables, start)
   isempty(solved) && return nothing
   local resolved = resolvedValues(solved)
   isempty(resolved) && return nothing
-  local throughSolved::Set{Symbol} = Set{Symbol}(d for (d, value) in solved if get(matchedValues, d, nothing) !== value)
-  return DerivativeSolution(resolved, equationOf, throughSolved)
+  return DerivativeSolution(resolved, equationOf, through)
 end
 
 """

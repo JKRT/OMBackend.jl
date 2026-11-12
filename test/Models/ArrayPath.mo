@@ -2607,4 +2607,26 @@ package ArrayPath
       der(x[k]) = -s[k].im;
     end for;
   end ComplexArrays;
+
+  model DerivativeTwoCycle "a stray inductance in series with a main one (MSL Machines' air gaps, per axis): psi = Lm is is no state; Ls der(is) + der(psi) = u - R is and der(psi) = Lm der(is) read each other's derivative, one solved with the other's value put in; (Ls + Lm) is' = u - R is"
+    parameter Real Ls = 0.1;
+    parameter Real Lm = 1;
+    parameter Real R = 2;
+    Real is[2](each start = 0, each fixed = true);
+    Real psi[2];
+  equation
+    Ls * der(is) + der(psi) = {sin(time), cos(time)} - R * is;
+    psi = Lm * is;
+  end DerivativeTwoCycle;
+
+  model ElementwisePowerSum "the sum of an element-wise power of an array (MSL Machines' quasiRMS: sqrt(sum(i .^ 2 / m))); i[k] = k x, x' = -sqrt(14 / 3) x"
+    parameter Integer m = 3;
+    Real i[m];
+    Real x(start = 1, fixed = true);
+  equation
+    for k in 1:m loop
+      i[k] = k * x;
+    end for;
+    der(x) = -sqrt(sum(i .^ 2 / m));
+  end ElementwisePowerSum;
 end ArrayPath;

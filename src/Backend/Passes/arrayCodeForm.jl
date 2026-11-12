@@ -839,8 +839,11 @@ of a size not known, too many elements, or min and max of an empty array.
 function reductionForm(fname::Symbol, arg::IR.Expression, cx::ElementContext)::Union{Nothing, IR.Expression}
   local ty::IR.ModelicaType = IR.typeOf(arg)
   ty isa IR.T_ARRAY || return nothing
-  all((d::IR.Dimension) -> d isa IR.DIM_SIZE, ty.dimensions) || return nothing
-  local dims::Vector{Int} = Int[(d::IR.DIM_SIZE).size for d in ty.dimensions]
+  #= the dimensions from the operands where the type does not give them (an inlined function's `i .^ 2 / m` is typed
+     by the function's `i[:]`: MSL Machines' quasiRMS of the stray load's currents) =#
+  local shape::Union{Nothing, Vector{Int}} = Evaluation.shapeOf(arg)
+  (shape === nothing || length(shape) != length(ty.dimensions)) && return nothing
+  local dims::Vector{Int} = shape
   local n::Int = prod(dims)
   n <= MAX_ELEMENT_TERMS || return nothing
   n == 0 && return fname === :product ? IR.REAL(1.0) : fname === :sum ? IR.REAL(0.0) : nothing
