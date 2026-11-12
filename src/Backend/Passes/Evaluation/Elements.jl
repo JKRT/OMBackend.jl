@@ -110,11 +110,23 @@ end
 
 `e[subscripts]`, picked where `e` is a record or an array literal and the subscripts are
 literals (the frontend reads a field of a record-valued call by its position, `f(x)[1]`; the
-derivative of the call is a record literal); a subscripted expression otherwise.
+derivative of the call is a record literal); a subscripted expression otherwise. Subscripts of a
+subscripted expression's whole dimensions take their places (`fire[ka + 1, :][k]` is `fire[ka + 1, k]`,
+of any element type: a row of SVPWM's constant Boolean table by a discrete index; left nested, the
+generated lookup of the row was one term and its second element out of bounds).
 """
 function selectElement(@nospecialize(e::IR.Expression), subscripts::Vector{IR.Subscript},
                        ty::IR.ModelicaType)::IR.Expression
   isempty(subscripts) && return e
+  if e isa IR.SUBSCRIPTED && count(s -> s isa IR.WHOLE, e.subscripts) == length(subscripts) &&
+     all(s -> s isa Union{IR.INDEX, IR.WHOLE}, e.subscripts) && all(s -> s isa IR.INDEX, subscripts)
+    local merged::Vector{IR.Subscript} = IR.Subscript[]
+    local next::Int = 0
+    for s in e.subscripts
+      push!(merged, s isa IR.WHOLE ? subscripts[next += 1] : s)
+    end
+    return selectElement(e.exp, merged, ty)
+  end
   local k::Union{Nothing, Int} = IR.literalIndex(subscripts[1])
   if k !== nothing
     local record = asRecord(e)

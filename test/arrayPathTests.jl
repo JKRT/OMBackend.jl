@@ -378,6 +378,25 @@ end
     end
   end
 
+  @testset "Scalarized by the backend: reductions of no elements, elements of a row of a table" begin
+    local I::Module = OMBackend.OMJLIR
+    #= sum and product of no elements are 0 and 1 (a tank's sum(topPorts.m_flow) without top ports: with the arrays
+       kept `sum({})` reached the generated code, MethodError zero(Any); MSL AST_BatchPlant's tank tests) =#
+    @test OMBackend.Passes.foldReduction(:sum, I.Expression[], I.T_REAL(), I.BUILTIN_CALL) === I.REAL(0.0)
+    @test OMBackend.Passes.foldReduction(:product, I.Expression[], I.T_INTEGER(), I.BUILTIN_CALL) === I.INTEGER(1)
+    @test OMBackend.Passes.foldReduction(:max, I.Expression[], I.T_REAL(), I.BUILTIN_CALL) === nothing
+    #= fire[ka + 1, :][2] is fire[ka + 1, 2] (a row of SVPWM's constant Boolean table by a discrete index: left
+       nested, the row's lookup was one term in the generated code, its second element a BoundsError) =#
+    local ka::I.Expression = I.CREF(I.ComponentRef(:ka, I.T_INTEGER()), I.T_INTEGER())
+    local table::I.Expression = I.CREF(I.ComponentRef(:fire, I.T_BOOLEAN()), I.T_BOOLEAN())
+    local row::I.Expression = I.SUBSCRIPTED(table, I.Subscript[I.INDEX(ka), I.WHOLE()], I.T_BOOLEAN())
+    local picked::I.Expression =
+      OMBackend.Passes.Evaluation.selectElement(row, I.Subscript[I.INDEX(I.INTEGER(2))], I.T_BOOLEAN())
+    @test picked isa I.SUBSCRIPTED && picked.exp === table && length(picked.subscripts) == 2
+    @test picked.subscripts[1] isa I.INDEX && picked.subscripts[1].exp === ka
+    @test picked.subscripts[2] isa I.INDEX && picked.subscripts[2].exp === I.INTEGER(2)
+  end
+
   @testset "a when algorithm reading its target, reinit of elements, enumeration dimensions" begin
     #= (s, y) := step(s) at 0.1, 0.35, 0.6, 0.85: s from pre(s) at each run (the event iteration reran the body with
        the last pass's s and never settled) =#

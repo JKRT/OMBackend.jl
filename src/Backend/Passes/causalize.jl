@@ -979,11 +979,18 @@ end
 
 """
 The reduction `reducer` of `elements` as a chain of `+` or `*`, or nested `min`/`max` calls (of
-`attributes`); `nothing` for none.
+`attributes`). Of no elements: `sum` is 0 and `product` 1 of a Real or Integer result (MLS 10.3.4; a tank's
+`sum(topPorts.m_flow)` without top ports, arrays kept: `sum({})` reached the generated code as `sum(Any[])`, MSL
+AST_BatchPlant's tank tests), `nothing` for `min`, `max` and another type.
 """
 function foldReduction(reducer::Symbol, elements::Vector{IR.Expression}, ty::IR.ModelicaType,
                        attributes::IR.CallAttributes)::Union{Nothing, IR.Expression}
-  isempty(elements) && return nothing
+  if isempty(elements)
+    reducer in (:sum, :product) || return nothing
+    ty isa IR.T_REAL && return IR.REAL(reducer === :sum ? 0.0 : 1.0)
+    ty isa IR.T_INTEGER && return IR.INTEGER(reducer === :sum ? 0 : 1)
+    return nothing
+  end
   local acc = elements[1]
   for x in elements[2:end]
     acc = reducer === :sum ? IR.BINARY(acc, IR.ADD, x, ty) :
