@@ -611,6 +611,26 @@ end
     @test [v.name for v in dampedView.model.variables if v.origin === :liftIfExpressions] ==
           [:ifEq_tmp0, :ifEq_tmp1, :ifEq_tmp2]
     @test occursin("w1[2] > (0.2 * ", string(lifted[2])) && !any(eq -> occursin("\$i", string(eq)), lifted)
+    #= a solved body's coefficient that is one literal at every iteration, by terms that are zero only there (a
+       product rule on a matrix read by the iterator, MSL FreeMotion's quaternion relation differentiated): that
+       literal, so the value is the element view's form (`rowLiteral`); one that differs per iteration, or reads a
+       variable at one, stays =#
+    let E::_IRd.Elements = _IRd.scalarizeArrays(_irArrayUnreduced("InertiaArray")).elements
+      local it::_IRM.CREF = _IRM.CREF(_IRM.ComponentRef(Symbol("\$i1"), _IRM.T_INTEGER()), _IRM.T_INTEGER())
+      local reals = (n::Int) -> _IRM.T_ARRAY(_IRM.T_REAL(), _IRM.Dimension[_IRM.DIM_SIZE(n)])
+      local vector = (xs::Vector{Float64}) -> _IRM.ARRAY(_IRM.Expression[_IRM.REAL(x) for x in xs], reals(length(xs)))
+      local at = (a::_IRM.Expression) -> _IRM.SUBSCRIPTED(a, _IRM.Subscript[_IRM.INDEX(it)], _IRM.T_REAL())
+      local phi::_IRM.Expression = at(_IRM.CREF(_IRM.ComponentRef(:phi1, reals(4)), reals(4)))
+      local rows::Vector{Pair{Int, Symbol}} = Pair{Int, Symbol}[1 => :a, 2 => :b, 3 => :c]
+      local valuesAt = (r::Int) -> Dict{Symbol, Int}(Symbol("\$i1") => r)
+      local zeroTerms::_IRM.Expression =
+        _IRd.minus(_IRd.times(_IRM.REAL(2.0), _IRd.times(at(vector([0.0, 0.0, 0.0])), phi)), _IRM.REAL(1.0))
+      @test _IRd.rowLiteral(zeroTerms, rows, valuesAt, E) == _IRM.REAL(-1.0)
+      local perRow::_IRM.Expression = _IRd.minus(at(vector([1.0, 2.0, 3.0])), _IRM.REAL(1.0))
+      @test _IRd.rowLiteral(perRow, rows, valuesAt, E) === perRow
+      local oneReads::_IRM.Expression = _IRd.minus(_IRd.times(at(vector([0.0, 0.0, 1.0])), phi), _IRM.REAL(1.0))
+      @test _IRd.rowLiteral(oneReads, rows, valuesAt, E) === oneReads
+    end
     #= a differentiated body that reads a parameter: in array form the parameter stays symbolic =#
     m = _irArrayUnreduced("AngleArray")
     @test _IRd.reduceIndexArrays!(m)
@@ -680,7 +700,10 @@ end
                                   ("PendulumVector", ["r[1]", "r[2]", "v[1]", "F"], 3.0),
                                   #= a start on an alias: the guesses of s and of the set's state carried from it
                                      (from 0 the initial system's residuals are not finite) =#
-                                  ("StartOnAlias", ["r[1]", "r[2]", "s", "v[2]"], 2.0))
+                                  ("StartOnAlias", ["r[1]", "r[2]", "s", "v[2]"], 2.0),
+                                  #= a quaternion's set of 3 of 4 beside the body's angular velocity, the states: a
+                                     nonlinear loop for Q, the differentiated w relation's der(der(Q)) the solver's =#
+                                  ("QuaternionFreeRotation", ["wb[1]", "wb[2]", "wb[3]", "Q[1]", "Q[3]"], 3.0))
         local scalarized = _irArraySimulate(name, names, stop; kept = false)
         #= the array code names a matrix element as Modelica writes it (x[1,2]), the scalar code x[1][2] =#
         local kept = _irArraySimulate(name, String[replace(n, "][" => ",") for n in names], stop; kept = true)

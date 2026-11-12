@@ -142,7 +142,8 @@ end
 The body equation `body` solved in array form for the derivative its iterations `rows` (element view row => the
 derivative solved from it) are solved for: the reference in the body that is each row's derivative at its iteration
 (one for all of them, subscripted by the iterators, each once), the coefficient as the element view's (an expression
-where it reads only parameters too: `literalCoefficients = false`), the value `solvedValue`'s. NotHandled where the
+where it reads only parameters too: `literalCoefficients = false`; the literal it is at every iteration,
+`rowLiteral`), the value `solvedValue`'s. NotHandled where the
 rows solve for references the body does not have alike.
 """
 function solvedTemplate(body::IR.SCALAR_EQUATION, iterators::Vector{Symbol}, rows::Vector{Pair{Int, Symbol}},
@@ -173,7 +174,28 @@ function solvedTemplate(body::IR.SCALAR_EQUATION, iterators::Vector{Symbol}, row
     throw(NotHandled("a derivative solved through $(cref.cref.name), not subscripted by its iterators $(iterators)"))
   local c::Union{Nothing, IR.Expression} = partialDerivative(canonical, cref.cref.name, functions; derivativeCalls = true)
   c === nothing && throw(NotHandled("the coefficient of $(cref.cref.name) in $(equationLine(body))"))
-  return SolvedTemplate(cref, iterators, solvedValue(canonical, cref.cref.name, c))
+  return SolvedTemplate(cref, iterators, solvedValue(canonical, cref.cref.name, rowLiteral(c, rows, valuesAt, E)))
+end
+
+"""
+    rowLiteral(c, rows, valuesAt, E) -> Expression
+
+The coefficient `c` of a body's derivative as the literal it is at every one of its iterations `rows`, where they
+all give the same one; else `c`. A product rule's terms on a matrix read by the iterator (FreeMotion's
+`w = 2 * (M(Q) * der(Q))` differentiated: `0.0 * der(Q[k])` per element) are zero only once the iterator has a value:
+in array form the coefficient was an expression, the value divided by it, and the element view's value (the literal's
+reciprocal) was another form.
+"""
+function rowLiteral(c::IR.Expression, rows::Vector{Pair{Int, Symbol}}, valuesAt::Function, E::Elements)::IR.Expression
+  isLiteral(c) && return c
+  local literal::Union{Nothing, IR.Expression} = nothing
+  for (r, _) in rows
+    local atRow::IR.Expression = foldTree(equationExpression(c, valuesAt(r), E))
+    isLiteral(atRow) || return c
+    (literal === nothing || literalValue(literal) == literalValue(atRow)) || return c
+    literal = atRow
+  end
+  return something(literal, c)
 end
 
 """

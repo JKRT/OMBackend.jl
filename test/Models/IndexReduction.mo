@@ -459,6 +459,23 @@ package IndexReduction "Models for OMBackend's index reduction step by step (Pas
     Q[3] = 0;
   end QuaternionAttitude;
 
+  model QuaternionFreeRotation "a torque-free rigid rotation, the attitude a quaternion: w from Q and der(Q) as an array equation (MSL FreeMotion's angularVelocity2), the body's wb = w the state; Euler's equations need der(wb), so the relation is differentiated and der(der(Q)) stays the solver's (energy and angular momentum constant)"
+    parameter Real J[3] = {1, 2, 3};
+    Real Q[4](start = {0, 0, 0, 1});
+    Real w[3];
+    Real wb[3](each stateSelect = StateSelect.always);
+  initial equation
+    Q[1] = 0;
+    Q[2] = 0;
+    Q[3] = 0;
+    wb = {1, 0.5, 0.2};
+  equation
+    w = 2 * ([Q[4], Q[3], -Q[2], -Q[1]; -Q[3], Q[4], Q[1], -Q[2]; Q[2], -Q[1], Q[4], -Q[3]] * der(Q));
+    0 = Q * Q - 1;
+    wb = w;
+    {J[1] * der(wb[1]), J[2] * der(wb[2]), J[3] * der(wb[3])} = -cross(wb, {J[1] * wb[1], J[2] * wb[2], J[3] * wb[3]});
+  end QuaternionFreeRotation;
+
   model AlgebraicNever "s only index reduction differentiates (no StateSelect): with the dynamic state sets' ranking StateSelect.never, so x (avoid) stays the state; otherwise s (default)"
     Real x(stateSelect = StateSelect.avoid, start = 0.5, fixed = true);
     Real z(stateSelect = StateSelect.never);
