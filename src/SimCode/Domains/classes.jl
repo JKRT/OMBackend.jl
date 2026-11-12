@@ -169,7 +169,7 @@ EqClass(lhs::IR, rhs::IR, nslots::Int, domain::Matrix{Int}, nrel::Int, text::Str
 #= A when-equation over a domain: its condition and body (discrete assignments, reinits). =#
 struct WhenClass
   cond::IR                               #= Op(:elsewhen, conditions) for when ... elsewhen =#
-  body::Vector{Tuple{Symbol, Ref, IR}}   #= (:assign, :reinit or :call (a statement), target, value) =#
+  body::Vector{Tuple{Symbol, Ref, IR}}   #= (:assign, :reinit, :switch (a state set's reinit) or :call (a statement), target, value) =#
   starts::Vector{Int}                    #= where each branch's body begins =#
   nslots::Int
   domain::Matrix{Int}

@@ -639,15 +639,14 @@ end
                                   ("EllipseArray", ["x[1]", "y[2]", "F[3]"], 3.0),
                                   ("MixedPendulums", ["single.x", "x[1]", "y[2]"], 3.0))
         local scalarized = _irArraySimulate(name, names, stop; kept = false)
-        local kept = _irArraySimulate(name, names, stop; kept = true)
+        #= the array code names a matrix element as Modelica writes it (x[1,2]), the scalar code x[1][2] =#
+        local kept = _irArraySimulate(name, String[replace(n, "][" => ",") for n in names], stop; kept = true)
         local cn::String = OMBackend.canonicalName("IndexReduction." * name)
         @test cn in OMBackend.ARRAY_REDUCED_MODELS
         @test isapprox(kept, scalarized; atol = 1e-8, rtol = 1e-8)
-        #= explicit once its derivatives are solved: array code (ArrayODEGen); the pendulums' dynamic state sets
-           (a fixed start on a dummy state, the sets' when-equations, a loop per element) the scalarized form =#
-        @test (cn in OMBackend.ARRAY_ODE_MODELS) == (name in ("InertiaArray", "AngleArray"))
-        name in ("InertiaArray", "AngleArray") ||
-          @test occursin("array code after index reduction", OMBackend.scalarizedFallbackReason(cn))
+        #= explicit once its derivatives are solved: array code (ArrayODEGen), the pendulums' dynamic state sets too
+           (a set's switch: the selection and the states at once) =#
+        @test cn in OMBackend.ARRAY_ODE_MODELS
       end
       #= `each start = sum(m)`: every element's start the sum, not m's elements (on the element view: sum of an
          array literal) =#

@@ -292,6 +292,9 @@ The reference of a variable of the `k`-th dynamic state set: the set's part (`\$
 stateSetCref(k::Int, name::Symbol, subscripts::Vector{IR.Subscript}, ty::IR.ModelicaType)::IR.ComponentRef =
   IR.ComponentRef(IR.CrefPart[IR.CrefPart(Symbol("\$STATESET", k), IR.Subscript[], IR.T_CLASS(:StateSet)), IR.CrefPart(name, subscripts, ty)])
 
+"Whether `cref` is of a dynamic state set (`stateSetCref`: its first part of the class StateSet)."
+isStateSetRef(cref::IR.ComponentRef)::Bool = !isempty(cref.parts) && cref.parts[1].ty == IR.T_CLASS(:StateSet)
+
 "The `j`-th state of the `l`-th level of the `k`-th dynamic state set: `\$STATESETk.x[j]`, `\$STATESETk.dx[j]` (its derivative level), ..."
 setStateCref(k::Int, l::Int, j::Int)::IR.ComponentRef =
   stateSetCref(k, Symbol("d"^(l - 1), "x"), IR.Subscript[IR.INDEX(IR.INTEGER(j))], IR.T_REAL())

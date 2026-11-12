@@ -162,6 +162,7 @@ struct ArrayModelParameters
   tend::Vector{Float64}        #= [stop time]: a solution read there gives the final values (_dlogIndex) =#
   abuf::Vector{Float64}        #= the algebraic variables of a right-hand side evaluated on Float64 (RHS!): no buffer per call =#
   blocks::Vector{BlockSolver}  #= the large algebraic loops' solvers (blockSolve!), in the order of the schedule =#
+  loops::Vector{Matrix{Float64}}   #= per loop family the members' guesses (unknown, member): the run's last solutions =#
   state::ArrayRuntimeState     #= the run's state (samples, memo, warnings, asserts, terminate) =#
   model::Module
 end
@@ -592,8 +593,8 @@ end
 """
     _loopFamilyCode(g, f, template, blocks, el, matchRow, a0, relBases) -> Tuple{Vector{Any}, Expr}
 
-The solve of the loop family `f` (`LOOPFAMILY_f!`): its tables (each member's instance columns and unknowns, a guess
-per unknown: the last solution, at first the start values) and the body that solves the members it is called for,
+The solve of the loop family `f` (`LOOPFAMILY_f!`): its tables (each member's instance columns and unknowns, the first
+guess per unknown: the start values; a run keeps its last solutions as the next guesses in its parameters, `p.loops`) and the body that solves the members it is called for,
 each by Newton's method on the residuals of its instances (lhs - rhs, by the template's classes at the member's
 columns), the unknowns set in place (a state derivative in du, an algebraic variable in a), the Jacobian by forward
 differences; the last solution kept as the next guess (in Float64 solves); residuals or a Jacobian not finite, or a
@@ -635,10 +636,12 @@ function _loopFamilyCode(g::Gen, f::Int, template::Vector{Tuple{Int, Int}}, bloc
   local code::Expr = quote
     local _x::AbstractVector = similar(a, $k); local _r::AbstractVector = similar(a, $k)
     local _r2::AbstractVector = similar(a, $k); local _J::AbstractMatrix = similar(a, $k, $k)
+    local _G::Matrix{Float64} = p.loops[$f]
     for _m in members
       for _j in 1:$k
-        _x[_j] = $G[_j, _m]
+        _x[_j] = _G[_j, _m]
       end
+      local _converged::Bool = false
       for _it in 1:50
         $set
         $(residuals(:_r))
@@ -671,13 +674,16 @@ function _loopFamilyCode(g::Gen, f::Int, template::Vector{Tuple{Int, Int}}, bloc
           _x[_j] -= _dx[_j]
           _step = max(_step, abs(_dx[_j]) / (1.0 + abs(_x[_j])))
         end
+        _converged = _step <= 1.0e-8
         _step <= 1.0e-12 && break
       end
       $set
-      #= the solution as the next guess, not a failed solve's NaN =#
-      if eltype(a) === Float64 && all(isfinite, _x)
+      #= the solution as the next guess: not a failed solve's NaN, nor the last iterate of a solve that did not
+         converge (unknowns that hold no solution, as a state set's selection read with the other side's states: the
+         next solve went to another root from there) =#
+      if _converged && eltype(a) === Float64 && all(isfinite, _x)
         for _j in 1:$k
-          $G[_j, _m] = _x[_j]
+          _G[_j, _m] = _x[_j]
         end
       end
     end
@@ -1213,6 +1219,13 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       local idx = _subscriptCode(g, info, target.name, target.subs)
       if kind == :reinit
         push!(stmtsOf[b], :(p.ureinit[$(_linear(info, idx))] = $(jl(g, value))))
+      elseif kind == :switch
+        #= a dynamic state set's switch: the state takes the newly selected candidate's value with the selection
+           matrix the body assigns, not after the sweep. A pass with the new selection and the old state read
+           the candidates wrong (the state another candidate's value): the switch fired back, and the event
+           iteration did not settle (PendulumArray at t = 0.356) =#
+        push!(stmtsOf[b], :(p.ureinit[$(_linear(info, idx))] = $(jl(g, value))))
+        push!(stmtsOf[b], :(u[$(_linear(info, idx))] = p.ureinit[$(_linear(info, idx))]))
       elseif _callOfParameters(g, value)
         #= a call of parameters only: once per pass of the event iteration (p.state.whenMemo), as the body
            fires once in an instant; the passes rerun a fired body, and an impure function (MSL
@@ -1498,6 +1511,9 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
                                                                                   for ((I, J), gs) in zip(blockPatterns, blockGuesses)]...)]
     const BLOCK_COLORS = Vector{Int}[$(columnColors)(S) for S in BLOCK_PATTERNS]
     const BLOCK_GUESSES = $(blockGuesses)
+    #= the loop families' first guesses; none of a family of large blocks (BLOCK_GUESSES) =#
+    const LOOP_GUESSES = Matrix{Float64}[$([get(largeFamily, f, false) ? :(zeros(0, 0)) : Symbol("LOOP_GUESS_", f)
+                                            for f in eachindex(loopBodies)]...)]
     #= initialization: the states the initial equations determine (one per residual) =#
     const INIT_UNKNOWNS = $(initStates)
     const INIT_PARAMS = $(initParams)   #= fixed = false parameters: positions in p.values =#
@@ -1997,7 +2013,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       local evv = entry[(nD + nR + 1):end]
       local q = $(paramsType)(p.values, rel, d, copy(d), copy(p.wcond), copy(p.sampleActive),
                               [false], [false], copy(p.upre), copy(p.ureinit), copy(p.wnew), p.dlog, evv, copy(p.hyst), copy(p.tend),
-                              zeros($nAlg), p.blocks, p.state, p.model)
+                              zeros($nAlg), p.blocks, map(copy, p.loops), p.state, p.model)
       equations!(similar(u), a, u, q, t, nothing, false)
       return a
     end
@@ -2250,6 +2266,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
                            zeros(Bool, N_WHENS), Tuple{Float64, Vector{Float64}}[], zeros(N_RELATIONS), [0.0], [Float64(tspan[2])],
                            zeros($nAlg),
                            $(BlockSolver)[$(BlockSolver)(BLOCK_PATTERNS[k], BLOCK_COLORS[k], BLOCK_GUESSES[k]) for k in eachindex(BLOCK_PATTERNS)],
+                           Matrix{Float64}[copy(G) for G in LOOP_GUESSES],
                            $(ArrayRuntimeState)(N_SAMPLES, strings), @__MODULE__)
     end
 

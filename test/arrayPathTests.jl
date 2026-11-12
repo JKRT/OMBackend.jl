@@ -768,9 +768,12 @@ end
     @test _values(run("TurnCells", false), ["c[1].x", "c[3].x"]) ≈ [exp(-2), exp(-2)] atol = 1e-6
     #= elements of smooth() and vector(cat()); an if-equation on a function of parameters; an array-valued
        if-expression is an array variable, its if-equation a for-equation over the elements =#
+    @test _values(run("ElementForms", false), ["x", "y", "e[2]"]) ≈ [exp(-1), 2 * exp(-1), -exp(-1)] atol = 1e-6
+    #= a fixed start on a dummy state (x, y the state): the initial equation x = start gives the state's value =#
+    @test _values(run("FixedDummy", false), ["y[1]", "y[2]", "z[2]"]) ≈
+          [2 * exp(-1), 4 * exp(-1), 4 * exp(-1)] atol = 1e-5
     #= an if-equation in a branch of an if-equation on a variable condition: one class `y[i] = if ... (if ...)` =#
-  @test _values(run("NestedIf", false), ["y[1]", "y[2]"]) ≈ [2 * exp(-1), 4 * exp(-1)] atol = 1e-5
-  @test _values(run("ElementForms", false), ["x", "y", "e[2]"]) ≈ [exp(-1), 2 * exp(-1), -exp(-1)] atol = 1e-6
+    @test _values(run("NestedIf", false), ["y[1]", "y[2]"]) ≈ [2 * exp(-1), 4 * exp(-1)] atol = 1e-5
     #= pre() is the start at the initialization and no when fires on its condition there; the event iteration after it
        fires them: the change of x from its start (omc). Initial sections of two instances, merged to arrays, run in
        the order of what they read through the equation between them (d2.x = d1.y). The scalarized route misses the

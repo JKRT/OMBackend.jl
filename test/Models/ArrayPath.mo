@@ -2262,6 +2262,18 @@ package ArrayPath
     R.T = {{1.0, 0.0}, {0.0, 1.0}};
     R.w = {time, 2.0};
   end TurnCells;
+  model FixedDummy "a fixed start on a dummy state: y[i] = 2 i exp(-t), from x[i] = i at the start"
+    Real x[2](start = {1, 2}, each fixed = true);
+    Real y[2](each stateSelect = StateSelect.prefer);
+    Real z[2];
+  equation
+    for i in 1:2 loop
+      x[i] + y[i] = 3 * i;
+      der(y[i]) = -y[i];
+      der(x[i]) = z[i];
+    end for;
+  end FixedDummy;
+
   model NestedIf "an if-equation in a branch of an if-equation on a variable condition"
     Real x(start = 1, fixed = true);
     Real y[2];

@@ -54,8 +54,7 @@ the domain level (`domainSystem`), from which CodeGeneration's ArrayODEGen (_emi
   - When-equations as the flat model's (`_addWhen!`): their triggers the condition, sample() in it.
 
 Not (yet), NotSupported (the caller takes the scalarized path): array equations, algorithms, a
-when-equation of the passes' structural kinds, sample() outside a when-condition, a
-fixed start on a dummy state (the reduced initialization's), whole arrays in scalar equations,
+when-equation of the passes' structural kinds, sample() outside a when-condition, whole arrays in scalar equations,
 records of records through functions.
 =#
 
@@ -814,7 +813,10 @@ function _addWhen!(g::Gen, eq::SC.WHEN_EQUATION, iterNames::Vector{String}, idom
         local stateRef::SC.Exp = SC.EXP_CREF(st.stateVar, SC.TYPE_REAL())
         local state::IR = toIR(g, isempty(st.subscripts) ? stateRef : SC.ASUB(stateRef, st.subscripts), ctx)
         (state isa Ref && g.vars[state.name].kind == :state) || ns("reinit of a non-state: $(_str(eq))")
-        push!(body, (:reinit, state, toIR(g, st.value, ctx)))
+        #= of a dynamic state set's state: the set's switch, in effect with the selection the body assigns =#
+        local ref::Union{Nothing, SC.IR.ComponentRef} = st.stateVar.ref
+        local switch::Bool = ref !== nothing && Passes.IndexReduction.isStateSetRef(ref)
+        push!(body, (switch ? :switch : :reinit, state, toIR(g, st.value, ctx)))
       elseif st isa Union{SC.ASSERT, SC.NORETCALL, SC.TERMINATE, SC.IF}
         push!(body, (:call, noTarget, _whenEffect(g, st, ctx)))
       else
@@ -1275,7 +1277,6 @@ function domainSystem(sc::SC.SIM_CODE)::DomainSystem
     elseif category in (:algebraic, :derivative, :dummyState)
       vtype == :real || ns("the algebraic variable $(nm), not Real")
       local fixed::Vector{Bool} = fixedOf(false)
-      category == :dummyState && any(fixed) && ns("a fixed start on the dummy state $(nm)")
       local algStarts::Vector{Float64} = startOf()
       any(fixed) && push!(fixedNonStates, (nm, Any[x for x in fixed], Any[x for x in algStarts]))
       g.vars[nm] = VarInfo(:alg, dims, perPart, g.nAlg, :real, SimVariable(sv, elementNames, nothing))
