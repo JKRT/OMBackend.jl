@@ -512,6 +512,22 @@ package IndexReduction "Models for OMBackend's index reduction step by step (Pas
     r[1] ^ 2 + r[2] ^ 2 = L ^ 2;
   end PendulumVector;
 
+  model StartOnAlias "a mass whose position r (avoid, a fixed start) a damper reads through the alias ra (no start), along its distance s to the origin: at the declared starts ra = 0 and the distance's gradient vanishes; at the starts carried through ra = r it is (-1, 0), so r[1] is the dummy of the set (MSL SpringDamperSystem's body1.frame_a.r_0)"
+    Real r[2](start = {-0.5, 0}, each fixed = true, each stateSelect = StateSelect.avoid);
+    Real v[2](each start = 0, each fixed = true);
+    Real ra[2];
+    Real length;
+    Real s;
+    Real f;
+  equation
+    ra = r;
+    length = sqrt(ra * ra);
+    s = if noEvent(length > 1e-10) then length else 1e-10;
+    f = 20 * der(s) + 100 * (s - 1);
+    der(r) = v;
+    der(v) = -f * ra / s + {0, -9.81};
+  end StartOnAlias;
+
   model InertiaArray "N rigidly coupled pairs of inertias as array equations (index 3 as written); arrays kept: phi1 and w1 the states as arrays"
     parameter Integer N = 4;
     Real phi1[N](each start = 0, each fixed = true);

@@ -581,6 +581,14 @@ end
     @test scalar.variables[Symbol("\$STATESET1.x[2,1]")].kind isa _IRM.STATE
     local aStart = (i, c) -> scalar.variables[Symbol("\$STATESET1.A[$(i),1,$(c)]")].attributes.start.value
     @test [aStart(i, 1) for i in 1:3] == [1, 0, 0]
+    #= a start declared on an alias of the set's candidates (ra = r, an array equation the arrays-kept model keeps):
+       at the declared starts ra = 0, the distance guarded and its gradient zero; the starts carried through the
+       explicit relations (`propagatedValues`, generic = false) give the gradient (-1, 0): r[1] the dummy, the set
+       starts on r[2] (MSL SpringDamperSystem: the generic point chose the element across the damper, Unstable) =#
+    m = _irArrayUnreduced("StartOnAlias")
+    @test withenv(() -> _IRd.reduceIndexArrays!(m), "OMBACKEND_DYNAMIC_STATE_SETS" => "true")
+    @test [m.variables[Symbol("\$STATESET1.A[1,$(c)]")].attributes.start.value for c in 1:2] == [0, 1]
+    @test m.variables[:s].kind isa _IRM.STATE && m.variables[:r].kind isa _IRM.DUMMY_STATE
     #= a differentiated body that reads a parameter: in array form the parameter stays symbolic =#
     m = _irArrayUnreduced("AngleArray")
     @test _IRd.reduceIndexArrays!(m)
