@@ -162,7 +162,8 @@ struct ArrayModelParameters
   tend::Vector{Float64}        #= [stop time]: a solution read there gives the final values (_dlogIndex) =#
   abuf::Vector{Float64}        #= the algebraic variables of a right-hand side evaluated on Float64 (RHS!): no buffer per call =#
   blocks::Vector{BlockSolver}  #= the large algebraic loops' solvers (blockSolve!), in the order of the schedule =#
-  loops::Vector{Matrix{Float64}}   #= per loop family the members' guesses (unknown, member): the run's last solutions =#
+  #= per loop family its members' guesses (unknown, member): the run's last solutions =#
+  loops::Vector{Matrix{Float64}}
   state::ArrayRuntimeState     #= the run's state (samples, memo, warnings, asserts, terminate) =#
   model::Module
 end
@@ -594,7 +595,8 @@ end
     _loopFamilyCode(g, f, template, blocks, el, matchRow, a0, relBases) -> Tuple{Vector{Any}, Expr}
 
 The solve of the loop family `f` (`LOOPFAMILY_f!`): its tables (each member's instance columns and unknowns, the first
-guess per unknown: the start values; a run keeps its last solutions as the next guesses in its parameters, `p.loops`) and the body that solves the members it is called for,
+guess per unknown: the start values; a run keeps its last solutions as the next guesses in its parameters, `p.loops`)
+and the body that solves the members it is called for,
 each by Newton's method on the residuals of its instances (lhs - rhs, by the template's classes at the member's
 columns), the unknowns set in place (a state derivative in du, an algebraic variable in a), the Jacobian by forward
 differences; the last solution kept as the next guess (in Float64 solves); residuals or a Jacobian not finite, or a

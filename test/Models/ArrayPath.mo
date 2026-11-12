@@ -2308,4 +2308,35 @@ package ArrayPath
     end if;
     der(x) = e[2] - v[2] + y;
   end ElementForms;
+  record Turned
+    Real T[3, 3];
+    Real w[3];
+  end Turned;
+
+  function resolveBack "v in the frame R is turned from"
+    input Turned R;
+    input Real v[3];
+    output Real u[3];
+  algorithm
+    u := transpose(R.T) * v;
+    annotation(Inline = true);
+  end resolveBack;
+
+  model SlidingMass "a mass on a turning slide: R.T[1, i] and R.T[3, i] times parameters known as zero (e[1], e[3])"
+    parameter Real e[3] = {0, 1, 0} "the slide's axis, in the turning frame";
+    parameter Real g = 9.81;
+    Real phi;
+    Turned R "the frame, turned by phi about z";
+    Real s(start = 1, fixed = true) "s = (g/2) (cos(phi) + sin(1/2) sinh(t)) + (1 - (g/2) cos(1/2)) cosh(t)";
+    Real v(start = 0, fixed = true);
+    Real r[3], vr[3], f[3];
+  equation
+    phi = time + 0.5;
+    R = Turned(T = {{cos(phi), sin(phi), 0}, {-sin(phi), cos(phi), 0}, {0, 0, 1}}, w = {0, 0, der(phi)});
+    r = resolveBack(R, e * s);
+    v = der(s);
+    der(r) = vr;
+    der(vr) = f + {0, -g, 0};
+    R.T[2, 1] * f[1] + R.T[2, 2] * f[2] + R.T[2, 3] * f[3] = 0;
+  end SlidingMass;
 end ArrayPath;

@@ -772,6 +772,11 @@ end
     #= a fixed start on a dummy state (x, y the state): the initial equation x = start gives the state's value =#
     @test _values(run("FixedDummy", false), ["y[1]", "y[2]", "z[2]"]) ≈
           [2 * exp(-1), 4 * exp(-1), 4 * exp(-1)] atol = 1e-5
+    #= index 3 through an inlined function of a record's matrix: R.T[1, i] and R.T[3, i] are read times parameters
+       known as zero (e = {0, 1, 0}), so Pantelides' algorithm gave them no derivatives; the for-equation's derivative
+       reads none of them =#
+    @test _values(run("SlidingMass", false), ["s"]) ≈
+          [9.81 / 2 * (cos(1.5) + sin(0.5) * sinh(1)) + (1 - 9.81 / 2 * cos(0.5)) * cosh(1)] atol = 1e-5
     #= an if-equation in a branch of an if-equation on a variable condition: one class `y[i] = if ... (if ...)` =#
     @test _values(run("NestedIf", false), ["y[1]", "y[2]"]) ≈ [2 * exp(-1), 4 * exp(-1)] atol = 1e-5
     #= pre() is the start at the initialization and no when fires on its condition there; the event iteration after it
