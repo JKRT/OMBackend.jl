@@ -643,7 +643,11 @@ end
                                   ("PendulumGrid", ["x[1][2]", "y[2][1]", "F[2][2]"], 3.0),
                                   ("ComponentPendulums", ["p[1].x", "p[2].y", "p[3].F"], 3.0),
                                   ("EllipseArray", ["x[1]", "y[2]", "F[3]"], 3.0),
-                                  ("MixedPendulums", ["single.x", "x[1]", "y[2]"], 3.0))
+                                  ("MixedPendulums", ["single.x", "x[1]", "y[2]"], 3.0),
+                                  #= a set across the subscripts of one array (r[1], r[2]): a scalar set that reads
+                                     the array, its state guessed by the start of the element it selects (r[2] = -0.6,
+                                     not the constraint's other root) =#
+                                  ("PendulumVector", ["r[1]", "r[2]", "v[1]", "F"], 3.0))
         local scalarized = _irArraySimulate(name, names, stop; kept = false)
         #= the array code names a matrix element as Modelica writes it (x[1,2]), the scalar code x[1][2] =#
         local kept = _irArraySimulate(name, String[replace(n, "][" => ",") for n in names], stop; kept = true)

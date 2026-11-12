@@ -500,6 +500,18 @@ package IndexReduction "Models for OMBackend's index reduction step by step (Pas
     end for;
   end PendulumArray;
 
+  model PendulumVector "a Cartesian pendulum with its position one array (index 3): the dynamic state set's candidates are r[1], r[2], elements of one array at different subscripts; arrays kept: a scalar set that reads the arrays"
+    parameter Real L = 1;
+    parameter Real g = 9.81;
+    Real r[2](start = {0.8, -0.6}, fixed = {true, false});
+    Real v[2](start = {0, 0}, fixed = {true, false});
+    Real F;
+  equation
+    der(r) = v;
+    der(v) = -r / L * F + {0, -g};
+    r[1] ^ 2 + r[2] ^ 2 = L ^ 2;
+  end PendulumVector;
+
   model InertiaArray "N rigidly coupled pairs of inertias as array equations (index 3 as written); arrays kept: phi1 and w1 the states as arrays"
     parameter Integer N = 4;
     Real phi1[N](each start = 0, each fixed = true);

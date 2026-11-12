@@ -101,8 +101,8 @@ integerRange(n::Int)::IR.Expression = IR.RANGE(IR.INTEGER(1), nothing, IR.INTEGE
     setLevels(set, s, E) -> Union{Nothing, Tuple{Vector{SetLevel}, Vector{Int}}}
 
 The levels of a dynamic state set whose candidates are elements of arrays, all at the same subscripts, and those
-subscripts; `nothing` for a set of scalars. NotHandled for one of elements at different subscripts or of
-scalars and elements together.
+subscripts; `nothing` for a set of scalars and for one of elements at different subscripts (r[1], r[2] of a
+position vector: a scalar set whose equations read the arrays). NotHandled for scalars and elements together.
 """
 function setLevels(set::DynamicSet, s::Structure, E::Elements)::Union{Nothing, Tuple{Vector{SetLevel}, Vector{Int}}}
   local levels = SetLevel[]
@@ -121,7 +121,7 @@ function setLevels(set::DynamicSet, s::Structure, E::Elements)::Union{Nothing, T
         end
         elementCount += 1
         index === nothing && (index = element[2])
-        element[2] == index || throw(NotHandled("a dynamic state set of the elements of arrays at different subscripts"))
+        element[2] == index || return nothing
         push!(out, element[1])
       end
     end

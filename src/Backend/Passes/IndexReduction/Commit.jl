@@ -206,26 +206,27 @@ twice the dummy's: `A` set to the selection of the others, the states of every l
 reinitialized to it.
 """
 function dynamicSet!(model::IR.Model, partition::IR.Partition, s::Structure, set::DynamicSet, k::Int)::Nothing
-  local (variables, equations) = dynamicSetParts(model, s, set, k)
+  local (variables, equations) = dynamicSetParts(model.variables, s, set, k)
   foreach(v -> push!(model.variables, v), variables)
   append!(partition.equations, equations)
   return nothing
 end
 
 """
-    dynamicSetParts(model, s, set, k) -> Tuple{Vector{IR.Variable}, Vector{IR.Equation}}
+    dynamicSetParts(modelVariables, s, set, k) -> Tuple{Vector{IR.Variable}, Vector{IR.Equation}}
 
 The variables and equations of the dynamic state set `set` as the `k`-th state set of the model (`dynamicSet!`),
-the model not changed.
+the model not changed. `modelVariables`: the variables the set's candidates are looked up in (their references, the
+start values that guess the states).
 """
-function dynamicSetParts(model::IR.Model, s::Structure, set::DynamicSet, k::Int)::Tuple{Vector{IR.Variable}, Vector{IR.Equation}}
+function dynamicSetParts(modelVariables::IR.VariableSet, s::Structure, set::DynamicSet, k::Int)::Tuple{Vector{IR.Variable}, Vector{IR.Equation}}
   size(set.jacobian, 1) == 1 || throw(NotHandled("a dynamic state set of $(size(set.jacobian, 1)) rows"))
   local variables = IR.Variable[]
   local equations = IR.Equation[]
   local n = length(set.candidates)
   #= a variable of the model or the structure by its own reference (a matrix element as SimCode names it, a derivative
      `IR.derivativeCref`); NotHandled for another name =#
-  local realRef::Function = (name::Symbol) -> IR.CREF(haskey(model.variables, name) ? model.variables[name].cref :
+  local realRef::Function = (name::Symbol) -> IR.CREF(haskey(modelVariables, name) ? modelVariables[name].cref :
                                           haskey(s.index, name) ? s.crefs[s.index[name]] :
                                           throw(NotHandled("the state set's variable $(name), of neither the model nor the structure")), IR.T_REAL())
   local integerRef::Function = (cref::IR.ComponentRef) -> IR.CREF(cref, IR.T_INTEGER())
@@ -250,7 +251,7 @@ function dynamicSetParts(model::IR.Model, s::Structure, set::DynamicSet, k::Int)
     push!(levels, (V, x))
     for j in 1:n-1
       local derivative::IR.ComponentRef = IR.derivativeCref(x[j])
-      local var = get(model.variables, V[index(start, j)], nothing)
+      local var = get(modelVariables, V[index(start, j)], nothing)
       local guess = var === nothing ? nothing : var.attributes.start
       local state::IR.Variable = IR.Variable(x[j], IR.T_REAL(), IR.STATE(1, derivative.name, true), nothing,
                                              IR.VariableAttributes(guess, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing),

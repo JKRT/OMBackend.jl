@@ -564,7 +564,14 @@ function stateSets(model::IR.Model, p::Plan, E::Elements, variables::IR.Variable
   local equations = IR.Equation[]
   local (families, scalarSets) = setFamilies(p, E, variables)
   for (k, set) in enumerate(scalarSets)
-    local (vs, eqs) = dynamicSetParts(model, p.structure, set, k)
+    #= on the element view's variables: a state's guess is the start value of the element it selects =#
+    local (vs, eqs) = dynamicSetParts(viewVariables, p.structure, set, k)
+    for v in vs
+      local guess::Union{Nothing, IR.Expression} = v.attributes.start
+      guess === nothing && continue
+      v.attributes = IR.VariableAttributes(arrayReferences(guess, E, variables), v.attributes.fixed, nothing, nothing, nothing,
+                                           nothing, nothing, nothing, nothing)
+    end
     append!(newVariables, vs)
     #= its pivots read the element view's variables: references into their arrays =#
     append!(equations, IR.Equation[arrayEquation(eq, E, variables) for eq in eqs])
