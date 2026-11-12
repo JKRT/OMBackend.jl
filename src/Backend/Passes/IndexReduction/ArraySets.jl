@@ -61,21 +61,32 @@ struct SetFamily
   jacobian::Vector{IR.Expression}
 end
 
-"The iterators of a for-equation over the elements of arrays of `sizes`: `\$i1`, `\$i2`, ..."
-setIterators(sizes::Vector{Int})::Vector{Symbol} = Symbol[Symbol("\$i", d) for d in eachindex(sizes)]
+"""
+The iterators of a for-equation over the elements of arrays of `sizes`: `\$i1`, `\$i2`, ...; after `used` iterators
+of enclosing for-equations `\$i(used + 1)`, ...
+"""
+setIterators(sizes::Vector{Int}, used::Int = 0)::Vector{Symbol} =
+  Symbol[Symbol("\$i", used + d) for d in eachindex(sizes)]
 
 "The subscripts by the iterators over the elements of arrays of `sizes` (`setIterators`): `[\$i1, \$i2, ...]`."
-iteratorSubscripts(sizes::Vector{Int})::Vector{IR.Subscript} =
-  IR.Subscript[IR.INDEX(IR.CREF(IR.ComponentRef(it, IR.T_INTEGER()), IR.T_INTEGER())) for it in setIterators(sizes)]
+iteratorSubscripts(sizes::Vector{Int}, used::Int = 0)::Vector{IR.Subscript} =
+  IR.Subscript[IR.INDEX(IR.CREF(IR.ComponentRef(it, IR.T_INTEGER()), IR.T_INTEGER()))
+               for it in setIterators(sizes, used)]
+
+"The index `N` of an iterator `\$iN` (`setIterators`, the frontend's vectorization of a component array); else 0."
+function iteratorIndex(name::Symbol)::Int
+  local text::String = String(name)
+  return startswith(text, "\$i") ? something(tryparse(Int, SubString(text, 3)), 0) : 0
+end
 
 """
     nestedFor(body, sizes) -> FOR_EQUATION
 
 The equations `body` for every element of arrays of `sizes`: nested for-equations over the dimensions, the first the
-outermost, by the iterators `setIterators(sizes)`.
+outermost, by the iterators `setIterators(sizes, used)`.
 """
-function nestedFor(body::Vector{IR.Equation}, sizes::Vector{Int})::IR.FOR_EQUATION
-  local iterators = setIterators(sizes)
+function nestedFor(body::Vector{IR.Equation}, sizes::Vector{Int}, used::Int = 0)::IR.FOR_EQUATION
+  local iterators = setIterators(sizes, used)
   local eq = IR.FOR_EQUATION(IR.Iterator(iterators[end], integerRange(sizes[end])), body, IR.NO_SOURCE, IR.DEFAULT_ATTRIBUTES)
   for d in reverse(eachindex(sizes))[2:end]
     eq = IR.FOR_EQUATION(IR.Iterator(iterators[d], integerRange(sizes[d])), IR.Equation[eq], IR.NO_SOURCE, IR.DEFAULT_ATTRIBUTES)

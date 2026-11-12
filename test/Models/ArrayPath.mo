@@ -2212,4 +2212,70 @@ package ArrayPath
       i[j] := tab[e[j]];
     end for;
   end EnumDefaultStart;
+  model BindCell "a declaration binding of a field (b)"
+    parameter Real k = 1.0;
+    Real a(start = 1.0, fixed = true);
+    Real b = 2.0 * k * a;
+  equation
+    der(a) = -b;
+  end BindCell;
+  model BindCells "bindings of fields of a model array stay on the merged arrays: a[k] = exp(-2 k t)"
+    BindCell c[3](k = {1.0, 2.0, 3.0});
+    Real y[3] = 3.0 * c.a;
+  end BindCells;
+  model ModCell "an array field (r) for a modifier"
+    Real r[2];
+    Real x(start = 1.0, fixed = true);
+  equation
+    der(x) = -(r[1] + r[2]) * x;
+  end ModCell;
+  model ModCells "a modifier over a model array on an array field, per element: c[k].x = exp(-(2 k + 1) t)"
+    parameter Real p[3] = {1.0, 2.0, 3.0};
+    ModCell c[3](r = {{p[i], p[i] + 1.0} for i in 1:3});
+  end ModCells;
+  model ModCellsMatrix "the same with a matrix as the value"
+    ModCell c[3](r = {{1.0, 2.0}, {2.0, 3.0}, {3.0, 4.0}});
+  end ModCellsMatrix;
+  model WCell "an array field (w) bound in the class"
+    Real a(start = 1.0, fixed = true);
+    Real w[2] = {a, 2.0 * a};
+  equation
+    der(a) = -w[2];
+  end WCell;
+  model WCells "an array field of a model array bound in its class: c[k].a = exp(-2 t)"
+    WCell c[3];
+  end WCells;
+  record Turn "a record with array fields"
+    Real T[2, 2];
+    Real w[2];
+  end Turn;
+  model TurnCell
+    input Turn R;
+    Real x(start = 1.0, fixed = true);
+  equation
+    der(x) = -R.w[2] * R.T[1, 1] * x;
+  end TurnCell;
+  model TurnCells "a record with array fields in a model array (c.R.T is Real[3, 2, 2]): c[k].x = exp(-2 t)"
+    Turn R;
+    TurnCell c[3](each R = R);
+  equation
+    R.T = {{1.0, 0.0}, {0.0, 1.0}};
+    R.w = {time, 2.0};
+  end TurnCells;
+  model ElementForms "elements of smooth() and vector(), an if-equation on a function of parameters: x = exp(-t)"
+    parameter Real n[3] = {0.0, -1.0, 0.0};
+    Real e[3];
+    Real v[3];
+    Real x(start = 1.0, fixed = true);
+    Real y;
+  equation
+    e = smooth(0, if x > -1.0 then n * x else n);
+    v = vector(cat(1, {{x}, {2.0 * x}}, {{0.0}}));
+    if norm2(n) > 0.5 then
+      y = 2.0 * x;
+    else
+      y = x;
+    end if;
+    der(x) = e[2] - v[2] + y;
+  end ElementForms;
 end ArrayPath;

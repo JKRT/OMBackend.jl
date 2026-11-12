@@ -349,8 +349,13 @@ record's array field the value indexed.
 """
 function _subscriptedIRx(g::Gen, e::SC.ASUB, ctx::Ctx)::IR
   any((s::SC.Exp) -> s isa SC.WHOLE_DIMENSION || s isa SC.RANGE, e.subs) && ns("a slice of $(_str(e))")
-  local subs::Vector{IR} = IR[toIR(g, s, ctx) for s in e.subs]
   local base::SC.Exp = e.exp
+  #= an element of an element (`{{1.0, 2.0}, {3.0, 4.0}}[\$i1][\$i2]`, a matrix modifier over a component array): the
+     element at both subscripts =#
+  if base isa SC.ASUB && !any((s::SC.Exp) -> s isa SC.WHOLE_DIMENSION || s isa SC.RANGE, base.subs)
+    return _subscriptedIRx(g, SC.ASUB(base.exp, SC.Exp[base.subs; e.subs]), ctx)
+  end
+  local subs::Vector{IR} = IR[toIR(g, s, ctx) for s in e.subs]
   base isa SC.EXP_CREF && isempty(base.cref.subs) && return _elementRefIR(g, String(base.cref.sym), subs)
   base isa SC.DER && return _elementRefIR(g, String(base.cref.sym), subs; der = true)
   #= an element of pre() of an array (a function's array argument, `f(pre(state))`): pre() of the element =#

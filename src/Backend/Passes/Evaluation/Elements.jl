@@ -138,7 +138,7 @@ end
 A scalar element of element-wise or array-scalar arithmetic (`({0, 0, 1} * w)[3]` is `1 * w`,
 folded: `w`; `*` and `/` of an array result whose operands are of its rank or scalars), the
 operands' elements picked (of `transpose(A)[i, j]`, `A[j, i]`; of an if-expression, each
-branch's; of a cast, its operand's), or of a matrix-matrix, matrix-vector or
+branch's; of a cast, of `smooth` and of `noEvent`, the operand's), or of a matrix-matrix, matrix-vector or
 vector-matrix product, the sum over the inner index (`(R_rel.T * {{0, 0, 0}, ..., {0, 0, 1}})[1, 1]`,
 a MultiBody frame's partial derivative); `nothing` for another expression.
 """
@@ -178,6 +178,11 @@ function scalarElement(e::IR.Expression, subscripts::Vector{IR.Subscript}, ty::I
     return ifThenElse(e.condition, pick(e.thenExp), pick(e.elseExp), ty)
   elseif e isa IR.CAST
     return pick(e.exp)
+  elseif IR.isBuiltinCall(e, :smooth) && length(e.arguments) == 2
+    #= smooth(p, x)[i] is smooth(p, x[i]) =#
+    return IR.CALL(:smooth, IR.Expression[e.arguments[1], pick(e.arguments[2])], ty, e.attributes)
+  elseif IR.isBuiltinCall(e, :noEvent) && length(e.arguments) == 1
+    return IR.CALL(:noEvent, IR.Expression[pick(e.arguments[1])], ty, e.attributes)
   elseif e isa IR.CALL && e.attributes.builtin
     return builtinElement(e, subscripts, ty)
   end
@@ -189,6 +194,7 @@ end
 
 A scalar element of an array built-in of literal subscripts: `identity(n)[i, j]` 1 or 0,
 `promote(a, n)[i, 1]` `a[i]` (the added dimensions of size 1), `fill(x, ...)[...]` x,
+`vector(a)[i]` `a[1, i, 1]` (along a's one dimension that is not of size 1),
 `cat(d, a, b, ...)` the element of the argument whose span along d holds the index;
 `nothing` for another call.
 """
@@ -203,6 +209,14 @@ function builtinElement(e::IR.CALL, subscripts::Vector{IR.Subscript}, ty::IR.Mod
     return selectElement(e.arguments[1], subscripts[1:k], ty)
   elseif e.name === :fill && length(index) == length(e.arguments) - 1
     return e.arguments[1]
+  elseif e.name === :vector && length(e.arguments) == 1 && length(index) == 1
+    #= the element along the one dimension of the argument that is not of size 1 (the first, where all are) =#
+    local sizes::Vector{Union{Nothing, Int}} =
+      Union{Nothing, Int}[IR.dimensionSize(d) for d in IR.dimensions(IR.typeOf(e.arguments[1]))]
+    (isempty(sizes) || any(isnothing, sizes) || count(!=(1), sizes) > 1) && return nothing
+    local along::Int = something(findfirst(!=(1), sizes), 1)
+    return selectElement(e.arguments[1],
+                         IR.Subscript[IR.INDEX(IR.INTEGER(d == along ? index[1] : 1)) for d in eachindex(sizes)], ty)
   elseif e.name === :cat && e.arguments[1] isa IR.INTEGER
     #= the argument whose span along the dimension holds the index, the index shifted into it =#
     local d = e.arguments[1].value

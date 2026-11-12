@@ -536,10 +536,13 @@ function lift(lifter::IfExpressionLifter, @nospecialize(e::IR.Expression), timeD
   existing === nothing || return existing
   local name = Symbol("ifEq_tmp", lifter.tick[])
   lifter.tick[] += 1
-  local v = IR.CREF(IR.ComponentRef(name, IR.T_REAL()), IR.T_REAL())
-  push!(lifter.variables, IR.Variable(name, IR.T_REAL(), IR.ALGEBRAIC(), nothing, IR.NO_ATTRIBUTES, IR.NO_DIRECTION,
+  #= an array-valued if-expression (arrays kept): an array variable, its branches array equations =#
+  local ty::IR.ModelicaType = e.ty isa IR.T_ARRAY ? e.ty : IR.T_REAL()
+  local v = IR.CREF(IR.ComponentRef(name, ty), ty)
+  push!(lifter.variables, IR.Variable(name, ty, IR.ALGEBRAIC(), nothing, IR.NO_ATTRIBUTES, IR.NO_DIRECTION,
                                       false, IR.NOT_CONNECTOR, IR.NO_SOURCE, :liftIfExpressions))
-  local assign = x -> IR.Equation[IR.SCALAR_EQUATION(v, x, IR.T_REAL(), IR.NO_SOURCE, IR.DEFAULT_ATTRIBUTES)]
+  local assign = x -> IR.Equation[ty isa IR.T_ARRAY ? IR.ARRAY_EQUATION(v, x, ty, IR.NO_SOURCE, IR.DEFAULT_ATTRIBUTES) :
+                                  IR.SCALAR_EQUATION(v, x, IR.T_REAL(), IR.NO_SOURCE, IR.DEFAULT_ATTRIBUTES)]
   push!(lifter.equations, IR.IF_EQUATION(IR.EquationBranch[IR.EquationBranch(c, assign(x)) for (c, x) in zip(conditions, values)],
                                          assign(elseValue), IR.NO_SOURCE, IR.DEFAULT_ATTRIBUTES))
   lifter.lifted[key] = v
@@ -599,7 +602,7 @@ function expandRecordFieldArrays!(variables::IR.VariableSet)::Nothing
      previous backend's). =#
   local groups = Dict{String, Tuple{IR.ComponentRef, IR.Variable, Dict{Vector{Int}, IR.Expression}}}()
   for v in variables
-    if !isRecordFieldArray(v.cref)
+    if !isRecordFieldArray(v.cref) || isOfComponentArray(v)
       push!(out, v)
     elseif !isempty(v.cref.parts[end].subscripts)
       push!(out, v)
@@ -624,6 +627,14 @@ function expandRecordFieldArrays!(variables::IR.VariableSet)::Nothing
   foreach(v -> push!(variables, v), out)
   return nothing
 end
+
+"""
+Whether the array `v` holds the dimensions of a component array besides its own (`cylinders.R.T` of
+`Shape cylinders[3]`, arrays kept: `Real[3, 3, 3]`, the field's own type `Real[3, 3]`). Such an array stays one
+variable: its elements by the field's own type alone would be those of one component.
+"""
+isOfComponentArray(v::IR.Variable)::Bool =
+  v.ty isa IR.T_ARRAY && length(IR.dimensions(v.ty)) > length(IR.dimensions(v.cref.parts[end].ty))
 
 """
 Whether `cref` is an array field of a record: its last part of an array type, the one before of a record type; not a

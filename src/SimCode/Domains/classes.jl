@@ -413,6 +413,8 @@ function _evalStatic(g::Gen, x::IR, d::Matrix{Int}, col::Int; structural::Bool =
     x.op == :if && return a[1] ? a[2] : a[3]
     x.op == :index && return a[1][a[2:end]...]
     x.op == :vect && return a
+    #= an array by its elements, column-major, its dimensions first (`_valueIRx`) =#
+    x.op == :arrayval && return length(a[1]) == 1 ? a[2:end] : reshape(a[2:end], a[1]...)
     (x.op in (:initial, :sample) || !isdefined(Base, x.op)) && ns("condition $(x.op)() in an if-equation")
     return getfield(Base, x.op)(a...)
   end
@@ -420,12 +422,13 @@ function _evalStatic(g::Gen, x::IR, d::Matrix{Int}, col::Int; structural::Bool =
 end
 
 """
-Whether a condition depends on loop indices and parameters only.
+Whether a condition depends on loop indices and parameters only, by what `_evalStatic` evaluates (no call of a
+Modelica function, `:fcall`: such a condition is evaluated when the model runs).
 """
 _isStatic(g::Gen, x::IR)::Bool =
   x isa Lit || x isa Slot ||
   (x isa Ref && !x.der && g.vars[x.name].kind == :param && all(s -> _isStatic(g, s), x.subs)) ||
-  (x isa Op && !(x.op in (:initial, :sample)) && all(a -> _isStatic(g, a), x.args))
+  (x isa Op && !(x.op in (:initial, :sample, :fcall)) && all(a -> _isStatic(g, a), x.args))
 
 """
 initial() activates a when at the initialization only as its condition (MLS 8.6, as

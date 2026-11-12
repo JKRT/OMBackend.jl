@@ -756,6 +756,19 @@ end
     @test _values(run("SliceConnectors", false), ["load.q[1]", "load.q[2]", "load.q[3]"]) ≈
       [(cos(k) - cos(k + 1)) / R[k] for k in 1:3] atol = 1e-6
     @test _values(run("SliceCells", false), ["s"]) ≈ [2 * sum((1 - exp(-k)) / k for k in 1:3)] atol = 1e-6
+    #= the binding of a field of a model array is an equation over the elements (it stays on the merged variable) =#
+    local bc = run("BindCells", false)
+    @test _values(bc, ["c[2].a", "c[3].b", "y[1]"]) ≈ [exp(-4), 6 * exp(-6), 3 * exp(-2)] atol = 1e-6
+    #= a modifier over a model array on an array field is each element's value (a constructor, a matrix); an array
+       field bound in the class is an array equation in the for-equation over the elements, rolled =#
+    @test _values(run("ModCells", false), ["c[1].x", "c[2].x", "c[3].x"]) ≈ exp.(-[3.0, 5.0, 7.0]) atol = 1e-6
+    @test _values(run("ModCellsMatrix", false), ["c[1].x", "c[3].x"]) ≈ exp.(-[3.0, 7.0]) atol = 1e-6
+    @test _values(run("WCells", false), ["c[2].a", "c[3].w[2]"]) ≈ [exp(-2), 2 * exp(-2)] atol = 1e-6
+    #= a record with array fields in a model array (c.R.T is Real[3, 2, 2]) stays an array of the component =#
+    @test _values(run("TurnCells", false), ["c[1].x", "c[3].x"]) ≈ [exp(-2), exp(-2)] atol = 1e-6
+    #= elements of smooth() and vector(cat()); an if-equation on a function of parameters; an array-valued
+       if-expression is an array variable, its if-equation a for-equation over the elements =#
+    @test _values(run("ElementForms", false), ["x", "y", "e[2]"]) ≈ [exp(-1), 2 * exp(-1), -exp(-1)] atol = 1e-6
     #= pre() is the start at the initialization and no when fires on its condition there; the event iteration after it
        fires them: the change of x from its start (omc). Initial sections of two instances, merged to arrays, run in
        the order of what they read through the equation between them (d2.x = d1.y). The scalarized route misses the
