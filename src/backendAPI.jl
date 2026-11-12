@@ -661,9 +661,41 @@ function generateReducedArrayODETargetCode(name::String, reduced::OMJLIR.Model):
   end
   modelName === nothing && return decline(string(modelCode))
   _registerArrayODEModule!(name, modelCode)
+  local failure::Union{Nothing, String} = _arrayStartFailure(name, modelCode)
+  if failure !== nothing
+    delete!(ARRAY_ODE_MODELS, name)
+    delete!(COMPILED_MODELS_DEJL, name)
+    return decline(failure)
+  end
   push!(ARRAY_REDUCED_MODELS, name)
   return (name, modelCode)
 end
+
+"""
+    _arrayStartFailure(name, modelCode) -> Union{Nothing, String}
+
+Why the array model `name` does not start, `nothing` where it does: a model with a large algebraic loop
+(`ArrayODEGen.blockSolve!`) has its problem built once at the translate, as the ModelingToolkit routes are taken only
+where they build (`_translateKept`). Its loops are solved by Newton from the start values, and a kinematic loop's
+Jacobian is singular there (MSL MultiBody Fourbar1: rank 2 of 12 with the rotation matrices at their zero starts):
+the simulation ended in "the initial system: the algebraic loop ... has no solution", with no route left to take.
+Not while a package image is generated (no module is evaluated then), nor for a model without such a loop.
+"""
+function _arrayStartFailure(name::String, modelCode::Expr)::Union{Nothing, String}
+  _calls(modelCode, CodeGeneration.ArrayODEGen.blockSolve!) || return nothing
+  ccall(:jl_generating_output, Cint, ()) == 1 && return nothing
+  try
+    getMTKProblem(name)
+    return nothing
+  catch err
+    isFatal(err) && rethrow()
+    return string("the array model does not start: ", first(replace(sprint(showerror, err), r"\s+" => " "), 300))
+  end
+end
+
+"Whether the code `ex` calls the function `f` (a function object in the head of a call)."
+_calls(ex::Expr, f::Function)::Bool =
+  (ex.head === :call && !isempty(ex.args) && ex.args[1] === f) || any(a -> a isa Expr && _calls(a, f), ex.args)
 
 
 """

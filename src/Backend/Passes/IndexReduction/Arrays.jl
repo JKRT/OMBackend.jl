@@ -900,7 +900,12 @@ function scalarEquations!(out::Vector{IR.Equation}, origins::Vector{EquationOrig
      initialState(...)`: with the sides swapped the model did not build, "DAE init: residual 2e9") =#
   E.passesFollow && ((lhs, rhs) = (rhs, lhs))
   local element = IR.elementType(eq.ty)
-  for index in rowMajor(knownSizes(eq.ty, "an array equation"))
+  local indices::Vector{Vector{Int}} = rowMajor(knownSizes(eq.ty, "an array equation"))
+  #= and in the frontend's order, the last element first: the order of the equations decides the alias roots and the
+     states the passes choose (MSL MultiBody PrismaticConstraint: other states, and a build the frontend's order
+     does not need) =#
+  E.passesFollow && reverse!(indices)
+  for index in indices
     local subscripts = IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index]
     local (l, r) = (pickElement(lhs, subscripts, element, E), pickElement(rhs, subscripts, element, E))
     local at = EquationOrigin(origin.equation, origin.path, origin.iteration, index)
