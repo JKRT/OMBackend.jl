@@ -997,6 +997,61 @@ function _stmtIR(g::Gen, st::SC.Statement, ctx::Ctx)::Stmt
 end
 
 """
+The variables the branches of an if-equation on a variable condition assign, each with its left side: `v = e`, or an
+if-equation in a branch that assigns them likewise (MSL KinematicPTP's phases). The same variables in every branch
+and the else, each once; NotSupported otherwise.
+"""
+function _ifAssigned(eq::SC.INLINE_IF_EQUATION)::Dict{String, SC.Exp}
+  local bodies::Vector{Vector{SC.Equation}} = Vector{SC.Equation}[eq.branchesTrue; [eq.branchElse]]
+  local perBranch::Vector{Dict{String, SC.Exp}} = Dict{String, SC.Exp}[_bodyAssigned(body) for body in bodies]
+  for d in perBranch
+    Set(keys(d)) == Set(keys(perBranch[1])) ||
+      ns("if-equation on a variable condition: branches give different variables")
+  end
+  return perBranch[1]
+end
+
+"The variables the equations of one branch of an if-equation assign (`_ifAssigned`), each with its left side."
+function _bodyAssigned(body::Vector{SC.Equation})::Dict{String, SC.Exp}
+  local assigned::Dict{String, SC.Exp} = Dict{String, SC.Exp}()
+  local add::Function = (key::String, lhs::SC.Exp) -> begin
+    haskey(assigned, key) && ns("if-equation on a variable condition: two equations for $(key)")
+    assigned[key] = lhs
+  end
+  for b in body
+    if b isa SC.INLINE_IF_EQUATION
+      foreach(kv::Pair{String, SC.Exp} -> add(kv.first, kv.second), collect(_ifAssigned(b)))
+    elseif b isa SC.EQUATION && _isReference(b.lhs)
+      add(string(b.lhs), b.lhs)
+    else
+      ns("if-equation on a variable condition: branch equation $(_eqText(b))")
+    end
+  end
+  return assigned
+end
+
+"What the if-equation `eq` gives the variable `key` (`_ifAssigned`): `if c1 then e1 elseif ... else en`."
+function _ifRhs(g::Gen, eq::SC.INLINE_IF_EQUATION, key::String, ctx::Ctx)::IR
+  local rhs::IR = _bodyRhs(g, eq.branchElse, key, ctx)
+  for i in length(eq.conditions):-1:1
+    rhs = Op(:if, IR[toIR(g, eq.conditions[i], ctx), _bodyRhs(g, eq.branchesTrue[i], key, ctx), rhs])
+  end
+  return rhs
+end
+
+"What the equations of one branch give the variable `key`: its equation's right side, or a nested if-equation's."
+function _bodyRhs(g::Gen, body::Vector{SC.Equation}, key::String, ctx::Ctx)::IR
+  for b in body
+    if b isa SC.INLINE_IF_EQUATION
+      haskey(_ifAssigned(b), key) && return _ifRhs(g, b, key, ctx)
+    elseif b isa SC.EQUATION && string(b.lhs) == key
+      return toIR(g, b.rhs, ctx)
+    end
+  end
+  ns("if-equation on a variable condition: no equation for $(key)")
+end
+
+"""
 An if-equation: on conditions of parameters and iterators each instance its branch's equations; on a variable
 condition each variable its branches assign (`v = e` in every branch and the else) one class
 `v = if c1 then e1 elseif ... else en`.
@@ -1019,26 +1074,11 @@ function _addIfEquation!(g::Gen, eq::SC.INLINE_IF_EQUATION, iterNames::Vector{St
     end
     return
   end
-  local keyed::Vector{Dict{String, SC.EQUATION}} = Dict{String, SC.EQUATION}[]
-  for body in bodies
-    local assigned::Dict{String, SC.EQUATION} = Dict{String, SC.EQUATION}()
-    for b in body
-      (b isa SC.EQUATION && _isReference(b.lhs)) || ns("if-equation on a variable condition: branch equation $(_eqText(b))")
-      local key::String = string(b.lhs)
-      haskey(assigned, key) && ns("if-equation on a variable condition: two equations for $(key)")
-      assigned[key] = b
-    end
-    push!(keyed, assigned)
-  end
-  all(d::Dict{String, SC.EQUATION} -> Set(keys(d)) == Set(keys(keyed[1])), keyed) ||
-    ns("if-equation on a variable condition: branches give different variables")
-  for key in sort!(collect(keys(keyed[1])))
+  local assigned::Dict{String, SC.Exp} = _ifAssigned(eq)
+  for key in sort!(collect(keys(assigned)))
     local ctx::Ctx = Ctx(iters, Int[], Base.RefValue(0), initial)
-    local lhs::IR = toIR(g, keyed[1][key].lhs, ctx)
-    local rhs::IR = toIR(g, keyed[end][key].rhs, ctx)
-    for i in length(eq.conditions):-1:1
-      rhs = Op(:if, IR[toIR(g, eq.conditions[i], ctx), toIR(g, keyed[i][key].rhs, ctx), rhs])
-    end
+    local lhs::IR = toIR(g, assigned[key], ctx)
+    local rhs::IR = _ifRhs(g, eq, key, ctx)
     ctx.nsam[] == 0 || ns("sample() in an equation")
     push!(initial ? g.initClasses : g.classes,
           EqClass(lhs, rhs, nIter, idom, initial ? 0 : ctx.nrel[], "$(key) = if ... ($(_str(eq.conditions[1])))"))

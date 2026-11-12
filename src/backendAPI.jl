@@ -525,18 +525,11 @@ function reducedArrayModel(lower::Function, name::String)::Union{Nothing, OMJLIR
        (a tick's value at the start, the order of a partition's equations), the scalar path does =#
     local clocked::Bool = Passes.hasClocks(lowered)
     local model::OMJLIR.Model = Passes.runPassesKeepingArrays!(lowered)
-    #= if-expressions that read a for-equation's iterator, which the passes left inline: the array code reads them, the
-       scalarized form of a reduced model would need them lifted =#
-    local inlineIfs::Bool = any(eq::OMJLIR.Equation -> eq isa OMJLIR.FOR_EQUATION && Passes.ifReadsIterator(eq),
-                                model.continuous[1].equations)
     local rolled::Bool = roll && reduction.rollComponents!(model) > 0
     if own || rolled
       local reduced::Bool = reduction.reduceIndexArrays!(model)
       if !reduced && clocked
         decline("index 1 with clocked partitions")
-        return nothing
-      elseif reduced && inlineIfs
-        decline("an if-expression that reads a for-equation's iterator, in a model of index above one")
         return nothing
       end
     elseif clocked
@@ -564,6 +557,13 @@ function scalarizedReducedModel(name::String, reduced::OMJLIR.Model)::Union{Noth
   local decline::Function = (reason::String) -> declineArrayPath!(name, "array index reduction", reason)
   local reduction::Module = Passes.IndexReduction
   reduction.indexReduced(reduced) || return nothing
+  #= if-expressions that read a for-equation's iterator, which the passes left inline: the array code reads them, the
+     scalarized form of a reduced model would need them lifted =#
+  if any(eq::OMJLIR.Equation -> eq isa OMJLIR.FOR_EQUATION && Passes.ifReadsIterator(eq),
+         reduced.continuous[1].equations)
+    decline("an if-expression that reads a for-equation's iterator, in a model of index above one")
+    return nothing
+  end
   local scalar::Union{Nothing, OMJLIR.Model} = _arrayReductionStep(name, decline) do
     local s::OMJLIR.Model = reduction.scalarizeArrays(reduced).model
     #= the parameter references as the scalar pipeline resolves them (the arrays-kept passes keep them for the array

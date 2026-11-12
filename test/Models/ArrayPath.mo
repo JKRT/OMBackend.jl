@@ -2262,6 +2262,24 @@ package ArrayPath
     R.T = {{1.0, 0.0}, {0.0, 1.0}};
     R.w = {time, 2.0};
   end TurnCells;
+  model NestedIf "an if-equation in a branch of an if-equation on a variable condition"
+    Real x(start = 1, fixed = true);
+    Real y[2];
+  equation
+    der(x) = -x;
+    for i in 1:2 loop
+      if time < 0.5 then
+        y[i] = i * x;
+      else
+        if x > 0.1 then
+          y[i] = 2 * i * x;
+        else
+          y[i] = 0;
+        end if;
+      end if;
+    end for;
+  end NestedIf;
+
   model ElementForms "elements of smooth() and vector(), an if-equation on a function of parameters: x = exp(-t)"
     parameter Real n[3] = {0.0, -1.0, 0.0};
     Real e[3];
