@@ -158,6 +158,38 @@ end
     @test OMBackend.getVariableValues(sol, "d[2]")[1] == 4
   end
 
+  @testset "The step after an event, a singular Jacobian at the start values, a coefficient of zero" begin
+    local tight::NamedTuple = (reltol = 1e-9, abstol = 1e-9)
+    #= y follows u with Td = 1e-4, u stops rising at 0.2: a = der(y) = 20 exp(-(t - 0.2) / Td). The step sized before
+       the event crossed the transient at once: a(0.2003) read 18.9 (`_restartStep!`) =#
+    local step::String = _arrayPathTranslate("ArrayPath.StepAfterEvent"; scalarized = false)
+    @test _arrayPathTaken(step)
+    local s1 = OMBackend.simulateModel(step; tspan = (0.0, 0.3), reltol = 1e-8, abstol = 1e-10)
+    @test s1.retcode == ReturnCode.Success
+    @test [s1(t; idxs = :a) for t in (0.2003, 0.2005, 0.21)] ≈ [20 * exp(-3), 20 * exp(-5), 0.0] atol = 1e-3
+    #= a state following its input through a gain of 15000 into a limit, no event at the limit: the solver's own
+       estimate of the first step after the slope's change is 0.01 s, the output at its limit after 2e-6 s; x stayed
+       on the input, 5.32 at 0.11 (the values: this model at a tolerance of 1e-10) =#
+    local kink::String = _arrayPathTranslate("ArrayPath.HighGainKink"; scalarized = false)
+    @test _arrayPathTaken(kink)
+    local s2 = OMBackend.simulateModel(kink; tspan = (0.0, 0.11), reltol = 1e-6, abstol = 1e-8)
+    @test s2.retcode == ReturnCode.Success
+    @test [s2(t; idxs = :x) for t in (0.101, 0.105, 0.11)] ≈ [0.6116052, 1.8580219, 3.4969888] atol = 1e-4
+    #= (v[k] + i[k])^3 = P in a loop through the elements, the start values zero: its rows of the Jacobian are zero
+       there. The loop was never solved, its unknowns NaN and the run a Success (`_blockJacobian!`: a least-norm step;
+       `_checkBlocksSolved`) =#
+    local i0::Float64 = 1 / 1.05
+    local (s, a, sol) = _bothWays("ArrayPath.SingularStart", ["v[1]", "i[1]", "v[5]", "x"]; tight...)
+    @test a ≈ [2 - i0, i0, 2 - i0, i0 * (1 - exp(-1))] atol = 1e-7
+    @test maximum(abs.(s .- a)) < 1e-7
+    @test all(b -> b.solved && b.failures == 0, sol.prob.p.blocks) && !isempty(sol.prob.p.blocks)
+    #= i[k] * R[k] = v[k] - vi[k] with R = {0, 0, 1}: not solved for i[k] where R[k] is 0 (0 / 0 from the first
+       evaluation on; `InstanceTable.vanishing`) =#
+    local (sz, az, _) = _bothWays("ArrayPath.ZeroCoefficient", ["v[1]", "v[2]", "v[3]"]; tight...)
+    @test az ≈ [exp(-0.5), exp(-0.5), exp(-1 / 3)] atol = 1e-7
+    @test maximum(abs.(sz .- az)) < 1e-7
+  end
+
   @testset "Initialization, sample, static if, discrete equations, algorithms" begin
     for (m, names, T) in (("ArrayPath.InitSteady", ["x", "y"], 1.0),
                           ("ArrayPath.SampleZOH", ["x", "u", "k"], 1.0),

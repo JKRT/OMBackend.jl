@@ -2405,4 +2405,54 @@ package ArrayPath
       d[2] = 2 * pre(d[2]);
     end when;
   end ArrayInitialFree;
+
+  model StepAfterEvent "a fast transient right after an event: y follows u with Td = 1e-4 and u stops rising at 0.2, so a = der(y) falls from 20 to 0 within a millisecond; the step after the event starts small"
+    parameter Real Td = 1e-4;
+    Real u = if time < 0.2 then 20 * time else 4;
+    Real y(start = 0, fixed = true);
+    Real a = der(y);
+  equation
+    der(y) = (u - y) / Td;
+  end StepAfterEvent;
+
+  model HighGainKink "a state that follows its input through a gain of 15000 into a limit without an event (an op-amp differentiator): the input's slope rises at 0.1, the output is at its limit 2e-6 s later; the solver's own estimate of a first step after the event is 0.01 s"
+    parameter Real V0 = 15000;
+    parameter Real RC = 0.05;
+    Real vin = if time < 0.1 then 0.3 + 0.1 * time else 0.31 + 500 * (time - 0.1);
+    Real x(start = 0.3, fixed = true);
+    Real vn = vin - x;
+    Real vout = smooth(0, noEvent(if V0 * vn > 15 then -15 else if V0 * vn < -15 then 15 else -V0 * vn));
+  equation
+    RC * der(x) = vn - vout;
+  end HighGainKink;
+
+  model SingularStart "an algebraic loop through the elements whose Jacobian is singular at the start values: (v[k] + i[k])^3 = P has no derivative at v = i = 0; one solution, v + i = 2, i = (E - 2) / (1 + 5 c)"
+    parameter Real E = 3;
+    parameter Real P = 8;
+    parameter Real c = 0.01;
+    Real v[5];
+    Real i[5];
+    Real s;
+    Real x(start = 0, fixed = true);
+  equation
+    s = c * (i[1] + i[2] + i[3] + i[4] + i[5]);
+    for k in 1:5 loop
+      (v[k] + i[k])^3 = P;
+      v[k] + 2 * i[k] = E - s;
+    end for;
+    der(x) = i[1] - x;
+  end SingularStart;
+
+  model ZeroCoefficient "an unknown times a parameter that is zero (a resistance of 0 in series): i[k] * R[k] = v[k] - vi[k] is not solved for i[k] where R[k] = 0; v' = -v / 2 there, -v / 3 with R = 1"
+    parameter Real R[3] = {0, 0, 1};
+    Real v[3](each start = 1, each fixed = true);
+    Real vi[3];
+    Real i[3];
+  equation
+    for k in 1:3 loop
+      i[k] * R[k] = v[k] - vi[k];
+      i[k] = vi[k] / 2;
+      der(v[k]) = -i[k];
+    end for;
+  end ZeroCoefficient;
 end ArrayPath;

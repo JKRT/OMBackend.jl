@@ -1183,13 +1183,15 @@ function _simplifySemiLinear!(g::Gen)::Int
 end
 
 """
-    InstanceTable(class, col, uptr, uid, upos, sptr, sid, outs, nEq, aliased)
+    InstanceTable(class, col, uptr, uid, upos, sptr, sid, outs, nEq, aliased, vanishing)
 
 The instances of a domain system's classes (`_elements`), each a row: its class (> 0 an equation class, < 0 an
 algorithm by its negated index) and column, its unknowns with their access positions (CSR: `uptr`, `uid`, `upos`), the
 states it reads (`sptr`, `sid`), the unknowns an algorithm instance assigns (empty for equations), the number of
-equation instances, and the (instance, unknown) pairs read through two different references (`x[i]` and `x[2]` at
-`i = 2`). Unknown ids: state derivatives `1:nStates`, algebraic elements after them, then the discrete unknowns.
+equation instances, the (instance, unknown) pairs read through two different references (`x[i]` and `x[2]` at
+`i = 2`), and those whose unknown has a coefficient of parameters that is zero at the instance (`_zeroDivisor`: no
+instance is matched to such an unknown, it stays one the instance reads). Unknown ids: state derivatives
+`1:nStates`, algebraic elements after them, then the discrete unknowns.
 """
 struct InstanceTable
   class::Vector{Int}     #= > 0 an equation class, < 0 an algorithm (-index) =#
@@ -1202,6 +1204,7 @@ struct InstanceTable
   outs::Vector{Vector{Int}}   #= unknowns an algorithm instance assigns (empty for equations) =#
   nEq::Int
   aliased::Set{Tuple{Int, Int}}   #= (instance, unknown) read through two different references (x[i] and x[2] at i = 2) =#
+  vanishing::Set{Tuple{Int, Int}} #= (instance, unknown) with a coefficient of parameters that is zero there =#
 end
 
 """
@@ -1284,10 +1287,13 @@ function _elements(g::Gen)::InstanceTable
   local sptr = Int[1]; local sid = Int[]
   local idx = Int[]
   local aliased::Set{Tuple{Int, Int}} = Set{Tuple{Int, Int}}()
+  local vanishing::Set{Tuple{Int, Int}} = Set{Tuple{Int, Int}}()
   local keyOf::Dict{Int, String} = Dict{Int, String}()
+  local divisors::Dict{Int, Union{Nothing, Vector{IR}}} = Dict{Int, Union{Nothing, Vector{IR}}}()
   for (ci, c) in enumerate(g.classes)
     local acc = accesses!(accesses!(Ref[], c.lhs), c.rhs)
     local keys::Vector{String} = String[irKey(r) for r in acc]
+    empty!(divisors)
     for j in 1:size(c.domain, 2)
       push!(class, ci); push!(col, j)
       empty!(keyOf)
@@ -1315,6 +1321,13 @@ function _elements(g::Gen)::InstanceTable
         local k::String = get!(keyOf, uid[i], keys[upos[i]])
         k == keys[upos[i]] || push!(aliased, (length(class), uid[i]))
       end
+      for i in firstAccess:length(uid)
+        (length(class), uid[i]) in aliased && continue
+        local ds::Union{Nothing, Vector{IR}} =
+          get!(() -> _explicitDivisors(g, c.lhs, c.rhs, upos[i]), divisors, upos[i])
+        (ds === nothing || isempty(ds)) && continue
+        _zeroDivisor(g, ds, c, j) && push!(vanishing, (length(class), uid[i]))
+      end
       push!(uptr, length(uid) + 1)
       push!(sptr, length(sid) + 1)
     end
@@ -1334,11 +1347,14 @@ function _elements(g::Gen)::InstanceTable
       push!(outs, sort!(collect(o)))
     end
   end
-  return InstanceTable(class, col, uptr, uid, upos, sptr, sid, outs, nEq, aliased)
+  return InstanceTable(class, col, uptr, uid, upos, sptr, sid, outs, nEq, aliased, vanishing)
 end
 
 """
-Maximum matching instances <-> unknowns (greedy, then augmenting paths).
+Maximum matching instances <-> unknowns (greedy, then augmenting paths). No instance is matched to an unknown whose
+coefficient is zero there (`InstanceTable.vanishing`): the explicit solution divides by it (MSL Spice3 BJT2,
+`irc * p1.m_collectorResist = C.v - Cinternal` with a collector resistance of 0: `irc` was 0 / 0 from the first
+evaluation on, the Oscillator ended in DtNaN).
 """
 function _match(el::InstanceTable, nU::Int)::Vector{Int}
   local N = el.nEq
@@ -1352,9 +1368,11 @@ function _match(el::InstanceTable, nU::Int)::Vector{Int}
     nOut += 1
   end
   N == nU - nOut || ns("$(N) equations for $(nU - nOut) unknowns (and $(nOut) assigned by algorithms)")
+  local vanishes::Bool = !isempty(el.vanishing)
   for r in 1:N
     for i in el.uptr[r]:(el.uptr[r + 1] - 1)
       local c = el.uid[i]
+      (vanishes && (r, c) in el.vanishing) && continue
       if matchCol[c] == 0
         matchRow[r] = c; matchCol[c] = r
         break
@@ -1380,6 +1398,7 @@ function _match(el::InstanceTable, nU::Int)::Vector{Int}
       end
       iters[end] = i + 1
       local c = el.uid[i]
+      (vanishes && (r, c) in el.vanishing) && continue
       (visited[c] == stamp || visited[c] == -1) && continue
       visited[c] = stamp
       push!(cols, c)
@@ -1571,6 +1590,26 @@ function _nonzeroDivisors(g::Gen, divisors::Vector{IR}, c::EqClass, col::Int)::B
     (value isa Real && !iszero(value)) || return false
   end
   return true
+end
+
+"""
+Whether a divisor of an explicit solve (`_explicitDivisors`) is zero at the instance column `col` of the class `c`,
+by the parameters' values; one that reads a parameter with fixed = false (its value comes with the initialization)
+or cannot be evaluated is not. The parameters stay tunable: an instance solved for another of its unknowns is right
+for any value of the coefficient.
+"""
+function _zeroDivisor(g::Gen, divisors::Vector{IR}, c::EqClass, col::Int)::Bool
+  for d in divisors
+    any(r::Ref -> r.name in g.freeParams, accesses!(Ref[], d)) && continue
+    local value::Any = try
+      _evalStatic(g, d, c.domain, col; structural = false)
+    catch err
+      err isa NotSupported || rethrow(err)
+      nothing
+    end
+    (value isa Real && iszero(value)) && return true
+  end
+  return false
 end
 
 """

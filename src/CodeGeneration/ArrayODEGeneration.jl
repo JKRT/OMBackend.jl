@@ -80,7 +80,7 @@ What the front half does not (yet) handle it reports with the reason, and the ca
 module ArrayODEGen
 
 import ModelingToolkit
-import ..CodeGeneration: stripBeginBlocks, ModelicaAssertionError, solveStoppedAtStart
+import ..CodeGeneration: stripBeginBlocks, ModelicaAssertionError, solveStoppedAtStart, _autoDtReset!
 import ...Passes
 import ...SimCode
 import ...SimCode.Domains: DomainSystem, InstanceTable, EqClass, EvFn, Gen, IR, Lit, LoopBlocks, NotSupported, Op, Pre,
@@ -205,6 +205,46 @@ _discreteState(p::ArrayModelParameters)::Tuple{Vector{Float64}, Vector{Float64},
 _startState(p::ArrayModelParameters)::ArrayStartState =
   ArrayStartState(_discreteState(p), copy(p.wcond), copy(p.wnew), length(p.dlog), copy(p.upre), copy(p.ureinit),
                   map(copy, p.loops), Vector{Float64}[copy(b.y) for b in p.blocks], length(p.state.rootLog))
+
+"""
+    _checkBlocksSolved(p)
+
+An error for a large algebraic loop that the initialization tried and never solved, as the scalar path's "the
+initial system". Its unknowns are NaN (`blockSolve!`); where no derivative reads them the solver neither rejects a
+step nor stops, and the run ended in Success with them NaN throughout (MSL QuasiStatic SinglePhase Rectifier).
+"""
+function _checkBlocksSolved(p::ArrayModelParameters)::Nothing
+  for (k::Int, b::BlockSolver) in enumerate(p.blocks)
+    (b.failures > 0 && !b.solved) &&
+      error("array model: the initial system: the algebraic loop $(k) of $(length(b.y)) unknowns has no solution " *
+            "from its start values")
+  end
+  return nothing
+end
+
+"""
+    _restartStep!(integrator)
+
+The next step after an event that changed the equations starts small, as on the MTK path (relationRefresh.jl
+`_restartStepSize!`): the derivatives can jump by orders of magnitude, and a step sized before the event crosses the
+fast transient at once, the values interpolated inside it far off (MSL SlewRateLimiter: one step of 0.4 s over a
+transient of 1e-4 s, `a` 12 for 0). The step is OrdinaryDiffEq's estimate of a first step (`_autoDtReset!`), at most
+1e-6 of the time span and the step proposed before. The estimate alone is not enough: the algebraic variables are
+solved inside the right-hand side, so a state that follows its input through a high gain has a derivative of
+round-off size at the event, and the estimate from it steps far over the transient (MSL OpAmps.Differentiator,
+V0 = 15000: 5e-3 s over a transient of 2e-6 s, the capacitor's voltage 0.02 V behind over the ramp). No step
+follows an event at the last stop.
+"""
+function _restartStep!(integrator)::Nothing
+  isempty(integrator.opts.tstops) && return nothing
+  local before::Float64 = abs(integrator.dtpropose)
+  _autoDtReset!(integrator)
+  local span::Float64 = abs(integrator.sol.prob.tspan[2] - integrator.sol.prob.tspan[1])
+  local cap::Float64 = 1.0e-6 * (isfinite(span) ? span : 1.0)
+  integrator.dt = integrator.tdir * min(abs(integrator.dt), cap, before)
+  integrator.dtpropose = integrator.dt
+  return nothing
+end
 
 """
     _logRoots!(p, t)
@@ -2134,10 +2174,17 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     #= The event iteration at an event during the solve: a model that does not settle
        (relations switching back and forth) stops the simulation, as OpenModelica. =#
     function _eventAt!(integrator, sampleInstant::Bool = false)
+      local p = integrator.p
       #= the state just before the event (a reinit moves it): the asserts' left limit =#
-      integrator.p.state.leftLimit = (Float64(integrator.t), copy(integrator.u))
-      eventIteration!(integrator.u, integrator.p, integrator.t, true, sampleInstant) &&
+      p.state.leftLimit = (Float64(integrator.t), copy(integrator.u))
+      local relBefore::Vector{Bool} = copy(p.rel); local dBefore::Vector{Float64} = copy(p.d)
+      if eventIteration!(integrator.u, p, integrator.t, true, sampleInstant)
+        #= After an event that changed the equations the next step starts small (`_restartStep!`). A relation's
+           crossing changed them; a sample instant did where a relation, a discrete variable or the state changed. =#
+        (!sampleInstant || relBefore != p.rel || dBefore != p.d || p.state.leftLimit[2] != integrator.u) &&
+          $(_restartStep!)(integrator)
         return $(hasTerminate ? :(_terminateReached!(integrator)) : true)
+      end
       @error string("[events] the event iteration did not settle at t = ", integrator.t,
                     " (relations switching back and forth: a chattering model); the simulation stops")
       DifferentialEquations.SciMLBase.terminate!(integrator, DifferentialEquations.SciMLBase.ReturnCode.Failure)
@@ -2373,6 +2420,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
            change(x) fires and schedules the output, as OpenModelica) =#
         eventIteration!(u0, p, tspan[1], true) || error("array model: the events at the start do not settle")
       end
+      $(_checkBlocksSolved)(p)
       _logDiscretes!(p, tspan[1])
       $(_logRoots!)(p, tspan[1])
       $(isempty(initAssertBody) ? nothing : :(checkInitialAsserts(u0, p, tspan[1])))
