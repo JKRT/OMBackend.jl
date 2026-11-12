@@ -417,6 +417,28 @@ end
     @test sp[1] ≈ vp[1] atol = 1e-7
   end
 
+  @testset "Rolled components: reinit of their states; initial equations that assign discrete elements, pre()" begin
+    #= two instances of MSL's Mean rolled into arrays: a reinit's state is a reference `IR.mapEquation!` keeps, the
+       rolling rewrote the expressions only ("unknown variable meanCurrent.x", `rolledReinits`); their initial
+       equations `y = y0` are a for-equation over the instances that no residual solves ("initialization
+       over-determined": unrolled, `rollLeftArrayEquations!`) =#
+    local (s, a, _) = _bothWays("ArrayPath.RolledReinit", ["m1.y", "m2.y", "m1.x", "m2.x"]; tspan = (0.0, 0.95),
+                                reltol = 1e-9, abstol = 1e-9)
+    @test a ≈ [1.0, 0.85, 0.15, 0.04625] atol = 1e-7
+    @test maximum(abs.(s .- a)) < 1e-7
+    #= `pre(e) = 0.5` gives a when-assigned variable its value before the first event (`_addInitialEquations!`), of a
+       component array's elements too (MSL Timer's `pre(entryTime) = 0`) =#
+    for (model, names) in (("ArrayPath.PreStartCell", ["e"]), ("ArrayPath.PreStarts", ["c[1].e", "c[2].e"]))
+      local (sp, ap, _) = _bothWays(model, names)
+      @test all(==(1.5), ap) && sp == ap
+    end
+    #= `pre(y) = y0` of a variable an equation computes is pre() at the initialization (`SPreStart`), not an
+       assignment of y: the equation gives y from it (MSL Hysteresis, MultiSwitch) =#
+    local (sh, ah, _) = _bothWays("ArrayPath.PreStartParameter", ["x[1]", "x[2]"])
+    @test isapprox(ah[1], 1.5; atol = 1e-6) && isapprox(ah[2], -0.5; atol = 1e-6)
+    @test maximum(abs.(sh .- ah)) < 1e-6
+  end
+
   @testset "Scalarized by the backend: array targets of when-equations and of an algorithm's tuple" begin
     #= models the array code does not take stay in the backend (its element view, no second flatten): `d = 2 * pre(d)`
        in a when-equation is an assignment per element (`elementAssignments`), in the branches of an if too; the array

@@ -2668,4 +2668,60 @@ package ArrayPath
     xd = previous(xs);
     y = hold(xd);
   end ClockedSampleHold;
+
+  model PeriodMean "MSL Blocks.Math.Mean: u integrated over a period, the mean taken and the state reset at its end; the start of the state and of the output by initial equations"
+    parameter Real f = 5;
+    parameter Real x0 = 0;
+    parameter Real y0 = 0;
+    Real u;
+    Real x;
+    discrete Real y;
+  initial equation
+    x = x0;
+    y = y0;
+  equation
+    der(x) = u;
+    when sample(1 / f, 1 / f) then
+      y = f * pre(x);
+      reinit(x, 0);
+    end when;
+  end PeriodMean;
+
+  model RolledReinit "two separately declared instances rolled into arrays: the reinit of each one's state, the initial equations of their discrete outputs (for-equations over the instances). At 0.95: m1.y = 1, m2.y = 0.85, m1.x = 0.15, m2.x = 0.04625"
+    PeriodMean m1(f = 5);
+    PeriodMean m2(f = 10);
+  equation
+    m1.u = 1;
+    m2.u = time;
+  end RolledReinit;
+
+  model PreStartCell "a counter whose value before the first event is given by an initial equation on pre()"
+    discrete Real e;
+    Real x(start = 0, fixed = true);
+  initial equation
+    pre(e) = 0.5;
+  equation
+    der(x) = 1;
+    when x > 0.3 then
+      e = pre(e) + 1;
+    end when;
+  end PreStartCell;
+
+  model PreStarts "pre(e) = 0.5 of a component array (MSL Timer's pre(entryTime) = 0 in a rolled component): an initial for-equation that no residual solves; e = 1.5 after 0.3"
+    PreStartCell c[2];
+  end PreStarts;
+
+  model PreStartParameter "pre(y) = a parameter's value, of variables an equation computes (MSL Hysteresis' pre(y) = pre_y_start, MultiSwitch's pre(y) = y_default): y[1] starts true and x[1] rises, y[2] starts false and x[2] falls; with pre() the start value (false) both fell"
+    parameter Boolean y0 = true;
+    Real x[2](each start = 0.5, each fixed = true);
+    Boolean y[2];
+  initial equation
+    pre(y[1]) = y0;
+    pre(y[2]) = not y0;
+  equation
+    for i in 1:2 loop
+      der(x[i]) = if y[i] then 1 else -1;
+      y[i] = not pre(y[i]) and x[i] > 1 or pre(y[i]) and x[i] >= 0;
+    end for;
+  end PreStartParameter;
 end ArrayPath;

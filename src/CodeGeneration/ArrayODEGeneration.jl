@@ -84,7 +84,8 @@ import ..CodeGeneration: stripBeginBlocks, ModelicaAssertionError, solveStoppedA
 import ...Passes
 import ...SimCode
 import ...SimCode.Domains: DomainSystem, InstanceTable, EqClass, EvFn, Gen, IR, Lit, LoopBlocks, NotSupported, Op, Pre,
-  Ref, Rel, SAssert, SAssign, SBreak, SCall, SFor, SIf, SWhen, SWhile, Slot, Stmt, TimeIR, TornBlock, VarInfo, WhenClass,
+  Ref, Rel, SAssert, SAssign, SBreak, SCall, SFor, SIf, SPreStart, SWhen, SWhile, Slot, Stmt, TimeIR, TornBlock, VarInfo,
+  WhenClass,
   AlgClass,
   _blockFamilies, _callOfParameters, _condElements, _initAlgAssigned, _paramValue!, _parametersOnly, _relationSlots,
   _isTimeRelation, _timeRelationSlots, _continuous,
@@ -933,6 +934,10 @@ function _stmtCode(g::Gen, stmts::Vector{Stmt}, condBase::Int, nwhen::Int; inWhe
       local idx = _subscriptCode(g, info, st.target.name, st.target.subs)
       push!(out, info.kind == :discrete ? :(p.d[$(_linear(info, idx))] = Float64($(jl(g, st.value)))) :
                                           :(a[$(_linear(info, idx))] = $(jl(g, st.value))))
+    elseif st isa SPreStart
+      local preInfo::VarInfo = g.vars[st.target.name]
+      local preIdx = _subscriptCode(g, preInfo, st.target.name, st.target.subs)
+      push!(out, :(p.dpre[$(_linear(preInfo, preIdx))] = Float64($(jl(g, st.value)))))
     elseif st isa SIf
       local ex = nothing
       for (c, body) in reverse(st.branches)
@@ -2658,6 +2663,9 @@ function _eachStmtRef(f::F, stmts::Vector{Stmt}, reads::Bool)::Nothing where {F 
   local exp!::Function = (x::IR) -> (reads && _eachRead(f, x); nothing)
   for st in stmts
     if st isa SAssign
+      reads ? (exp!(st.value); foreach(exp!, st.target.subs)) : f(st.target)
+    elseif st isa SPreStart
+      #= pre() of the target: what the equations compute from it follows, as from an assignment =#
       reads ? (exp!(st.value); foreach(exp!, st.target.subs)) : f(st.target)
     elseif st isa Union{SIf, SWhen}
       foreach(b::Tuple{IR, Vector{Stmt}} -> (exp!(b[1]); _eachStmtRef(f, b[2], reads)), st.branches)

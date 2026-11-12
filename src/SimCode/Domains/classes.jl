@@ -188,6 +188,12 @@ struct SAssign <: Stmt
   value::IR
 end
 
+"`pre(target) = value` at the initialization (an initial equation on pre() of a discrete variable)."
+struct SPreStart <: Stmt
+  target::Ref
+  value::IR
+end
+
 struct SIf <: Stmt
   branches::Vector{Tuple{IR, Vector{Stmt}}}   #= else: condition Lit(true) =#
 end
@@ -450,6 +456,9 @@ function _initAlgTargets(g::Gen, stmts::Vector{Stmt})
     if st isa SAssign
       (g.vars[st.target.name].kind == :discrete || st.target.name in g.freeParams) ||
         ns("initial algorithm assigns $(st.target.name), not a discrete variable or a parameter with fixed = false")
+    elseif st isa SPreStart
+      g.vars[st.target.name].kind == :discrete ||
+        ns("pre() of $(st.target.name), not a discrete variable, given a value")
     elseif st isa SIf
       foreach(b -> _initAlgTargets(g, b[2]), st.branches)
     elseif st isa SFor || st isa SWhile
@@ -612,7 +621,7 @@ end
 "The ids of the event sources in statements that `want` takes, into `ids`."
 function _sourceIds!(ids::Set{Int}, stmts::Vector{Stmt}, want::F)::Set{Int} where {F}
   for st in stmts
-    st isa SAssign && _sourceIds!(ids, st.value, want)
+    st isa Union{SAssign, SPreStart} && _sourceIds!(ids, st.value, want)
     if st isa SIf || st isa SWhen
       for (c, b) in st.branches
         _sourceIds!(ids, c, want)
@@ -813,6 +822,7 @@ _substitutedTarget(t::Ref, alias::Dict{String, Tuple{String, Bool}})::Ref =
 function _substituted(st::Stmt, alias::Dict{String, Tuple{String, Bool}})::Stmt
   local body::Function = (b::Vector{Stmt}) -> Stmt[_substituted(x, alias) for x in b]
   st isa SAssign && return SAssign(_substitutedTarget(st.target, alias), _substituted(st.value, alias))
+  st isa SPreStart && return SPreStart(_substitutedTarget(st.target, alias), _substituted(st.value, alias))
   st isa SIf && return SIf(Tuple{IR, Vector{Stmt}}[(_substituted(c, alias), body(b)) for (c, b) in st.branches])
   st isa SFor && return SFor(st.slot, st.range, body(st.body))
   st isa SWhile && return SWhile(_substituted(st.cond, alias), body(st.body))
@@ -1250,6 +1260,8 @@ function _algAccesses!(g::Gen, stmts::Vector{Stmt}, env::Dict{Int, Int}, d::Matr
       local u = _unknownOf(g, info, off, false)
       u > 0 || ns("algorithm assigns $(st.target.name), which an equation or when-equation defines")
       push!(outs, u)
+      readIR!(st.value)
+    elseif st isa SPreStart
       readIR!(st.value)
     elseif st isa SIf || st isa SWhen
       for (c, body) in st.branches

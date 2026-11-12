@@ -294,6 +294,7 @@ function _initialMatching(g::Gen, deps::Union{Nothing, Vector{Vector{Int}}}, pro
   deps === nothing && ns("initialization of a model with a large dependency pattern")
   #= candidate free states per initial equation instance =#
   local rows::Vector{Vector{Int}} = Vector{Int}[]
+  local rowText::Vector{String} = String[]
   for c in g.initClasses
     local acc::Vector{Ref} = accesses!(accesses!(Ref[], c.lhs), c.rhs)
     for j in 1:size(c.domain, 2)
@@ -323,6 +324,7 @@ function _initialMatching(g::Gen, deps::Union{Nothing, Vector{Vector{Int}}}, pro
         end
       end
       push!(rows, sort!([k for k in cand if k > g.nStates || !fixedMask[k]]))
+      push!(rowText, c.text)
     end
   end
   #= matching rows -> free states (augmenting paths) =#
@@ -331,7 +333,7 @@ function _initialMatching(g::Gen, deps::Union{Nothing, Vector{Vector{Int}}}, pro
   for r0 in eachindex(rows)
     local visited::Set{Int} = Set{Int}()
     _augment!(rows, matchCol, matchRow, visited, r0) ||
-      ns("initialization over-determined (an initial equation without a free state)")
+      ns("initialization over-determined (an initial equation without a free state): " * first(rowText[r0], 120))
   end
   return InitialMatching(matchRow, length(rows), freeCols)
 end

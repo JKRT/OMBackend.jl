@@ -635,7 +635,8 @@ _eqText(@nospecialize(eq))::String = _str(eq)
 """
 Whether the initial equation `lhs = rhs` is an assignment, made once as an initial algorithm's (no unknown of the
 initialization's solve): the initial value of a discrete variable, scalar or an array's element (`d = expr`, CDL
-Discrete's `y = y_start`, assigned after the solve), or such a parameter with fixed = false given the value of an
+Discrete's `y = y_start`, assigned after the solve; `pre(d) = expr` too, MSL Timer's `pre(entryTime) = 0`, the
+caller passes `d`), or such a parameter with fixed = false given the value of an
 expression of parameters (`p = expr`): MSL GlobalSeed's `id_impure = initializeImpureRandom(seed)`, an impure call the solve's Newton made at every
 evaluation, a new value each time (ImpureGenerator stalled). Not of free parameters the solve determines (a double
 exponential's `eta = exp(-T/tau1) - exp(-T/tau2)`); those an earlier such assignment gives are known.
@@ -653,6 +654,10 @@ function _initialAssignment(g::Gen, lhs::IR, rhs::IR)::Bool
   lhs.name in g.freeParams || return false
   return all(r::Ref -> r.name != lhs.name && g.vars[r.name].kind == :param && known(r.name), reads)
 end
+
+"Whether a when-equation assigns the variable `name` (an element of it)."
+_whenAssigned(g::Gen, name::String)::Bool =
+  any(w::WhenClass -> any(b::Tuple -> b[1] == :assign && b[2] isa Ref && b[2].name == name, w.body), g.whens)
 
 """
 The initial equations: the assignments among them (a discrete variable's initial value, a parameter with fixed = false
@@ -678,8 +683,16 @@ function _addInitialEquations!(g::Gen, equations::Vector{SC.Equation})::Nothing
     assigned = false
     for k in eachindex(pending)
       local (eq::SC.EQUATION, lhs::IR, rhs::IR, _) = pending[k]
-      _initialAssignment(g, lhs, rhs) || continue
-      push!(g.initAlgs, AlgClass(Stmt[SAssign(lhs::Ref, rhs)], 0, NO_SLOTS, 0, 0, _eqText(eq)))
+      #= `pre(d) = value`: pre() of the discrete variable at the initialization (`SPreStart`); of a variable a
+         when-equation assigns also its initial value, held until a when fires (MSL Timer's `pre(entryTime) = 0`).
+         One an equation computes is not assigned: the equation gives it, from that pre() (MSL MultiSwitch's
+         `pre(y) = y_default`, a hysteresis' `pre(y) = pre_y_start`) =#
+      local target::IR = lhs isa Pre ? lhs.ref : lhs
+      _initialAssignment(g, target, rhs) || continue
+      local body::Vector{Stmt} = Stmt[]
+      (lhs isa Pre && !_whenAssigned(g, target.name)) || push!(body, SAssign(target::Ref, rhs))
+      lhs isa Pre && push!(body, SPreStart(target::Ref, rhs))
+      push!(g.initAlgs, AlgClass(body, 0, NO_SLOTS, 0, 0, _eqText(eq)))
       deleteat!(pending, k)
       assigned = true
       break

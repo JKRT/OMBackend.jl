@@ -308,9 +308,10 @@ the initial ones, which no pass before rolls or splits (MSL Body's `zeros(3) = e
 state's `x = x_start`), and those in an if-equation's branches or a for-equation's body that read no continuous
 array. The array code has classes over index domains and none for an array equation as a whole. An inlined call's
 array literal subscripted by the iterator is then unrolled (`unrollElementLoops!`). One of an unknown size stays.
-An initial one that reads no continuous array (of a discrete array, of a parameter array with fixed = false) is its
-element equations: no residual solves it, the initialization assigns it, an element at a time, the reference on the
-left (the lowering writes an array equality `rhs = lhs`).
+An initial one that reads no continuous variable (of a discrete array, of a parameter array with fixed = false; a
+for-equation over the elements of such, a rolled component's) is its element equations: no residual solves it, the
+initialization assigns it, an element at a time, the reference on the left (the lowering writes an array equality
+`rhs = lhs`).
 """
 function rollLeftArrayEquations!(model::IR.Model)::IR.Model
   local partition::IR.Partition = model.continuous[1]
@@ -319,18 +320,40 @@ function rollLeftArrayEquations!(model::IR.Model)::IR.Model
   local initial::Vector{IR.Equation} = IR.Equation[]
   for eq in partition.initialEquations
     local rolled::IR.Equation = elementLoops(eq, variables, 0)
-    local assigned::Bool = eq isa IR.ARRAY_EQUATION && !IndexReduction.readsContinuousArray(eq.lhs, variables) &&
-                           !IndexReduction.readsContinuousArray(eq.rhs, variables)
+    local assigned::Bool = eq isa Union{IR.ARRAY_EQUATION, IR.FOR_EQUATION} && !readsContinuous(eq, variables)
     assigned ? append!(initial, IR.Equation[referenceLeft(x) for x in unrolledWhole(rolled)]) : push!(initial, rolled)
   end
   partition.initialEquations = initial
   return model
 end
 
-"A scalar equation `value = reference` as `reference = value`; another as it is."
+"A scalar equation `value = reference` (or `value = pre(reference)`) as `reference = value`; another as it is."
 referenceLeft(eq::IR.Equation)::IR.Equation =
-  (eq isa IR.SCALAR_EQUATION && eq.rhs isa IR.CREF && !(eq.lhs isa IR.CREF)) ?
+  (eq isa IR.SCALAR_EQUATION && isReference(eq.rhs) && !isReference(eq.lhs)) ?
     IR.SCALAR_EQUATION(eq.rhs, eq.lhs, eq.ty, eq.source, eq.attributes) : eq
+
+"A reference, or `pre` of one."
+isReference(e::IR.Expression)::Bool =
+  e isa IR.CREF || (IR.isBuiltinCall(e, :pre) && length(e.arguments) == 1 && e.arguments[1] isa IR.CREF)
+
+"""
+Whether the equation `eq` (its nested ones too) reads a continuous variable: a state, a derivative or an algebraic
+Real, scalar or array. An initial equation that reads none (of the elements of discrete arrays, of parameters with
+fixed = false, of `pre()` of them: a rolled component's `for \$c loop mean[\$c].y_last = mean[\$c].y0`) is no
+residual of the initialization's solve.
+"""
+function readsContinuous(eq::IR.Equation, variables::IR.VariableSet)::Bool
+  local found::Base.RefValue{Bool} = Ref(false)
+  IR.foreachExp(eq) do @nospecialize(x::IR.Expression)
+    (found[] || !(x isa IR.CREF)) && return nothing
+    local name::Symbol = IR.hasSubscripts(x.cref) ? IndexReduction.unsubscriptedName(x.cref) : x.cref.name
+    local v::Union{Nothing, IR.Variable} = get(variables, name, nothing)
+    (v !== nothing && v.kind isa Union{IR.STATE, IR.STATE_DER, IR.ALGEBRAIC, IR.ALGEBRAIC_DER} &&
+     IR.elementType(v.ty) isa IR.T_REAL) && (found[] = true)
+    return nothing
+  end
+  return found[]
+end
 
 "The equations of the for-equation `eq` at every value of its iterators (nested ones too); of no literal range as it
 is."
