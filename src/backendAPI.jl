@@ -521,24 +521,17 @@ function reducedArrayModel(lower::Function, name::String)::Union{Nothing, OMJLIR
        rolled into arrays (OMBACKEND_ROLL_COMPONENTS) =#
     local roll::Bool = envSwitch("OMBACKEND_ROLL_COMPONENTS") && !isempty(reduction.componentGroups(lowered.variables))
     local own::Bool = reduction.hasContinuousArrays(lowered) && reduction.hasArrayEquations(lowered)
-    #= the passes lower clocked partitions to when-equations on sample(): the array code does not keep their semantics
-       (a tick's value at the start, the order of a partition's equations), the scalar path does =#
-    local clocked::Bool = Passes.hasClocks(lowered)
+    #= the passes lower clocked partitions to when-equations on sample() (`lowerClockedPartitions!`): nothing of a
+       clock is left for the array code, which takes them as any when-equation (a tick at the start, a when body's
+       assignments in their order) =#
     local model::OMJLIR.Model = Passes.runPassesKeepingArrays!(lowered)
     local rolled::Bool = roll && reduction.rollComponents!(model) > 0
     if own || rolled
-      local reduced::Bool = reduction.reduceIndexArrays!(model)
-      if !reduced && clocked
-        decline("index 1 with clocked partitions")
-        return nothing
-      end
-    elseif clocked
-      decline("index 1 with clocked partitions")
-      return nothing
-    elseif !reduction.commitIndexOne!(model)
-      #= none to keep and of index above one: the model reduces as the scalarized one =#
-      decline("no for-equations or array equations over continuous arrays, of index above one")
-      return nothing
+      reduction.reduceIndexArrays!(model)
+    else
+      #= none to keep: its index reduced, or its states committed, in the array form all the same (the array code
+         takes a model of scalars as arrays of no dimensions) =#
+      reduction.reduceIndexArrays!(model; arrays = false)
     end
     model
   end
@@ -674,15 +667,16 @@ end
 """
     _arrayStartFailure(name, modelCode) -> Union{Nothing, String}
 
-Why the array model `name` does not start, `nothing` where it does: a model with a large algebraic loop
-(`ArrayODEGen.blockSolve!`) has its problem built once at the translate, as the ModelingToolkit routes are taken only
-where they build (`_translateKept`). Its loops are solved by Newton from the start values, and a kinematic loop's
-Jacobian is singular there (MSL MultiBody Fourbar1: rank 2 of 12 with the rotation matrices at their zero starts):
-the simulation ended in "the initial system: the algebraic loop ... has no solution", with no route left to take.
-Not while a package image is generated (no module is evaluated then), nor for a model without such a loop.
+Why the array model `name` does not start, `nothing` where it does: a model with an algebraic loop (a large one,
+`ArrayODEGen.blockSolve!`, or a family solved by a generated Newton) has its problem built once at the translate, as
+the ModelingToolkit routes are taken only where they build (`_translateKept`). Its loops are solved by Newton from
+the start values, and a kinematic loop's Jacobian is singular there (MSL MultiBody Fourbar1: rank 2 of 12 with the
+rotation matrices at their zero starts): the simulation ended in "the initial system: the algebraic loop ... has no
+solution", with no route left to take. Not while a package image is generated (no module is evaluated then), nor
+for a model without a loop.
 """
 function _arrayStartFailure(name::String, modelCode::Expr)::Union{Nothing, String}
-  _calls(modelCode, CodeGeneration.ArrayODEGen.blockSolve!) || return nothing
+  (_calls(modelCode, CodeGeneration.ArrayODEGen.blockSolve!) || _defines(modelCode, "LOOPFAMILY_")) || return nothing
   ccall(:jl_generating_output, Cint, ()) == 1 && return nothing
   try
     getMTKProblem(name)
@@ -692,6 +686,12 @@ function _arrayStartFailure(name::String, modelCode::Expr)::Union{Nothing, Strin
     return string("the array model does not start: ", first(replace(sprint(showerror, err), r"\s+" => " "), 300))
   end
 end
+
+"Whether the code `ex` defines a function whose name starts with `prefix` (the array code's loop families)."
+_defines(ex::Expr, prefix::String)::Bool =
+  (ex.head === :function && !isempty(ex.args) && ex.args[1] isa Expr && ex.args[1].head === :call &&
+   ex.args[1].args[1] isa Symbol && startswith(String(ex.args[1].args[1]), prefix)) ||
+  any(a -> a isa Expr && _defines(a, prefix), ex.args)
 
 "Whether the code `ex` calls the function `f` (a function object in the head of a call)."
 _calls(ex::Expr, f::Function)::Bool =

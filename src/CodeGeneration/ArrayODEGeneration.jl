@@ -1261,8 +1261,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     local solution::Union{Nothing, Tuple{Ref, IR}} = any(r::Int -> (r, matchRow[r]) in el.aliased, batch) ? nothing : solutions[(ci, p)]
     if solution === nothing
       #= nonlinear in its unknown, or reading it through a reference that is it only at some instance: each instance
-         solved by Newton on its residual, as a loop of one (in a model with arrays, as the loops) =#
-      hasArrays || ns("cannot solve for an unknown in a model without arrays: $(c.text)")
+         solved by Newton on its residual, as a loop of one =#
       push!(familyTemplates, [(ci, p)])
       local f::Int = length(familyTemplates)
       loopFamily!(f, familyTemplates[f], [[r] for r in batch])

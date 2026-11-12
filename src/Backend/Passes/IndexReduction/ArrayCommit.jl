@@ -638,13 +638,15 @@ end
 Index reduction of an arrays-kept model in array form: planned on its element view (`scalarizeArrays`, `knownPlan`),
 committed in array form (`arrayCommit`, `commitArrays!`); true where reduced. A model of index 1 is committed with
 the plan that differentiates nothing (its states, their derivative variables and links in array form, as the array
-code reads them): false. False, the model not changed, where it has no continuous arrays. An array whose elements the plan treats differently (slicing) is split into
-its elements first (`splitArrays!`), and the plan committed again. NotHandled where the array form does not take the
-plan (der() of an expression, a split down to no array equations: the caller takes the scalarized path and discards
-the model, which a split may have changed).
+code reads them): false. With `arrays` (the default) false, the model not changed, where it has no continuous
+arrays; without, a model of scalars is reduced the same way (a scalar is the array form's variable of no
+dimensions: MSL Rotational ElasticBearing, of index 3 and no array, for the array code). An array whose elements the
+plan treats differently (slicing) is split into its elements first (`splitArrays!`), and the plan committed again.
+NotHandled where the array form does not take the plan (der() of an expression, a split down to no array equations:
+the caller takes the scalarized path and discards the model, which a split may have changed).
 """
-function reduceIndexArrays!(model::IR.Model)::Bool
-  hasContinuousArrays(model) || return false
+function reduceIndexArrays!(model::IR.Model; arrays::Bool = true)::Bool
+  (arrays && !hasContinuousArrays(model)) && return false
   any(readsDerCall, model.continuous[1].equations) && throw(NotHandled("der() of an expression with arrays kept"))
   local view::Scalarized = scalarizeArrays(model)
   local partition::IR.Partition = view.model.continuous[1]

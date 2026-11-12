@@ -188,7 +188,7 @@ package ArrayPath
     end for;
   end Rectifier;
 
-  model AlgebraicLoop "Outside the array path (a loop in a model without arrays): it is scalarized as before"
+  model AlgebraicLoop "a loop in a model without arrays: the array code's (y = 0.75 x, z = 0.25 x, x' = -0.75 x)"
     Real x(start = 1, fixed = true);
     Real y, z;
   equation
@@ -2629,4 +2629,43 @@ package ArrayPath
     end for;
     der(x) = -sqrt(sum(i .^ 2 / m));
   end ElementwisePowerSum;
+
+  model ScalarLoop "a nonlinear loop of scalars (no arrays): y + z^3 = x, y - z = x / 2"
+    Real x(start = 1, fixed = true);
+    Real y(start = 1);
+    Real z;
+  equation
+    der(x) = -y;
+    y + z^3 = x;
+    y - z = 0.5 * x;
+  end ScalarLoop;
+
+  model ScalarIndexTwo "two masses rigidly coupled, scalars (no arrays, index above one): (m1 + m2) x1'' = -k x1"
+    parameter Real m1 = 1;
+    parameter Real m2 = 2;
+    parameter Real k = 10;
+    Real x1(start = 1, fixed = true);
+    Real v1(start = 0, fixed = true);
+    Real x2;
+    Real v2;
+    Real f;
+  equation
+    der(x1) = v1;
+    m1 * der(v1) = -k * x1 + f;
+    der(x2) = v2;
+    m2 * der(v2) = -f;
+    x2 = x1;
+  end ScalarIndexTwo;
+
+  model ClockedSampleHold "a periodic clock of 0.1 s samples x, a unit delay, held into the continuous system (a clocked partition of index 1, no arrays)"
+    Real x(start = 1, fixed = true);
+    Real xs(start = 0);
+    Real xd(start = 0);
+    Real y;
+  equation
+    der(x) = -x;
+    xs = sample(x, Clock(0.1));
+    xd = previous(xs);
+    y = hold(xd);
+  end ClockedSampleHold;
 end ArrayPath;

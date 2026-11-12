@@ -1296,6 +1296,14 @@ variable it names that its type does not have and its subscripts do not index; 0
 function missingComponentDimensions(x::IR.CREF, variables::IR.VariableSet)::Int
   local name::Symbol = IR.hasSubscripts(x.cref) ? unsubscriptedName(x.cref) : x.cref.name
   local v::Union{Nothing, IR.Variable} = get(variables, name, nothing)
+  #= a record is no variable: its dimensions are its first Real field's (`c.V_m` of a component array of Complex
+     values: `c.V_m.re`) =#
+  local ty::IR.ModelicaType = IR.elementType(x.ty)
+  while v === nothing && ty isa IR.T_RECORD && !isempty(ty.fields)
+    name = Symbol(name, ".", ty.fields[1].name)
+    v = get(variables, name, nothing)
+    ty = IR.elementType(ty.fields[1].ty)
+  end
   (v === nothing || !(v.ty isa IR.T_ARRAY)) && return 0
   return length(IR.dimensions(v.ty)) - count(s -> s isa IR.INDEX, allSubscripts(x.cref)) - length(IR.dimensions(x.ty))
 end

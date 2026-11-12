@@ -741,25 +741,22 @@ end
       @test dampedScalarized[4] > 0.01
       @test OMBackend.canonicalName("IndexReduction.SeparateDampedPairs") in OMBackend.ARRAY_REDUCED_MODELS
       #= a derivative array solved from different bodies: solvedInArrays splits it in place, so the array code solves
-         a copy and the scalarized fallback (a dynamic state set) reads the reduced model as reduced =#
+         a copy and the model it was given stays as reduced (the scalarized form of the reduced model reads it) =#
       let (fm, functions) = _irArrayFlat("PendulumsFirstForceLaw")
         local reduced::_IRM.Model = OMBackend.reducedArrayModel(fm; functionList = functions)
         local names::Vector{Symbol} = Symbol[v.name for v in reduced.variables]
-        @test OMBackend.generateReducedArrayODETargetCode(OMBackend.canonicalName(fm.name), reduced) === nothing
+        @test OMBackend.generateReducedArrayODETargetCode(OMBackend.canonicalName(fm.name), reduced) !== nothing
         @test Symbol[v.name for v in reduced.variables] == names
       end
-      #= what the array form declines (no arrays to keep, of index above one): the backend scalarizes the kept flat
-         model itself, so no frontend flattens it again; switched off, `nothing` (the caller's scalarizing flatten),
-         the reasons recorded =#
+      #= no arrays to keep, of index above one: reduced in the array form all the same, for the array code (a
+         scalar is an array of no dimensions); the backend's scalarization and its switch: arrayPathTests =#
       let (fm, functions) = _irArrayFlat("RigidInertias")
         local rigid::String = OMBackend.canonicalName(fm.name)
         @test OMBackend.translateReducedArrays(fm; functionList = functions) !== nothing
-        @test rigid in OMBackend.BACKEND_SCALARIZED_MODELS
-        withenv("OMBACKEND_BACKEND_SCALARIZATION" => "false") do
-          @test OMBackend.translateReducedArrays(fm; functionList = functions) === nothing
-          @test !(rigid in OMBackend.BACKEND_SCALARIZED_MODELS)
-          @test occursin("backend scalarization: switched off", OMBackend.scalarizedFallbackReason(rigid))
-        end
+        @test rigid in OMBackend.ARRAY_ODE_MODELS
+        local inertias::Vector{String} = ["phi1", "w1", "phi2", "tau"]
+        @test isapprox(_irArraySimulate("RigidInertias", inertias, 2.0; kept = true),
+                       _irArraySimulate("RigidInertias", inertias, 2.0; kept = false); atol = 1e-8, rtol = 1e-8)
       end
       local firstLaw::Vector{String} = ["x[1]", "y[1]", "x[2]", "F[1]", "F[3]"]
       local firstLawScalarized::Vector{Float64} = _irArraySimulate("PendulumsFirstForceLaw", firstLaw, 1.0; kept = false)

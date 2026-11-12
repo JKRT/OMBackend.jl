@@ -343,14 +343,33 @@ end
     @test w ≈ v .- x atol = 1e-12
   end
 
-  @testset "Outside the scope: scalarized as before" begin
-    #= a loop of a model without arrays (the scalar path solves it); a loop through a relation (events in a loop) =#
-    for model in ("ArrayPath.AlgebraicLoop", "ArrayPath.LoopWithEvent")
-      local name::String = _arrayPathTranslate(model; scalarized = false)
-      @test !_arrayPathTaken(name)
-      local sol::OMBackend.DifferentialEquations.SciMLBase.AbstractODESolution = OMBackend.simulateModel(name; tspan = (0.0, 1.0))
-      @test sol.retcode == ReturnCode.Success
-    end
+  @testset "Models of scalars: algebraic loops, index above one, a clock; outside the scope: scalarized" begin
+    local tight::NamedTuple = (reltol = 1e-9, abstol = 1e-9)
+    #= a model without arrays is the array code's (its variables arrays of no dimensions): a loop of scalars
+       (y = 0.75 x, z = 0.25 x, x' = -0.75 x), a nonlinear one, an index of two reduced in the array form
+       ((m1 + m2) x1'' = -k x1). Declined before by policy ("algebraic loop in a model without arrays", "no
+       for-equations or array equations over continuous arrays, of index above one": 69 MSL 4.1.0 models) =#
+    local (s, a, _) = _bothWays("ArrayPath.AlgebraicLoop", ["x", "y", "z"]; tight...)
+    @test a ≈ exp(-0.75) .* [1.0, 0.75, 0.25] atol = 1e-7
+    @test maximum(abs.(s .- a)) < 1e-7
+    local (sn, an, _) = _bothWays("ArrayPath.ScalarLoop", ["x", "y", "z"]; tight...)
+    @test an[2] + an[3]^3 ≈ an[1] atol = 1e-9
+    @test an[2] - an[3] ≈ 0.5 * an[1] atol = 1e-9
+    @test maximum(abs.(sn .- an)) < 1e-7
+    local (s2, a2, _) = _bothWays("ArrayPath.ScalarIndexTwo", ["x1", "x2"]; tight...)
+    @test a2 ≈ [cos(sqrt(10 / 3)), cos(sqrt(10 / 3))] atol = 1e-7
+    @test maximum(abs.(s2 .- a2)) < 1e-7
+    #= a clocked partition of index 1 (lowered to a when-equation on sample()): ticks at 0, 0.1, 0.2 before 0.25.
+       Declined before ("index 1 with clocked partitions": 57 MSL 4.1.0 models) =#
+    local (sc, ac, _) = _bothWays("ArrayPath.ClockedSampleHold", ["xs", "xd", "y"]; tspan = (0.0, 0.25), tight...)
+    @test ac ≈ [exp(-0.2), exp(-0.1), exp(-0.1)] atol = 1e-7
+    @test maximum(abs.(sc .- ac)) < 1e-7
+    #= a loop through a relation (events in a loop): scalarized as before =#
+    local name::String = _arrayPathTranslate("ArrayPath.LoopWithEvent"; scalarized = false)
+    @test !_arrayPathTaken(name)
+    local sol::OMBackend.DifferentialEquations.SciMLBase.AbstractODESolution =
+      OMBackend.simulateModel(name; tspan = (0.0, 1.0))
+    @test sol.retcode == ReturnCode.Success
   end
 
   @testset "Complex values: record equations in for bodies, array equations of records" begin
@@ -415,6 +434,12 @@ end
       local (fm, cache) = OMFrontend.instantiateSCodeToFM(model, _ARRAY_PATH_SCODE[]; scalarize = false)
       @test OMBackend.translateReducedArrays(fm; functionList = OMFrontend.cacheToFunctionList(cache)) !== nothing
       @test name in OMBackend.BACKEND_SCALARIZED_MODELS
+      #= switched off: `nothing` (the caller's scalarizing flatten), the reason recorded =#
+      withenv("OMBACKEND_BACKEND_SCALARIZATION" => "false") do
+        @test OMBackend.translateReducedArrays(fm; functionList = OMFrontend.cacheToFunctionList(cache)) === nothing
+        @test !(name in OMBackend.BACKEND_SCALARIZED_MODELS)
+        @test occursin("backend scalarization: switched off", OMBackend.scalarizedFallbackReason(name))
+      end
       _arrayPathTranslate(model; scalarized = false)
       local sol::OMBackend.DifferentialEquations.SciMLBase.AbstractODESolution =
         OMBackend.simulateModel(name; tspan = (0.0, T))
