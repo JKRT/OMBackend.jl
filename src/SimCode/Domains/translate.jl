@@ -88,6 +88,11 @@ function _bindingDeps(g::Gen, v::SimVariable)::Vector{String}
     x isa SC.EXP_CREF || return nothing
     local info::Union{Nothing, VarInfo} = get(g.vars, String(x.cref.sym), nothing)
     info !== nothing && info.kind == :param && info.vtype != :other && !(String(x.cref.sym) in deps) && push!(deps, String(x.cref.sym))
+    #= an external object: the parameters its constructor reads (the object is made from them, `_objectRead`) =#
+    if info !== nothing && info.kind == :param && info.vtype == :other
+      local root::Union{Nothing, Tuple{String, SC.CALL}} = _objectRoot(g, String(x.cref.sym))
+      root === nothing || foreach((d::String) -> d in deps || push!(deps, d), _bindingDeps(g, g.vars[root[1]].var))
+    end
     nothing
   end
   return deps
@@ -298,6 +303,52 @@ function _stringRoot(g::Gen, name::String)::Union{Nothing, Tuple{String, SC.SCON
 end
 
 """
+The external object that `name` is, through its references to others (`tableID = table.tableID`), and its constructor's
+call; nothing where it is none.
+"""
+function _objectRoot(g::Gen, name::String)::Union{Nothing, Tuple{String, SC.CALL}}
+  local seen::Set{String} = Set{String}()
+  local nm::String = name
+  while !(nm in seen)
+    push!(seen, nm)
+    local info::Union{Nothing, VarInfo} = get(g.vars, nm, nothing)
+    (info !== nothing && info.kind == :param && info.vtype == :other) || return nothing
+    local ty::SC.SType = info.var.simVar.elementType
+    (ty isa SC.TYPE_COMPLEX && !ty.isRecord && isempty(info.dims)) || return nothing
+    local b::Union{Nothing, SC.Exp} = SC.bindingOf(info.var.simVar.varKind)
+    b isa SC.CALL && return (nm, b)
+    (b isa SC.EXP_CREF && isempty(b.cref.subs)) || return nothing
+    nm = String(b.cref.sym)
+  end
+  return nothing
+end
+
+"""
+A read of the external object `name` (a table: an argument of the functions that read it), `Op(:object)` of its slot
+in `Gen.objects` and its name; nothing where `name` is none. The object is made once per build by its constructor's
+call (as on the scalarized path: an MSL table keeps the state of the simulation reading it), of the translated values
+of the parameters the call reads: the code depends on them (`Gen.structural`, an override refused).
+"""
+function _objectRead(g::Gen, name::String)::Union{Nothing, IR}
+  local root::Union{Nothing, Tuple{String, SC.CALL}} = _objectRoot(g, name)
+  root === nothing && return nothing
+  local (nm::String, call::SC.CALL) = root
+  local k::Union{Nothing, Int} = findfirst(o::Tuple{String, IR, String} -> o[1] == nm, g.objects)
+  if k === nothing
+    _isFunctionCall(g, call) || ns("the constructor of the external object $(nm): $(_str(call))")
+    local value::IR = _functionCallIRx(g, call, Ctx(Dict{String, Int}(), Int[]))
+    _parametersOnly(g, value) || ns("the constructor of the external object $(nm) reads a variable: $(_str(call))")
+    for d in _bindingDeps(g, g.vars[nm].var)
+      push!(g.structural, d)
+      _paramValue!(g, d)
+    end
+    push!(g.objects, (nm, value, replace(String(call.name), r"_constructor$" => "_destructor")))
+    k = length(g.objects)
+  end
+  return Op(:object, IR[Lit(k), Lit(nm)])
+end
+
+"""
 A read of the String parameter `name` of the translated value `value`: its slot in the run state (`Gen.strings`; an
 override reaches it), its value and name (`Op(:stringparam)`; a parameter binding or a static condition reads the value,
 which fixes it).
@@ -442,7 +493,10 @@ function _argumentsIRx!(out::Vector{IR}, g::Gen, a::SC.Exp, ctx::Ctx)::Nothing
       push!(out, _valueIRx(g, x, ctx))
     end
   elseif a isa SC.EXP_CREF && a.ty isa SC.TYPE_COMPLEX
-    ns("a record argument: $(_str(a))")
+    #= an external object (a table) as it is; a record variable has no value here =#
+    local object::Union{Nothing, IR} = a.ty.isRecord ? nothing : _objectRead(g, String(a.cref.sym))
+    object === nothing && ns("a record argument: $(_str(a))")
+    push!(out, object)
   else
     push!(out, _valueIRx(g, a, ctx))
   end
@@ -1206,7 +1260,7 @@ function domainSystem(sc::SC.SIM_CODE)::DomainSystem
   local g::Gen = Gen(Dict{String, VarInfo}(), 0, 0, 0, Dict{String, Any}(), Dict{String, Symbol}(), Set{String}(),
                 EqClass[], EqClass[], AlgClass[], Tuple{String, String, Bool}[], WhenClass[], AssertClass[], 0, 0, 0, 0,
                 -1000, false, Dict{Int, Int}(), AlgClass[], String[], AssertClass[], functionOutputs, Dict{String, String}(),
-                Set{String}(), Tuple{String, String}[])
+                Set{String}(), Tuple{String, String}[], Tuple{String, IR, String}[])
   local stateNamesOrdered::Vector{String} = String[]; local algNamesOrdered::Vector{String} = String[]
   local discreteNamesOrdered::Vector{String} = String[]
   local u0::Vector{Float64} = Float64[]; local d0::Vector{Float64} = Float64[]; local a0::Vector{Float64} = Float64[]

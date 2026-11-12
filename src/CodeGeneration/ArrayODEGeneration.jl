@@ -89,7 +89,7 @@ import ...SimCode.Domains: DomainSystem, InstanceTable, EqClass, EvFn, Gen, IR, 
   AlgClass,
   _blockFamilies, _callOfParameters, _condElements, _initAlgAssigned, _paramValue!, _parametersOnly, _relationSlots,
   _isTimeRelation, _timeRelationSlots, _continuous,
-  domainSystem, ns, Schedule, causalSchedule!, ParameterBinding, parameterBindings
+  domainSystem, ns, Schedule, causalSchedule!, ParameterBinding, parameterBindings, _bindingDeps
 
 const SII = ModelingToolkit.SymbolicIndexingInterface
 
@@ -901,6 +901,8 @@ function jl(g::Gen, x::IR)
     x.op == :assertcall && return :(($(args[1])) || _assertFailed(p, $(args[3]), ($(args[3]), _col), t, $(args[2])))
     x.op == :terminate && return :(_terminate!(p, $(args[1])))
     x.op == :stringparam && return :(p.state.strings[$(x.args[1].v)])
+    #= an external object: the module's constant (`_objectDefinitions`) =#
+    x.op == :object && return Symbol("OBJECT_", x.args[1].v)
     x.op == :seq && return Expr(:block, args...)
     x.op == :noEvent && return args[1]
     x.op == :arrayval && return length(args[1]) == 1 ? Expr(:vect, args[2:end]...) :
@@ -1452,6 +1454,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
   end
   local usedParams = collect(keys(g.paramSyms))
   local (paramOrder, rules, bindingKinds) = _parameterRules(g)
+  local objectDefs::Vector{Any} = _objectDefinitions(g, modelName)
   #= Layout of the flat parameter vector: (symbol, offset, length, dims), Julia (column-major)
      order inside an array. =#
   local layout = Tuple{Symbol, Int, Int, Vector{Int}}[]
@@ -1590,6 +1593,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     const ALGEBRAIC_INDEX = $(_nameIndex(algNamesOrdered))
     const DISCRETE_INDEX = $(_nameIndex(discreteNamesOrdered))
     const PARAMS = $(paramTuple)
+    $(objectDefs...)
     const PARAMETER_LAYOUT = $(layout)
     const PARAMETER_NAMES = $(paramNames)
     const PARAMETER_ELEMENTS = $(paramElements)
@@ -2758,6 +2762,26 @@ function generateArrayODECode(sc::SimCode.SIM_CODE, modelName::String)
     err isa Union{NotSupported, Passes.IndexReduction.NotHandled} || rethrow(err)
     return (nothing, err isa NotSupported ? err.msg : sprint(showerror, err))
   end
+end
+
+"""
+The external objects the code reads (`Gen.objects`) as the module's constants `OBJECT_k`: each made once, when the
+module is evaluated, by its constructor's call on the translated parameter values (`PARAMS`), and registered under the
+model with its destructor (`CodeGeneration._externalObjectRef`); the objects of the model's build before this one are
+freed first. NotSupported for a constructor call without code.
+"""
+function _objectDefinitions(g::Gen, modelName::String)::Vector{Any}
+  isempty(g.objects) && return Any[]
+  local model::String = _OMBACKEND.canonicalName(modelName)
+  local defs::Vector{Any} = Any[:($(_OMBACKEND.CodeGeneration.freeExternalObjects!)($model))]
+  for (k::Int, (nm::String, value::IR, destructor::String)) in enumerate(g.objects)
+    local rule::Any = _bindingCode(g, ParameterBinding(nm, _bindingDeps(g, g.vars[nm].var), :scalar, IR[value]))
+    rule === nothing && ns("the constructor of the external object $(nm)")
+    push!(defs, :(const $(Symbol("OBJECT_", k)) =
+                    $(_OMBACKEND.CodeGeneration._externalObjectRef)($(QuoteNode(Symbol(nm))), ($rule)(PARAMS),
+                                                                    $(QuoteNode(Symbol(destructor))), $model)))
+  end
+  return defs
 end
 
 """

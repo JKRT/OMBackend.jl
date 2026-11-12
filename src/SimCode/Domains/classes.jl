@@ -276,6 +276,8 @@ mutable struct Gen
   derOf::Dict{String, String}   #= the states' derivative links (SimCode's STATE_DERIVATIVE entries): \$STATEDER.x -> x =#
   startComputed::Set{String}    #= parameters the translation has no value of (an impure call): computed at each start =#
   strings::Vector{Tuple{String, String}}  #= String parameters the code reads (name, translated value): the run state's slots =#
+  #= the external objects the code reads (name, constructor call, destructor): one object per build (`_objectRead`) =#
+  objects::Vector{Tuple{String, IR, String}}
 end
 
 struct Ctx

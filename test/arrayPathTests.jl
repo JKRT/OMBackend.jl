@@ -439,6 +439,15 @@ end
     @test maximum(abs.(sh .- ah)) < 1e-6
   end
 
+  @testset "External objects: a table read by the equations and by a parameter's binding" begin
+    #= the object is a constant of the model's module, made once per build by its constructor's call on the
+       parameters' translated values (`_objectRead`, `_objectDefinitions`); a function takes it as an argument (it
+       was "a record argument") =#
+    local (st, at, _) = _bothWays("ArrayPath.TableDrive", ["x[1]", "x[2]", "z"])
+    @test isapprox(at, [1.0, 2.0, 1.0]; atol = 1e-6)
+    @test maximum(abs.(st .- at)) < 1e-6
+  end
+
   @testset "Scalarized by the backend: array targets of when-equations and of an algorithm's tuple" begin
     #= models the array code does not take stay in the backend (its element view, no second flatten): `d = 2 * pre(d)`
        in a when-equation is an assignment per element (`elementAssignments`), in the branches of an if too; the array

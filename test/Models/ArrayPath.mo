@@ -2724,4 +2724,64 @@ package ArrayPath
       y[i] = not pre(y[i]) and x[i] > 1 or pre(y[i]) and x[i] >= 0;
     end for;
   end PreStartParameter;
+
+  class TimeTable "Modelica.Blocks.Types.ExternalCombiTimeTable of MSL 4.1"
+    extends ExternalObject;
+    function constructor
+      input String tableName;
+      input String fileName;
+      input Real table[:, :];
+      input Real startTime;
+      input Integer columns[:];
+      input Integer smoothness;
+      input Integer extrapolation;
+      input Real shiftTime;
+      input Integer timeEvents;
+      input Boolean verboseRead;
+      input String delimiter;
+      input Integer nHeaderLines;
+      output TimeTable externalCombiTimeTable;
+    external "C" externalCombiTimeTable = ModelicaStandardTables_CombiTimeTable_init3(fileName, tableName,
+      table, size(table, 1), size(table, 2), startTime, columns, size(columns, 1), smoothness, extrapolation,
+      shiftTime, timeEvents, verboseRead, delimiter, nHeaderLines)
+      annotation(Library = {"ModelicaStandardTables", "ModelicaIO", "ModelicaMatIO", "zlib"});
+    end constructor;
+
+    function destructor
+      input TimeTable externalCombiTimeTable;
+    external "C" ModelicaStandardTables_CombiTimeTable_close(externalCombiTimeTable)
+      annotation(Library = {"ModelicaStandardTables", "ModelicaIO", "ModelicaMatIO", "zlib"});
+    end destructor;
+  end TimeTable;
+
+  function timeTableValue "Modelica.Blocks.Tables.Internal.getTimeTableValueNoDer"
+    input TimeTable tableID;
+    input Integer icol;
+    input Real timeIn;
+    input Real nextTimeEvent;
+    input Real pre_nextTimeEvent;
+    output Real y;
+  external "C" y = ModelicaStandardTables_CombiTimeTable_getValue(tableID, icol, timeIn, nextTimeEvent, pre_nextTimeEvent)
+    annotation(Library = {"ModelicaStandardTables", "ModelicaIO", "ModelicaMatIO", "zlib"});
+  end timeTableValue;
+
+  function timeTableTmax "Modelica.Blocks.Tables.Internal.getTimeTableTmax"
+    input TimeTable tableID;
+    output Real timeMax;
+  external "C" timeMax = ModelicaStandardTables_CombiTimeTable_maximumTime(tableID)
+    annotation(Library = {"ModelicaStandardTables", "ModelicaIO", "ModelicaMatIO", "zlib"});
+  end timeTableTmax;
+
+  model TableDrive "an external object (a time table, linear from 0 to 2 over [0, 1]) read by the equations of an array and by a parameter's binding (MSL CombiTimeTable's tableID and t_max): x[i] = i t^2, tmax = 1"
+    parameter Real data[2, 2] = [0, 0; 1, 2];
+    parameter TimeTable tableID = TimeTable("NoName", "NoName", data, 0.0, {2}, 1, 2, 0.0, 3, false, ",", 0);
+    parameter Real tmax = timeTableTmax(tableID);
+    Real x[2](each start = 0, each fixed = true);
+    Real z(start = 0, fixed = true);
+  equation
+    for i in 1:2 loop
+      der(x[i]) = i * timeTableValue(tableID, 1, time, 1e60, 1e60);
+    end for;
+    der(z) = tmax;
+  end TableDrive;
 end ArrayPath;
