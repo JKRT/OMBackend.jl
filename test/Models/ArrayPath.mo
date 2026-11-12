@@ -2455,4 +2455,49 @@ package ArrayPath
       der(v[k]) = -i[k];
     end for;
   end ZeroCoefficient;
+
+  function swapStep "two outputs, the second an array"
+    input Real s[2];
+    output Real r;
+    output Real t[2];
+  algorithm
+    r := s[1] + s[2];
+    t := {s[2], s[1] + 1};
+  end swapStep;
+
+  model WhenArrayTarget "a when-equation that assigns a whole array (not array code: scalarized by the backend, an assignment per element); d doubled at 0.5"
+    discrete Real d[2](start = {3, 4}, each fixed = true);
+    Real x(start = 0, fixed = true);
+  equation
+    der(x) = 1;
+    when x > 0.5 then
+      d = 2 * pre(d);
+    end when;
+  end WhenArrayTarget;
+
+  model WhenIfArrayTarget "WhenArrayTarget, the array assigned in the branches of an if: d + 1 at 0.25, doubled at 0.75"
+    discrete Real d[2](start = {3, 4}, each fixed = true);
+    Real x(start = 0, fixed = true);
+  equation
+    der(x) = 1;
+    when {x > 0.25, x > 0.75} then
+      if x > 0.5 then
+        d = 2 * pre(d);
+      else
+        d = pre(d) + {1, 1};
+      end if;
+    end when;
+  end WhenIfArrayTarget;
+
+  model TupleArrayTarget "an algorithm's tuple with an array target (the reference kept as the frontend's scalarization has it); at 0.25, 0.5, 0.75: r = 3, 4, 5, s = {2, 2}, {2, 3}, {3, 3}"
+    discrete Real s[2](start = {1, 2}, each fixed = true);
+    discrete Real r(start = 0, fixed = true);
+    Real x(start = 0, fixed = true);
+  equation
+    der(x) = 1;
+  algorithm
+    when sample(0.25, 0.25) then
+      (r, s) := swapStep(pre(s));
+    end when;
+  end TupleArrayTarget;
 end ArrayPath;

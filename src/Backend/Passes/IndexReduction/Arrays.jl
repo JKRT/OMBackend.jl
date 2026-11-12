@@ -943,7 +943,8 @@ end
 function scalarEquations!(out::Vector{IR.Equation}, origins::Vector{EquationOrigin}, eq::IR.WHEN_EQUATION,
                           origin::EquationOrigin, values::Dict{Symbol, Int}, E::Elements)::Nothing
   local branches = IR.WhenBranch[IR.WhenBranch(IR.Expression[equationExpression(t, values, E) for t in b.triggers], b.atInitial,
-                                               b.atTerminal, scalarStatements(b.body, values, E)) for b in eq.branches]
+                                               b.atTerminal, elementAssignments(scalarStatements(b.body, values, E), E))
+                                 for b in eq.branches]
   push!(out, IR.WHEN_EQUATION(branches, eq.kind, eq.source, unlinked(eq.attributes)))
   push!(origins, origin)
   return nothing
@@ -968,7 +969,9 @@ function scalarEquations!(out::Vector{IR.Equation}, origins::Vector{EquationOrig
   for c in eq.outputs
     pushReferences!(outputs, elementReference(IR.CREF(withIteratorCref(c, values), IR.T_UNKNOWN()), E))
   end
-  push!(out, IR.ALGORITHM(scalarStatements(eq.statements, values, E), outputs, eq.source, unlinked(eq.attributes)))
+  local statements::Vector{IR.Statement} = IR.Statement[wholeTargets(s, x, values) for (s, x) in
+                                                        zip(eq.statements, scalarStatements(eq.statements, values, E))]
+  push!(out, IR.ALGORITHM(statements, outputs, eq.source, unlinked(eq.attributes)))
   push!(origins, origin)
   return nothing
 end
@@ -1101,6 +1104,81 @@ function scalarStatements(body::Vector{IR.Statement}, values::Dict{Symbol, Int},
   local g = e::IR.Expression -> withoutEmptyTargets(scalarExpression(e, values, E))
   return IR.Statement[scalarReinit(mapRoots(g, s), values, E) for s in body]
 end
+
+"""
+    elementAssignments(body, E) -> Vector{Statement}
+
+The statements of a when-equation with each assignment of an array (`d = 2 * pre(d)`, arrays kept: `{d[1], d[2]} :=
+2 * pre({d[1], d[2]})` in the scalarized model) as one assignment per element (`pickElement` of both sides), as the
+frontend's scalarization writes the equation; in the branches of an if too. An array of records and a tuple of
+targets stay. Not for an algorithm's statements: those run in order, and an array's assignment there reads its whole
+right-hand side before an element is assigned (`wholeTargets`).
+"""
+function elementAssignments(body::Vector{IR.Statement}, E::Elements)::Vector{IR.Statement}
+  local out::Vector{IR.Statement} = IR.Statement[]
+  foreach(s -> elementAssignments!(out, s, E), body)
+  return out
+end
+function elementAssignments!(out::Vector{IR.Statement}, s::IR.ASSIGNMENT, E::Elements)::Nothing
+  local ty::IR.ModelicaType = s.lhs isa IR.ARRAY ? IR.typeOf(s.lhs) : IR.T_UNKNOWN()
+  local element::IR.ModelicaType = ty isa IR.T_ARRAY ? IR.elementType(ty) : ty
+  if !(ty isa IR.T_ARRAY) || element isa IR.T_RECORD
+    push!(out, s)
+    return nothing
+  end
+  for index in rowMajor(knownSizes(ty, "an array assigned in a when-equation"))
+    local subscripts::Vector{IR.Subscript} = IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index]
+    push!(out, IR.ASSIGNMENT(pickElement(s.lhs, subscripts, element, E), pickElement(s.rhs, subscripts, element, E),
+                             s.source))
+  end
+  return nothing
+end
+function elementAssignments!(out::Vector{IR.Statement}, s::IR.IF_STATEMENT, E::Elements)::Nothing
+  local branches::Vector{IR.StatementBranch} =
+    IR.StatementBranch[IR.StatementBranch(b.condition, elementAssignments(b.body, E)) for b in s.branches]
+  push!(out, IR.IF_STATEMENT(branches, elementAssignments(s.elseBody, E), s.source))
+  return nothing
+end
+elementAssignments!(out::Vector{IR.Statement}, s::IR.Statement, ::Elements)::Nothing = (push!(out, s); nothing)
+
+"""
+    wholeTargets(original, scalar, values) -> Statement
+
+The statement `scalar` of an algorithm (`scalarStatements` of `original`) with each target that is an array as a
+whole as the reference it was (`s`, not `{s[1], s[2]}`; a loop's iterators at their values), also in a tuple of
+targets and in nested statements: the form the frontend's scalarization gives an algorithm, which the passes on
+algorithms take (`Passes.tupleAssignElements`: a target that is not a variable is not supported; MSL realFFT's
+`(info, Ai, ...) := realFFT(...)`, Xorshift64star's `(r, state) := random(pre(state))`).
+"""
+function wholeTargets(original::IR.ASSIGNMENT, scalar::IR.ASSIGNMENT, values::Dict{Symbol, Int})::IR.Statement
+  local lhs::IR.Expression = scalar.lhs
+  if original.lhs isa IR.TUPLE && lhs isa IR.TUPLE && length(original.lhs.elements) == length(lhs.elements)
+    lhs = IR.TUPLE(IR.Expression[wholeTarget(o, x, values) for (o, x) in zip(original.lhs.elements, lhs.elements)],
+                   lhs.ty)
+  else
+    lhs = wholeTarget(original.lhs, lhs, values)
+  end
+  return IR.ASSIGNMENT(lhs, scalar.rhs, scalar.source)
+end
+"The target `scalar` of `original`: the reference `original` where its scalarized form is its array of elements."
+wholeTarget(original::IR.Expression, scalar::IR.Expression, values::Dict{Symbol, Int})::IR.Expression =
+  (original isa IR.CREF && scalar isa IR.ARRAY) ? withIterators(original, values) : scalar
+wholeTargets(original::IR.IF_STATEMENT, scalar::IR.IF_STATEMENT, values::Dict{Symbol, Int})::IR.Statement =
+  IR.IF_STATEMENT(IR.StatementBranch[IR.StatementBranch(x.condition, wholeTargets(o.body, x.body, values))
+                                     for (o, x) in zip(original.branches, scalar.branches)],
+                  wholeTargets(original.elseBody, scalar.elseBody, values), scalar.source)
+wholeTargets(original::IR.FOR_STATEMENT, scalar::IR.FOR_STATEMENT, values::Dict{Symbol, Int})::IR.Statement =
+  IR.FOR_STATEMENT(scalar.iterator, wholeTargets(original.body, scalar.body, values), scalar.source)
+wholeTargets(original::IR.WHILE_STATEMENT, scalar::IR.WHILE_STATEMENT, values::Dict{Symbol, Int})::IR.Statement =
+  IR.WHILE_STATEMENT(scalar.condition, wholeTargets(original.body, scalar.body, values), scalar.source)
+wholeTargets(original::IR.WHEN_STATEMENT, scalar::IR.WHEN_STATEMENT, values::Dict{Symbol, Int})::IR.Statement =
+  IR.WHEN_STATEMENT(IR.WhenBranch[IR.WhenBranch(x.triggers, x.atInitial, x.atTerminal,
+                                                wholeTargets(o.body, x.body, values))
+                                  for (o, x) in zip(original.branches, scalar.branches)], scalar.source)
+wholeTargets(::IR.Statement, scalar::IR.Statement, ::Dict{Symbol, Int})::IR.Statement = scalar
+wholeTargets(original::Vector{IR.Statement}, scalar::Vector{IR.Statement},
+             values::Dict{Symbol, Int})::Vector{IR.Statement} =
+  IR.Statement[wholeTargets(o, x, values) for (o, x) in zip(original, scalar)]
 
 "A `reinit`'s state by its element variable; another statement (its nested ones too) as it is."
 function scalarReinit(s::IR.REINIT, values::Dict{Symbol, Int}, E::Elements)::IR.Statement

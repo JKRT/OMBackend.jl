@@ -353,6 +353,27 @@ end
     end
   end
 
+  @testset "Scalarized by the backend: array targets of when-equations and of an algorithm's tuple" begin
+    #= models the array code does not take stay in the backend (its element view, no second flatten): `d = 2 * pre(d)`
+       in a when-equation is an assignment per element (`elementAssignments`), in the branches of an if too; the array
+       target of an algorithm's tuple stays its reference (`wholeTargets`). The element view gave both the array of
+       the elements as the target, which the when's and the tuple's translation refused =#
+    for (model, names, T, expected) in (("ArrayPath.WhenArrayTarget", ["d[1]", "d[2]"], 1.0, [6.0, 8.0]),
+                                        ("ArrayPath.WhenIfArrayTarget", ["d[1]", "d[2]"], 1.0, [8.0, 10.0]),
+                                        ("ArrayPath.TupleArrayTarget", ["r", "s[1]", "s[2]"], 0.9, [5.0, 3.0, 3.0]))
+      #= the route of OM's translate (`translateReducedArrays`: `nothing` is its caller's second flatten) =#
+      local name::String = _arrayPathTranslate(model; scalarized = false)
+      local (fm, cache) = OMFrontend.instantiateSCodeToFM(model, _ARRAY_PATH_SCODE[]; scalarize = false)
+      @test OMBackend.translateReducedArrays(fm; functionList = OMFrontend.cacheToFunctionList(cache)) !== nothing
+      @test name in OMBackend.BACKEND_SCALARIZED_MODELS
+      _arrayPathTranslate(model; scalarized = false)
+      local sol::OMBackend.DifferentialEquations.SciMLBase.AbstractODESolution =
+        OMBackend.simulateModel(name; tspan = (0.0, T))
+      @test sol.retcode == ReturnCode.Success
+      @test _values(sol, names) ≈ expected atol = 1e-9
+    end
+  end
+
   @testset "a when algorithm reading its target, reinit of elements, enumeration dimensions" begin
     #= (s, y) := step(s) at 0.1, 0.35, 0.6, 0.85: s from pre(s) at each run (the event iteration reran the body with
        the last pass's s and never settled) =#
