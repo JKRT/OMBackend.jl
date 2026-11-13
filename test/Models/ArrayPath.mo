@@ -2784,4 +2784,49 @@ package ArrayPath
     end for;
     der(z) = tmax;
   end TableDrive;
+
+  function differences "two outputs, the first an array (MSL Machines' ToSpacePhasor)"
+    input Real x[3];
+    output Real y[2];
+    output Real mean;
+  algorithm
+    for k in 1:2 loop
+      y[k] := x[k] - x[k + 1];
+    end for;
+    mean := (x[1] + x[2] + x[3]) / 3;
+  end differences;
+
+  model FirstArrayOutput "the array output of a function of two outputs, the first taken (i_ = ToSpacePhasor(i)): y[k] = x[k] - x[k + 1], x[i] = x0[i] exp(-i t)"
+    Real x[3](start = {1, 2, 4}, each fixed = true);
+    Real y[2];
+    Real w[2] "of an array expression as the argument (ToSpacePhasor(v_p - v_n)): w = 2 y";
+  equation
+    for i in 1:3 loop
+      der(x[i]) = -i * x[i];
+    end for;
+    y = differences(x);
+    w = differences(2 * x - {1, 1, 1});
+  end FirstArrayOutput;
+
+  function twoGains "two outputs, the first an array (MSL Filter's coefficient functions)"
+    input Real k;
+    output Real a[2];
+    output Real b;
+  algorithm
+    a := {k, 2 * k};
+    b := 3 * k;
+  end twoGains;
+
+  model FreeParameterTuple "(a, b) = f(k) in an initial equation, a and b parameters with fixed = false (MSL Filter's (cr, c0, c1) = coefficients.lowPass(...)): der(x[i]) = -a[i] x[i] + b, x[i] = b / a[i] + (1 - b / a[i]) exp(-a[i] t)"
+    parameter Real k = 1;
+    parameter Real a[2](each fixed = false);
+    parameter Real b(fixed = false);
+    Real x[2](each start = 1, each fixed = true);
+  initial equation
+    (a, b) = twoGains(k);
+  equation
+    for i in 1:2 loop
+      der(x[i]) = -a[i] * x[i] + b;
+    end for;
+  end FreeParameterTuple;
 end ArrayPath;

@@ -421,6 +421,11 @@ function _subscriptedIRx(g::Gen, e::SC.ASUB, ctx::Ctx)::IR
     #= an array of rows by several subscripts (a built-in's elements, `cat(2, ...)[\$i1, \$i2]`): its value indexed =#
     return Op(:index, IR[_valueIRx(g, base, ctx); subs])
   end
+  #= an element of an array output of a function of several outputs (`ToSpacePhasor(i)[1][k]`, a tuple's element): the
+     output at its position in the function's result, indexed =#
+  if base isa SC.TSUB && base.ty isa SC.TYPE_ARRAY && _isFunctionCall(g, base.exp)
+    return Op(:index, IR[Op(:index, IR[_functionCallIRx(g, base.exp::SC.CALL, ctx), Lit(base.index)]); subs])
+  end
   (_isFunctionCall(g, base) || base isa SC.RSUB) || ns("an element of $(_str(base))")
   return Op(:index, IR[_valueIRx(g, base, ctx); subs])
 end
@@ -453,6 +458,20 @@ field the field's.
 function _valueIRx(g::Gen, e::SC.Exp, ctx::Ctx)::IR
   _isFunctionCall(g, e) && e.ty isa SC.TYPE_ARRAY && return _functionCallIRx(g, e::SC.CALL, ctx)
   e isa SC.RSUB && e.ty isa SC.TYPE_ARRAY && return _recordElementIRx(g, e, ctx)
+  if e isa SC.EXP_CREF && isempty(e.cref.subs)
+    local whole::Union{Nothing, IR} = _wholeArrayIRx(g, String(e.cref.sym))
+    whole === nothing || return whole
+  end
+  #= an array's sum, difference, negation or scaling (`f(v - w)`): the array of its elements =#
+  if e isa Union{SC.BINARY, SC.UNARY} && _expType(e) isa SC.TYPE_ARRAY
+    local opDims::Vector{Int} = _knownDims(_expType(e), "an array argument of a size not known: $(_str(e))")
+    prod(opDims) <= Passes.MAX_ELEMENT_TERMS || ns("an array argument of $(prod(opDims)) elements")
+    local opElements::Vector{IR} = IR[]
+    for t in Iterators.product((1:d for d in opDims)...)   #= column-major: the first index fastest =#
+      push!(opElements, _elementIRx(g, e, collect(Int, t), ctx))
+    end
+    return Op(:arrayval, IR[Lit(Tuple(opDims)); opElements])
+  end
   e isa SC.ARRAY_EXP || return toIR(g, e, ctx)
   local dims::Vector{Int} = _knownDims(e.ty, "an array argument of a size not known: $(_str(e))")
   prod(dims) <= Passes.MAX_ELEMENT_TERMS || ns("an array argument of $(prod(dims)) elements")
@@ -467,6 +486,55 @@ function _valueIRx(g::Gen, e::SC.Exp, ctx::Ctx)::IR
     return Lit(length(dims) == 1 ? constant : reshape(constant, dims...))
   end
   return Op(:arrayval, IR[Lit(Tuple(dims)); elements])
+end
+
+"The operators of arrays taken element by element (`_elementIRx`): of two arrays."
+const ELEMENTWISE_OPERATORS = Dict{SC.OpKind, Symbol}(
+  SC.OP_ADD => :+, SC.OP_SUB => :-, SC.OP_ADD_EW => :+, SC.OP_SUB_EW => :-, SC.OP_MUL_EW => :*, SC.OP_DIV_EW => :/)
+"Of a scalar and an array (`_elementIRx`)."
+const SCALAR_ARRAY_OPERATORS = Dict{SC.OpKind, Symbol}(
+  SC.OP_ADD_SCALAR_ARRAY => :+, SC.OP_SUB_SCALAR_ARRAY => :-, SC.OP_MUL_SCALAR_ARRAY => :*,
+  SC.OP_DIV_SCALAR_ARRAY => :/)
+"Of an array and a scalar (`_elementIRx`)."
+const ARRAY_SCALAR_OPERATORS = Dict{SC.OpKind, Symbol}(
+  SC.OP_ADD_ARRAY_SCALAR => :+, SC.OP_SUB_ARRAY_SCALAR => :-, SC.OP_MUL_ARRAY_SCALAR => :*,
+  SC.OP_DIV_ARRAY_SCALAR => :/)
+
+"""
+The element `idx` of an array-valued expression (of a function's argument, `f(v - w)`): of a sum, difference or
+negation of arrays the operation on the elements, of an array and a scalar the element with the scalar; of another (a
+variable, a call, a literal) the expression subscripted (`_subscriptedIRx`).
+"""
+function _elementIRx(g::Gen, e::SC.Exp, idx::Vector{Int}, ctx::Ctx)::IR
+  (e isa SC.UNARY && e.op == SC.OP_UMINUS) && return Op(:neg, IR[_elementIRx(g, e.exp, idx, ctx)])
+  if e isa SC.BINARY
+    local array1::Bool = _expType(e.exp1) isa SC.TYPE_ARRAY
+    local array2::Bool = _expType(e.exp2) isa SC.TYPE_ARRAY
+    if array1 && array2 && haskey(ELEMENTWISE_OPERATORS, e.op)
+      return Op(ELEMENTWISE_OPERATORS[e.op], IR[_elementIRx(g, e.exp1, idx, ctx), _elementIRx(g, e.exp2, idx, ctx)])
+    elseif !array1 && array2 && (haskey(SCALAR_ARRAY_OPERATORS, e.op) || e.op == SC.OP_MUL)
+      return Op(get(SCALAR_ARRAY_OPERATORS, e.op, :*), IR[toIR(g, e.exp1, ctx), _elementIRx(g, e.exp2, idx, ctx)])
+    elseif array1 && !array2 && (haskey(ARRAY_SCALAR_OPERATORS, e.op) || e.op in (SC.OP_MUL, SC.OP_DIV))
+      return Op(get(ARRAY_SCALAR_OPERATORS, e.op, e.op == SC.OP_DIV ? :/ : :*),
+                IR[_elementIRx(g, e.exp1, idx, ctx), toIR(g, e.exp2, ctx)])
+    end
+  end
+  return toIR(g, SC.ASUB(e, SC.Exp[SC.ICONST(i) for i in idx]), ctx)
+end
+
+"""
+An array variable of the equations as a whole (a function's argument, `f(x)`): the array of its elements (column-major,
+`Op(:arrayval)`); nothing for a scalar, a parameter (its value is an array already) or another name.
+"""
+function _wholeArrayIRx(g::Gen, name::String)::Union{Nothing, IR}
+  local info::Union{Nothing, VarInfo} = get(g.vars, get(g.derOf, name, name), nothing)
+  (info === nothing || isempty(info.dims) || info.kind == :param) && return nothing
+  prod(info.dims) <= Passes.MAX_ELEMENT_TERMS || ns("an array argument of $(prod(info.dims)) elements")
+  local elements::Vector{IR} = IR[]
+  for t in Iterators.product((1:d for d in info.dims)...)   #= column-major: the first index fastest =#
+    push!(elements, _elementRefIR(g, name, IR[Lit(i) for i in t]))
+  end
+  return Op(:arrayval, IR[Lit(Tuple(info.dims)); elements])
 end
 
 """
@@ -778,11 +846,19 @@ function _addEquation!(g::Gen, eq::SC.Equation, iterNames::Vector{String}, idom:
     return
   elseif eq isa SC.EQUATION && eq.lhs isa SC.TUPLE
     #= (a, b) = f(x): an algorithm node assigning each target its output =#
-    local tupleCtx::Ctx = Ctx(iters, Int[])
+    #= of an initial equation whose targets are parameters with fixed = false (MSL Filter's coefficients,
+       `(cr, c0, c1) = coefficients.lowPass(...)`): an initial algorithm, its relations no events =#
+    local initialTuple::Bool = initial && all((e::SC.Exp) -> e isa SC.WILD || _isFreeParameter(g, e), eq.lhs.elements)
+    local tupleCtx::Ctx = initialTuple ? Ctx(iters, Int[], Base.RefValue(0), true) : Ctx(iters, Int[])
     local tupleCall::IR = toIR(g, eq.rhs, tupleCtx)
     tupleCtx.nsam[] == 0 || ns("sample() in an equation")
-    push!(g.algs, AlgClass(_tupleAssignments(g, eq.lhs, tupleCall, _expType(eq.rhs), tupleCtx), nIter, idom, tupleCtx.nrel[], 0,
-                           _eqText(eq)))
+    local assignments::Vector{Stmt} =
+      _tupleAssignments(g, eq.lhs, tupleCall, _expType(eq.rhs), tupleCtx; free = initialTuple)
+    if initialTuple
+      push!(g.initAlgs, AlgClass(assignments, nIter, idom, 0, 0, _eqText(eq)))
+    else
+      push!(g.algs, AlgClass(assignments, nIter, idom, tupleCtx.nrel[], 0, _eqText(eq)))
+    end
     return
   elseif eq isa SC.EQUATION
     #= relations of initial equations are evaluated at the start (no events) =#
@@ -924,14 +1000,20 @@ function _whenEffect(g::Gen, st::SC.Statement, ctx::Ctx)::IR
   ns("a when-statement $(nameof(typeof(st))): $(_str(st))")
 end
 
+"Whether `e` references a parameter with fixed = false (the variable, or an element of it)."
+_isFreeParameter(g::Gen, e::SC.Exp)::Bool = e isa SC.EXP_CREF && String(e.cref.sym) in g.freeParams
+
 """
 The statements of `(a, _, c) = call` (a tuple equation): the call once, into a temporary, and an assignment of each
 target that is not a wildcard from its output (at its position in the result, `SimCode.outputPosition` of the call's type
 `callType`: a record output before it is its fields); a whole array target element by element from that output
-(`(r, state) = random(pre(state))`: Buildings.Occupants).
+(`(r, state) = random(pre(state))`: Buildings.Occupants). The targets algebraic or discrete variables; `free`:
+parameters with fixed = false (an initial equation's).
 """
-function _tupleAssignments(g::Gen, lhs::SC.TUPLE, call::IR, callType::SC.SType, ctx::Ctx)::Vector{Stmt}
+function _tupleAssignments(g::Gen, lhs::SC.TUPLE, call::IR, callType::SC.SType, ctx::Ctx;
+                           free::Bool = false)::Vector{Stmt}
   local out::Vector{Stmt} = Stmt[]
+  local kinds::Tuple{Vararg{Symbol}} = free ? (:param,) : (:alg, :discrete)
   local res::Slot = Slot(g.tmpSlot -= 1)
   for (i, e) in enumerate(lhs.elements)
     e isa SC.WILD && continue
@@ -939,7 +1021,7 @@ function _tupleAssignments(g::Gen, lhs::SC.TUPLE, call::IR, callType::SC.SType, 
     if e isa SC.EXP_CREF && isempty(e.cref.subs) && haskey(g.vars, String(e.cref.sym)) && !isempty(g.vars[String(e.cref.sym)].dims)
       local name::String = String(e.cref.sym)
       local info::VarInfo = g.vars[name]
-      info.kind in (:alg, :discrete) || ns("tuple target $(_str(e))")
+      info.kind in kinds || ns("tuple target $(_str(e))")
       for t in Iterators.product((1:d for d in info.dims)...)
         local subs::Vector{IR} = IR[Lit(k) for k in t]
         push!(out, SAssign(Ref(name, subs, false), Op(:index, IR[Op(:index, IR[res, Lit(SC.outputPosition(callType, i))]), subs...])))
@@ -947,7 +1029,7 @@ function _tupleAssignments(g::Gen, lhs::SC.TUPLE, call::IR, callType::SC.SType, 
       continue
     end
     local target::IR = toIR(g, e, ctx)
-    (target isa Ref && g.vars[target.name].kind in (:alg, :discrete)) || ns("tuple target $(_str(e))")
+    (target isa Ref && g.vars[target.name].kind in kinds) || ns("tuple target $(_str(e))")
     push!(out, SAssign(target, Op(:index, IR[res, Lit(SC.outputPosition(callType, i))])))
   end
   isempty(out) || pushfirst!(out, SCall(Op(:setlocal, IR[res, call])))

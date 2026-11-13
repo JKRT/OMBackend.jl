@@ -448,6 +448,21 @@ end
     @test maximum(abs.(st .- at)) < 1e-6
   end
 
+  @testset "Function arguments and results: arrays as wholes, the first of several outputs, free parameters" begin
+    #= `y = f(x)` of a function of two outputs takes the first, an array, by its elements (`SC.TSUB` under a
+       subscript); an array variable or a sum of arrays as the argument is the array of its elements
+       (`_wholeArrayIRx`, `_elementIRx`): MSL Machines' `i_ = ToSpacePhasor(plug_p.pin.i)`, `ToSpacePhasor(v_p - v_n)` =#
+    local names::Vector{String} = ["y[1]", "y[2]", "w[1]", "w[2]"]
+    local (sf, af, _) = _bothWays("ArrayPath.FirstArrayOutput", names)
+    local y::Vector{Float64} = [exp(-1) - 2 * exp(-2), 2 * exp(-2) - 4 * exp(-3)]
+    @test isapprox(af, [y; 2 .* y]; atol = 1e-6)
+    @test maximum(abs.(sf .- af)) < 1e-9
+    #= an initial tuple equation whose targets are parameters with fixed = false is an initial algorithm =#
+    local (sp, ap, _) = _bothWays("ArrayPath.FreeParameterTuple", ["x[1]", "x[2]"])
+    @test isapprox(ap, [3 - 2 * exp(-1), 1.5 - 0.5 * exp(-2)]; atol = 1e-6)
+    @test maximum(abs.(sp .- ap)) < 1e-6
+  end
+
   @testset "Scalarized by the backend: array targets of when-equations and of an algorithm's tuple" begin
     #= models the array code does not take stay in the backend (its element view, no second flatten): `d = 2 * pre(d)`
        in a when-equation is an assignment per element (`elementAssignments`), in the branches of an if too; the array
