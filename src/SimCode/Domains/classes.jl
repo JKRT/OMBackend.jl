@@ -1437,9 +1437,25 @@ function _match(el::InstanceTable, nU::Int, texts::Vector{String})::Vector{Int}
       push!(rows, matchCol[c]); push!(iters, el.uptr[matchCol[c]])
     end
     found || ns("structurally singular (index reduction needed, or under/over-determined): no unknown left for " *
-                first(texts[el.class[r0]], 120))
+                first(texts[el.class[r0]], 120) * _overdeterminedSet(el, matchCol, visited, stamp, r0, texts))
   end
   return matchRow
+end
+
+"""
+The equations a failed search of `_match` went through: with the equation `r0` they are one more than the unknowns
+they share. As text for the refusal, the first six of them.
+"""
+function _overdeterminedSet(el::InstanceTable, matchCol::Vector{Int}, visited::Vector{Int}, stamp::Int, r0::Int,
+                            texts::Vector{String})::String
+  local rows::Vector{Int} = Int[matchCol[c] for c in eachindex(visited) if visited[c] == stamp && matchCol[c] != 0]
+  isempty(rows) && return " (it reads no unknown)"
+  local shown::Vector{String} = unique!(String[first(texts[el.class[r]], 80) for r in rows])
+  get(ENV, "OMBACKEND_ARRAY_TRACE", "") == "true" &&
+    foreach(t -> println("[match] over-determined with ", texts[el.class[r0]], ": ", t),
+            unique!(String[texts[el.class[r]] for r in rows]))
+  return string("; with it ", length(rows) + 1, " equations share ", length(rows), " unknowns: ",
+                join(first(shown, 6), "; "), length(shown) > 6 ? "; ..." : "")
 end
 
 """

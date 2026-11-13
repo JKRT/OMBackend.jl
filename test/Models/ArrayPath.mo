@@ -2924,6 +2924,22 @@ package ArrayPath
     end for;
   end ZeroOrientationPhases;
 
+  model ZeroConductanceCore "MSL FundamentalWave's eddy-current core without conductance, in series with a winding: Vm = G * der(PhiCore) with G = 0 gives Vm = 0, and loss = Vm * der(PhiCore) is the only other read of der(PhiCore), so PhiCore is no state (it is the winding's flux); a winding of 2 turns at v = sin(t): Phi = (1 - cos(t)) / 2"
+    parameter Real G = 0 "the core's conductance: none";
+    parameter Real N = 2;
+    Real Phi(start = 0, fixed = true);
+    Real PhiCore;
+    Real Vm;
+    Real v;
+    Real loss;
+  equation
+    v = sin(time);
+    v = N * der(Phi);
+    PhiCore = Phi;
+    Vm = G * der(PhiCore);
+    loss = Vm * der(PhiCore);
+  end ZeroConductanceCore;
+
   model IdealDiodeLoop "MSL IdealSemiconductor's equations, two diodes on sources of opposite phase: the Boolean off[k] = s[k] < 0 is in the loop of s, vd and i (a discrete unknown in an algebraic loop); conducting i = V / (R + Ron), blocking i = Goff V / (1 + R Goff); q(1) = (1 - Goff) / (pi (R + Ron))"
     parameter Real R = 1;
     parameter Real Ron = 1e-5;

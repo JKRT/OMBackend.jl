@@ -478,6 +478,13 @@ end
     local angles::Vector{Float64} = [0.0, 2pi / 3, 4pi / 3]
     @test isapprox(_values(solPhases, ["Phire[1]", "Phire[2]", "Phire[3]"]), cos.(angles) .* exp(-1); atol = 1e-6)
     @test isapprox(_values(solPhases, ["Phiim[1]", "Phiim[2]", "Phiim[3]"]), sin.(angles) .* exp(-1); atol = 1e-6)
+    #= a variable an equation gives as zero once the parameter's zero is out (`Vm = 0` of a core without
+       conductance) takes der(PhiCore) out of the loss, its last read: PhiCore is no state. Left a state beside the
+       winding's flux it equals, the array code had two states tied by an equation (the MSL machines: structurally
+       singular) =#
+    local (sc, ac, _) = _bothWays("ArrayPath.ZeroConductanceCore", ["Phi", "PhiCore", "Vm", "loss"])
+    @test isapprox(ac, [(1 - cos(1.0)) / 2, (1 - cos(1.0)) / 2, 0.0, 0.0]; atol = 1e-6)
+    @test maximum(abs.(sc .- ac)) < 1e-6
   end
 
   @testset "A discrete unknown in an algebraic loop: the loop cut at it, the event iteration settles it" begin

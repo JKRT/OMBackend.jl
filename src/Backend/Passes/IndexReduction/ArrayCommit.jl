@@ -424,8 +424,87 @@ function dropKnownZeroTerms!(model::IR.Model, view::Scalarized)::Bool
     equations[k] = folded
     union!(dropped, setdiff(before, after))
   end
+  #= the variables the equations give as zero (the folds above made some: `V_m = 0` of a core without conductance),
+     as the plan's structure knows them (`withKnownValues`), out of the equations where that takes another variable
+     out (`lossPower = V_m * der(Phi)`: the plan counts on no der(Phi) there) =#
+  local (givenZero::Set{Symbol}, giving::Dict{Int, Symbol}) = zeroVariables(equations, model.variables)
+  if !isempty(givenZero)
+    for (k::Int, eq::IR.Equation) in enumerate(equations)
+      eq isa IR.SCALAR_EQUATION || continue
+      local folded::IR.SCALAR_EQUATION = withoutZeroVariables(eq, givenZero, get(giving, k, nothing))
+      local out::Set{Symbol} = setdiff(variableReads(eq, model.variables), variableReads(folded, model.variables))
+      issubset(out, givenZero) && continue
+      equations[k] = folded
+      union!(dropped, out)
+    end
+  end
   isempty(dropped) || demoteDeadStates!(model, dropped)
   return !isempty(dropped) || !isempty(sliced)
+end
+
+"""
+    zeroVariable(eq, variables) -> Union{Nothing, Symbol}
+
+The Real algebraic scalar variable the scalar equation `eq` gives as zero: `x = 0`, `0 = x` (the plan's
+`setsConstant`), also negated or times a literal other than zero (`1.5707963267948966 * V_m.re = 0`); nothing for
+any other equation.
+"""
+function zeroVariable(eq::IR.SCALAR_EQUATION, variables::IR.VariableSet)::Union{Nothing, Symbol}
+  (isZero(eq.rhs) || isZero(eq.lhs)) || return nothing
+  local side::IR.Expression = isZero(eq.rhs) ? eq.lhs : eq.rhs
+  while true
+    if side isa IR.UNARY && side.op === IR.UMINUS
+      side = side.exp
+    elseif side isa IR.BINARY && side.op === IR.MUL && isLiteral(side.exp1) && !isZero(side.exp1)
+      side = side.exp2
+    elseif side isa IR.BINARY && side.op === IR.MUL && isLiteral(side.exp2) && !isZero(side.exp2)
+      side = side.exp1
+    else
+      break
+    end
+  end
+  (side isa IR.CREF && !IR.hasSubscripts(side.cref)) || return nothing
+  local v = get(variables, side.cref.name, nothing)
+  (v !== nothing && v.kind isa Union{IR.ALGEBRAIC, IR.ALGEBRAIC_DER} && v.ty isa IR.T_REAL) || return nothing
+  return v.name
+end
+
+"""
+    zeroVariables(equations, variables) -> (Set{Symbol}, Dict{Int, Symbol})
+
+The variables the scalar equations give as zero, and for each equation that gives one (by its index) the variable:
+by an equation of its own (`zeroVariable`), or by one that is such an equation once the others are zero (`y = x`,
+`y = x * w`), until no more is found.
+"""
+function zeroVariables(equations::Vector{IR.Equation}, variables::IR.VariableSet)::Tuple{Set{Symbol}, Dict{Int, Symbol}}
+  local givenZero::Set{Symbol} = Set{Symbol}()
+  local giving::Dict{Int, Symbol} = Dict{Int, Symbol}()
+  local grew::Bool = true
+  while grew
+    grew = false
+    for (k::Int, eq::IR.Equation) in enumerate(equations)
+      (eq isa IR.SCALAR_EQUATION && !haskey(giving, k)) || continue
+      local folded::IR.SCALAR_EQUATION = isempty(givenZero) ? eq : withoutZeroVariables(eq, givenZero, nothing)
+      local name::Union{Nothing, Symbol} = zeroVariable(folded, variables)
+      (name === nothing || name in givenZero) && continue
+      push!(givenZero, name)
+      giving[k] = name
+      grew = true
+    end
+  end
+  return (givenZero, giving)
+end
+
+"""
+The scalar equation `eq` with each read of a variable of `givenZero` as that zero, its arithmetic folded; `own`:
+the variable this equation gives, which stays.
+"""
+function withoutZeroVariables(eq::IR.SCALAR_EQUATION, givenZero::Set{Symbol},
+                              own::Union{Nothing, Symbol})::IR.SCALAR_EQUATION
+  local zeroed = (@nospecialize(e::IR.Expression)) ->
+    (e isa IR.CREF && e.cref.name !== own && e.cref.name in givenZero) ? ZERO : e
+  return IR.SCALAR_EQUATION(foldTree(IR.mapExp(zeroed, eq.lhs)), foldTree(IR.mapExp(zeroed, eq.rhs)), eq.ty, eq.source,
+                            eq.attributes)
 end
 
 """
