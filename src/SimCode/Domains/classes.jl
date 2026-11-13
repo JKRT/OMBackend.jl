@@ -278,6 +278,7 @@ mutable struct Gen
   strings::Vector{Tuple{String, String}}  #= String parameters the code reads (name, translated value): the run state's slots =#
   #= the external objects the code reads (name, constructor call, destructor): one object per build (`_objectRead`) =#
   objects::Vector{Tuple{String, IR, String}}
+  usesLeft::Bool   #= the code reads an algebraic variable's left limit at an event (pre() of it) =#
 end
 
 struct Ctx

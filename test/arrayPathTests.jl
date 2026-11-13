@@ -525,6 +525,19 @@ end
     @test p.rel[1] && p.rel[2]
   end
 
+  @testset "Clocked sample(): the left limit at a tick, a hold sampled back into its partition" begin
+    #= `sample(u, clock)` takes u's left limit (MLS 16.5.1): pre() of u, of an algebraic variable its value before the
+       event's sweep (`p.aleft`); a relation's change at a sample instant belongs to the tick's event
+       (`_atSampleInstant`), and the after-step probe leaves the discrete values as they were (`relationsChanged`).
+       u and b step at 0.2, a tick: sampled at the tick at 0.3; n counts the ticks through a hold (MSL Clocked
+       Sample1, Sample2, Sample3: 999x off omc, the event iteration not settling) =#
+    for (stop, expected) in ((0.25, [0.0, 0.0, 3.0]), (0.35, [1.0, 1.0, 4.0]))
+      local (sl, al, _) = _bothWays("ArrayPath.ClockedLeftLimit", ["y", "by", "nh"]; tspan = (0.0, stop))
+      @test al == expected
+      @test sl == expected
+    end
+  end
+
   @testset "A large loop that is linear and badly conditioned: differences over a step of the unknowns' size" begin
     #= forward differences carry the residuals' round-off into the Jacobian, 1e-8 of it; at a condition of 1e10
        Newton's method does not contract with it and the loop's unknowns were NaN (MSL ThyristorBridge2mPulse_R: both

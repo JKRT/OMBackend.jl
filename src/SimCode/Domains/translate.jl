@@ -1342,7 +1342,7 @@ function domainSystem(sc::SC.SIM_CODE)::DomainSystem
   local g::Gen = Gen(Dict{String, VarInfo}(), 0, 0, 0, Dict{String, Any}(), Dict{String, Symbol}(), Set{String}(),
                 EqClass[], EqClass[], AlgClass[], Tuple{String, String, Bool}[], WhenClass[], AssertClass[], 0, 0, 0, 0,
                 -1000, false, Dict{Int, Int}(), AlgClass[], String[], AssertClass[], functionOutputs, Dict{String, String}(),
-                Set{String}(), Tuple{String, String}[], Tuple{String, IR, String}[])
+                Set{String}(), Tuple{String, String}[], Tuple{String, IR, String}[], false)
   local stateNamesOrdered::Vector{String} = String[]; local algNamesOrdered::Vector{String} = String[]
   local discreteNamesOrdered::Vector{String} = String[]
   local u0::Vector{Float64} = Float64[]; local d0::Vector{Float64} = Float64[]; local a0::Vector{Float64} = Float64[]

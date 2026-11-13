@@ -2669,6 +2669,24 @@ package ArrayPath
     y = hold(xd);
   end ClockedSampleHold;
 
+  model ClockedLeftLimit "sample(u, clock) at a tick where u jumps takes u's left limit (MLS 16.5.1): u and the Boolean b step at 0.2, a tick of the clock of 0.1 s, so ys and bs step at the tick at 0.3; a hold's output sampled back into its partition is last tick's: n counts the ticks (no algebraic loop through the hold)"
+    Real u = if time < 0.2 then 0 else 1;
+    Boolean b = time >= 0.2;
+    Real ys(start = 0);
+    Boolean bs(start = false);
+    Real n(start = 0);
+    Real y;
+    Boolean by;
+    Real nh;
+  equation
+    ys = sample(u, Clock(0.1));
+    bs = sample(b, Clock(0.1));
+    n = sample(nh, Clock(0.1)) + 1;
+    y = hold(ys);
+    by = hold(bs);
+    nh = hold(n);
+  end ClockedLeftLimit;
+
   model PeriodMean "MSL Blocks.Math.Mean: u integrated over a period, the mean taken and the state reset at its end; the start of the state and of the output by initial equations"
     parameter Real f = 5;
     parameter Real x0 = 0;

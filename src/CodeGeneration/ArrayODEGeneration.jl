@@ -179,6 +179,7 @@ struct ArrayModelParameters
   hyst::Vector{Float64}        #= [H]: the relations' hysteresis (_rel); 0 (literal relations) while initializing =#
   tend::Vector{Float64}        #= [stop time]: a solution read there gives the final values (_dlogIndex) =#
   abuf::Vector{Float64}        #= the algebraic variables of a right-hand side evaluated on Float64 (RHS!): no buffer per call =#
+  aleft::Vector{Float64}       #= the algebraic variables before the event's sweep: pre() of one (its left limit) =#
   blocks::Vector{BlockSolver}  #= the large algebraic loops' solvers (blockSolve!), in the order of the schedule =#
   #= per loop family its members' guesses (unknown, member): the run's last solutions =#
   loops::Vector{Matrix{Float64}}
@@ -909,10 +910,12 @@ function jl(g::Gen, x::IR)
     local idx = _subscriptCode(g, info, x.ref.name, x.ref.subs)
     info.kind == :state && return :(p.upre[$(_linear(info, idx))])
     info.kind == :discrete && return _discreteRead(info, :(p.dpre[$(_linear(info, idx))]))
-    #= An algebraic variable's value before the instant is not kept: its current value was
-       read (`peak = pre(u)` at u's step took the value after it, OpenModelica the one
-       before); the scalarized path keeps it. =#
-    info.kind == :alg && ns("pre() of the algebraic variable $(x.ref.name)")
+    #= an algebraic variable's value before the event's sweep (`p.aleft`, kept by `eventIteration!`): at the first
+       sweep its left limit, the value `sample(u, clock)` takes at a tick where u jumps (MLS 16.5.1) =#
+    if info.kind == :alg
+      g.usesLeft = true
+      return :(p.aleft[$(_linear(info, idx))])
+    end
     error("IR: pre() of $(x.ref.name)")
   elseif x isa Rel
     local k = :($(g.relBase) + (_col - 1) * $(g.relCount) + $(x.id))
@@ -1690,6 +1693,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     #= the slots of relations of time and parameters (`_timeRel`): their crossings are time events =#
     const TIME_SLOT = $(_timeRelationSlots(g, nRelTotal, relBases, whenRelBases, algRelBases))
     const USES_INITIAL = $(g.usesInitial)
+    const USES_LEFT = $(g.usesLeft)
     #= the sample() instances (their starts and intervals each problem's, set by sampleSchedule! after the initialization) =#
     const N_SAMPLES = $(length(sampleSchedule))
     #= the round-off of a tick st + k dt, relative to the largest magnitude in it (omc's SAMPLE_EPS 1e-14): ticks within
@@ -2184,7 +2188,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       local evv = entry[(nD + nR + 1):end]
       local q = $(paramsType)(p.values, rel, d, copy(d), copy(p.wcond), copy(p.sampleActive),
                               [false], [false], copy(p.upre), copy(p.ureinit), copy(p.wnew), p.dlog, evv, copy(p.hyst), copy(p.tend),
-                              zeros($nAlg), p.blocks, $(_rootsAt)(p, t, right), p.state, p.model)
+                              zeros($nAlg), copy(p.aleft), p.blocks, $(_rootsAt)(p, t, right), p.state, p.model)
       equations!(similar(u), a, u, q, t, nothing, false)
       return a
     end
@@ -2231,6 +2235,12 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
        a discrete value starts the next one from the new values, until one changes nothing. =#
     function eventIteration!(u, p, t, fire::Bool, sampleInstant::Bool = false)
       local du = similar(u); local a = similar(u, $nAlg)
+      #= the algebraic variables' left limit: the equations with the relations and discrete values of before the
+         event =#
+      if USES_LEFT
+        equations!(du, a, u, p, t, nothing, false)
+        p.aleft .= a
+      end
       for _ in 1:50
         p.dpre .= p.d
         _settle!(du, a, u, p, t, fire) || return false
@@ -2245,6 +2255,8 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
         local switched = p.wnew != p.wcond
         p.wcond .= p.wnew
         (moved || switched || p.d != p.dpre) || return true
+        #= pre() in the next sweep: this one's values =#
+        USES_LEFT && (p.aleft .= a)
       end
       return false
     end
@@ -2321,9 +2333,24 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
        exactly on its threshold, where the exact-zero rule made it true already: the when on it took its rising
        edge before the event and never fired (MSL 4.1 Trapezoid's `time >= (pre(count) + 1)*period +
        startTime`: OpAmps.Differentiator's source stayed in its first period). =#
+    #= Whether t is a sample instant. A relation's change there belongs to the tick's event (`affectSample!` takes
+       the relations literal at the instant), which follows at this time: handled first as an event of its own, the
+       tick read the values of after the change (a clocked `sample(u)` at the instant of u's step takes u's left limit,
+       MLS 16.5.1: MSL Clocked BooleanSignals.Sample1). =#
+    function _atSampleInstant(p, t)
+      N_SAMPLES > 0 || return false
+      local stops = p.state.sampleStops
+      local near = searchsortedfirst(stops, t - 1.0e-12 * (1 + abs(t)))
+      return near <= length(stops) && abs(stops[near] - t) <= 1.0e-12 * (1 + abs(t))
+    end
+
     function affectCrossing!(integrator, events::AbstractVector{Int8})
       local t = integrator.t
       local p = integrator.p
+      if _atSampleInstant(p, t)
+        DifferentialEquations.u_modified!(integrator, false)
+        return nothing
+      end
       local tl = max(integrator.tprev, t - max(1e-10, 2 * p.hyst[1]) * (1 + abs(t)))
       local ul = tl < t ? integrator(tl) : copy(integrator.uprev)
       local du = similar(ul); local a = similar(ul, $nAlg)
@@ -2417,6 +2444,10 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     end
 
     function affect!(integrator)
+      if _atSampleInstant(integrator.p, integrator.t)
+        DifferentialEquations.u_modified!(integrator, false)
+        return nothing
+      end
       _eventAt!(integrator)
       _logDiscretes!(integrator.p, integrator.t)
       DifferentialEquations.u_modified!(integrator, true)
@@ -2429,6 +2460,10 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     function relationsChanged(u, t, integrator)
       local p = integrator.p
       local rel0 = copy(p.rel); local w0 = copy(p.wcond); local e0 = copy(p.evv)
+      #= the discrete values too: this evaluation runs the lifted clusters of discrete equations (and computes the
+         discrete unknowns) with the relations as they are now; left in place, pre() at the event that follows was
+         the value after it (`when sample() then bs := pre(b)` of `b = time >= 0.2` at the tick at 0.2) =#
+      local d0 = copy(p.d)
       local du = similar(u)
       if CROSSINGS_ONLY
         crossings!(du, p.abuf, u, p, t, nothing, true)
@@ -2438,7 +2473,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
         whens!(du, a, u, p, t, nothing, true, false)
       end
       local changed = rel0 != p.rel || e0 != p.evv
-      p.rel .= rel0; p.wcond .= w0; p.evv .= e0
+      p.rel .= rel0; p.wcond .= w0; p.evv .= e0; p.d .= d0
       return changed
     end
 
@@ -2463,7 +2498,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
                            zeros(Bool, N_RELATIONS), copy(D0), copy(D0), zeros(Bool, N_WHENS),
                            zeros(Bool, N_SAMPLES), [false], [false], copy(U0), copy(U0),
                            zeros(Bool, N_WHENS), Tuple{Float64, Vector{Float64}}[], zeros(N_RELATIONS), [0.0], [Float64(tspan[2])],
-                           zeros($nAlg),
+                           zeros($nAlg), zeros($nAlg),
                            $(BlockSolver)[$(BlockSolver)(BLOCK_PATTERNS[k], BLOCK_COLORS[k], BLOCK_GUESSES[k]) for k in eachindex(BLOCK_PATTERNS)],
                            Matrix{Float64}[copy(G) for G in LOOP_GUESSES],
                            $(ArrayRuntimeState)(N_SAMPLES, strings), @__MODULE__)
