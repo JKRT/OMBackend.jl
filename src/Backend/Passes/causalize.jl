@@ -712,11 +712,26 @@ function recordFieldArrayElements(v::IR.Variable)::Vector{IR.Variable}
     local index = collect(Tuple(i))
     local cref::IR.ComponentRef = IR.withLastSubscripts(v.cref, IR.Subscript[IR.INDEX(IR.INTEGER(k)) for k in index])
     local binding = v.binding === nothing ? nothing : bindingElement(v.binding, index)
-    push!(out, IR.Variable(cref, ty.elementType, v.kind, binding, v.attributes, v.direction, v.isProtected, v.connector,
+    #= the element's own start, fixed, nominal, min and max: with the array's, `state.X[1]` had the start
+       `{0.01, 0.99}` (MSL Media MoistAir: "the start of medium.state.X[1] does not evaluate") =#
+    local a::IR.VariableAttributes = v.attributes
+    local attributes::IR.VariableAttributes =
+      IR.VariableAttributes(attributeElement(a.start, index), attributeElement(a.fixed, index),
+                            attributeElement(a.nominal, index), attributeElement(a.min, index),
+                            attributeElement(a.max, index), a.unit, a.displayUnit, a.quantity, a.stateSelect)
+    push!(out, IR.Variable(cref, ty.elementType, v.kind, binding, attributes, v.direction, v.isProtected, v.connector,
                            v.source, :expandRecordFieldArrays))
   end
   return out
 end
+
+"""
+The element `index` of an attribute of an array variable: of an array value (a start `{0.01, 0.99}`) its element
+(`bindingElement`), a scalar's (given for each element) itself.
+"""
+attributeElement(::Nothing, ::Vector{Int})::Nothing = nothing
+attributeElement(a::IR.Expression, index::Vector{Int})::Union{Nothing, IR.Expression} =
+  (a isa IR.ARRAY || IR.typeOf(a) isa IR.T_ARRAY) ? bindingElement(a, index) : a
 
 """
 The element `index` of an array binding: of an array value its element (`nothing` outside

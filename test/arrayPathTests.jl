@@ -1770,4 +1770,27 @@ end
     @test av ≈ [2.0, 3.0, 0.8] atol = 1e-6
     @test sv ≈ av atol = 1e-6
   end
+
+  @testset "the elements of a record's array field: each its own start" begin
+    #= the passes write a record's array field as its elements (`recordFieldArrayElements`); each took the array's
+       start, `{0.25, -0.75}` on a scalar: "the start of s.X[1] does not evaluate" (MSL Media's MoistAir,
+       `state.X(start = reference_X)`). Each element its own value: the root of X[i]^2 = c its start's sign chooses =#
+    local fields = Modelica"""
+      record Composition
+        Real X[2];
+      end Composition;
+
+      model FieldStarts "X = {0.25, -0.75} sqrt(1 + time)"
+        Composition s(X(start = {0.25, -0.75}));
+        Real x(start = 1, fixed = true);
+      equation
+        der(x) = -x;
+        s.X[1] * s.X[1] = 0.0625 * (1 + time);
+        s.X[2] * s.X[2] = 0.5625 * (1 + time);
+      end FieldStarts;
+      """
+    local (sf, af, _) = _bothWaysOf(fields, "FieldStarts", ["s.X[1]", "s.X[2]"])
+    @test af ≈ [0.25 * sqrt(2), -0.75 * sqrt(2)] rtol = 1e-6
+    @test sf ≈ af rtol = 1e-6
+  end
 end
