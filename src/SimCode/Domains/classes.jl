@@ -689,13 +689,33 @@ crossing functions (`_evfn`).
 _relationSlots(g::Gen, nRelTotal::Int, relBases::Vector{Int}, whenRelBases::Vector{Int}, algRelBases::Vector{Int})::BitVector =
   .!_sourceSlots(g, nRelTotal, relBases, whenRelBases, algRelBases, (x::IR) -> x isa EvFn, 2)
 
-"The slots of the relation numbering that are relations of time and a parameter expression (`_isTimeRelation`)."
+"The slots of the relation numbering that are relations of time and an expression of the events (`_isTimeRelation`)."
 _timeRelationSlots(g::Gen, nRelTotal::Int, relBases::Vector{Int}, whenRelBases::Vector{Int}, algRelBases::Vector{Int})::BitVector =
   _sourceSlots(g, nRelTotal, relBases, whenRelBases, algRelBases, (x::IR) -> x isa Rel && _isTimeRelation(g, x), 1)
 
-"Whether the relation `x` is of `time` and a parameter expression (`time > 0.6`): a time event at its exact time."
+"""
+Whether the relation `x` is of `time` and an expression that changes only at events: a time event at its exact time.
+A parameter expression (`time > 0.6`), or arithmetic of parameters, discrete variables and pre() (`_eventConstant`,
+OpenModelica's `timeEventTrigger`): `time < T0 + Trising` with T0 a when-equation's. With the hysteresis of a state
+event, 1e-10 (1 + |time|), such a relation changed 1e-10 s late: after the end of MSL Spice3 Inverter's run of
+1e-11 s, its V_pulse sources ramping on to 200 V instead of 5 V.
+"""
 _isTimeRelation(g::Gen, x::Rel)::Bool =
-  (x.lhs isa TimeIR && _parametersOnly(g, x.rhs)) || (x.rhs isa TimeIR && _parametersOnly(g, x.lhs))
+  (x.lhs isa TimeIR && _timeEventOperand(g, x.rhs)) || (x.rhs isa TimeIR && _timeEventOperand(g, x.lhs))
+
+"What a relation of `time` is a time event against (`_isTimeRelation`)."
+_timeEventOperand(g::Gen, x::IR)::Bool = _parametersOnly(g, x) || _eventConstant(g, x)
+
+"""
+Whether `x` changes only at events: literals, iterators, parameters, discrete variables, pre() of a variable, and
+their sums, differences, products, quotients and powers (OpenModelica's `isEventConstantExp`).
+"""
+function _eventConstant(g::Gen, x::IR)::Bool
+  (x isa Lit || x isa Slot || x isa Pre) && return true
+  x isa Ref && return g.vars[x.name].kind in (:param, :discrete) && !x.der && all(s::IR -> _eventConstant(g, s), x.subs)
+  x isa Op && return x.op in (:+, :-, :*, :/, :^) && all(a::IR -> _eventConstant(g, a), x.args)
+  return false
+end
 
 """
 Whether an expression varies in time other than through the unknowns it reads: time, a state, a discrete variable

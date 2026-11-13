@@ -132,8 +132,9 @@ end
     ArrayRuntimeState(nSamples)
 
 What one problem of an array model holds besides its values (`ArrayModelParameters.state`), so that problems of one model
-(an ensemble's) run apart: the sample() starts and intervals (`sampleSchedule!`) and the stop times of the last
-`sampleTimes`, the when bodies' calls of parameters in a pass of the event iteration (`whenMemo`), the warnings reported,
+(an ensemble's) run apart: the sample() starts and intervals (`sampleSchedule!`), their last stop and the next one
+(`_nextSampleStop`), the when bodies' calls of parameters in a pass of the event iteration (`whenMemo`), the
+warnings reported,
 the asserts' probe (`_violated!`), an assert crossing to decide (`pending`: its time and state), the message of a
 terminate() reached, the discrete state at the start of the current step (`stepStart`, `_discreteState`: within a step
 that ends at an event the asserts read it), the String parameters' values (`Gen.strings`, with their overrides), the
@@ -491,22 +492,27 @@ literal value at an exact zero the same way, `_update!`; a true relation is not 
 would chatter). With H = 0 (initialization) it is evaluated literally.
 """
 _finiteAbs(x) = (local v = abs(float(x)); v < 1.0e300 ? v : 0.0)   #= as Float64: abs(typemin(Int)) stays negative =#
-@inline _rel(z, p, mode::Bool, k::Int, x, y, op) = _relationAt(z, p, mode, k, x, y, op, p.hyst[1])
+@inline _rel(z, p, mode::Bool, k::Int, x, y, op) =
+  _relationAt(z, p, mode, k, x, y, op, p.hyst[1] == 0, p.hyst[1] * (1 + max(_finiteAbs(x), _finiteAbs(y))))
 
 """
-A relation of `time` and a parameter expression (`time > 0.6`): a time event at its exact time, as OpenModelica takes
-it, its hysteresis only the floating-point resolution (none at the initialization).
+A relation of `time` and an expression that changes only at events (`time > 0.6`, `time < T0 + Trising` with T0
+discrete: `_isTimeRelation`): a time event at its exact time, as OpenModelica takes it, its hysteresis only the
+floating-point resolution of its operands (none at the initialization): of their size, not of a second, which is
+0.4 % of a pulse of 0.5 ps.
 """
-@inline _timeRel(z, p, mode::Bool, k::Int, x, y, op) = _relationAt(z, p, mode, k, x, y, op, p.hyst[1] == 0 ? 0.0 : 8 * eps(Float64))
+@inline _timeRel(z, p, mode::Bool, k::Int, x, y, op) =
+  _relationAt(z, p, mode, k, x, y, op, p.hyst[1] == 0,
+              8 * eps(Float64) * max(_finiteAbs(x), _finiteAbs(y), floatmin(Float64)))
 
-"A relation of hysteresis `H` (`_rel`, `_timeRel`)."
-@inline function _relationAt(z, p, mode::Bool, k::Int, x, y, op, H::Float64)
+"A relation of the hysteresis `band`, evaluated literally where `literal` (`_rel`, `_timeRel`)."
+@inline function _relationAt(z, p, mode::Bool, k::Int, x, y, op, literal::Bool, band::Float64)
   #= as Float64: the difference of two native Integers (an opaque function's result) wraps around beyond 2^63 =#
   local zc = (op === (>) || op === (>=)) ? float(y) - float(x) : float(x) - float(y)
   local old = p.rel[k]
-  local eps = H * (1 + max(_finiteAbs(x), _finiteAbs(y)))
+  local eps = literal ? 0.0 : band
   z === nothing || (z[k] = old ? zc - eps : zc + eps)
-  mode && (p.rel[k] = H == 0 ? op(x, y) : old ? zc <= eps : (zc <= -eps || (zc == 0 && op(x, y))))
+  mode && (p.rel[k] = literal ? op(x, y) : old ? zc <= eps : (zc <= -eps || (zc == 0 && op(x, y))))
   return p.rel[k]
 end
 
@@ -1676,7 +1682,6 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     import Symbolics
     import NonlinearSolve
     import ADTypes
-    import DiffEqCallbacks
     import LinearAlgebra
     #= the MTK path's function code names it (algorithmic.jl: an output array's growth) =#
     const OMBackend = $(_OMBACKEND)
@@ -1742,7 +1747,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     const N_RELATIONS = $(nRelTotal)
     #= the relation numbering's relations (not event-generating functions' crossing functions) =#
     const RELATION_SLOT = $(_relationSlots(g, nRelTotal, relBases, whenRelBases, algRelBases))
-    #= the slots of relations of time and parameters (`_timeRel`): their crossings are time events =#
+    #= the slots of relations of time and what changes only at events (`_timeRel`): their crossings are time events =#
     const TIME_SLOT = $(_timeRelationSlots(g, nRelTotal, relBases, whenRelBases, algRelBases))
     const USES_INITIAL = $(g.usesInitial)
     const USES_LEFT = $(g.usesLeft)
@@ -2435,18 +2440,22 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     #= Whether t is a sample instant. A relation's change there belongs to the tick's event (`affectSample!` takes
        the relations literal at the instant), which follows at this time: handled first as an event of its own, the
        tick read the values of after the change (a clocked `sample(u)` at the instant of u's step takes u's left limit,
-       MLS 16.5.1: MSL Clocked BooleanSignals.Sample1). =#
-    function _atSampleInstant(p, t)
+       MLS 16.5.1: MSL Clocked BooleanSignals.Sample1). At: within 1e-12 of the run's time scale (its span, or the
+       time where larger), not of a second: a pulse edge 1e-13 s after a tick is no part of the tick (MSL Spice3
+       Inverter, a run of 1e-11 s: its sources' edges were dropped). =#
+    function _atSampleInstant(p, t, tspan)
       N_SAMPLES > 0 || return false
       local stops = p.state.sampleStops
-      local near = searchsortedfirst(stops, t - 1.0e-12 * (1 + abs(t)))
-      return near <= length(stops) && abs(stops[near] - t) <= 1.0e-12 * (1 + abs(t))
+      local span = abs(tspan[2] - tspan[1])
+      local w = 1.0e-12 * (isfinite(span) ? max(span, abs(t)) : 1 + abs(t))
+      local near = searchsortedfirst(stops, t - w)
+      return near <= length(stops) && abs(stops[near] - t) <= w
     end
 
     function affectCrossing!(integrator, events::AbstractVector{Int8})
       local t = integrator.t
       local p = integrator.p
-      if _atSampleInstant(p, t)
+      if _atSampleInstant(p, t, integrator.sol.prob.tspan)
         DifferentialEquations.u_modified!(integrator, false)
         return nothing
       end
@@ -2486,12 +2495,11 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       N_DELAYS == 0 || _delayLeft!(integrator)
       local tspan = integrator.sol.prob.tspan
       local (starts, intervals, stops) = (p.state.sampleStart, p.state.sampleInterval, p.state.sampleStops)
-      local i = searchsortedfirst(stops, t)
-      local next = i < length(stops) ? stops[i + 1] : Inf
+      local next = _nextSampleStop(p, t, tspan)
       for id in eachindex(starts)
         local k = round((t - starts[id]) / intervals[id])
         local (ts, w) = _sampleTick(starts[id], intervals[id], k, tspan)
-        #= active at the stop its tick joined (sampleTimes): at or after it within its round-off, before the next =#
+        #= active at the stop its tick joined (_nextSampleStop): at or after it within its round-off, before the next =#
         p.sampleActive[id] = k >= 0 && 0.0 <= ts - t <= w && ts < next
       end
       #= the relations literal at the instant (H = 0): one whose crossing function is 0 there (a
@@ -2507,6 +2515,10 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       fill!(p.sampleActive, false)
       _logDiscretes!(p, t)
       DifferentialEquations.u_modified!(integrator, true)
+      #= the stop after this one =#
+      stops[1] = t
+      stops[2] = next
+      next < tspan[2] && DifferentialEquations.add_tstop!(integrator, next)
       return nothing
     end
 
@@ -2519,34 +2531,54 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       return (ts, w)
     end
 
-    #= the sample instants of p's samples over tspan, kept as p's stops (affectSample! activates a sample at the stop its
-       tick joined) =#
-    function sampleTimes(p, tspan)
-      local ticks = Tuple{Float64, Float64}[]
-      local stops = p.state.sampleStops
+    #= The stop of p's samples after the stop `after` (NaN: the first one, at or after the start time); Inf where no
+       tick is left in tspan. Ticks within round-off of each other are one instant, a tick joining the stop before it
+       (3 * 0.2 and 2 * 0.3; sample(-100, 0.1) and sample(0, 0.1) near 0): affectSample! activates each sample at the
+       stop its tick joined. One stop at a time, each from the samples' ticks next to the last: a table of the ticks
+       over tspan took all memory where the period is far below the span (MSL Spice3 Inverter: V_pulse's
+       sample(TD, PER) of period 2e-12 s, its problem built over 1 s for the start check, 5e11 ticks). =#
+    function _nextSampleStop(p, after, tspan)
+      local next = Inf
+      local initial = isnan(after)
+      local from = initial ? Float64(tspan[1]) : after
       for (st, dt) in zip(p.state.sampleStart, p.state.sampleInterval)
         (isfinite(st) && isfinite(dt)) || error("array model: sample start and interval must be finite")
         dt > 0 || error("array model: sample interval must be positive")
-        local k = max(0.0, ceil((tspan[1] - st) / dt) - 1)
+        local k = max(0.0, ceil((from - st) / dt) - 1)
         while true
           local (ts, w) = _sampleTick(st, dt, k, tspan)
           ts > tspan[2] && break
-          ts >= tspan[1] && push!(ticks, (ts, w))
+          if initial ? ts >= tspan[1] : ts - after > w
+            next = min(next, ts)
+            break
+          end
+          k + 1 > k || error(string("array model: sample interval ", dt, " below the round-off of the time ", from))
           k += 1
         end
       end
-      #= ticks within round-off of each other are one instant, a tick joining the stop before it (3 * 0.2 and 2 * 0.3;
-         sample(-100, 0.1) and sample(0, 0.1) near 0); affectSample! activates each sample at the stop its tick joined =#
-      sort!(ticks)
-      empty!(stops)
-      for (ts, w) in ticks
-        (isempty(stops) || ts - stops[end] > w) && push!(stops, ts)
-      end
-      return copy(stops)
+      return next
     end
 
+    #= The samples' stops as a callback: the first stop at the start of a solve (a tick at the start time handled
+       there), then each from the one before (affectSample!), a solver stop where within tspan. =#
+    function _sampleStart!(c, u, t, integrator)
+      local stops = integrator.p.state.sampleStops
+      local tspan = integrator.sol.prob.tspan
+      resize!(stops, 2)
+      stops[1] = -Inf
+      stops[2] = _nextSampleStop(integrator.p, NaN, tspan)
+      if stops[2] == t
+        affectSample!(integrator)
+      elseif stops[2] < tspan[2]
+        DifferentialEquations.add_tstop!(integrator, stops[2])
+      end
+      return nothing
+    end
+
+    _sampleDue(u, t, integrator) = t == integrator.p.state.sampleStops[2]
+
     function affect!(integrator)
-      if _atSampleInstant(integrator.p, integrator.t)
+      if _atSampleInstant(integrator.p, integrator.t, integrator.sol.prob.tspan)
         DifferentialEquations.u_modified!(integrator, false)
         return nothing
       end
@@ -2654,7 +2686,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
                                                              rootfind = DifferentialEquations.SciMLBase.RightRootFind,
                                                              initialize = _startHysteresis!),
                                     DiscreteCallback(relationsChanged, affect!; save_positions = (false, false)))
-      N_SAMPLES == 0 || push!(cbs, DiffEqCallbacks.PresetTimeCallback(sampleTimes(p, tspan), affectSample!))
+      N_SAMPLES == 0 || push!(cbs, DiscreteCallback(_sampleDue, affectSample!; initialize = _sampleStart!))
       if !isempty(ASSERTS) || FUNCTION_ASSERTS
         $(nCross == 0 ?
           :(push!(cbs, DiscreteCallback(_assertStep, integrator -> nothing;

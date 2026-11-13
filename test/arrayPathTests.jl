@@ -138,7 +138,7 @@ end
     @test _arrayPathTaken(cb)
     @test OMBackend.getVariableValues(OMBackend.resimulateModel(cb; tspan = (0.0, 1.0), parameters = Dict{String, Any}("lim" => 2.0)), "x")[end] ≈ 1.0 rtol = 1e-6
     @test_throws Exception OMBackend.resimulateModel(cb; tspan = (0.0, 1.0))
-    #= a sample interval that is not finite is refused (sampleTimes did not end) =#
+    #= a sample interval that is not finite is refused (its ticks did not end) =#
     local se = _arrayPathTranslate("ArrayPath.SampleEquation"; scalarized = false)
     @test_throws ErrorException OMBackend.resimulateModel(se; tspan = (0.0, 1.0), parameters = Dict{String, Any}("samplePeriod" => Inf))
     @test_throws Exception OMBackend.resimulateModel(name; tspan = (0.0, 1.0), parameters = Dict("n" => 4))
@@ -1475,5 +1475,135 @@ end
       local ed = run("EnumDefaultStart", scalarized)
       @test at(ed, "i[1]", [0.1, 0.7]) == [10.0, 30.0] && at(ed, "i[2]", [0.1, 0.7]) == [10.0, 20.0]
     end
+  end
+
+  @testset "the plan's folds in the committed model, if-equations in for-equations, time events, sample stops" begin
+    #= an if-equation in a for-equation that index reduction differentiates: the ramp's if-expression, lifted to an
+       if-equation (`ifEq_tmp = ...` per branch), in the for-equation over the two masses rolled into one class; the
+       position constraint is differentiated twice, branch by branch (it was refused: "differentiating a IF_EQUATION
+       in a for-equation"; MSL Spice3's V_pulse sources). Each mass follows its ramp: v its slope, f zero. =#
+    local ramps = Modelica"""
+      model DrivenMass "a mass whose position a ramp gives: v and f are the ramp's derivatives"
+        parameter Real startTime = 0.5;
+        parameter Real height = 1;
+        parameter Real duration = 1;
+        parameter Real m = 1;
+        Real x;
+        Real v;
+        Real f;
+      equation
+        x = if time < startTime then 0
+            else if time < startTime + duration then (time - startTime) * height / duration else height;
+        der(x) = v;
+        m * der(v) = f;
+      end DrivenMass;
+
+      model RolledRampConstraint
+        DrivenMass a(startTime = 0.5);
+        DrivenMass b(startTime = 1);
+      end RolledRampConstraint;
+      """
+    for (stop, expected) in ((1.2, [0.7, 1.0, 0.2, 1.0, 0.0]), (1.8, [1.0, 0.0, 0.8, 1.0, 0.0]))
+      local (sr, ar, _) = _bothWaysOf(ramps, "RolledRampConstraint", ["a.x", "a.v", "b.x", "b.v", "b.f"];
+                                      tspan = (0.0, stop))
+      @test ar ≈ expected atol = 1e-9
+      @test sr ≈ expected atol = 1e-9
+    end
+    #= a function's output that is zero for every value of its arguments (the simulation code's interpretation: a
+       junction without area has no capacitance) takes der(v) out of the plan's structure: v is no state. The
+       committed model kept the term and the state (MSL Spice3's MOSFET capacitances: "no unknown left for
+       0 = S.v - Sinternal"). Alone, and two of one class rolled (the zero an array's, the equation a for-equation).
+       v = g u / (1 + g). =#
+    local junctions = Modelica"""
+      function junctionCapacitance "none for a junction without area (not inlined: an algorithm with an if)"
+        input Real v;
+        input Real area;
+        output Real c;
+      algorithm
+        if area > 0 then
+          c := area * (1 + v * v);
+        else
+          c := 0;
+        end if;
+      end junctionCapacitance;
+
+      model Junction "a node behind a conductance: its voltage a state only where the junction has a capacitance"
+        parameter Real area = 0;
+        parameter Real g = 2;
+        Real u;
+        Real v;
+        Real c;
+        Real ic;
+      equation
+        c = junctionCapacitance(v, area);
+        ic = c * der(v);
+        g * (u - v) = ic + v;
+      end Junction;
+
+      model ZeroJunction
+        Junction a;
+      equation
+        a.u = sin(time);
+      end ZeroJunction;
+
+      model ZeroJunctions
+        Junction a(g = 2);
+        Junction b(g = 4);
+      equation
+        a.u = sin(time);
+        b.u = cos(time);
+      end ZeroJunctions;
+      """
+    local (sj, aj, _) = _bothWaysOf(junctions, "ZeroJunction", ["a.v", "a.ic"])
+    @test aj ≈ [2 * sin(1) / 3, 0.0] atol = 1e-9
+    @test sj ≈ aj atol = 1e-9
+    local (sjs, ajs, _) = _bothWaysOf(junctions, "ZeroJunctions", ["a.v", "b.v", "b.ic"])
+    @test ajs ≈ [2 * sin(1) / 3, 4 * cos(1) / 5, 0.0] atol = 1e-9
+    @test sjs ≈ ajs atol = 1e-9
+    #= a relation of time and a discrete variable is a time event at its exact time (OpenModelica's
+       timeEventTrigger), as one of time and parameters: with a state event's hysteresis, 1e-10 (1 + |time|), the
+       pulse of 0.5 ps never ended within this run of 10 ps (x = 1e-11; MSL Spice3 Inverter's sources). The first
+       step given: left to the solver it is cut to the first stop, 2 ps, and OrdinaryDiffEqCore 4.19.1 interpolates an
+       event in such a step with the step proposed before the cut (x = 0.1 ps at the first edge; fixed in 4.20,
+       SciML/OrdinaryDiffEq.jl#4664). The samples' stops come one at a time: the 1001 of the span, each from the one
+       before, not a table over the span the problem is built with. =#
+    local pulses = Modelica"""
+      model PicoPulse "5 pulses of 0.5 ps, each from the time a sample sets"
+        parameter Real period = 2e-12;
+        parameter Real width = 0.5e-12;
+        discrete Real T0(start = 0, fixed = true);
+        Real y;
+        Real x(start = 0, fixed = true);
+      equation
+        when sample(0, period) then
+          T0 = time;
+        end when;
+        y = if time < T0 + width then 1 else 0;
+        der(x) = y;
+      end PicoPulse;
+
+      model Ticks "1001 ticks in 1 s"
+        Integer n(start = 0, fixed = true);
+        Real x(start = 1, fixed = true);
+      equation
+        der(x) = -x;
+        when sample(0, 1e-3) then
+          n = pre(n) + 1;
+        end when;
+      end Ticks;
+      """
+    local pico::String = _translateProgram(pulses, "PicoPulse"; scalarized = false)
+    @test _arrayPathTaken(pico)
+    local ps = OMBackend.simulateModel(pico; tspan = (0.0, 1.0e-11), dt = 1.0e-15)
+    @test ps.retcode == ReturnCode.Success
+    @test OMBackend.getVariableValues(ps, "x")[end] ≈ 2.5e-12 rtol = 1e-9
+    local ticks::String = _translateProgram(pulses, "Ticks"; scalarized = false)
+    @test _arrayPathTaken(ticks)
+    local (tp, tc) = OMBackend.getMTKProblem(ticks)
+    @test tp.tspan == (0.0, 1.0)
+    local DE = OMBackend.DifferentialEquations
+    local tsol = Base.invokelatest(DE.solve, tp, DE.Rodas5P(); callback = tc)
+    @test OMBackend.getVariableValues(tsol, "n")[end] == 1001.0
+    @test length(tp.p.state.sampleStops) == 2
   end
 end

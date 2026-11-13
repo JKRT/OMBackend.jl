@@ -120,10 +120,6 @@ function whenTargets!(out::Set{Symbol}, eq::IR.Equation, variables::IR.VariableS
   return nothing
 end
 
-"The variable a reference is to or into: its own name, else (an element) its array's."
-variableNameOf(c::IR.ComponentRef, variables::IR.VariableSet)::Symbol =
-  (IR.hasSubscripts(c) && !haskey(variables, c.name)) ? unsubscriptedName(c) : c.name
-
 #= ==================================================================================== =#
 #= Clusters evaluated at every pass                                                     =#
 #= ==================================================================================== =#
