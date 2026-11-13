@@ -151,6 +151,14 @@ function blockSolve!(s::BlockSolver, residual!::R, du::AbstractVector, a::Abstra
     s.x .= s.y
     ok = _blockNewton!(s, residual!, args, true)
   end
+  if !(ok && !s.rankDeficient)
+    #= a loop linear in its unknowns and badly conditioned (ideal switches: both thyristors of a commutating pair
+       conducting for a pass of the event iteration, 1e-5 ohm against 1e5): the forward differences' round-off,
+       1e-8 of the Jacobian, times the condition leaves Newton's method no contraction. Differences over a step of
+       the unknowns' size are exact for a linear loop (`coarse`) =#
+    s.x .= s.y
+    ok = _blockNewton!(s, residual!, args, true; coarse = true)
+  end
   ok = ok && !s.rankDeficient
   if ok
     s.y .= s.x
@@ -178,13 +186,14 @@ iteration and the checks after the steps, its hysteresis 1e-12 at a tolerance of
 guess is kept when its first step is at round-off already; the steps of a Jacobian of this call that stop contracting
 end within 1e-5 (EngineV6's forces of 1e9 cancel to zero only that far).
 """
-function _blockNewton!(s::BlockSolver, residual!::R, args::Tuple, full::Bool)::Bool where {R <: Function}
+function _blockNewton!(s::BlockSolver, residual!::R, args::Tuple, full::Bool;
+                       coarse::Bool = false)::Bool where {R <: Function}
   local x::Vector{Float64} = s.x; local r::Vector{Float64} = s.r; local dx::Vector{Float64} = s.dx
   residual!(r, x, args...)
   s.residuals += 1
   local fresh::Bool = false
   if full || !s.factored
-    _blockJacobian!(s, residual!, args) || return false
+    _blockJacobian!(s, residual!, args; coarse) || return false
     fresh = true
   end
   local maxiters::Int = full ? 50 : 10 + length(s.groups)
@@ -216,12 +225,12 @@ function _blockNewton!(s::BlockSolver, residual!::R, args::Tuple, full::Bool)::B
     step <= 1.0 && continue
     (rate >= 1.0 && fresh && step <= 1.0e5) && return all(isfinite, r)
     if full
-      _blockJacobian!(s, residual!, args) || return false
+      _blockJacobian!(s, residual!, args; coarse) || return false
     elseif rate > 0.5 || step * rate^(maxiters - iteration) > 1.0
       #= diverging with a Jacobian of this call: the full Newton's; slow with one: on with it =#
       (fresh && rate >= 1.0) && return false
       if !fresh
-        _blockJacobian!(s, residual!, args) || return false
+        _blockJacobian!(s, residual!, args; coarse) || return false
         fresh = true
         previous = Inf
       end
@@ -256,13 +265,13 @@ derivative there (MSL QuasiStatic SinglePhase Rectifier's power balance `v * con
 values, the loop never solved and its 83 variables NaN through a run that ended in Success), and the least-norm step
 of the other rows leaves that point.
 """
-function _blockJacobian!(s::BlockSolver, residual!::R, args::Tuple)::Bool where {R <: Function}
+function _blockJacobian!(s::BlockSolver, residual!::R, args::Tuple; coarse::Bool = false)::Bool where {R <: Function}
   local x::Vector{Float64} = s.x; local xp::Vector{Float64} = s.xp; local h::Vector{Float64} = s.h
   local J::_SPARSE.SparseMatrixCSC{Float64, Int} = s.J
   for cols in s.groups
     xp .= x
     for j in cols
-      h[j] = sqrt(eps(Float64)) * max(1.0, abs(x[j]))
+      h[j] = (coarse ? 1.0 : sqrt(eps(Float64))) * max(1.0, abs(x[j]))
       xp[j] += h[j]
     end
     residual!(s.rp, xp, args...)

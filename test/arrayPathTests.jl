@@ -479,6 +479,65 @@ end
     local (sd, ad, _) = _bothWays("ArrayPath.IdealDiodeLoop", ["q"])
     @test isapprox(ad[1], (1 - 1e-5) / (pi * 1.00001); atol = 1e-6)
     @test abs(sd[1] - ad[1]) < 1e-6
+    #= three thyristors to one load: the loop of all is a large block, cut at each `off`; a commutation passes
+       through both conducting =#
+    local (st, at, _) = _bothWays("ArrayPath.ThyristorCommutation", ["q"])
+    @test isapprox(at[1], 3 * sqrt(3) / (2 * pi) * cosd(20); atol = 1e-3)
+    @test abs(st[1] - at[1]) < 1e-4
+  end
+
+  @testset "Lifted clusters of discrete equations: their initialized values, a mixed system's search" begin
+    #= the cluster's initial when-equation (initial() true) gives its variables their initialized values; where the
+       cluster runs in the start's iteration pre() of them is that value, not the start (`initialAlgorithms!`): MSL
+       Rotational.Examples.Friction's clutch at a relative speed of -10 was Stuck, its mode's start Unknown =#
+    local (si, ai, _) = _bothWays("ArrayPath.InitialCluster", ["x"]; tspan = (0.0, 0.5))
+    @test isapprox(ai[1], -0.5; atol = 1e-6) && isapprox(si[1], -0.5; atol = 1e-6)
+    #= a friction element's equations: sa, a and f in a loop with startForward and locked =#
+    local (ss, as, solStick) = _bothWays("ArrayPath.StickSlip", ["v"]; tspan = (0.0, 2.0))
+    @test isapprox(as[1], 2 * (cos(asin(0.75)) - cos(2)) - (2 - asin(0.75)); atol = 1e-5)
+    @test abs(ss[1] - as[1]) < 1e-3
+    #= relations that cycle in the event iteration's sweeps (MSL Rotational SimpleGearShift at its shift: "the event
+       iteration did not settle"): the combination that gives itself back is searched for, fewest changes first
+       (`_searchRelations!`). Here two relations: (true, false) and (false, true) give each other, (false, false)
+       gives (true, false), (true, true) itself =#
+    local generation::Module = OMBackend.CodeGeneration.ArrayODEGen
+    local p = solStick.prob.p
+    fill!(p.rel, false)
+    p.rel[1] = true
+    local flips::BitVector = falses(length(p.rel))
+    flips[1:2] .= true
+    local next = Dict((true, true) => (true, true), (true, false) => (false, true), (false, true) => (true, false),
+                      (false, false) => (true, false))
+    local equations! = (du, a, u, q, t, z, mode, fire) -> begin
+      if mode
+        local r::Tuple{Bool, Bool} = next[(a[1] >= 2.0, isodd(round(Int, a[1])))]
+        q.rel[1] = r[1]
+        q.rel[2] = r[2]
+      end
+      a[1] = 2 * q.rel[1] + q.rel[2]
+      nothing
+    end
+    local whens! = (du, a, u, q, t, z, mode, fire) -> nothing
+    local a::Vector{Float64} = zeros(length(p.abuf))
+    a[1] = 2.0
+    @test generation._searchRelations!(equations!, whens!, zeros(1), a, zeros(1), p, 0.0, true, copy(p.rel), copy(p.d),
+                                       flips)
+    @test p.rel[1] && p.rel[2]
+  end
+
+  @testset "A large loop that is linear and badly conditioned: differences over a step of the unknowns' size" begin
+    #= forward differences carry the residuals' round-off into the Jacobian, 1e-8 of it; at a condition of 1e10
+       Newton's method does not contract with it and the loop's unknowns were NaN (MSL ThyristorBridge2mPulse_R: both
+       thyristors of a commutating pair conducting for a pass of the event iteration; DtNaN). `blockSolve!` then
+       takes differences over a step of the unknowns' size, exact for a linear loop =#
+    local generation::Module = OMBackend.CodeGeneration.ArrayODEGen
+    local A::Matrix{Float64} = [1.0 1.0; 1.0 1.0 + 1e-10]
+    local b::Vector{Float64} = A * [1.0, 2.0]
+    local solver = generation.BlockSolver(generation._SPARSE.sparse(ones(2, 2)), [1, 2], [0.0, 0.0])
+    local residual! = (res, y, du, a, u, p, t, z, mode, fire) -> (res .= A * y .- b; a .= y; nothing)
+    generation.blockSolve!(solver, residual!, zeros(1), zeros(2), zeros(1), nothing, 0.0, nothing, false, false)
+    @test solver.failures == 0
+    @test isapprox(solver.x, [1.0, 2.0]; rtol = 1e-5)
   end
 
   @testset "Function arguments and results: arrays as wholes, the first of several outputs, free parameters" begin

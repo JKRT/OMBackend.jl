@@ -2893,4 +2893,64 @@ package ArrayPath
     end for;
     der(q) = i[1];
   end IdealDiodeLoop;
+
+  model ThyristorCommutation "three ideal thyristors from three phase sources to one load (a center tap rectifier), fired 20 degrees after the natural commutation: the loop of all (a discrete unknown per thyristor, cut there); when one fires the last still conducts, and for a pass of the event iteration both do: a near short (2 Ron = 2e-5 ohm under 0.6 V), a linear loop of condition 1e10; q(1) = 3 sqrt(3) / (2 pi) cos(20 degrees) within 1e-3"
+    constant Real pi = 3.141592653589793;
+    parameter Real R = 1;
+    parameter Real Ron = 1e-5;
+    parameter Real Goff = 1e-5;
+    Real v[3];
+    Real s[3](each start = 0);
+    Real vd[3];
+    Real i[3];
+    Real vL;
+    Boolean fire[3];
+    Boolean off[3](each start = true);
+    Real q(start = 0, fixed = true);
+  equation
+    for k in 1:3 loop
+      v[k] = sin(2 * pi * time - (k - 1) * 2 * pi / 3);
+      fire[k] = sin(2 * pi * time - (k - 1) * 2 * pi / 3 - pi / 6 - pi / 9) > 0;
+      off[k] = s[k] < 0 or pre(off[k]) and not fire[k];
+      vd[k] = s[k] * (if off[k] then 1 else Ron);
+      i[k] = s[k] * (if off[k] then Goff else 1);
+      v[k] - vL = vd[k];
+    end for;
+    vL = R * (i[1] + i[2] + i[3]);
+    der(q) = vL;
+  end ThyristorCommutation;
+
+  model InitialCluster "discrete equations whose initial() term decides them at the initialization (MSL PartialFriction's startBackward = ... or initial() and w < 0, mode start Unknown): back and mode = -1 there, x rises from -1 with slope 1; with pre(mode) the start value again in the start's iteration, mode was 0 and x stayed"
+    Real x(start = -1, fixed = true);
+    Boolean back(start = false, fixed = true);
+    Integer mode(start = 3, fixed = true);
+  equation
+    back = pre(mode) == 0 and x < -2 or initial() and x < 0;
+    mode = if (pre(mode) == -1 or back) and x < 0 then -1 else 0;
+    der(x) = if mode == -1 then 1 else 0;
+  end InitialCluster;
+
+  model StickSlip "a mass with Coulomb friction and a stiction peak (MSL PartialFriction's equations), pushed by 2 sin(t): stuck until 2 sin(t) > Fmax = 1.5 at asin(0.75), then sliding against F0 = 1: v(2) = 2 (cos(asin(0.75)) - cos(2)) - (2 - asin(0.75)) = 1.00324; sa, a and f in a loop with the discrete startForward and locked (a mixed system)"
+    parameter Real m = 1;
+    parameter Real F0 = 1;
+    parameter Real Fmax = 1.5;
+    Real u = 2 * sin(time);
+    Real v(start = 0, fixed = true);
+    Real a;
+    Real sa;
+    Real f;
+    Boolean startForward(start = false, fixed = true);
+    Boolean startBackward(start = false, fixed = true);
+    Boolean locked;
+    Integer mode(start = 0, fixed = true);
+  equation
+    der(v) = a;
+    m * a = u - f;
+    startForward = pre(mode) == 0 and (sa > Fmax or pre(startForward) and sa > F0) or pre(mode) == -1 and v > 1e-10 or initial() and v > 0;
+    startBackward = pre(mode) == 0 and (sa < -Fmax or pre(startBackward) and sa < -F0) or pre(mode) == 1 and v < -1e-10 or initial() and v < 0;
+    locked = not (pre(mode) == 1 or startForward or pre(mode) == -1 or startBackward);
+    a = if locked then 0 else if startForward then sa - Fmax else if startBackward then sa + Fmax else if pre(mode) == 1 then sa - Fmax else sa + Fmax;
+    f = if locked then sa else if startForward then F0 else if startBackward then -F0 else if pre(mode) == 1 then F0 else -F0;
+    mode = if (pre(mode) == 1 or startForward) and v > 0 then 1 else if (pre(mode) == -1 or startBackward) and v < 0 then -1 else 0;
+  end StickSlip;
 end ArrayPath;

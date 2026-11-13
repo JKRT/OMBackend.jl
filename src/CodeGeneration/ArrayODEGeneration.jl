@@ -155,11 +155,12 @@ mutable struct ArrayRuntimeState
   leftLimit::Tuple{Float64, Vector{Float64}}
   atStart::Union{Nothing, ArrayStartState}
   rootLog::Vector{RootLogEntry}
+  forced::Bool   #= the buffered relations hold a combination being tried (`_searchRelations!`) =#
 end
 ArrayRuntimeState(nSamples::Int, strings::Vector{String}) =
   ArrayRuntimeState(zeros(nSamples), zeros(nSamples), Float64[], Dict{Tuple{Int, Int, Int}, Any}(), Set{Any}(), false, false,
                     (NaN, Float64[]), nothing, (Float64[], Float64[], Bool[], Float64[]), strings, (NaN, Float64[]),
-                    nothing, RootLogEntry[])
+                    nothing, RootLogEntry[], false)
 
 struct ArrayModelParameters
   values::Vector{Float64}
@@ -1147,6 +1148,18 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
   local (initBody::Vector{Any}, _) = _initialResiduals(g)
   #= initial algorithms: code, and what they assign =#
   local initAlgOuts::Set{String} = _initAlgAssigned(g)
+  #= the variables of lifted clusters of discrete equations that an initial algorithm gives their initialized values
+     (the cluster's initial when-equation, `initial()` true): where the cluster runs at the start's iteration, pre()
+     of them is that value, not the start (`initialAlgorithms!`) =#
+  local clusterNames::Set{String} = Set{String}()
+  for w::WhenClass in g.whens, (kind::Symbol, target::Ref, _) in w.body
+    (w.everyEvent && kind == :assign) && push!(clusterNames, target.name)
+  end
+  local clusterPre::Vector{Int} = Int[]
+  for nm::String in sort!(collect(intersect(clusterNames, initAlgOuts)))
+    g.vars[nm].kind == :discrete || continue
+    append!(clusterPre, (g.vars[nm].offset + 1):(g.vars[nm].offset + prod(g.vars[nm].dims; init = 1)))
+  end
   g.relBase = 0; g.relCount = 0
   local initAlgBody = Any[]
   local (initAlgOrdered::Vector{AlgClass}, initAlgRefresh::BitVector) = _initAlgPlan(g)
@@ -1403,7 +1416,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       #= a lifted cluster of discrete equations (`everyEvent`): wherever the discrete equations run in event mode, at
          every pass of every event and of the start's iteration (pre() the initial values), its conditions the events'
          sources =#
-      local guard = w.everyEvent ? :mode : :(fire && ($(rises[b])))
+      local guard = w.everyEvent ? :(mode || p.state.forced) : :(fire && ($(rises[b])))
       inst = inst === nothing ? Expr(:if, guard, blk) : Expr(b == 1 ? :if : :elseif, guard, blk, inst)
     end
     push!(whenConds, w.nslots == 0 ? Expr(:let, :(_col = 1), cond) : _loopCode(w.nslots, w.domain, collect(1:size(w.domain, 2)), cond))
@@ -2062,6 +2075,12 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
           $(initAlgCode...)
         end
         $(initAlgWriteBack...)
+        #= a lifted cluster's variables: their initialized values are pre() of them from here on (a friction
+           element's mode, Backward by `initial() and w_relfric < 0`; with pre() the start, Unknown, the start's
+           iteration made a clutch at a relative speed of -10 Stuck: MSL Rotational.Examples.Friction) =#
+        for _k in $clusterPre
+          p.dpre[_k] = p.d[_k]
+        end
       finally
         p.checking[1] = false
       end
@@ -2172,18 +2191,25 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
 
     #= One sweep at (u, t): passes with the same pre() until nothing changes (a fired body runs in each: with pre()
        fixed it gives the same values). Returns whether they settled. =#
-    function _settle!(du, a, u, p, t, fire::Bool)
+    function _settle!(du, a, u, p, t, fire::Bool, searched::Bool = false)
       p.upre .= u; p.ureinit .= u
       empty!(p.state.whenMemo)
-      for _ in 1:50
+      local rel0 = copy(p.rel); local d0 = copy(p.d)
+      local flips = falses(length(rel0))
+      for pass in 1:50
         local relBefore = copy(p.rel); local dBefore = copy(p.d)
         local rBefore = copy(p.ureinit); local wBefore = copy(p.wnew); local eBefore = copy(p.evv)
         equations!(du, a, u, p, t, nothing, true, fire)
         whens!(du, a, u, p, t, nothing, true, fire)
         (relBefore == p.rel && dBefore == p.d && rBefore == p.ureinit && wBefore == p.wnew && eBefore == p.evv) &&
           return true
+        pass > 25 && (flips .|= relBefore .!= p.rel)
       end
-      return false
+      #= relations that keep changing (a mixed system that cycles: a bridge's commutation): the combination of their
+         values that gives itself back, then the sweeps from it =#
+      searched && return false
+      $(_searchRelations!)(equations!, whens!, du, a, u, p, t, fire, rel0, d0, flips) || return false
+      return _settle!(du, a, u, p, t, fire, true)
     end
 
     #= The initialization's solution at (u, t): the relations, the when-conditions and the discrete variables the
@@ -2607,6 +2633,61 @@ function _readsParameterOf(x::IR, names::Set{String})::Bool
   x isa Rel && return _readsParameterOf(x.lhs, names) || _readsParameterOf(x.rhs, names)
   x isa EvFn && return _readsParameterOf(x.arg, names)
   x isa Pre && return _readsParameterOf(x.ref, names)
+  return false
+end
+
+"""
+    _searchRelations!(equations!, whens!, du, a, u, p, t, fire, rel0, d0, flips) -> Bool
+
+The solution of a mixed system whose relations cycle in the event iteration's sweeps (`flips`: the relations that
+kept changing): the combinations of their values, fewest changes from the values before the sweeps (`rel0`, the
+discrete values `d0`) first; each is put in place of the buffered relations, the equations and the lifted clusters
+of discrete equations evaluated with them (`forced`: the relations as buffered, the discrete variables from them,
+until those stay) and then once with the relations evaluated on that solution. The first combination that gives
+itself back is left in place: true. OpenModelica solves a mixed system so (a friction element's `startForward` and
+`locked` with the torque that decides them); the scalarized path's `_search!` (discreteClusters.jl). False, the values
+before the sweeps restored, where none does or more than 12 relations changed.
+"""
+function _searchRelations!(equations!::F, whens!::W, du::AbstractVector, a::AbstractVector, u::AbstractVector,
+                           p::ArrayModelParameters, t::Real, fire::Bool, rel0::Vector{Bool}, d0::Vector{Float64},
+                           flips::BitVector)::Bool where {F <: Function, W <: Function}
+  local slots::Vector{Int} = findall(flips)
+  local trace::Bool = _OMBACKEND.envSwitch("OMBACKEND_ARRAY_TRACE")
+  trace && println("[arraycode] relation search at t = ", t, ": relations ", slots)
+  (isempty(slots) || length(slots) > 12) && return false
+  local masks::Vector{Int} = sort!(collect(0:((1 << length(slots)) - 1)); by = count_ones)
+  for mask::Int in masks
+    p.rel .= rel0
+    p.d .= d0
+    for (k::Int, slot::Int) in enumerate(slots)
+      (mask >> (k - 1)) & 1 == 1 && (p.rel[slot] = !rel0[slot])
+    end
+    local candidate::Vector{Bool} = copy(p.rel)
+    #= the discrete variables of these relations: a loop cut at one reads its last value, so until they stay =#
+    local stable::Bool = false
+    p.state.forced = true
+    try
+      for _ in 1:6
+        local dBefore::Vector{Float64} = copy(p.d)
+        equations!(du, a, u, p, t, nothing, false, fire)
+        whens!(du, a, u, p, t, nothing, false, false)
+        if dBefore == p.d
+          stable = true
+          break
+        end
+      end
+    finally
+      p.state.forced = false
+    end
+    (stable && all(isfinite, a) && all(isfinite, du)) || continue
+    equations!(du, a, u, p, t, nothing, true, fire)
+    whens!(du, a, u, p, t, nothing, true, fire)
+    trace && println("[arraycode]   combination ", candidate[slots], " gives ", p.rel[slots], "; others changed: ",
+                     setdiff(findall(p.rel .!= candidate), slots))
+    p.rel == candidate && return true
+  end
+  p.rel .= rel0
+  p.d .= d0
   return false
 end
 
