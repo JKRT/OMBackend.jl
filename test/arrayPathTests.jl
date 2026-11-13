@@ -1619,4 +1619,88 @@ end
     @test OMBackend.getVariableValues(tsol, "n")[end] == 1001.0
     @test length(tp.p.state.sampleStops) == 2
   end
+
+  @testset "inStream of three or more connectors; an if-expression on a for-equation's iterator" begin
+    #= a stream connection of four connectors: the frontend writes the mixing enthalpy with OMCPositiveMax(flow, eps)
+       (NFConnectEquations.makePositiveMaxCall), max in the array code as in the scalar code (it was refused:
+       "function OMCPositiveMax"; MSL Fluid DrumBoiler, ThreeTanks). 0.4 at h = 10 and 0.2 at h = 4 flow into the
+       junction: h = 8 there, to the eps of 1e-7 =#
+    local streams = Modelica"""
+      connector FluidPort
+        Real p;
+        flow Real m_flow;
+        stream Real h_outflow;
+      end FluidPort;
+
+      model Boundary
+        parameter Real p0 = 1;
+        parameter Real h0 = 0;
+        FluidPort port;
+      equation
+        port.p = p0;
+        port.h_outflow = h0;
+      end Boundary;
+
+      model Resistance
+        FluidPort a;
+        FluidPort b;
+      equation
+        a.m_flow + b.m_flow = 0;
+        a.m_flow = a.p - b.p;
+        a.h_outflow = inStream(b.h_outflow);
+        b.h_outflow = inStream(a.h_outflow);
+      end Resistance;
+
+      model Probe "no flow: the mixing enthalpy of what flows into the junction"
+        FluidPort port;
+        Real h;
+      equation
+        port.m_flow = 0;
+        port.h_outflow = 0;
+        h = inStream(port.h_outflow);
+      end Probe;
+
+      model Junction
+        Boundary hot(p0 = 2, h0 = 10);
+        Boundary cold(p0 = 1.8, h0 = 4);
+        Boundary sink(p0 = 1, h0 = 0);
+        Resistance r1;
+        Resistance r2;
+        Resistance r3;
+        Probe probe;
+        Real x(start = 0, fixed = true);
+      equation
+        connect(hot.port, r1.a);
+        connect(cold.port, r2.a);
+        connect(r1.b, r3.a);
+        connect(r2.b, r3.a);
+        connect(probe.port, r3.a);
+        connect(r3.b, sink.port);
+        der(x) = probe.h;
+      end Junction;
+      """
+    local (sj, aj, _) = _bothWaysOf(streams, "Junction", ["probe.h", "x", "r3.a.m_flow"])
+    @test aj ≈ [8.0, 8.0, 0.6] atol = 1e-5
+    @test sj ≈ aj atol = 1e-8
+    #= `x[i] = if i == 1 then u else 0.5 * x[i - 1]`: each instance its branch, the class split by the condition on
+       the iterator (`_iteratorIf`). As one class the branch not taken was read at every instance: "subscript 0 out of
+       1:3 on x" (MSL StateGraph's steps, `outPort[i].available = if i == 1 then active else outPort[i - 1]...`) =#
+    local chains = Modelica"""
+      model ChainedHalves "x = {u, u / 2, u / 4} with u = 1 + time"
+        parameter Integer n = 3;
+        Real u;
+        Real x[n];
+        Real s(start = 0, fixed = true);
+      equation
+        u = 1 + time;
+        for i in 1:n loop
+          x[i] = if i == 1 then u else 0.5 * x[i - 1];
+        end for;
+        der(s) = x[n];
+      end ChainedHalves;
+      """
+    local (sc, ac, _) = _bothWaysOf(chains, "ChainedHalves", ["x[1]", "x[3]", "s"])
+    @test ac ≈ [2.0, 0.5, 0.375] atol = 1e-6
+    @test sc ≈ ac atol = 1e-6
+  end
 end

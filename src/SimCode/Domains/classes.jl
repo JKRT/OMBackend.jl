@@ -333,7 +333,10 @@ const MATH_BUILTINS = Dict("sin" => :sin, "cos" => :cos, "tan" => :tan, "asin" =
                            "acos" => :acos, "atan" => :atan, "atan2" => :atan, "exp" => :exp,
                            "log" => :log, "log10" => :log10, "sqrt" => :sqrt, "abs" => :abs,
                            "sinh" => :sinh, "cosh" => :cosh, "tanh" => :tanh,
-                           "min" => :min, "max" => :max, "sign" => :sign)
+                           "min" => :min, "max" => :max, "sign" => :sign,
+                           #= the frontend's positiveMax of a stream connection (inStream of three or more
+                              connectors): max(flow, eps), as the scalar code (modelicaBuiltins.jl) =#
+                           "OMCPositiveMax" => :max)
 
 const MATH_WRAPPED = ("sin", "cos", "tan", "asin", "acos", "atan", "atan2", "sinh", "cosh", "tanh", "exp", "log", "log10")
 
@@ -1478,7 +1481,9 @@ function _match(el::InstanceTable, nU::Int, texts::Vector{String})::Vector{Int}
     matchCol[u] = r
     nOut += 1
   end
-  N == nU - nOut || ns("$(N) equations for $(nU - nOut) unknowns (and $(nOut) assigned by algorithms)")
+  #= more equations than unknowns: the search below names one without an unknown and those it competes with =#
+  local counts::String = "$(N) equations for $(nU - nOut) unknowns (and $(nOut) assigned by algorithms)"
+  N < nU - nOut && ns(counts)
   local vanishes::Bool = !isempty(el.vanishing)
   for r in 1:N
     for i in el.uptr[r]:(el.uptr[r + 1] - 1)
@@ -1522,7 +1527,8 @@ function _match(el::InstanceTable, nU::Int, texts::Vector{String})::Vector{Int}
       end
       push!(rows, matchCol[c]); push!(iters, el.uptr[matchCol[c]])
     end
-    found || ns("structurally singular (index reduction needed, or under/over-determined): no unknown left for " *
+    found || ns((N > nU - nOut ? counts * ": " : "structurally singular (index reduction needed, or " *
+                                                 "under/over-determined): ") * "no unknown left for " *
                 first(texts[el.class[r0]], 120) * _overdeterminedSet(el, matchCol, visited, stamp, r0, texts))
   end
   return matchRow

@@ -1019,6 +1019,43 @@ function _addInitialEquations!(g::Gen, equations::Vector{SC.Equation})::Nothing
   return nothing
 end
 
+"Whether `x` reads an iterator of its for-equation."
+_readsSlot(x::IR)::Bool =
+  x isa Slot || (x isa Op && any(_readsSlot, x.args)) || (x isa Ref && any(_readsSlot, x.subs))
+
+"What `_iteratorIf` finds: the if-expression and its condition."
+const IteratorIf = Tuple{SC.IFEXP, IR}
+
+"""
+    _iteratorIf(g, e, iters) -> Union{Nothing, IteratorIf}
+
+The first if-expression in `e` (top-down) whose condition is static (`_isStatic`: literals, parameters, iterators)
+and reads an iterator, with that condition; nothing where there is none. A condition `toIR` does not take is not one.
+"""
+function _iteratorIf(g::Gen, e::SC.Exp, iters::Dict{String, Int})::Union{Nothing, IteratorIf}
+  local found::Base.RefValue{Union{Nothing, IteratorIf}} = Base.RefValue{Union{Nothing, IteratorIf}}(nothing)
+  local visit = (x::SC.Exp, acc::Base.RefValue{Union{Nothing, IteratorIf}}) -> begin
+    acc[] === nothing || return (x, false, acc)
+    x isa SC.IFEXP || return (x, true, acc)
+    local condition::Union{Nothing, IR} = try
+      toIR(g, x.cond, Ctx(iters, Int[], Base.RefValue(0), true))
+    catch err
+      err isa NotSupported || rethrow()
+      nothing
+    end
+    (condition !== nothing && _isStatic(g, condition) && _readsSlot(condition)) || return (x, true, acc)
+    acc[] = (x, condition)
+    return (x, false, acc)
+  end
+  SC.traverseExpTopDown(e, visit, found)
+  return found[]
+end
+
+"`e` with the if-expression `target` (that node) replaced by `branch`."
+_withBranch(e::SC.Exp, target::SC.IFEXP, branch::SC.Exp)::SC.Exp =
+  first(SC.traverseExpTopDown(e, (x::SC.Exp, acc::Nothing) -> x === target ? (branch, false, acc) : (x, true, acc),
+                              nothing))
+
 """
 The classes of an equation of the simulation code: a for-equation's body over its iterator's range (the domain
 crossed), a scalar equation one class over the domain, an assert one checked over it.
@@ -1054,6 +1091,21 @@ function _addEquation!(g::Gen, eq::SC.Equation, iterNames::Vector{String}, idom:
     end
     return
   elseif eq isa SC.EQUATION
+    #= an if-expression on an iterator (MSL StateGraph's
+       `outPort[i].available = if i == 1 then active else outPort[i - 1].available and not outPort[i - 1].reset`):
+       each instance its branch, the class split by the condition (as an if-equation's, `_addIfEquation!`). As one
+       class the branch not taken was read at every instance: "subscript 0 out of 1:1" at i = 1 =#
+    local split::Union{Nothing, IteratorIf} = nIter == 0 ? nothing : _iteratorIf(g, eq.rhs, iters)
+    (split === nothing && nIter > 0) && (split = _iteratorIf(g, eq.lhs, iters))
+    if split !== nothing
+      local taken::Vector{Int} = Int[j for j in 1:size(idom, 2) if _evalStatic(g, split[2], idom, j) == true]
+      local others::Vector{Int} = setdiff(1:size(idom, 2), taken)
+      for (branch::SC.Exp, columns::Vector{Int}) in ((split[1].thenExp, taken), (split[1].elseExp, others))
+        _addEquation!(g, SC.EQUATION(_withBranch(eq.lhs, split[1], branch), _withBranch(eq.rhs, split[1], branch),
+                                     eq.source, eq.attr), iterNames, idom[:, columns]; initial = initial)
+      end
+      return
+    end
     #= relations of initial equations are evaluated at the start (no events) =#
     local ctx::Ctx = Ctx(iters, Int[], Base.RefValue(0), initial)
     local lhs::IR = toIR(g, eq.lhs, ctx)
