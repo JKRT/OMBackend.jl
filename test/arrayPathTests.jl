@@ -613,6 +613,61 @@ end
     @test isapprox(solver.x, [1.0, 2.0]; rtol = 1e-5)
   end
 
+  @testset "A large loop whose Newton steps overshoot, or whose residuals throw" begin
+    #= the root of a difference at zero (a pipe's flow at equal pressures): each full Newton step lands as far on
+       the other side, and the loop's unknowns were NaN (MSL Fluid EmptyTanks did not start). `blockSolve!` then
+       shortens the steps until the residuals fall (`_blockDamped!`) =#
+    local generation::Module = OMBackend.CodeGeneration.ArrayODEGen
+    local root = (x::Float64) -> sign(x) * sqrt(abs(x))
+    local residual! = (res, y, du, a, u, p, t, z, mode, fire) ->
+      (res[1] = root(y[1] - y[2]); res[2] = y[1] + y[2] - 3.0; a .= y; nothing)
+    local arguments::Tuple = (zeros(1), zeros(2), zeros(1), nothing, 0.0, nothing, false, false)
+    local plain = generation.BlockSolver(generation._SPARSE.sparse(ones(2, 2)), [1, 2], [3.0, 0.0])
+    plain.x .= plain.y
+    @test !generation._blockAttempt!(plain, residual!, arguments, :full)
+    local solver = generation.BlockSolver(generation._SPARSE.sparse(ones(2, 2)), [1, 2], [3.0, 0.0])
+    generation.blockSolve!(solver, residual!, zeros(1), zeros(2), zeros(1), nothing, 0.0, nothing, false, false)
+    @test solver.failures == 0
+    @test isapprox(solver.x, [1.5, 1.5]; atol = 1e-8)
+    #= residuals that throw at the iterate (the cosine of an infinite angle): a failed solve, the unknowns NaN, no
+       exception (thrown on from the asserts' check after a step it ended MSL MultiBody UniversalConstraint's run) =#
+    local throwing! = (res, y, du, a, u, p, t, z, mode, fire) ->
+      (res[1] = cos(1.0 / (y[1] - 1.0)); res[2] = y[2]; nothing)
+    local thrown = generation.BlockSolver(generation._SPARSE.sparse(ones(2, 2)), [1, 2], [1.0, 1.0])
+    generation.blockSolve!(thrown, throwing!, zeros(1), zeros(2), zeros(1), nothing, 0.0, nothing, false, false)
+    @test thrown.failures == 1
+    @test all(isnan, thrown.x)
+  end
+
+  @testset "A function inlined into an equation: its relations generate no events" begin
+    #= `dp = squareBothWays(q, 1, 4)`, inlined `if q >= 0 then q^2 else -4 q^2`, in the loop of q: as an event's
+       relation its branch was held during the loop's solve (the residual kinked at zero flow: MSL AST_BatchPlant
+       TwoTanks Unstable where the levels meet, EmptyTanks 30200 steps) and a small loop refused it. A function's
+       relations are no events (MLS 3.7.5): `IndexReduction.withoutEvents` =#
+    local (si, ai, _) = _bothWays("ArrayPath.InlinedRelation", ["h[1]", "h[2]", "q", "dp"]; reltol = 1e-8, abstol = 1e-10)
+    local d::Float64 = (sqrt(2) - 1)^2
+    @test isapprox(ai, [1 + d / 2, 1 - d / 2, sqrt(2) - 1, d]; atol = 1e-6)
+    @test maximum(abs.(si .- ai)) < 1e-6
+  end
+
+  @testset "pre() of array elements in an initial for-equation; a field of an if-expression of records" begin
+    #= `pre(above[i]) = x0 >= height[i]` in an initial for-equation was an initial equation without an unknown
+       ("initialization over-determined": six MSL AST_BatchPlant tank models); it gives pre() of each element at the
+       initialization, as the scalar equation's does (`_initialPreStart`). At the start x = 0.9 is inside the band of
+       above[1], which keeps pre()'s true: count 11. (The scalarized route starts with 10: not compared there) =#
+    local startName::String = _arrayPathTranslate("ArrayPath.PreStartInLoop"; scalarized = false)
+    @test _arrayPathTaken(startName)
+    @test _values(OMBackend.simulateModel(startName; tspan = (0.0, 0.01)), ["count"]) == [11.0]
+    local (sp, ap, _) = _bothWays("ArrayPath.PreStartInLoop", ["x", "count"])
+    @test isapprox(ap, [0.5 + 0.4 * cos(1.0), 10.0]; atol = 1e-6)
+    @test maximum(abs.(sp .- ap)) < 1e-6
+    #= `w = {Complex(x, 0) * quarterTurn(1), ...}`: the inlined function's value is an if-expression of records,
+       whose field is the if-expression of its branches' fields (MSL ComplexBlocks ShowTransferFunction's powerOfJ) =#
+    local (sq, aq, _) = _bothWays("ArrayPath.RecordIfField", ["x", "w[1].re", "w[1].im", "w[2].re", "w[2].im"])
+    @test isapprox(aq, [exp(-1), 0.0, exp(-1), -exp(-1), 0.0]; atol = 1e-6)
+    @test maximum(abs.(sq .- aq)) < 1e-6
+  end
+
   @testset "Function arguments and results: arrays as wholes, the first of several outputs, free parameters" begin
     #= `y = f(x)` of a function of two outputs takes the first, an array, by its elements (`SC.TSUB` under a
        subscript); an array variable or a sum of arrays as the argument is the array of its elements

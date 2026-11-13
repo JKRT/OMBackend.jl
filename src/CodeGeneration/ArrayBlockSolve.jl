@@ -146,10 +146,10 @@ function blockSolve!(s::BlockSolver, residual!::R, du::AbstractVector, a::Abstra
     error("array model: an algebraic loop solved in the equations needs Float64 values (a solver with finite differences)")
   local args::Tuple = (du, a, u, p, t, nothing, false, fire)
   s.x .= s.y
-  local ok::Bool = _blockNewton!(s, residual!, args, !s.solved)
+  local ok::Bool = _blockAttempt!(s, residual!, args, s.solved ? :kept : :full)
   if !(ok && !s.rankDeficient) && s.solved
     s.x .= s.y
-    ok = _blockNewton!(s, residual!, args, true)
+    ok = _blockAttempt!(s, residual!, args, :full)
   end
   if !(ok && !s.rankDeficient)
     #= a loop linear in its unknowns and badly conditioned (ideal switches: both thyristors of a commutating pair
@@ -157,7 +157,13 @@ function blockSolve!(s::BlockSolver, residual!::R, du::AbstractVector, a::Abstra
        1e-8 of the Jacobian, times the condition leaves Newton's method no contraction. Differences over a step of
        the unknowns' size are exact for a linear loop (`coarse`) =#
     s.x .= s.y
-    ok = _blockNewton!(s, residual!, args, true; coarse = true)
+    ok = _blockAttempt!(s, residual!, args, :coarse)
+  end
+  if !(ok && !s.rankDeficient)
+    #= a loop whose full Newton steps overshoot (a pipe's flow, the root of the pressure difference, at zero flow:
+       each step lands as far on the other side): steps shortened until the residuals fall (`_blockDamped!`) =#
+    s.x .= s.y
+    ok = _blockAttempt!(s, residual!, args, :damped)
   end
   ok = ok && !s.rankDeficient
   if ok
@@ -170,6 +176,28 @@ function blockSolve!(s::BlockSolver, residual!::R, du::AbstractVector, a::Abstra
   #= the last evaluation was at the solution unless crossing functions or relation values are asked for =#
   (ok && z === nothing && !mode) || residual!(s.r, s.x, du, a, u, p, t, z, mode, fire)
   return nothing
+end
+
+"""
+    _blockAttempt!(s, residual!, args, kind) -> Bool
+
+One attempt of `blockSolve!`: Newton with the kept factorization (`kind` `:kept`), with a Jacobian in every step
+(`:full`), that with differences over the unknowns' size (`:coarse`), or with shortened steps (`:damped`,
+`_blockDamped!`). An error of the residuals at an iterate or at a point the Jacobian's
+differences perturb (a domain error: `cos` of an infinite angle, a root of a negative number; a function's assert:
+the scalar path's `_RHS_STEP_ERRORS`) is a failed attempt, kept as the right-hand side's last error
+(`StepRejectingRHS`): thrown on, it ended a run from the check of the asserts after a step, which no wrapper guards
+(MSL MultiBody UniversalConstraint).
+"""
+function _blockAttempt!(s::BlockSolver, residual!::R, args::Tuple, kind::Symbol)::Bool where {R <: Function}
+  try
+    kind === :damped && return _blockDamped!(s, residual!, args)
+    return _blockNewton!(s, residual!, args, kind !== :kept; coarse = kind === :coarse)
+  catch err
+    err isa _OMBACKEND.CodeGeneration._RHS_STEP_ERRORS || rethrow()
+    _OMBACKEND.CodeGeneration.LAST_RHS_ERROR[] = err
+    return false
+  end
 end
 
 """
@@ -217,6 +245,7 @@ function _blockNewton!(s::BlockSolver, residual!::R, args::Tuple, full::Bool;
       return true
     end
     x .-= dx
+    all(isfinite, x) || return false
     residual!(r, x, args...)
     s.residuals += 1
     local rate::Float64 = step / previous
@@ -238,6 +267,54 @@ function _blockNewton!(s::BlockSolver, residual!::R, args::Tuple, full::Bool;
   end
   #= the iterations used up while polishing: within 1e-10 =#
   return previous <= 1.0 && all(isfinite, r)
+end
+
+"""
+    _blockDamped!(s, residual!, args) -> Bool
+
+Newton on the block's residuals from `s.x` with a Jacobian in every step and each step shortened (halved, at most
+twelve times) until the sum of the squared residuals falls: the Newton direction is one of descent for it. Converged
+where the full step is within 1e-10 of the values (as `_blockNewton!`); false where no shortened step lowers the
+residuals, a Jacobian fails, or after 100 steps. The last evaluation is at the returned iterate.
+"""
+function _blockDamped!(s::BlockSolver, residual!::R, args::Tuple)::Bool where {R <: Function}
+  local x::Vector{Float64} = s.x; local r::Vector{Float64} = s.r; local dx::Vector{Float64} = s.dx
+  local x0::Vector{Float64} = s.xp
+  all(isfinite, x) || return false
+  residual!(r, x, args...)
+  s.residuals += 1
+  for _ in 1:100
+    all(isfinite, r) || return false
+    _blockJacobian!(s, residual!, args) || return false
+    _blockStep!(s)
+    all(isfinite, dx) || return false
+    local step::Float64 = 0.0
+    for i in eachindex(x)
+      step = max(step, abs(dx[i]) / (1.0e-10 * (1.0 + abs(x[i]))))
+    end
+    if step <= 1.0
+      x .-= dx
+      residual!(r, x, args...)
+      s.residuals += 1
+      return all(isfinite, r)
+    end
+    local before::Float64 = sum(abs2, r)
+    local scale::Float64 = 1.0
+    local lower::Bool = false
+    x0 .= x
+    for _ in 1:13
+      x .= x0 .- scale .* dx
+      residual!(r, x, args...)
+      s.residuals += 1
+      if all(isfinite, r) && sum(abs2, r) < (1.0 - 1.0e-4 * scale) * before
+        lower = true
+        break
+      end
+      scale /= 2.0
+    end
+    lower || return false
+  end
+  return false
 end
 
 "The Newton step `s.dx` for the residuals `s.r` with the kept factorization (the least-norm one with a pseudo-inverse)."

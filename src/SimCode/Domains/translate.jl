@@ -593,6 +593,15 @@ A field of a record value: of a function's record result the call's tuple at the
 by its fields, `generateIOL`).
 """
 function _recordElementIRx(g::Gen, e::SC.RSUB, ctx::Ctx)::IR
+  if e.exp isa SC.IFEXP
+    #= of an if-expression of records its branches' fields (an inlined function's `if k == 0 then Complex(1, 0)
+       else Complex(0, 1)`: MSL ComplexBlocks' powerOfJ) =#
+    local branches::SC.IFEXP = e.exp
+    return Op(:if, IR[toIR(g, branches.cond, ctx),
+                      _recordElementIRx(g, SC.RSUB(branches.thenExp, e.index, e.fieldName, e.ty), ctx),
+                      _recordElementIRx(g, SC.RSUB(branches.elseExp, e.index, e.fieldName, e.ty), ctx)])
+  end
+  _isRecordValue(e.exp) && return _recordFieldIRx(g, e.exp, e.index, e.fieldName, ctx)
   _isFunctionCall(g, e.exp) || ns("a field of $(_str(e.exp))")
   local rty::SC.SType = (e.exp::SC.CALL).ty
   (rty isa SC.TYPE_COMPLEX && rty.isRecord) || ns("a field of $(_str(e.exp)), not a record")
@@ -882,6 +891,21 @@ function _initialAssignment(g::Gen, lhs::IR, rhs::IR)::Bool
   return all(r::Ref -> r.name != lhs.name && g.vars[r.name].kind == :param && known(r.name), reads)
 end
 
+"""
+Whether the initial equation `lhs = rhs` of a for-equation's body gives pre() of a discrete variable's element its
+value (`pre(d[i]) = expr`): each subscript a literal or an iterator, `expr` reading neither `d` nor a parameter with
+fixed = false (one an initial algorithm gives is known only after it: the scalar equations' order,
+`_addInitialEquations!`).
+"""
+function _initialPreStart(g::Gen, lhs::IR, rhs::IR)::Bool
+  lhs isa Pre || return false
+  local target::Ref = lhs.ref
+  local info::VarInfo = g.vars[target.name]
+  (info.kind == :discrete && !target.der && length(target.subs) == length(info.dims)) || return false
+  all(x::IR -> x isa Union{Lit, Slot}, target.subs) || return false
+  return all(r::Ref -> r.name != target.name && !(r.name in g.freeParams), accesses!(Ref[], rhs))
+end
+
 "Whether a when-equation assigns the variable `name` (an element of it)."
 _whenAssigned(g::Gen, name::String)::Bool =
   any(w::WhenClass -> any(b::Tuple -> b[1] == :assign && b[2] isa Ref && b[2].name == name, w.body), g.whens)
@@ -972,6 +996,16 @@ function _addEquation!(g::Gen, eq::SC.Equation, iterNames::Vector{String}, idom:
     local rhs::IR = toIR(g, eq.rhs, ctx)
     #= sample() in an initial equation: no ticks there =#
     (initial && ctx.nsam[] > 0) && ns("sample() in an initial equation")
+    if initial && nIter > 0 && _initialPreStart(g, lhs, rhs)
+      #= `pre(d[i]) = value` in an initial for-equation: pre() of each element at the initialization, as the scalar
+         one's (`_addInitialEquations!`; MSL Fluid's tank: `pre(aboveLevel[i]) = level_start >= height[i]`) =#
+      local preTarget::Ref = (lhs::Pre).ref
+      local preBody::Vector{Stmt} = Stmt[]
+      _whenAssigned(g, preTarget.name) && push!(preBody, SAssign(preTarget, rhs))
+      push!(preBody, SPreStart(preTarget, rhs))
+      push!(g.initAlgs, AlgClass(preBody, nIter, idom, 0, 0, _eqText(eq)))
+      return
+    end
     push!(initial ? g.initClasses : g.classes, EqClass(lhs, rhs, nIter, idom, ctx.nrel[], _eqText(eq), ctx.nsam[]))
     return
   elseif eq isa SC.INLINE_IF_EQUATION

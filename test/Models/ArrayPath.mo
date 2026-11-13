@@ -3125,4 +3125,58 @@ package ArrayPath
     ColoredBody body1(m = 2);
     ColoredBody body2(m = body1.m);
   end RolledBodies;
+
+  function squareBothWays "k1 x^2 for x >= 0, -k2 x^2 below (as MSL Fluid's regSquare2 outside its regularized band): one expression, which the backend inlines (no Inline annotation: the frontend leaves the call)"
+    input Real x;
+    input Real k1;
+    input Real k2;
+    output Real y;
+  algorithm
+    y := if x >= 0 then k1 * x ^ 2 else -k2 * x ^ 2;
+  end squareBothWays;
+
+  model InlinedRelation "a function with a relation inlined into an equation of a loop: the relation is the function's, no event (MLS 3.7.5), so the loop is solved on the branch of its iterate, not on the branch held since the last event. Two tanks of area 1 joined by a valve, q the flow from 1 to 2: h1 - h2 = squareBothWays(q, 1, 4). From h = {2, 0}: q = sqrt(h1 - h2), the difference d = h1 - h2 follows der(d) = -2 sqrt(d), d = (sqrt(2) - t)^2, zero at t = sqrt(2)"
+    Real h[2](start = {2, 0}, each fixed = true);
+    Real q(start = 1);
+    Real dp;
+  equation
+    der(h[1]) = -q;
+    der(h[2]) = q;
+    dp = h[1] - h[2];
+    dp = squareBothWays(q, 1, 4);
+  end InlinedRelation;
+
+  model PreStartInLoop "pre() of a discrete array's elements given in an initial for-equation (MSL Fluid's tank: pre(aboveLevel[i]) = level_start >= height[i]); above[i] keeps its value inside a band of 0.1 around height[i]. x = 0.5 + 0.4 cos(t): at t = 0, x = 0.9, above = {true, true} by pre() (without it above[1] is false: 0.9 is inside its band); at t = 1, x = 0.716: {false, true}"
+    parameter Real height[2] = {0.85, 0.6};
+    parameter Real x0 = 0.9;
+    Real x;
+    Boolean above[2];
+    Real count;
+  initial equation
+    for i in 1:2 loop
+      pre(above[i]) = x0 >= height[i];
+    end for;
+  equation
+    x = 0.5 + 0.4 * cos(time);
+    for i in 1:2 loop
+      above[i] = x >= height[i] + 0.1 or pre(above[i]) and x >= height[i] - 0.1;
+    end for;
+    count = (if above[1] then 1 else 0) + (if above[2] then 10 else 0);
+  end PreStartInLoop;
+
+  function quarterTurn "j^k as a Complex number (as MSL ComplexBlocks' powerOfJ)"
+    input Integer k;
+    output Complex z;
+  algorithm
+    z := if mod(k, 4) == 0 then Complex(1, 0) else if mod(k, 4) == 1 then Complex(0, 1) else if mod(k, 4) == 2 then Complex(-1, 0) else Complex(0, -1);
+    annotation(Inline = true);
+  end quarterTurn;
+
+  model RecordIfField "a field of an if-expression of records (an inlined function's value): w = {x j^1, x j^2}, x = exp(-t)"
+    Real x(start = 1, fixed = true);
+    Complex w[2];
+  equation
+    der(x) = -x;
+    w = {Complex(x, 0) * quarterTurn(1), Complex(x, 0) * quarterTurn(2)};
+  end RecordIfField;
 end ArrayPath;

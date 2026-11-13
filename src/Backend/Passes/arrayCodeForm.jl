@@ -267,7 +267,8 @@ end
 
 The first partition's equations and initial equations with their calls inlined where the functions' algorithms run
 into one expression (MLS: InlineAfterIndexReduction, Inline; `inlinedEquation`); not of an external function or one
-with an assert (inlined, its check is lost: normalizeWithAssert).
+with an assert (inlined, its check is lost: normalizeWithAssert). The relations of an inlined body generate no events
+(`IndexReduction.withoutEvents`).
 """
 function inlineAfterIndexReduction!(model::IR.Model)::IR.Model
   local inlinable::Dict{Symbol, IR.ModelicaFunction} =
@@ -306,7 +307,7 @@ function inlinedEquation(eq::IR.Equation, functions::Dict{Symbol, IR.ModelicaFun
   end
   calls || return eq
   (eq isa IR.SCALAR_EQUATION || eq isa IR.ARRAY_EQUATION || eq isa IR.IF_EQUATION) &&
-    return IndexReduction.inlineEquation(eq, functions)
+    return IndexReduction.inlineEquation(eq, functions; noEvents = true)
   eq isa IR.FOR_EQUATION &&
     return IR.FOR_EQUATION(eq.iterator, IR.Equation[inlinedEquation(e, functions) for e in eq.body], eq.source, eq.attributes)
   return eq
