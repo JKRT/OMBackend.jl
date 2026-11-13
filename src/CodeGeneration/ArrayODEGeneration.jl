@@ -712,7 +712,7 @@ function _loopFamilyCode(g::Gen, f::Int, template::Vector{Tuple{Int, Int}}, bloc
   for (m, b) in enumerate(blocks), j in 1:k
     local r::Int = b[j]
     local u::Int = matchRow[r]
-    u <= nS + g.nAlg || ns("a discrete unknown in an algebraic loop")
+    u <= nS + g.nAlg || ns("a discrete unknown in an algebraic loop: " * first(g.classes[template[j][1]].text, 120))
     cols[j, m] = el.col[r]; ids[j, m] = u
     guess[j, m] = u <= nS ? 0.0 : a0[u - nS]
   end

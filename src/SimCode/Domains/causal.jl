@@ -137,8 +137,16 @@ function causalSchedule!(g::Gen; keepsArrays::Bool, full::Bool, fixedMask::Vecto
   end
   local el::InstanceTable = _elements(g)
   local matchRow::Vector{Int} = _match(el, nU, String[c.text for c in g.classes])
+  #= the discrete unknowns the event iteration settles: computed from the continuous variables through relations
+     only (a Boolean's `off = s < 0`), so constant between events; a loop is cut there (`_scheduleWithLoops`) =#
+  local settled::BitVector = falses(nU)
+  for r in 1:el.nEq
+    matchRow[r] > g.nStates + g.nAlg || continue
+    local own::EqClass = g.classes[el.class[r]]
+    settled[matchRow[r]] = !(_continuous(g, own.lhs) || _continuous(g, own.rhs))
+  end
   local (batches::Vector{Tuple{Tuple{Int, Int}, Vector{Int}}}, pos::Vector{Int}, producer::Vector{Int}, loops::LoopBlocks) =
-    _schedule(el, matchRow, nU)
+    _schedule(el, matchRow, nU, settled)
   if _OMBACKEND.envSwitch("OMBACKEND_ARRAY_TRACE")
     local blockSizes::Dict{Int, Int} = Dict{Int, Int}()
     foreach(b::Vector{Int} -> (blockSizes[length(b)] = get(blockSizes, length(b), 0) + 1), loops.blocks)
@@ -150,7 +158,7 @@ function causalSchedule!(g::Gen; keepsArrays::Bool, full::Bool, fixedMask::Vecto
      arrays of no dimensions (a loop that does not start declines the array code at the translate,
      `OMBackend._arrayStartFailure`) =#
   local hasArrays::Bool = keepsArrays && any(c::EqClass -> size(c.domain, 2) > 1, g.classes)
-  local large::BitVector = _largeBlocks(g, loops, matchRow)
+  local large::BitVector = _largeBlocks(g, loops, matchRow, el)
   local deps::Union{Nothing, Vector{Vector{Int}}} = _stateDeps(el, matchRow, batches, producer, loops, g.nStates)
   local pattern::Union{Nothing, Tuple{Vector{Int}, Vector{Int}}} = _jacobianPattern(el, matchRow, deps, g.nStates)
   local initial::InitialMatching = _initialMatching(g, deps, producer, fixedMask)

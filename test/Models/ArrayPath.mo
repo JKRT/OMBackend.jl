@@ -2874,4 +2874,23 @@ package ArrayPath
     Vre = Phire;
     Vim = Phiim;
   end ZeroOrientation;
+
+  model IdealDiodeLoop "MSL IdealSemiconductor's equations, two diodes on sources of opposite phase: the Boolean off[k] = s[k] < 0 is in the loop of s, vd and i (a discrete unknown in an algebraic loop); conducting i = V / (R + Ron), blocking i = Goff V / (1 + R Goff); q(1) = (1 - Goff) / (pi (R + Ron))"
+    parameter Real R = 1;
+    parameter Real Ron = 1e-5;
+    parameter Real Goff = 1e-5;
+    Real s[2](each start = 0);
+    Real vd[2];
+    Real i[2];
+    Boolean off[2](each start = true);
+    Real q(start = 0, fixed = true);
+  equation
+    for k in 1:2 loop
+      off[k] = s[k] < 0;
+      vd[k] = s[k] * (if off[k] then 1 else Ron);
+      i[k] = s[k] * (if off[k] then Goff else 1);
+      (if k == 1 then 1 else -1) * sin(2 * 3.141592653589793 * time) = R * i[k] + vd[k];
+    end for;
+    der(q) = i[1];
+  end IdealDiodeLoop;
 end ArrayPath;

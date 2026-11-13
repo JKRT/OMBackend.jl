@@ -1308,6 +1308,8 @@ function _elements(g::Gen)::InstanceTable
     local acc = accesses!(accesses!(Ref[], c.lhs), c.rhs)
     local keys::Vector{String} = String[irKey(r) for r in acc]
     empty!(divisors)
+    #= an equation of discrete time: it reads the continuous variables through relations only (`off = s < 0`) =#
+    local discreteTime::Bool = !(_continuous(g, c.lhs) || _continuous(g, c.rhs))
     for j in 1:size(c.domain, 2)
       push!(class, ci); push!(col, j)
       empty!(keyOf)
@@ -1341,6 +1343,14 @@ function _elements(g::Gen)::InstanceTable
           get!(() -> _explicitDivisors(g, c.lhs, c.rhs, upos[i]), divisors, upos[i])
         (ds === nothing || isempty(ds)) && continue
         _zeroDivisor(g, ds, c, j) && push!(vanishing, (length(class), uid[i]))
+      end
+      #= an equation of discrete time is not solved for a continuous unknown (a relation gives none): its unknown is
+         the discrete variable, which a continuous equation reading it then leaves to it (the matching gave an ideal
+         diode's `off` to `i = s * (if off then Goff else 1)` and `s` to `off = s < 0`) =#
+      if discreteTime
+        for i in firstAccess:length(uid)
+          uid[i] <= g.nStates + g.nAlg && push!(vanishing, (length(class), uid[i]))
+        end
       end
       push!(uptr, length(uid) + 1)
       push!(sptr, length(sid) + 1)
@@ -1436,7 +1446,7 @@ Kahn's algorithm in batches: all ready instances of one (class, matched access) 
 a key whose remaining instances are all ready first. Returns the batches (consecutive equal
 keys merged), the matched access per instance and the producer per unknown.
 """
-function _schedule(el::InstanceTable, matchRow::Vector{Int}, nU::Int)
+function _schedule(el::InstanceTable, matchRow::Vector{Int}, nU::Int, settled::BitVector)
   local N = length(el.class)
   local producer = zeros(Int, nU)
   for r in 1:el.nEq
@@ -1510,7 +1520,7 @@ function _schedule(el::InstanceTable, matchRow::Vector{Int}, nU::Int)
     end
   end
   done == N && return (batches, pos, producer, LoopBlocks(Vector{Int}[], zeros(Int, N), Vector{Tuple{Int, Int}}[]))
-  return _scheduleWithLoops(el, matchRow, nU, producer, pos)
+  return _scheduleWithLoops(el, matchRow, nU, producer, pos, settled)
 end
 
 """
@@ -1538,10 +1548,12 @@ const NEWTON_BLOCK_SIZE = Base.RefValue(8)
 The large blocks of `loops` (more than `NEWTON_BLOCK_SIZE` instances: loops that couple the elements, solved by
 `blockSolve!`); NotSupported for a discrete unknown in one.
 """
-function _largeBlocks(g::Gen, loops::LoopBlocks, matchRow::Vector{Int})::BitVector
+function _largeBlocks(g::Gen, loops::LoopBlocks, matchRow::Vector{Int}, el::InstanceTable)::BitVector
   local large::BitVector = BitVector(length(b) > NEWTON_BLOCK_SIZE[] for b in loops.blocks)
   for (b, rs) in enumerate(loops.blocks)
-    (large[b] && any(r::Int -> matchRow[r] > g.nStates + g.nAlg, rs)) && ns("a discrete unknown in an algebraic loop")
+    large[b] || continue
+    local k::Union{Nothing, Int} = findfirst(r::Int -> matchRow[r] > g.nStates + g.nAlg, rs)
+    k === nothing || ns("a discrete unknown in an algebraic loop: " * first(g.classes[el.class[rs[k]]].text, 120))
   end
   return large
 end
@@ -1835,12 +1847,12 @@ function _components(succ::Vector{Vector{Int}})::Vector{Int}
 end
 
 """
-The schedule of a model with algebraic loops (`_schedule`'s, where Kahn's algorithm leaves instances in cycles): the
-strongly connected sets of instances blocks (`LoopBlocks`), each solved as one; the blocks of a template batched by
-family (key (0, family), the batch listing block numbers), the other instances as `_schedule` batches them. Not an
-algorithm or a discrete unknown in a loop.
+The instances that read what each instance produces (the edges of the instances' graph), without the edges of `cuts`
+(producer, reader). With `comp` (the instances' strongly connected sets), the reads of a `settled` unknown within the
+set of its producer are cut too, into `cuts` (`_scheduleWithLoops`).
 """
-function _scheduleWithLoops(el::InstanceTable, matchRow::Vector{Int}, nU::Int, producer::Vector{Int}, pos::Vector{Int})
+function _instanceSuccessors!(cuts::Set{Tuple{Int, Int}}, el::InstanceTable, matchRow::Vector{Int},
+                              producer::Vector{Int}, settled::BitVector, comp::Vector{Int})::Vector{Vector{Int}}
   local N::Int = length(el.class)
   local succ::Vector{Vector{Int}} = [Int[] for _ in 1:N]
   for r in 1:N, i in el.uptr[r]:(el.uptr[r + 1] - 1)
@@ -1848,9 +1860,37 @@ function _scheduleWithLoops(el::InstanceTable, matchRow::Vector{Int}, nU::Int, p
     u == matchRow[r] && continue
     local q::Int = producer[u]
     (q == 0 || q == r) && continue
+    (!isempty(comp) && settled[u] && comp[q] == comp[r]) && push!(cuts, (q, r))
+    (q, r) in cuts && continue
     push!(succ[q], r)
   end
+  return succ
+end
+
+"""
+The schedule of a model with algebraic loops (`_schedule`'s, where Kahn's algorithm leaves instances in cycles): the
+strongly connected sets of instances blocks (`LoopBlocks`), each solved as one; the blocks of a template batched by
+family (key (0, family), the batch listing block numbers), the other instances as `_schedule` batches them. Not an
+algorithm in a loop. A loop through a discrete unknown the event iteration settles (`settled`: its equation reads the
+continuous variables through relations only, an ideal diode's `off = s < 0`) is cut at that unknown: its readers in the
+loop read its last value (it does not change between events; at an event the sweeps repeat until it stays, as
+OpenModelica's mixed systems), its own instance comes after the loop, which is of the continuous unknowns.
+"""
+function _scheduleWithLoops(el::InstanceTable, matchRow::Vector{Int}, nU::Int, producer::Vector{Int}, pos::Vector{Int},
+                            settled::BitVector)
+  local N::Int = length(el.class)
+  local cuts::Set{Tuple{Int, Int}} = Set{Tuple{Int, Int}}()
+  local succ::Vector{Vector{Int}} = _instanceSuccessors!(cuts, el, matchRow, producer, settled, Int[])
   local comp::Vector{Int} = _components(succ)
+  if any(settled)
+    #= cut, and the sets again: until no settled unknown is read within the set of its producer =#
+    for _ in 1:N
+      local before::Int = length(cuts)
+      succ = _instanceSuccessors!(cuts, el, matchRow, producer, settled, comp)
+      length(cuts) == before && break
+      comp = _components(succ)
+    end
+  end
   local members::Dict{Int, Vector{Int}} = Dict{Int, Vector{Int}}()
   foreach(r::Int -> push!(get!(() -> Int[], members, comp[r]), r), 1:N)
   local blocks::Vector{Vector{Int}} = Vector{Int}[]
@@ -1927,7 +1967,8 @@ end
 
 """
 The states every equation instance depends on, through the algebraic unknowns it reads
-(in schedule order); nothing when that would be large.
+(in schedule order; not through a discrete unknown a loop was cut at, which comes after its readers); nothing when
+that would be large.
 """
 function _stateDeps(el::InstanceTable, matchRow, batches, producer, loops::LoopBlocks, nStates::Int)
   local N = length(el.class)
@@ -1943,7 +1984,9 @@ function _stateDeps(el::InstanceTable, matchRow, batches, producer, loops::LoopB
           union!(s, el.sid[el.sptr[r]:(el.sptr[r + 1] - 1)])
           for i in el.uptr[r]:(el.uptr[r + 1] - 1)
             local q::Int = producer[el.uid[i]]
-            (q == 0 || loops.blockOf[q] == b) && continue
+            #= not scheduled yet: a discrete unknown the loop was cut at (`_scheduleWithLoops`), constant between
+               events: no dependency on the states =#
+            (q == 0 || loops.blockOf[q] == b || !isassigned(deps, q)) && continue
             union!(s, deps[q])
           end
         end
@@ -1958,7 +2001,7 @@ function _stateDeps(el::InstanceTable, matchRow, batches, producer, loops::LoopB
       local s = Set{Int}(el.sid[el.sptr[r]:(el.sptr[r + 1] - 1)])
       for i in el.uptr[r]:(el.uptr[r + 1] - 1)
         local u = el.uid[i]
-        u == matchRow[r] && continue
+        (u == matchRow[r] || !isassigned(deps, producer[u])) && continue
         union!(s, deps[producer[u]])
       end
       deps[r] = sort!(collect(s))

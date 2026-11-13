@@ -470,6 +470,17 @@ end
     @test maximum(abs.(sz .- az)) < 1e-6
   end
 
+  @testset "A discrete unknown in an algebraic loop: the loop cut at it, the event iteration settles it" begin
+    #= an ideal diode's `off = s < 0` is in the loop of s, v and i. Its equation reads the continuous variables
+       through a relation only, so it is constant between events: the loop is solved for the continuous unknowns with
+       its last value, its own instance after the loop, and the event iteration's sweeps repeat until it stays
+       (`_scheduleWithLoops`). The matching leaves `off` to that equation (`_elements`: an equation of discrete
+       time is not solved for a continuous unknown) =#
+    local (sd, ad, _) = _bothWays("ArrayPath.IdealDiodeLoop", ["q"])
+    @test isapprox(ad[1], (1 - 1e-5) / (pi * 1.00001); atol = 1e-6)
+    @test abs(sd[1] - ad[1]) < 1e-6
+  end
+
   @testset "Function arguments and results: arrays as wholes, the first of several outputs, free parameters" begin
     #= `y = f(x)` of a function of two outputs takes the first, an array, by its elements (`SC.TSUB` under a
        subscript); an array variable or a sum of arrays as the argument is the array of its elements
