@@ -350,6 +350,23 @@ function sameEquation(a::IR.SCALAR_EQUATION, b::IR.SCALAR_EQUATION)::Bool
          equationForm(IR.SCALAR_EQUATION(bl, br, b.ty, b.source, b.attributes))
 end
 
+"An equation's line with its sides folded as `sameEquation` compares them (`foldTree`); another equation's as it is."
+foldedLine(eq::IR.SCALAR_EQUATION)::String =
+  equationLine(IR.SCALAR_EQUATION(foldTree(eq.lhs), foldTree(eq.rhs), eq.ty, eq.source, eq.attributes))
+foldedLine(eq::IR.Equation)::String = equationLine(eq)
+
+"""
+Where the texts `a` and `b` first differ, 100 characters of each around it (`a ... vs b ...`): a message's part for
+two equations of thousands of characters (a medium's derivative: 98000 each, the whole of both in a refusal).
+"""
+function firstDifference(a::String, b::String)::String
+  local (x::Vector{Char}, y::Vector{Char}) = (collect(a), collect(b))
+  local shorter::Int = min(length(x), length(y))
+  local k::Int = something(findfirst(i::Int -> x[i] != y[i], 1:shorter), shorter + 1)
+  local around = (t::Vector{Char}) -> String(t[max(1, k - 40):min(length(t), k + 60)])
+  return string("at character ", k, " of ", length(x), " and ", length(y), ": ", around(x), " vs ", around(y))
+end
+
 "Whether `name` is a Real parameter or constant of `variables` whose value `values` knows as zero."
 function isKnownZero(name::Symbol, variables::IR.VariableSet, values::StartValues)::Bool
   local v = get(variables, name, nothing)
@@ -767,7 +784,8 @@ function forDerivatives(eq::IR.FOR_EQUATION, rows::Vector{Int}, view::Scalarized
         #= an iteration's own zeros (`p[i]` at this i) =#
         local mine = withoutKnownZeros(elementEquation(derivative, values, E), elementVariables, known, E)
         sameEquation(mine, own) ||
-          throw(NotHandled("a for-equation whose derivative in array form is not the element's at $(view.origins[r].iteration): $(equationLine(mine)) vs $(equationLine(own))"))
+          throw(NotHandled("a for-equation whose derivative in array form is not the element's at " *
+                           "$(view.origins[r].iteration): $(firstDifference(foldedLine(mine), foldedLine(own)))"))
       end
     end
     chains[path] = chain

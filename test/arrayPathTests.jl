@@ -2234,4 +2234,30 @@ end
     @test isapprox(at, [1.6, 3.2, 2.4, 1.2]; atol = 1e-6)
     @test maximum(abs.(st .- at)) < 1e-6
   end
+
+  @testset "Folds: the size and the scalar product of vector literals" begin
+    #= the element view of a for-equation differentiated has `{dh_dX} * {der_X}` and `if size({Xi[1]}, 1) == 2 then
+       ... else ...` where the array form has the terms and the branch ("a for-equation whose derivative in array
+       form is not the element's": MSL Fluid's ducts of moist air, RoomCO2WithControls); `sameEquation` compares
+       them folded =#
+    local I = OMBackend.OMJLIR
+    local R = OMBackend.Passes.IndexReduction
+    local real = (name::Symbol) -> I.CREF(I.ComponentRef(I.CrefPart[I.CrefPart(name, I.Subscript[], I.T_REAL())]),
+                                          I.T_REAL())
+    local vector = I.T_ARRAY(I.T_REAL(), I.Dimension[I.DIM_SIZE(2)])
+    local a = I.ARRAY(I.Expression[real(:a), real(:b)], vector)
+    local b = I.ARRAY(I.Expression[real(:c), real(:d)], vector)
+    local product = R.foldTree(I.BINARY(a, I.SCALAR_PRODUCT, b, I.T_REAL()))
+    @test product isa I.BINARY && product.op === I.ADD
+    @test product.exp1 == I.BINARY(real(:a), I.MUL, real(:c), I.T_REAL())
+    @test product.exp2 == I.BINARY(real(:b), I.MUL, real(:d), I.T_REAL())
+    @test R.foldTree(I.SIZE(a, I.INTEGER(1))) == I.INTEGER(2)
+    local chosen = (n::Int) -> R.foldTree(I.IF_EXPRESSION(I.RELATION(I.SIZE(a, I.INTEGER(1)), I.EQUAL, I.INTEGER(n), 0),
+                                                           real(:a), real(:b), I.T_REAL()))
+    @test chosen(2) == real(:a)
+    @test chosen(3) == real(:b)
+    #= a size along another dimension, or of what is no literal, stays =#
+    @test R.foldTree(I.SIZE(a, I.INTEGER(2))) isa I.SIZE
+    @test R.foldTree(I.SIZE(real(:a), I.INTEGER(1))) isa I.SIZE
+  end
 end
