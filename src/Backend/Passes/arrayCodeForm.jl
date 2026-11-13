@@ -57,6 +57,7 @@ code generation takes; of its first partition (a model of several the generation
 """
 function arrayCodeForm!(model::IR.Model)::IR.Model
   (length(model.continuous) == 1 && isempty(model.clocked) && isempty(model.modes)) || return model
+  sampledReadsAsPre!(model)
   whenAssignedDiscrete!(model)
   everyPassClusters!(model)
   dropUnreadDerivatives!(model)
@@ -65,6 +66,21 @@ function arrayCodeForm!(model::IR.Model)::IR.Model
   unrollElementLoops!(model)
   literalRanges!(model)
   elementForm!(model)
+  return model
+end
+
+"""
+The reads of `sample(u, clock)` (`IR.SAMPLED_READ`) as pre() of u: the array code's event iteration evaluates the
+equations before a tick's when-equation, so u's left limit is its value before the event's sweep (pre() of a
+discrete variable, of an algebraic one the buffer the iteration keeps).
+"""
+function sampledReadsAsPre!(model::IR.Model)::IR.Model
+  local asPre = (@nospecialize(e::IR.Expression)) ->
+    (e isa IR.CALL && e.name === IR.SAMPLED_READ) ? IR.CALL(:pre, e.arguments, e.ty, IR.BUILTIN_CALL) : e
+  for partition in model.continuous
+    foreach(eq -> IR.mapEquation!(asPre, eq), partition.equations)
+    foreach(eq -> IR.mapEquation!(asPre, eq), partition.initialEquations)
+  end
   return model
 end
 
@@ -846,6 +862,13 @@ form.
 """
 function callForm(e::IR.CALL, cx::ElementContext)::IR.Expression
   local fname::Symbol = e.name
+  #= a reduction over an array constructor of a constant range (an inlined function's `sum({v[k] * conj(i[k]) for k
+     in 1:m})`, MSL QuasiStatic's activePower): unrolled (`unrollAt`), its Complex projections by their parts =#
+  if e.attributes.builtin && fname in FOLDED_REDUCERS && length(e.arguments) == 1 &&
+     e.arguments[1] isa IR.ARRAY_CONSTRUCTOR
+    local unrolled::IR.Expression = unrollAt(e)
+    unrolled === e || return elementFormExp(withComplexProjections(unrolled), cx)
+  end
   if e.attributes.builtin && (fname in (:sum, :product) || (fname in (:min, :max) && length(e.arguments) == 1))
     local written::Union{Nothing, IR.Expression} = reductionForm(fname, e.arguments[1], cx)
     written === nothing || return written

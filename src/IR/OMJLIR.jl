@@ -570,6 +570,14 @@ end
 
 "The attributes of a call to a pure built-in function."
 const BUILTIN_CALL = CallAttributes(true, false, false)
+
+"""
+The mark of a variable read by `sample(u, clock)` in a lowered clocked partition (a built-in call of one argument,
+`\$sampled(u)`): the read takes u's left limit at the tick (MLS 16.5.1). The array code reads pre() of u
+(`Passes.arrayCodeForm!`); the simulation code of the other routes reads u (`SimCode.simExp`: their sample
+callbacks run before the instant's other events).
+"""
+const SAMPLED_READ = Symbol("\$sampled")
 "The attributes of a call to a pure function of the model."
 const FUNCTION_CALL = CallAttributes(false, false, false)
 

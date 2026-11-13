@@ -535,14 +535,26 @@ end
     @test maximum(abs.(sr .- ar)) < 1e-5
   end
 
+  @testset "Vectors of records as function arguments, a reduction over an array constructor" begin
+    #= a vector of Complex values has no variable of its own: its fields' vectors are the variables, and a generated
+       function takes it by those (`_recordVectorFields`, the elements' fields of an array literal of them). The
+       function's own body decides the value (MSL 4's Complex scalar product conjugates its first argument): y = 2 x.
+       It was "unknown variable k" (MSL QuasiStatic power and RMS sensors) =#
+    local (sv, av, _) = _bothWays("ArrayPath.ComplexVectorArguments", ["y.re", "y.im", "r"])
+    @test isapprox(av, [2 * exp(-1), 0.0, exp(-1)]; atol = 1e-6)
+    @test maximum(abs.(sv .- av)) < 1e-9
+  end
+
   @testset "Clocked sample(): the left limit at a tick, a hold sampled back into its partition" begin
     #= `sample(u, clock)` takes u's left limit (MLS 16.5.1): pre() of u, of an algebraic variable its value before the
        event's sweep (`p.aleft`); a relation's change at a sample instant belongs to the tick's event
        (`_atSampleInstant`), and the after-step probe leaves the discrete values as they were (`relationsChanged`).
        u and b step at 0.2, a tick: sampled at the tick at 0.3; n counts the ticks through a hold (MSL Clocked
-       Sample1, Sample2, Sample3: 999x off omc, the event iteration not settling) =#
-    for (stop, expected) in ((0.25, [0.0, 0.0, 3.0]), (0.35, [1.0, 1.0, 4.0]))
-      local (sl, al, _) = _bothWays("ArrayPath.ClockedLeftLimit", ["y", "by", "nh"]; tspan = (0.0, stop))
+       Sample1, Sample2, Sample3: 999x off omc, the event iteration not settling). The scalarized route reads the
+       sampled variable itself (`IR.SAMPLED_READ`): pre() of an Integer the equations compute had no slot in its
+       sample callback (MSL Clocked IntegerSignals.Hold: KeyError) =#
+    for (stop, expected) in ((0.25, [0.0, 0.0, 3.0, 2.0]), (0.35, [1.0, 1.0, 4.0, 3.0]))
+      local (sl, al, _) = _bothWays("ArrayPath.ClockedLeftLimit", ["y", "by", "nh", "kh"]; tspan = (0.0, stop))
       @test al == expected
       @test sl == expected
     end

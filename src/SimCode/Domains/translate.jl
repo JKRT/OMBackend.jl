@@ -550,6 +550,49 @@ function _recordElementIRx(g::Gen, e::SC.RSUB, ctx::Ctx)::IR
   return g.functions[String((e.exp::SC.CALL).name)] == 1 ? call : Op(:index, IR[call, Lit(e.index)])
 end
 
+"Whether `x` is a record value without record fields: a reference to a record variable or element, a record literal."
+function _isRecordValue(x::SC.Exp)::Bool
+  x isa Union{SC.EXP_CREF, SC.RECORD} || return false
+  local ty::SC.SType = x.ty
+  (ty isa SC.TYPE_COMPLEX && ty.isRecord) || return false
+  return !any((t::SC.SType) -> t isa SC.TYPE_COMPLEX, ty.fieldTypes)
+end
+
+"""
+The field number `k`, `field`, of the record value `x` (`_isRecordValue`): a literal's expression, of a reference
+the field's variable at the reference's subscripts (the variables of a record are its fields': `u.re` of `u[1]` is
+`u.re[1]`).
+"""
+function _recordFieldIRx(g::Gen, x::SC.Exp, k::Int, field::String, ctx::Ctx)::IR
+  x isa SC.RECORD && return toIR(g, x.exps[k], ctx)
+  local c::SC.SimCref = (x::SC.EXP_CREF).cref
+  return _elementRefIR(g, string(c.sym, ".", field), IR[Lit(i) for i in c.subs])
+end
+
+"""
+The fields' vectors of the reference `a` to a vector of records without record fields (`Complex k[3]`: `k.re`, `k.im`,
+each the array of its elements), for a function's argument; `nothing` where `a` is none.
+"""
+function _recordVectorFields(g::Gen, a::SC.EXP_CREF)::Union{Nothing, Vector{IR}}
+  local ty::SC.SType = a.ty
+  (isempty(a.cref.subs) && ty isa SC.TYPE_ARRAY && ty.elementType isa SC.TYPE_COMPLEX && ty.elementType.isRecord) ||
+    return nothing
+  any((t::SC.SType) -> t isa SC.TYPE_COMPLEX, ty.elementType.fieldTypes) && return nothing
+  local out::Vector{IR} = IR[]
+  for field::String in ty.elementType.fieldNames
+    local name::String = string(a.cref.sym, ".", field)
+    local info::Union{Nothing, VarInfo} = get(g.vars, name, nothing)
+    (info === nothing || isempty(info.dims)) && return nothing
+    prod(info.dims) <= Passes.MAX_ELEMENT_TERMS || ns("an array argument of $(prod(info.dims)) elements")
+    local elements::Vector{IR} = IR[]
+    for t in Iterators.product((1:d for d in info.dims)...)   #= column-major: the first index fastest =#
+      push!(elements, _elementRefIR(g, name, IR[Lit(i) for i in t]))
+    end
+    push!(out, Op(:arrayval, IR[Lit(Tuple(info.dims)); elements]))
+  end
+  return out
+end
+
 """
 An argument's values (onto `out`): a record literal's fields each (a generated function takes a record by its fields,
 `R_T`, `R_w`: `generateIOL`), an array's or a scalar's value (`_valueIRx`).
@@ -560,6 +603,17 @@ function _argumentsIRx!(out::Vector{IR}, g::Gen, a::SC.Exp, ctx::Ctx)::Nothing
       (x isa SC.RECORD || (x isa SC.EXP_CREF && x.ty isa SC.TYPE_COMPLEX)) && ns("a record argument with record fields: $(_str(a))")
       push!(out, _valueIRx(g, x, ctx))
     end
+  elseif a isa SC.ARRAY_EXP && !isempty(a.elements) && all(_isRecordValue, a.elements)
+    #= a vector of records (`Complex u[:]`, MSL QuasiStatic's quasiRMS(u)): a generated function takes it by its
+       fields' vectors, one argument each (`flattenRecordInput`) =#
+    local fields::Vector{String} = (a.elements[1].ty::SC.TYPE_COMPLEX).fieldNames
+    for (k::Int, field::String) in enumerate(fields)
+      local elements::Vector{IR} = IR[_recordFieldIRx(g, x, k, field, ctx) for x in a.elements]
+      push!(out, Op(:arrayval, IR[Lit((length(elements),)); elements]))
+    end
+  elseif a isa SC.EXP_CREF && _recordVectorFields(g, a) !== nothing
+    #= a reference to a vector of records (the variables are its fields' vectors): by those, one argument each =#
+    append!(out, _recordVectorFields(g, a)::Vector{IR})
   elseif a isa SC.EXP_CREF && a.ty isa SC.TYPE_COMPLEX
     #= an external object (a table) as it is; a record variable has no value here =#
     local object::Union{Nothing, IR} = a.ty.isRecord ? nothing : _objectRead(g, String(a.cref.sym))

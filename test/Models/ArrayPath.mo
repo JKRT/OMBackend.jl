@@ -2675,16 +2675,21 @@ package ArrayPath
     Real ys(start = 0);
     Boolean bs(start = false);
     Real n(start = 0);
+    Integer k = integer(floor(10 * time + 0.5)) "an Integer the equations compute (MSL's realToInteger of a table), sampled: 2 at 0.2, 3 at 0.3";
+    Integer ks(start = 0);
     Real y;
     Boolean by;
     Real nh;
+    Integer kh;
   equation
     ys = sample(u, Clock(0.1));
     bs = sample(b, Clock(0.1));
     n = sample(nh, Clock(0.1)) + 1;
+    ks = sample(k, Clock(0.1));
     y = hold(ys);
     by = hold(bs);
     nh = hold(n);
+    kh = hold(ks);
   end ClockedLeftLimit;
 
   model PeriodMean "MSL Blocks.Math.Mean: u integrated over a period, the mean taken and the state reset at its end; the start of the state and of the output by initial equations"
@@ -2937,6 +2942,41 @@ package ArrayPath
     vL = R * (i[1] + i[2] + i[3]);
     der(q) = vL;
   end ThyristorCommutation;
+
+  function complexMeanMagnitude "the mean magnitude of a vector of Complex values (MSL QuasiStatic's quasiRMS)"
+    input Complex u[:];
+    output Real y;
+  algorithm
+    y := 0;
+    for i in 1:size(u, 1) loop
+      y := y + sqrt(u[i].re ^ 2 + u[i].im ^ 2);
+    end for;
+    y := y / size(u, 1);
+  end complexMeanMagnitude;
+
+  function conjugatedProduct "sum(conj(a[k]) * b[k]): MSL 4's Complex scalarProduct, a record result of vectors of records"
+    input Complex a[:];
+    input Complex b[size(a, 1)];
+    output Complex c;
+  algorithm
+    c := Complex(0, 0);
+    for i in 1:size(a, 1) loop
+      c := Complex(c.re + a[i].re * b[i].re + a[i].im * b[i].im, c.im + a[i].re * b[i].im - a[i].im * b[i].re);
+    end for;
+  end conjugatedProduct;
+
+  model ComplexVectorArguments "vectors of Complex values as function arguments (the variables are their fields' vectors) and a Complex result: u = {x, j x}, k = {1, j}; y = conj(k) . u = 2 x (unconjugated it were 0), r = x"
+    parameter Complex k[2] = {Complex(1, 0), Complex(0, 1)};
+    Real x(start = 1, fixed = true);
+    Complex u[2];
+    Complex y;
+    Real r;
+  equation
+    der(x) = -x;
+    u = {Complex(x, 0), Complex(0, x)};
+    y = conjugatedProduct(k, u);
+    r = complexMeanMagnitude(u);
+  end ComplexVectorArguments;
 
   model IfBranchResiduals "if-equations on a variable condition whose branches set different variables and have a left side that is no reference (MSL CCCVcharger, IdealSwitchWithArc, DCPowerSupply's -i = ...): a charger of constant current, then constant voltage, on R and C, two elements; vc = t until u = 1 + t reaches Vend, then vc' = Vend - vc: vc(3) = {2 - exp(-2), 3 - exp(-1)}"
     parameter Real Vend[2] = {2, 3};
