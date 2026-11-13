@@ -943,22 +943,26 @@ end
        target of an algorithm's tuple stays its reference (`wholeTargets`). The element view gave both the array of
        the elements as the target, which the when's and the tuple's translation refused. An initial array equation
        `pre(s) = seedPair(seed)` has its elements in that orientation (as lowered it is `rhs = lhs`): with
-       `seedPair(seed)[k] = pre(s[k])` the scalarized model did not build =#
-    for (model, names, T, expected) in (("ArrayPath.WhenArrayTarget", ["d[1]", "d[2]"], 1.0, [6.0, 8.0]),
-                                        ("ArrayPath.WhenIfArrayTarget", ["d[1]", "d[2]"], 1.0, [8.0, 10.0]),
-                                        ("ArrayPath.TupleArrayTarget", ["r", "s[1]", "s[2]"], 0.9, [5.0, 3.0, 3.0]),
-                                        ("ArrayPath.PreArrayStart", ["r", "s[1]", "s[2]"], 0.9,
-                                         [2.000000005e9, 2.000000003e9, 3.0]))
+       `seedPair(seed)[k] = pre(s[k])` the scalarized model did not build. The two tuple models are the array
+       code's since it takes pre() of an array as a function's argument (`arrayCode`); the same values =#
+    for (model, names, T, expected, arrayCode) in
+        (("ArrayPath.WhenArrayTarget", ["d[1]", "d[2]"], 1.0, [6.0, 8.0], false),
+         ("ArrayPath.WhenIfArrayTarget", ["d[1]", "d[2]"], 1.0, [8.0, 10.0], false),
+         ("ArrayPath.TupleArrayTarget", ["r", "s[1]", "s[2]"], 0.9, [5.0, 3.0, 3.0], true),
+         ("ArrayPath.PreArrayStart", ["r", "s[1]", "s[2]"], 0.9, [2.000000005e9, 2.000000003e9, 3.0], true))
       #= the route of OM's translate (`translateReducedArrays`: `nothing` is its caller's second flatten) =#
       local name::String = _arrayPathTranslate(model; scalarized = false)
       local (fm, cache) = OMFrontend.instantiateSCodeToFM(model, _ARRAY_PATH_SCODE[]; scalarize = false)
       @test OMBackend.translateReducedArrays(fm; functionList = OMFrontend.cacheToFunctionList(cache)) !== nothing
-      @test name in OMBackend.BACKEND_SCALARIZED_MODELS
-      #= switched off: `nothing` (the caller's scalarizing flatten), the reason recorded =#
-      withenv("OMBACKEND_BACKEND_SCALARIZATION" => "false") do
-        @test OMBackend.translateReducedArrays(fm; functionList = OMFrontend.cacheToFunctionList(cache)) === nothing
-        @test !(name in OMBackend.BACKEND_SCALARIZED_MODELS)
-        @test occursin("backend scalarization: switched off", OMBackend.scalarizedFallbackReason(name))
+      @test _arrayPathTaken(name) == arrayCode
+      if !arrayCode
+        @test name in OMBackend.BACKEND_SCALARIZED_MODELS
+        #= switched off: `nothing` (the caller's scalarizing flatten), the reason recorded =#
+        withenv("OMBACKEND_BACKEND_SCALARIZATION" => "false") do
+          @test OMBackend.translateReducedArrays(fm; functionList = OMFrontend.cacheToFunctionList(cache)) === nothing
+          @test !(name in OMBackend.BACKEND_SCALARIZED_MODELS)
+          @test occursin("backend scalarization: switched off", OMBackend.scalarizedFallbackReason(name))
+        end
       end
       _arrayPathTranslate(model; scalarized = false)
       local sol::OMBackend.DifferentialEquations.SciMLBase.AbstractODESolution =
@@ -1792,5 +1796,61 @@ end
     local (sf, af, _) = _bothWaysOf(fields, "FieldStarts", ["s.X[1]", "s.X[2]"])
     @test af ≈ [0.25 * sqrt(2), -0.75 * sqrt(2)] rtol = 1e-6
     @test sf ≈ af rtol = 1e-6
+  end
+
+  @testset "pre() of an array as an argument, an array output into a row, an element of a negated array" begin
+    #= `(r, state) = fibStep(pre(state))` in a when-equation: pre() of the array as the argument (the array of pre()
+       of its elements), the array output into the array (MSL's random number generators: "the array state64 as a
+       whole in an equation of scalars"); of two instances rolled into one class the argument and the target are a
+       row of the rolled array, `state[\$c]` ("partial subscripts on uniformNoise1|uniformNoise2.state"). Fibonacci
+       numbers: after 9 ticks r = 55 and the state {34, 55} from {0, 1}, r = 110 and {68, 110} from {0, 2} =#
+    local steps = Modelica"""
+      function fibStep
+        input Integer s[2];
+        output Real r;
+        output Integer t[2];
+      algorithm
+        r := s[1] + s[2];
+        t := {s[2], s[1] + s[2]};
+      end fibStep;
+
+      model Fib
+        parameter Integer seed = 1;
+        discrete Real r(start = 0, fixed = true);
+        Integer state[2](start = {0, seed}, each fixed = true);
+      equation
+        when sample(0.1, 0.1) then
+          (r, state) = fibStep(pre(state));
+        end when;
+      end Fib;
+
+      model Fibs
+        Fib a(seed = 1);
+        Fib b(seed = 2);
+      end Fibs;
+      """
+    local (s1, a1, _) = _bothWaysOf(steps, "Fib", ["r", "state[2]"]; tspan = (0.0, 0.95))
+    @test a1 == [55.0, 55.0]
+    @test s1 == a1
+    local (s2, a2, _) = _bothWaysOf(steps, "Fibs", ["a.r", "b.r", "b.state[1]"]; tspan = (0.0, 0.95))
+    @test a2 == [55.0, 110.0, 68.0]
+    @test s2 == a2
+    #= `n = not b` of Boolean arrays, element by element: `(not b)[i]` is the negation of the element (it was
+       refused: "an element of not pwm.svPWM.fire_p", MSL PowerConverters' space vector PWM) =#
+    local negations = Modelica"""
+      model NotArray "n[1] until 0.25, n[2] until 0.75"
+        Boolean b[2];
+        Boolean n[2];
+        Real x(start = 0, fixed = true);
+      equation
+        b[1] = time > 0.25;
+        b[2] = time > 0.75;
+        n = not b;
+        der(x) = (if n[1] then 1 else 0) + (if n[2] then 2 else 0);
+      end NotArray;
+      """
+    local (sn, an, _) = _bothWaysOf(negations, "NotArray", ["x", "n[2]"])
+    @test an ≈ [1.75, 0.0] atol = 1e-6
+    @test sn ≈ an atol = 1e-6
   end
 end

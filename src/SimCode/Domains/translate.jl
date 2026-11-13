@@ -496,6 +496,9 @@ function _subscriptedIRx(g::Gen, e::SC.ASUB, ctx::Ctx)::IR
     element isa Ref || ns("an element of $(_str(base))")
     return Pre(element)
   end
+  #= an element of the negation of a Boolean array (`not fire_p`, element by element: MSL PowerConverters' space
+     vector PWM): the negation of the element =#
+  (base isa SC.LUNARY && base.op == SC.OP_NOT) && return Op(:!, IR[_subscriptedIRx(g, SC.ASUB(base.exp, e.subs), ctx)])
   if base isa SC.ARRAY_EXP
     local literal::Union{Nothing, Array} = _literalArray(base)
     literal === nothing || return Op(:index, IR[Lit(literal); subs])
@@ -543,6 +546,15 @@ function _valueIRx(g::Gen, e::SC.Exp, ctx::Ctx)::IR
   if e isa SC.EXP_CREF && isempty(e.cref.subs)
     local whole::Union{Nothing, IR} = _wholeArrayIRx(g, String(e.cref.sym))
     whole === nothing || return whole
+  end
+  #= pre() of an array variable as a whole (`random(pre(state))`, MSL's random number generators): the array of
+     pre() of its elements =#
+  if e isa SC.PRE && isempty(e.cref.subs)
+    local wholePre::Union{Nothing, IR} = _wholeArrayIRx(g, String(e.cref.sym))
+    if wholePre !== nothing
+      local elementsOf::Vector{IR} = (wholePre::Op).args
+      return Op(:arrayval, IR[elementsOf[1]; IR[Pre(x::Ref) for x in @view elementsOf[2:end]]])
+    end
   end
   #= an array's sum, difference, negation or scaling (`f(v - w)`): the array of its elements =#
   if e isa Union{SC.BINARY, SC.UNARY} && _expType(e) isa SC.TYPE_ARRAY
@@ -1181,7 +1193,8 @@ function _addEquation!(g::Gen, eq::SC.Equation, iterNames::Vector{String}, idom:
     #= (a, b) = f(x): an algorithm node assigning each target its output =#
     #= of an initial equation whose targets are parameters with fixed = false (MSL Filter's coefficients,
        `(cr, c0, c1) = coefficients.lowPass(...)`): an initial algorithm, its relations no events =#
-    local initialTuple::Bool = initial && all((e::SC.Exp) -> e isa SC.WILD || _isFreeParameter(g, e), eq.lhs.elements)
+    local initialTuple::Bool = initial &&
+      all((e::SC.Exp) -> e isa SC.WILD || _isFreeParameter(g, e) || _isEmptyArray(g, e), eq.lhs.elements)
     local tupleCtx::Ctx = initialTuple ? Ctx(iters, Int[], Base.RefValue(0), true) : Ctx(iters, Int[])
     local tupleCall::IR = toIR(g, eq.rhs, tupleCtx)
     tupleCtx.nsam[] == 0 || ns("sample() in an equation")
@@ -1401,8 +1414,48 @@ function _whenEffect(g::Gen, st::SC.Statement, ctx::Ctx)::IR
   ns("a when-statement $(nameof(typeof(st))): $(_str(st))")
 end
 
-"Whether `e` references a parameter with fixed = false (the variable, or an element of it)."
-_isFreeParameter(g::Gen, e::SC.Exp)::Bool = e isa SC.EXP_CREF && String(e.cref.sym) in g.freeParams
+"Whether `e` references a parameter with fixed = false (the variable, an element of it, or a row: `r[1]`)."
+_isFreeParameter(g::Gen, e::SC.Exp)::Bool =
+  (e isa SC.EXP_CREF && String(e.cref.sym) in g.freeParams) ||
+  (e isa SC.ASUB && e.exp isa SC.EXP_CREF && String(e.exp.cref.sym) in g.freeParams)
+
+"""
+Whether the tuple target `e` is an array without elements (a dimension of size 0: a filter without conjugate
+complex poles, `(r[1], a[1], b[1], ku[1]) = roots.lowPass(...)` with `a` and `b` of size [2, 0]): nothing to assign.
+"""
+function _isEmptyArray(g::Gen, e::SC.Exp)::Bool
+  local ty::SC.SType = _expType(e)
+  (ty isa SC.TYPE_ARRAY && any(==(0), ty.dims)) && return true
+  local name::String = e isa SC.EXP_CREF ? String(e.cref.sym) :
+    (e isa SC.ASUB && e.exp isa SC.EXP_CREF) ? String(e.exp.cref.sym) : ""
+  local info::Union{Nothing, VarInfo} = get(g.vars, name, nothing)
+  return info !== nothing && any(==(0), info.dims)
+end
+
+"A tuple target that is an array (`_arrayTarget`): the variable, its leading subscripts, the dimensions left."
+const ArrayTarget = Tuple{String, Vector{IR}, Vector{Int}}
+
+"""
+A tuple's target that is an array: a variable as a whole (`r`), or an array by its leading subscripts only (`r[1]`,
+`state[\$c]`: the array of one of the components rolled into the variable; MSL's filters' roots and random number
+generators, "partial subscripts on uniformNoise1|uniformNoise2.state"). Nothing for a scalar or an element.
+"""
+function _arrayTarget(g::Gen, e::SC.Exp, ctx::Ctx)::Union{Nothing, ArrayTarget}
+  local name::String = ""
+  local leading::Vector{IR} = IR[]
+  if e isa SC.EXP_CREF
+    name = String(e.cref.sym)
+    leading = IR[Lit(k) for k in e.cref.subs]
+  elseif e isa SC.ASUB && e.exp isa SC.EXP_CREF && isempty(e.exp.cref.subs)
+    name = String(e.exp.cref.sym)
+    leading = IR[toIR(g, s, ctx) for s in e.subs]
+  else
+    return nothing
+  end
+  local info::Union{Nothing, VarInfo} = get(g.vars, name, nothing)
+  (info === nothing || length(leading) >= length(info.dims)) && return nothing
+  return (name, leading, info.dims[(length(leading) + 1):end])
+end
 
 """
 The statements of `(a, _, c) = call` (a tuple equation): the call once, into a temporary, and an assignment of each
@@ -1417,15 +1470,16 @@ function _tupleAssignments(g::Gen, lhs::SC.TUPLE, call::IR, callType::SC.SType, 
   local kinds::Tuple{Vararg{Symbol}} = free ? (:param,) : (:alg, :discrete)
   local res::Slot = Slot(g.tmpSlot -= 1)
   for (i, e) in enumerate(lhs.elements)
-    e isa SC.WILD && continue
+    (e isa SC.WILD || _isEmptyArray(g, e)) && continue
     _isReference(e) || ns("tuple target $(_str(e))")
-    if e isa SC.EXP_CREF && isempty(e.cref.subs) && haskey(g.vars, String(e.cref.sym)) && !isempty(g.vars[String(e.cref.sym)].dims)
-      local name::String = String(e.cref.sym)
-      local info::VarInfo = g.vars[name]
-      info.kind in kinds || ns("tuple target $(_str(e))")
-      for t in Iterators.product((1:d for d in info.dims)...)
+    local rows::Union{Nothing, ArrayTarget} = _arrayTarget(g, e, ctx)
+    if rows !== nothing
+      local (name::String, leading::Vector{IR}, rest::Vector{Int}) = rows
+      g.vars[name].kind in kinds || ns("tuple target $(_str(e))")
+      local result::IR = Op(:index, IR[res, Lit(SC.outputPosition(callType, i))])
+      for t in Iterators.product((1:d for d in rest)...)
         local subs::Vector{IR} = IR[Lit(k) for k in t]
-        push!(out, SAssign(Ref(name, subs, false), Op(:index, IR[Op(:index, IR[res, Lit(SC.outputPosition(callType, i))]), subs...])))
+        push!(out, SAssign(Ref(name, IR[leading; subs], false), Op(:index, IR[result; subs])))
       end
       continue
     end
@@ -1449,13 +1503,13 @@ function _whenTupleAssignments(g::Gen, lhs::SC.TUPLE, call::IR, callType::SC.STy
     e isa SC.WILD && continue
     _isReference(e) || ns("tuple target $(_str(e))")
     local output::IR = Op(:index, IR[res, Lit(SC.outputPosition(callType, i))])
-    if e isa SC.EXP_CREF && isempty(e.cref.subs) && haskey(g.vars, String(e.cref.sym)) && !isempty(g.vars[String(e.cref.sym)].dims)
-      local name::String = String(e.cref.sym)
-      local info::VarInfo = g.vars[name]
-      info.kind == :discrete || ns("when assigns a non-discrete variable: $(_str(e))")
-      for t in Iterators.product((1:d for d in info.dims)...)
+    local rows::Union{Nothing, ArrayTarget} = _arrayTarget(g, e, ctx)
+    if rows !== nothing
+      local (name::String, leading::Vector{IR}, rest::Vector{Int}) = rows
+      g.vars[name].kind == :discrete || ns("when assigns a non-discrete variable: $(_str(e))")
+      for t in Iterators.product((1:d for d in rest)...)
         local subs::Vector{IR} = IR[Lit(k) for k in t]
-        push!(out, (:assign, Ref(name, subs, false), Op(:index, IR[output; subs])))
+        push!(out, (:assign, Ref(name, IR[leading; subs], false), Op(:index, IR[output; subs])))
       end
       continue
     end
