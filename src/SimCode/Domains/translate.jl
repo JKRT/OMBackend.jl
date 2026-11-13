@@ -1276,6 +1276,40 @@ end
 _isReference(e::SC.Exp)::Bool = e isa Union{SC.EXP_CREF, SC.DER} || (e isa SC.ASUB && e.exp isa Union{SC.EXP_CREF, SC.DER})
 
 """
+The elements (row-major) of an array variable referred to as a whole, `v` or `pre(v)`; nothing for another
+expression.
+"""
+function _wholeArrayElements(g::Gen, e::SC.Exp)::Union{Nothing, Vector{SC.Exp}}
+  if e isa SC.CALL && e.kind == SC.CALL_BUILTIN && e.name === :pre && length(e.args) == 1
+    local inner::Union{Nothing, Vector{SC.Exp}} = _wholeArrayElements(g, e.args[1])
+    inner === nothing && return nothing
+    local preType::SC.SType = e.ty isa SC.TYPE_ARRAY ? e.ty.elementType : e.ty
+    return SC.Exp[SC.CALL(e.name, SC.Exp[x], preType, e.kind) for x in inner]
+  end
+  (e isa SC.EXP_CREF && isempty(e.cref.subs) && e.ty isa SC.TYPE_ARRAY) || return nothing
+  local info::Union{Nothing, VarInfo} = get(g.vars, String(e.cref.sym), nothing)
+  (info === nothing || isempty(info.dims)) && return nothing
+  local elementType::SC.SType = (e.ty::SC.TYPE_ARRAY).elementType
+  return SC.Exp[SC.EXP_CREF(SC.SimCref(e.cref.sym, Int[t...], e.cref.ref), elementType)
+                for t in _elementSubscripts(info.dims)]
+end
+
+"""
+The triggers of the trigger `c` of a when-branch: of a Boolean array as a whole (`when shut.pre_reset then`: a vector
+of conditions, MLS 8.3.5, the when fires where an element becomes true) its elements; of change() or edge() of an
+array that of each element (`change(pre(shut.reset))`, a lifted cluster's); another trigger itself. MSL's
+ControlledTanks (StateGraph, Fluid): "the array shut.pre_reset as a whole in an equation of scalars".
+"""
+function _elementTriggers(g::Gen, c::SC.Exp)::Vector{SC.Exp}
+  local elements::Union{Nothing, Vector{SC.Exp}} = _wholeArrayElements(g, c)
+  elements === nothing || return elements
+  (c isa SC.CALL && c.kind == SC.CALL_BUILTIN && c.name in (:change, :edge) && length(c.args) == 1) || return SC.Exp[c]
+  elements = _wholeArrayElements(g, c.args[1])
+  elements === nothing && return SC.Exp[c]
+  return SC.Exp[SC.CALL(c.name, SC.Exp[x], c.ty, c.kind) for x in elements]
+end
+
+"""
 A when-equation, over the domain: each branch's triggers its condition (several the vector of them, each an edge of its
 own; a branch active at the initialization with initial() among them: `when initial()` alone; change(e) of a Boolean
 expression the vector {e, not e}), its statements the body: assignments to discrete variables, reinit of states,
@@ -1291,7 +1325,7 @@ function _addWhen!(g::Gen, eq::SC.WHEN_EQUATION, iterNames::Vector{String}, idom
   while branch !== nothing
     local triggers::Vector{IR} = IR[]
     local constant::Bool = false
-    for c in _triggers(branch.condition)
+    for whole in _triggers(branch.condition), c in _elementTriggers(g, whole)
       if c isa SC.CALL && c.kind == SC.CALL_BUILTIN && c.name === :change && !_isReference(c.args[1])
         #= change(e) of a Boolean expression (a lifted discrete cluster's trigger): e or not e becomes true =#
         local x::IR = toIR(g, c.args[1], ctx)

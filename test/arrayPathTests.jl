@@ -1739,4 +1739,35 @@ end
                                                parameters = Dict{String, Any}("initiallyActive" => false))
     @test OMBackend.getVariableValues(inactive, "x")[end] ≈ 0.0 atol = 1e-9
   end
+
+  @testset "a when-equation on an array: a vector of conditions, change() of an array" begin
+    #= `when b then` with b a Boolean array is a when on the vector of its elements (MLS 8.3.5): it fires where one
+       becomes true; `change(k)` of an array where an element changes (at 1/3, 1/2, 2/3).
+       It was refused: "the array b as a whole in an equation of scalars" (MSL ControlledTanks, StateGraph and Fluid:
+       `when pre_reset then on = false`) =#
+    local vectors = Modelica"""
+      model ArrayWhen "n counts the elements of b that became true, m the instants an element of k changed"
+        Boolean b[2];
+        Integer k[2];
+        Integer n(start = 0, fixed = true);
+        Integer m(start = 0, fixed = true);
+        Real x(start = 0, fixed = true);
+      equation
+        b[1] = time > 0.25;
+        b[2] = time > 0.75;
+        k[1] = integer(2 * time);
+        k[2] = integer(3 * time);
+        when b then
+          n = pre(n) + 1;
+        end when;
+        when change(k) then
+          m = pre(m) + 1;
+        end when;
+        der(x) = n;
+      end ArrayWhen;
+      """
+    local (sv, av, _) = _bothWaysOf(vectors, "ArrayWhen", ["n", "m", "x"]; tspan = (0.0, 0.9))
+    @test av ≈ [2.0, 3.0, 0.8] atol = 1e-6
+    @test sv ≈ av atol = 1e-6
+  end
 end
