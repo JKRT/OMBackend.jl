@@ -448,6 +448,19 @@ end
     @test maximum(abs.(st .- at)) < 1e-6
   end
 
+  @testset "Small loops: a solve that does not converge is made again, damped, from the last solution and the starts" begin
+    #= from the solution on the saturated piece Newton's method cycles between two points that are no solutions; the
+       last iterate went into the equations as the solution (MSL OpAmps.VoltageFollower: +15 V for -5 V) =#
+    local (ss, as, _) = _bothWays("ArrayPath.SaturatedLoop", ["x", "y"])
+    @test isapprox(as, [7.5 + 0.5 * 1000 / 1001, 1000 / 1001]; atol = 1e-5)
+    @test maximum(abs.(ss .- as)) < 1e-5
+    #= a Jacobian singular at the start values (a product of two unknowns, both 0 there): the least-squares step of
+       the smallest norm in the damped attempts; it was NaN (MSL Analog.Examples.Resistor: its assert failed at 0) =#
+    local (sb, ab, _) = _bothWays("ArrayPath.BilinearStart", ["x", "R"])
+    @test isapprox(ab[1], sin(1) / 10; rtol = 1e-4)
+    @test maximum(abs.(sb .- ab)) < 1e-6
+  end
+
   @testset "Function arguments and results: arrays as wholes, the first of several outputs, free parameters" begin
     #= `y = f(x)` of a function of two outputs takes the first, an array, by its elements (`SC.TSUB` under a
        subscript); an array variable or a sum of arrays as the argument is the array of its elements

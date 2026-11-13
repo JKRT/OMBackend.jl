@@ -699,7 +699,9 @@ and the body that solves the members it is called for,
 each by Newton's method on the residuals of its instances (lhs - rhs, by the template's classes at the member's
 columns), the unknowns set in place (a state derivative in du, an algebraic variable in a), the Jacobian by forward
 differences; the last solution kept as the next guess (in Float64 solves); residuals or a Jacobian not finite, or a
-singular Jacobian, make the unknowns NaN (the solver rejects the step). Not relations in a loop (events), nor a discrete unknown.
+singular Jacobian, make the unknowns NaN (the solver rejects the step); a solve that does not converge is made again
+with damped steps, from the last solution and then from the start values. Not relations in a loop (events), nor a
+discrete unknown.
 """
 function _loopFamilyCode(g::Gen, f::Int, template::Vector{Tuple{Int, Int}}, blocks::Vector{Vector{Int}}, el::InstanceTable,
                          matchRow::Vector{Int}, a0::Vector{Float64}, relBases::Vector{Int})::Tuple{Vector{Any}, Expr}
@@ -738,45 +740,87 @@ function _loopFamilyCode(g::Gen, f::Int, template::Vector{Tuple{Int, Int}}, bloc
     local _x::AbstractVector = similar(a, $k); local _r::AbstractVector = similar(a, $k)
     local _r2::AbstractVector = similar(a, $k); local _J::AbstractMatrix = similar(a, $k, $k)
     local _G::Matrix{Float64} = p.loops[$f]
+    local _xs::AbstractVector = similar(a, $k)
     for _m in members
-      for _j in 1:$k
-        _x[_j] = _G[_j, _m]
-      end
       local _converged::Bool = false
-      for _it in 1:50
-        $set
-        $(residuals(:_r))
+      #= from the last solution; where that does not converge, again with the step damped (halved until the residuals
+         decrease), then so from the start values. A piecewise equation's Newton step from a solution on another piece
+         can cycle between two points that are no solutions (MSL IdealizedOpAmpLimited: from the saturated output,
+         reached in an event's sweep, back to the linear range; the last iterate went into the equations as the
+         solution), an exponential's can overflow (a Zener diode's) =#
+      for _attempt in 1:3
         for _j in 1:$k
-          local _xj::Real = _x[_j]
-          local _h::Real = 1.4901161193847656e-8 * max(1.0, abs(_xj))
-          _x[_j] = _xj + _h
+          _attempt == 2 && (_xs[_j] = _x[_j])
+          _x[_j] = _attempt == 3 ? $G[_j, _m] : _G[_j, _m]
+        end
+        for _it in 1:50
           $set
-          $(residuals(:_r2))
-          for _i in 1:$k
-            _J[_i, _j] = (_r2[_i] - _r[_i]) / _h
+          $(residuals(:_r))
+          for _j in 1:$k
+            local _xj::Real = _x[_j]
+            local _h::Real = 1.4901161193847656e-8 * max(1.0, abs(_xj))
+            _x[_j] = _xj + _h
+            $set
+            $(residuals(:_r2))
+            for _i in 1:$k
+              _J[_i, _j] = (_r2[_i] - _r[_i]) / _h
+            end
+            _x[_j] = _xj
           end
-          _x[_j] = _xj
+          #= residuals or a Jacobian not finite, or a singular one (a trial point of the solver where the equations
+             overflow, or a junction's derivative underflows: MSL DifferenceAmplifier's transistors): the unknowns NaN,
+             so the step is rejected =#
+          if !(all(isfinite, _r) && all(isfinite, _J))
+            fill!(_x, NaN)
+            break
+          end
+          local _F = LinearAlgebra.lu(_J; check = false)
+          local _dx::AbstractVector = _r2
+          if LinearAlgebra.issuccess(_F)
+            _dx = _F \ _r
+          elseif _attempt > 1 && eltype(a) === Float64
+            #= singular where two unknowns whose product the equations take are both zero (`v = R_actual * i` at
+               the starts, MSL's resistor with a heat port): the least-squares step of the smallest norm =#
+            _dx = LinearAlgebra.pinv(_J; rtol = $(RANK_TOLERANCE)) * _r
+          else
+            fill!(_x, NaN)
+            break
+          end
+          local _scale::Float64 = 1.0
+          if _attempt > 1
+            local _norm::Real = sum(abs2, _r)
+            for _j in 1:$k
+              _r2[_j] = _x[_j]
+            end
+            while true
+              for _j in 1:$k
+                _x[_j] = _r2[_j] - _scale * _dx[_j]
+              end
+              $set
+              $(residuals(:_r))
+              (sum(abs2, _r) <= _norm || _scale < 1.0e-3) && break
+              _scale *= 0.5
+            end
+            for _j in 1:$k
+              _x[_j] = _r2[_j]
+            end
+          end
+          #= converged by the whole step of Newton's method, damped or not =#
+          local _step::Real = 0.0
+          for _j in 1:$k
+            _x[_j] -= _scale * _dx[_j]
+            _step = max(_step, abs(_dx[_j]) / (1.0 + abs(_x[_j])))
+          end
+          _converged = _step <= 1.0e-8
+          _step <= 1.0e-12 && break
         end
-        #= residuals or a Jacobian not finite, or a singular one (a trial point of the solver where the equations
-           overflow, or a junction's derivative underflows: MSL DifferenceAmplifier's transistors): the unknowns NaN, so
-           the step is rejected =#
-        if !(all(isfinite, _r) && all(isfinite, _J))
-          fill!(_x, NaN)
-          break
+        _converged && break
+        #= no attempt converged: the first one's last iterate (NaN where it was not finite: the step is rejected) =#
+        if _attempt == 3
+          for _j in 1:$k
+            _x[_j] = _xs[_j]
+          end
         end
-        local _F = LinearAlgebra.lu(_J; check = false)
-        if !LinearAlgebra.issuccess(_F)
-          fill!(_x, NaN)
-          break
-        end
-        local _dx::AbstractVector = _F \ _r
-        local _step::Real = 0.0
-        for _j in 1:$k
-          _x[_j] -= _dx[_j]
-          _step = max(_step, abs(_dx[_j]) / (1.0 + abs(_x[_j])))
-        end
-        _converged = _step <= 1.0e-8
-        _step <= 1.0e-12 && break
       end
       $set
       #= the solution as the next guess: not a failed solve's NaN, nor the last iterate of a solve that did not

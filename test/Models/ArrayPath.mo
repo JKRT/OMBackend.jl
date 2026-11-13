@@ -2829,4 +2829,29 @@ package ArrayPath
       der(x[i]) = -a[i] * x[i] + b;
     end for;
   end FreeParameterTuple;
+
+  model SaturatedLoop "an amplifier with a limited output in a loop (MSL IdealizedOpAmpLimited as a voltage follower): after the input's step at 0.5 the last solution is on the saturated piece (y = 15), from where Newton's method cycles between two points that are no solutions; y = K / (1 + K) u after it, x(1) = 7.5 + 0.5 K / (1 + K)"
+    parameter Real K = 1000;
+    Real u = if time < 0.5 then 100 else 1;
+    Real e;
+    Real y;
+    Real x(start = 0, fixed = true);
+  equation
+    e = u - y;
+    y = smooth(0, noEvent(if K * e > 15 then 15 else if K * e < -15 then -15 else K * e));
+    der(x) = y;
+  end SaturatedLoop;
+
+  model BilinearStart "a loop whose Jacobian is singular at the start values: R * i = v with R and i both 0 there (MSL's resistor with a heat port: R_actual without a start); R = 100 (1 + 1e-3 (T - 300)), T - 300 = 0.01 v i, x integrates i: about sin(1) / 10"
+    Real v = 10 * cos(time);
+    Real R;
+    Real i;
+    Real T(start = 300);
+    Real x(start = 0, fixed = true);
+  equation
+    R * i = v;
+    R = 100 * (1 + 1e-3 * (T - 300));
+    T - 300 = 0.01 * v * i;
+    der(x) = i;
+  end BilinearStart;
 end ArrayPath;
