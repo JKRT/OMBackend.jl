@@ -374,6 +374,77 @@ sameEquation(::IR.Equation, ::IR.Equation)::Bool = false
 "An equation as one line of text, for a message."
 equationLine(eq::IR.Equation)::String = replace(string(eq), r"\s*\n\s*" => " ")
 
+"The names of the variables (no parameters or constants) the scalar equation `eq` reads."
+function variableReads(eq::IR.SCALAR_EQUATION, variables::IR.VariableSet)::Set{Symbol}
+  local names::Set{Symbol} = Set{Symbol}()
+  local visit = (@nospecialize(e::IR.Expression)) -> begin
+    if e isa IR.CREF
+      local v = get(variables, e.cref.name, nothing)
+      (v === nothing || v.kind isa Union{IR.PARAMETER, IR.CONSTANT}) || push!(names, e.cref.name)
+    end
+    nothing
+  end
+  IR.foreachExp(visit, eq.lhs)
+  IR.foreachExp(visit, eq.rhs)
+  return names
+end
+
+"""
+    dropKnownZeroTerms!(model, view) -> Bool
+
+The scalar equations of the model's continuous partition as the plan's structure reads them (`withKnownValues`):
+without the terms a Real parameter known as zero before the simulation takes out (`withoutKnownZeros`), where that
+takes a variable out of the equation. Left in, the committed model kept a variable the plan did not count on: MSL
+FundamentalWave's converter at orientation 0, `-v = N.re * der(Phi.re) + N.im * der(Phi.im)` with `N.im = 0`, kept
+`der(Phi.im)` as an unknown whose only coefficient is zero (the array code: structurally singular). An equation whose
+variables the zeros leave in place stays as written, its parameters symbolic. A scalar state whose derivative no
+equation reads after that is no state (`demoteDeadStates!`). Whether an equation changed.
+"""
+function dropKnownZeroTerms!(model::IR.Model, view::Scalarized)::Bool
+  local variables::IR.VariableSet = view.model.variables
+  local values::StartValues = StartValues(variables, view.model.functions; parametersOnly = true)
+  local equations::Vector{IR.Equation} = model.continuous[1].equations
+  local dropped::Set{Symbol} = Set{Symbol}()
+  for (k::Int, eq::IR.Equation) in enumerate(equations)
+    eq isa IR.SCALAR_EQUATION || continue
+    local folded::IR.SCALAR_EQUATION = withoutKnownZeros(eq, variables, values, view.elements)
+    local before::Set{Symbol} = variableReads(eq, model.variables)
+    local after::Set{Symbol} = variableReads(folded, model.variables)
+    (length(after) < length(before) && issubset(after, before)) || continue
+    equations[k] = folded
+    union!(dropped, setdiff(before, after))
+  end
+  isempty(dropped) || demoteDeadStates!(model, dropped)
+  return !isempty(dropped)
+end
+
+"""
+    demoteDeadStates!(model, candidates)
+
+The scalar states whose derivative variable (of `candidates`: the variables a fold took out of an equation) no
+equation of the model reads any more: algebraic variables, their derivative variables gone, as the plan's structure
+reads them (`Structure`) and SimCode's `demoteDeadStates` makes them on the scalarized path. Left a state, the array
+code kept it as given and its derivative as an unknown without an equation.
+"""
+function demoteDeadStates!(model::IR.Model, candidates::Set{Symbol})::Nothing
+  local read::Set{Symbol} = Set{Symbol}()
+  local visit = (@nospecialize(e::IR.Expression)) -> (e isa IR.CREF && push!(read, e.cref.name); nothing)
+  for partition::IR.Partition in model.continuous
+    foreach((eq::IR.Equation) -> IR.foreachExp(visit, eq), partition.equations)
+    foreach((eq::IR.Equation) -> IR.foreachExp(visit, eq), partition.initialEquations)
+  end
+  local dead::Set{Symbol} = Set{Symbol}()
+  for v::IR.Variable in model.variables
+    (v.kind isa IR.STATE && v.ty isa IR.T_REAL && v.kind.derivative !== nothing) || continue
+    local derivative::Symbol = v.kind.derivative
+    (derivative in candidates && !(derivative in read) && haskey(model.variables, derivative)) || continue
+    v.kind = IR.ALGEBRAIC()
+    push!(dead, derivative)
+  end
+  isempty(dead) || filter!((v::IR.Variable) -> !(v.name in dead), model.variables)
+  return nothing
+end
+
 """
     forDerivatives(eq, rows, view, p, seeds, planSeeds, E, variables, functions, known)
       -> Dict{Vector{Int}, Vector{IR.Equation}}
@@ -649,6 +720,8 @@ function reduceIndexArrays!(model::IR.Model; arrays::Bool = true)::Bool
   (arrays && !hasContinuousArrays(model)) && return false
   any(readsDerCall, model.continuous[1].equations) && throw(NotHandled("der() of an expression with arrays kept"))
   local view::Scalarized = scalarizeArrays(model)
+  #= the equations as the plan's structure reads them (the terms of parameters known as zero) =#
+  dropKnownZeroTerms!(model, view) && (view = scalarizeArrays(model))
   local partition::IR.Partition = view.model.continuous[1]
   local written::Plan = plan(view.model, partition; indexOne = true)
   #= the array form of the plan as written first: a plan it does not take is refused before the simulation code's

@@ -2854,4 +2854,24 @@ package ArrayPath
     T - 300 = 0.01 * v * i;
     der(x) = i;
   end BilinearStart;
+
+  model ZeroOrientation "MSL FundamentalWave's converter at orientation 0: -v = Nre * der(Phire) + Nim * der(Phiim) with Nim = Nt * sin(orientation) = 0, so der(Phiim) has a zero coefficient only and Phiim is no state; a coil of 1 ohm and a reluctance of 1: Phire = exp(-t), Phiim = 0"
+    parameter Real Nt = 1;
+    parameter Real orientation = 0;
+    final parameter Real Nre = Nt * cos(orientation);
+    final parameter Real Nim = Nt * sin(orientation);
+    Real Phire(start = 1, fixed = true);
+    Real Phiim;
+    Real i;
+    Real v;
+    Real Vre;
+    Real Vim;
+  equation
+    Vre = Nre * i;
+    Vim = Nim * i;
+    -v = Nre * der(Phire) + Nim * der(Phiim);
+    v = i;
+    Vre = Phire;
+    Vim = Phiim;
+  end ZeroOrientation;
 end ArrayPath;

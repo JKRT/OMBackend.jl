@@ -461,6 +461,15 @@ end
     @test maximum(abs.(sb .- ab)) < 1e-6
   end
 
+  @testset "A parameter known as zero: its terms out of the equations, a state whose derivative they held is none" begin
+    #= the plan's structure reads the equations with the known values (`withKnownValues`); the committed model kept
+       `Nim * der(Phiim)` and with it Phiim as a state and der(Phiim) as an unknown whose only coefficient is zero:
+       structurally singular in the array code (MSL FundamentalWave SinglePhaseInductance). `dropKnownZeroTerms!` =#
+    local (sz, az, _) = _bothWays("ArrayPath.ZeroOrientation", ["Phire", "Phiim"])
+    @test isapprox(az, [exp(-1), 0.0]; atol = 1e-6)
+    @test maximum(abs.(sz .- az)) < 1e-6
+  end
+
   @testset "Function arguments and results: arrays as wholes, the first of several outputs, free parameters" begin
     #= `y = f(x)` of a function of two outputs takes the first, an array, by its elements (`SC.TSUB` under a
        subscript); an array variable or a sum of arrays as the argument is the array of its elements

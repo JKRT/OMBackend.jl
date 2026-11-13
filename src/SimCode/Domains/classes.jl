@@ -1368,9 +1368,9 @@ end
 Maximum matching instances <-> unknowns (greedy, then augmenting paths). No instance is matched to an unknown whose
 coefficient is zero there (`InstanceTable.vanishing`): the explicit solution divides by it (MSL Spice3 BJT2,
 `irc * p1.m_collectorResist = C.v - Cinternal` with a collector resistance of 0: `irc` was 0 / 0 from the first
-evaluation on, the Oscillator ended in DtNaN).
+evaluation on, the Oscillator ended in DtNaN). `texts`: the classes' equations, for the message.
 """
-function _match(el::InstanceTable, nU::Int)::Vector{Int}
+function _match(el::InstanceTable, nU::Int, texts::Vector{String})::Vector{Int}
   local N = el.nEq
   local matchRow = zeros(Int, length(el.class))
   local matchCol = zeros(Int, nU)
@@ -1425,7 +1425,8 @@ function _match(el::InstanceTable, nU::Int)::Vector{Int}
       end
       push!(rows, matchCol[c]); push!(iters, el.uptr[matchCol[c]])
     end
-    found || ns("structurally singular (index reduction needed, or under/over-determined)")
+    found || ns("structurally singular (index reduction needed, or under/over-determined): no unknown left for " *
+                first(texts[el.class[r0]], 120))
   end
   return matchRow
 end

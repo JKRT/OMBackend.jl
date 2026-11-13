@@ -136,7 +136,7 @@ function causalSchedule!(g::Gen; keepsArrays::Bool, full::Bool, fixedMask::Vecto
     g.usesInitial && ns("initial() (OMBackend.ARRAY_PATH_FULL)")
   end
   local el::InstanceTable = _elements(g)
-  local matchRow::Vector{Int} = _match(el, nU)
+  local matchRow::Vector{Int} = _match(el, nU, String[c.text for c in g.classes])
   local (batches::Vector{Tuple{Tuple{Int, Int}, Vector{Int}}}, pos::Vector{Int}, producer::Vector{Int}, loops::LoopBlocks) =
     _schedule(el, matchRow, nU)
   if _OMBACKEND.envSwitch("OMBACKEND_ARRAY_TRACE")
