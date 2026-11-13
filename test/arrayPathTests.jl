@@ -525,6 +525,16 @@ end
     @test p.rel[1] && p.rel[2]
   end
 
+  @testset "If-equations whose branches set different variables: a residual per equation" begin
+    #= `if cv then u = Vend else -i = -I`: the branches assign different variables, one by a left side that is no
+       reference. Each equation of the if-equation is a class `0 = if c then l1 - r1 else l2 - r2` (`_ifResidual`),
+       here in a loop with the circuit's equation; it was refused ("branches give different variables": MSL
+       CCCV_Cell, SwitchWithArc, DemoPowerSupply) =#
+    local (sr, ar, _) = _bothWays("ArrayPath.IfBranchResiduals", ["vc[1]", "vc[2]"]; tspan = (0.0, 3.0))
+    @test isapprox(ar, [2 - exp(-2), 3 - exp(-1)]; atol = 1e-5)
+    @test maximum(abs.(sr .- ar)) < 1e-5
+  end
+
   @testset "Clocked sample(): the left limit at a tick, a hold sampled back into its partition" begin
     #= `sample(u, clock)` takes u's left limit (MLS 16.5.1): pre() of u, of an algebraic variable its value before the
        event's sweep (`p.aleft`); a relation's change at a sample instant belongs to the tick's event

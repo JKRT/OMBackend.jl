@@ -2112,6 +2112,15 @@ function _affine(x::IR, key::String)::Union{Nothing, Tuple{IR, IR}}
     local abNumerator::Union{Nothing, Tuple{IR, IR}} = _affine(x.args[1], key)
     abNumerator === nothing && return nothing
     return (Op(:/, IR[abNumerator[1], x.args[2]]), Op(:/, IR[abNumerator[2], x.args[2]]))
+  elseif x.op == :if && length(x.args) == 3 && !any(r::Ref -> irKey(r) == key, accesses!(Ref[], x.args[1]))
+    #= an if-expression on a condition that does not read it (an if-equation's residual, `_ifResidual`): affine in
+       each branch; not where it is missing from one branch only (its coefficient zero there: no explicit solution) =#
+    local abThen::Union{Nothing, Tuple{IR, IR}} = _affine(x.args[2], key)
+    local abElse::Union{Nothing, Tuple{IR, IR}} = _affine(x.args[3], key)
+    (abThen === nothing || abElse === nothing) && return nothing
+    _isLit(abThen[1], 0.0) != _isLit(abElse[1], 0.0) && return nothing
+    local coefficient::IR = _isLit(abThen[1], 0.0) ? Lit(0.0) : Op(:if, IR[x.args[1], abThen[1], abElse[1]])
+    return (coefficient, Op(:if, IR[x.args[1], abThen[2], abElse[2]]))
   end
   return nothing
 end

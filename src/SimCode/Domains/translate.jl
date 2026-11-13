@@ -1206,9 +1206,66 @@ function _bodyRhs(g::Gen, body::Vector{SC.Equation}, key::String, ctx::Ctx)::IR
 end
 
 """
+The number of scalar equations of each branch of the if-equation `eq` (a nested if-equation's counted); NotSupported
+where the branches differ in it or hold another kind of equation.
+"""
+function _ifEquationCount(eq::SC.INLINE_IF_EQUATION)::Int
+  local bodies::Vector{Vector{SC.Equation}} = Vector{SC.Equation}[eq.branchesTrue; [eq.branchElse]]
+  local counts::Vector{Int} = Int[_bodyEquationCount(body) for body in bodies]
+  all(==(counts[1]), counts) || ns("if-equation on a variable condition: branches of different numbers of equations")
+  return counts[1]
+end
+
+"The scalar equations of one branch of an if-equation (`_ifEquationCount`)."
+function _bodyEquationCount(body::Vector{SC.Equation})::Int
+  local n::Int = 0
+  for b in body
+    if b isa SC.INLINE_IF_EQUATION
+      n += _ifEquationCount(b)
+    elseif b isa SC.EQUATION && !(b.lhs isa SC.TUPLE)
+      n += 1
+    else
+      ns("if-equation on a variable condition: branch equation $(_eqText(b))")
+    end
+  end
+  return n
+end
+
+"""
+The residual of the `k`-th equation of the if-equation `eq`, the k-th of every branch paired:
+`if c1 then l1 - r1 elseif ... else ln - rn`. One branch holds at a time, so the pairing does not matter; the class
+`0 = residual` reads what every branch reads (a switch with an arc: `i = Goff * v` in one branch, `v = ...` in the
+other; a power supply's `-i = I0 - Gcc * v`).
+"""
+function _ifResidual(g::Gen, eq::SC.INLINE_IF_EQUATION, k::Int, ctx::Ctx)::IR
+  local residual::IR = _bodyResidual(g, eq.branchElse, k, ctx)
+  for i in length(eq.conditions):-1:1
+    residual = Op(:if, IR[toIR(g, eq.conditions[i], ctx), _bodyResidual(g, eq.branchesTrue[i], k, ctx), residual])
+  end
+  return residual
+end
+
+"The residual `lhs - rhs` of the `k`-th scalar equation of one branch of an if-equation (`_ifResidual`)."
+function _bodyResidual(g::Gen, body::Vector{SC.Equation}, k::Int, ctx::Ctx)::IR
+  local before::Int = 0
+  for b in body
+    if b isa SC.INLINE_IF_EQUATION
+      local n::Int = _ifEquationCount(b)
+      k <= before + n && return _ifResidual(g, b, k - before, ctx)
+      before += n
+    else
+      before += 1
+      before == k && return Op(:-, IR[toIR(g, (b::SC.EQUATION).lhs, ctx), toIR(g, b.rhs, ctx)])
+    end
+  end
+  ns("if-equation on a variable condition: no equation $(k) in a branch")
+end
+
+"""
 An if-equation: on conditions of parameters and iterators each instance its branch's equations; on a variable
 condition each variable its branches assign (`v = e` in every branch and the else) one class
-`v = if c1 then e1 elseif ... else en`.
+`v = if c1 then e1 elseif ... else en`; branches that assign different variables, or by equations that are no
+`v = e`, a residual class per equation (`_ifResidual`).
 """
 function _addIfEquation!(g::Gen, eq::SC.INLINE_IF_EQUATION, iterNames::Vector{String}, idom::Matrix{Int}; initial::Bool = false)
   local iters::Dict{String, Int} = Dict{String, Int}(n => k for (k, n) in enumerate(iterNames))
@@ -1228,7 +1285,26 @@ function _addIfEquation!(g::Gen, eq::SC.INLINE_IF_EQUATION, iterNames::Vector{St
     end
     return
   end
-  local assigned::Dict{String, SC.Exp} = _ifAssigned(eq)
+  local assigned::Union{Nothing, Dict{String, SC.Exp}} = try
+    _ifAssigned(eq)
+  catch err
+    err isa NotSupported || rethrow(err)
+    nothing
+  end
+  if assigned === nothing
+    #= branches that do not assign the same variables by `v = e`: a residual per equation, the k-th of every branch
+       paired (`_ifResidual`) =#
+    local count::Int = _ifEquationCount(eq)
+    for k in 1:count
+      local rctx::Ctx = Ctx(iters, Int[], Base.RefValue(0), initial)
+      local residual::IR = _ifResidual(g, eq, k, rctx)
+      rctx.nsam[] == 0 || ns("sample() in an equation")
+      push!(initial ? g.initClasses : g.classes,
+            EqClass(Lit(0.0), residual, nIter, idom, initial ? 0 : rctx.nrel[],
+                    "0 = if ... ($(_str(eq.conditions[1]))), equation $(k)"))
+    end
+    return
+  end
   for key in sort!(collect(keys(assigned)))
     local ctx::Ctx = Ctx(iters, Int[], Base.RefValue(0), initial)
     local lhs::IR = toIR(g, assigned[key], ctx)

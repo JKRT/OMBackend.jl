@@ -2938,6 +2938,28 @@ package ArrayPath
     der(q) = vL;
   end ThyristorCommutation;
 
+  model IfBranchResiduals "if-equations on a variable condition whose branches set different variables and have a left side that is no reference (MSL CCCVcharger, IdealSwitchWithArc, DCPowerSupply's -i = ...): a charger of constant current, then constant voltage, on R and C, two elements; vc = t until u = 1 + t reaches Vend, then vc' = Vend - vc: vc(3) = {2 - exp(-2), 3 - exp(-1)}"
+    parameter Real Vend[2] = {2, 3};
+    parameter Real I = 1;
+    parameter Real R = 1;
+    parameter Real C = 1;
+    Real vc[2](each start = 0, each fixed = true);
+    Real u[2];
+    Real i[2];
+    Boolean cv[2](each start = false, each fixed = true);
+  equation
+    for k in 1:2 loop
+      C * der(vc[k]) = i[k];
+      u[k] = R * i[k] + vc[k];
+      cv[k] = time >= k;
+      if cv[k] then
+        u[k] = Vend[k];
+      else
+        -i[k] = -I;
+      end if;
+    end for;
+  end IfBranchResiduals;
+
   model InitialCluster "discrete equations whose initial() term decides them at the initialization (MSL PartialFriction's startBackward = ... or initial() and w < 0, mode start Unknown): back and mode = -1 there, x rises from -1 with slope 1; with pre(mode) the start value again in the start's iteration, mode was 0 and x stayed"
     Real x(start = -1, fixed = true);
     Boolean back(start = false, fixed = true);
