@@ -973,10 +973,92 @@ _whenAssigned(g::Gen, name::String)::Bool =
   any(w::WhenClass -> any(b::Tuple -> b[1] == :assign && b[2] isa Ref && b[2].name == name, w.body), g.whens)
 
 """
+The left side `d` of an initial equation `d = value` read through the equations that compute `d`: a scalar discrete
+variable no when-equation assigns that is, by equations between such variables (`active = localActive`, a
+connection's `active = timer.u`), equal to one an equation gives as pre() of a variable
+(`localActive = pre(newActive)`) is that pre(); equal to a variable the when-equations assign, that variable (its
+initial value), or the pre() they all assign it (the passes lift `localActive = pre(newActive)` into a when-equation
+of every event: `_whenPre`). MSL StateGraph's steps:
+`initial equation active = true` gives pre(newActive). As an assignment of `active` it took `active` out of the
+unknowns, and `active = localActive` was an equation too many ("52 equations for 50 unknowns"). Another left side,
+and one equal to several such, as it is.
+"""
+function _throughDefinitions(g::Gen, lhs::IR)::IR
+  local discrete::Function = (x::IR) -> x isa Ref && !x.der && isempty(x.subs) && g.vars[x.name].kind == :discrete
+  (discrete(lhs) && !_whenAssigned(g, (lhs::Ref).name)) || return lhs
+  local equal::Set{String} = Set{String}([lhs.name])
+  local pres::Vector{Pre} = Pre[]
+  local assigned::Vector{Ref} = Ref[]
+  local grew::Bool = true
+  while grew
+    grew = false
+    for c::EqClass in g.classes
+      c.nslots == 0 || continue
+      for (a::IR, b::IR) in ((c.lhs, c.rhs), (c.rhs, c.lhs))
+        (discrete(a) && (a::Ref).name in equal) || continue
+        if discrete(b) && _whenAssigned(g, (b::Ref).name)
+          local lifted::Union{Nothing, Pre} = _whenPre(g, b.name)
+          if lifted === nothing
+            any(q::Ref -> q.name == b.name, assigned) || push!(assigned, b)
+          else
+            any(q::Pre -> q.ref.name == lifted.ref.name, pres) || push!(pres, lifted)
+          end
+        elseif discrete(b) && !((b::Ref).name in equal)
+          push!(equal, b.name)
+          grew = true
+        elseif b isa Pre && isempty(b.ref.subs) && !any(q::Pre -> q.ref.name == b.ref.name, pres)
+          push!(pres, b)
+        end
+      end
+    end
+  end
+  (length(pres) == 1 && isempty(assigned)) && return pres[1]
+  (isempty(pres) && length(assigned) == 1) && return assigned[1]
+  return lhs
+end
+
+"""
+pre() of the scalar variable every when-equation that assigns the scalar `name` assigns it (`name := pre(y)`, a
+lifted `name = pre(y)`); nothing where an assignment differs.
+"""
+function _whenPre(g::Gen, name::String)::Union{Nothing, Pre}
+  local found::Union{Nothing, Pre} = nothing
+  for w::WhenClass in g.whens, (kind::Symbol, target::Ref, value::IR) in w.body
+    (kind === :assign && target.name == name) || continue
+    (w.nslots == 0 && isempty(target.subs) && value isa Pre && isempty(value.ref.subs)) || return nothing
+    (found === nothing || found.ref.name == value.ref.name) || return nothing
+    found = value
+  end
+  return found
+end
+
+"The variable an initial equation's left side gives a value: `d` of `d = ...` and of `pre(d) = ...`; nothing otherwise."
+_initialTarget(lhs::IR)::Union{Nothing, String} =
+  lhs isa Pre ? lhs.ref.name : (lhs isa Ref && !lhs.der) ? lhs.name : nothing
+
+"The variables `x` reads pre() of, into `names`."
+function _preNames!(names::Set{String}, x::IR)::Set{String}
+  if x isa Pre
+    push!(names, x.ref.name)
+  elseif x isa Op
+    foreach(a::IR -> _preNames!(names, a), x.args)
+  elseif x isa Rel
+    _preNames!(names, x.lhs); _preNames!(names, x.rhs)
+  elseif x isa EvFn
+    _preNames!(names, x.arg)
+  elseif x isa Ref
+    foreach(a::IR -> _preNames!(names, a), x.subs)
+  end
+  return names
+end
+
+"""
 The initial equations: the assignments among them (a discrete variable's initial value, a parameter with fixed = false
 given its value from parameters: `_initialAssignment`) as initial algorithms, in the order their parameters become
 known (GlobalSeed's `seed`, then `id_impure = initializeImpureRandom(seed)`, whatever the equations' order); the others
-as initial equations (`_addEquation!`).
+as initial equations (`_addEquation!`). An equation on a variable an equation computes gives pre() of what that reads
+(`_throughDefinitions`); of two that give pre() of one variable, `pre(a) = pre(b)` gives pre(b) where nothing else
+does; one that reads pre() of a variable another gives comes after it.
 """
 function _addInitialEquations!(g::Gen, equations::Vector{SC.Equation})::Nothing
   local pending::Vector{Tuple{SC.EQUATION, IR, IR, Int}} = Tuple{SC.EQUATION, IR, IR, Int}[]
@@ -988,16 +1070,37 @@ function _addInitialEquations!(g::Gen, equations::Vector{SC.Equation})::Nothing
       ctx.nsam[] == 0 || ns("sample() in an equation")
       #= `value = d`, the discrete variable on the right (MSL Mean's `y0 = y_last`): its initial value, `d = value` =#
       (_isDiscreteTarget(g, rhs) && !_isDiscreteTarget(g, lhs)) && ((lhs, rhs) = (rhs, lhs))
-      push!(pending, (eq, lhs, rhs, ctx.nrel[]))
+      push!(pending, (eq, _throughDefinitions(g, lhs), rhs, ctx.nrel[]))
     else
       _addEquation!(g, eq, String[], NO_SLOTS; initial = true)
     end
   end
+  #= two equations that give pre() of one variable: `pre(a) = pre(b)` gives pre(b) where no other does =#
+  local given::Dict{String, Int} = Dict{String, Int}()
+  for (_, lhs, _, _) in pending
+    local name::Union{Nothing, String} = _initialTarget(lhs)
+    name === nothing || (given[name] = get(given, name, 0) + 1)
+  end
+  for k in eachindex(pending)
+    local (eq::SC.EQUATION, lhs::IR, rhs::IR, nrel::Int) = pending[k]
+    (lhs isa Pre && rhs isa Pre && get(given, lhs.ref.name, 0) > 1 && get(given, rhs.ref.name, 0) == 0) || continue
+    pending[k] = (eq, rhs, lhs, nrel)
+    given[lhs.ref.name] -= 1
+    given[rhs.ref.name] = 1
+  end
   local assigned::Bool = true
-  while assigned
+  #= `ordered`: an equation that reads pre() of a variable another pending one gives waits for it; given up where
+     that leaves none to take (a cycle) =#
+  local ordered::Bool = true
+  while assigned || ordered
+    (assigned || !ordered) || (ordered = false)
     assigned = false
     for k in eachindex(pending)
       local (eq::SC.EQUATION, lhs::IR, rhs::IR, _) = pending[k]
+      if ordered
+        local read::Set{String} = _preNames!(Set{String}(), rhs)
+        any(j::Int -> j != k && _initialTarget(pending[j][2]) in read, eachindex(pending)) && continue
+      end
       #= `pre(d) = value`: pre() of the discrete variable at the initialization (`SPreStart`); of a variable a
          when-equation assigns also its initial value, held until a when fires (MSL Timer's `pre(entryTime) = 0`).
          One an equation computes is not assigned: the equation gives it, from that pre() (MSL MultiSwitch's

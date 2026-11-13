@@ -1703,4 +1703,40 @@ end
     @test ac ≈ [2.0, 0.5, 0.375] atol = 1e-6
     @test sc ≈ ac atol = 1e-6
   end
+
+  @testset "an initial equation on a discrete variable an equation computes" begin
+    #= `initial equation active = initiallyActive` with `active = localActive`, `localActive = pre(newActive)` and a
+       connection's `active = mirror`: the initial equation gives pre(newActive), `pre(newActive) = pre(localActive)`
+       then pre(localActive) (`_throughDefinitions`). As an assignment of `active` it took `active` out of the
+       unknowns: "8 equations for 7 unknowns" (MSL StateGraph's steps, FirstExample). Active until `set` at 0.5. =#
+    local latches = Modelica"""
+      model Latch "a step as StateGraph's: active from pre(newActive), left when set"
+        parameter Boolean initiallyActive = true;
+        Boolean localActive;
+        Boolean newActive;
+        Boolean active;
+        Boolean mirror;
+        Boolean set;
+        Real x(start = 0, fixed = true);
+      initial equation
+        pre(newActive) = pre(localActive);
+        active = initiallyActive;
+      equation
+        localActive = pre(newActive);
+        active = localActive;
+        active = mirror;
+        set = time > 0.5;
+        newActive = localActive and not set;
+        der(x) = if mirror then 1 else 0;
+      end Latch;
+      """
+    local (sl, al, _) = _bothWaysOf(latches, "Latch", ["x", "active"])
+    @test al ≈ [0.5, 0.0] atol = 1e-6
+    @test sl ≈ al atol = 1e-6
+    local latch::String = _translateProgram(latches, "Latch"; scalarized = false)
+    @test OMBackend.getVariableValues(OMBackend.simulateModel(latch; tspan = (0.0, 0.25)), "active")[end] == 1.0
+    local inactive = OMBackend.resimulateModel(latch; tspan = (0.0, 1.0),
+                                               parameters = Dict{String, Any}("initiallyActive" => false))
+    @test OMBackend.getVariableValues(inactive, "x")[end] ≈ 0.0 atol = 1e-9
+  end
 end
