@@ -797,6 +797,41 @@ end
     @test maximum(abs.(ss .- as)) < 1e-5
   end
 
+  @testset "An Integer field of an array of records with a declaration binding" begin
+    #= `reader(states = {source, source})` gives the fields of `states` their bindings; the Real one became a
+       for-equation, the Integer one (`states.phase = {source.phase, source.phase}`) no equation: its elements were
+       discrete unknowns nothing gives ("314 equations for 316 unknowns": MSL Fluid PumpingSystem's
+       `heatTransfer.states.phase`). An equation per element (`IndexReduction.discreteBindingEquations`) =#
+    local phases = Modelica"""
+      record PhaseState
+        Integer phase;
+        Real p;
+      end PhaseState;
+
+      model Reader
+        input PhaseState states[2];
+        Real y;
+      equation
+        y = states[1].phase * states[2].p;
+      end Reader;
+
+      model DiscreteArrayBinding "phase = 2 while x = exp(-t) > 0.5, then 1; y = phase x"
+        Real x(start = 1, fixed = true);
+        PhaseState source;
+        Reader reader(states = {source, source});
+      equation
+        der(x) = -x;
+        source.phase = if x > 0.5 then 2 else 1;
+        source.p = x;
+      end DiscreteArrayBinding;
+      """
+    for (stop, expected) in ((0.5, [2 * exp(-0.5)]), (1.0, [exp(-1)]))
+      local (sd, ad, _) = _bothWaysOf(phases, "DiscreteArrayBinding", ["reader.y"]; tspan = (0.0, stop))
+      @test isapprox(ad, expected; atol = 1e-5)
+      @test maximum(abs.(sd .- ad)) < 1e-5
+    end
+  end
+
   @testset "Function arguments and results: arrays as wholes, the first of several outputs, free parameters" begin
     #= `y = f(x)` of a function of two outputs takes the first, an array, by its elements (`SC.TSUB` under a
        subscript); an array variable or a sum of arrays as the argument is the array of its elements

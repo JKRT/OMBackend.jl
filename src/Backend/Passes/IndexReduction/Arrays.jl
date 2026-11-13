@@ -1290,6 +1290,34 @@ function bindingEquation(v::IR.Variable, variables::IR.VariableSet)::Union{Nothi
 end
 
 """
+    discreteBindingEquations(v, variables) -> Vector{Equation}
+
+The declaration binding of the Boolean, Integer or enumeration array `v` (arrays kept: a field of an array of
+records, `states.phase` of `ThermodynamicState states[1] = {medium.state}`) as one equation per element,
+`v[k] = e[k]` (`bindingEquation` with its iterations written out, an element of an array literal picked): the
+passes of discrete equations take scalar ones. Empty where `bindingEquation` gives none. Without them the elements
+were discrete unknowns no equation gives (MSL Fluid PumpingSystem: 314 equations for 316 unknowns).
+"""
+function discreteBindingEquations(v::IR.Variable, variables::IR.VariableSet)::Vector{IR.Equation}
+  local rolled::Union{Nothing, IR.FOR_EQUATION} = bindingEquation(v, variables)
+  rolled === nothing && return IR.Equation[]
+  local iterators::Set{Symbol} = Set{Symbol}()
+  local loop::IR.Equation = rolled
+  while loop isa IR.FOR_EQUATION
+    push!(iterators, loop.iterator.name)
+    loop = loop.body[1]
+  end
+  local picked = (@nospecialize(x::IR.Expression)) ->
+    x isa IR.SUBSCRIPTED ? subscriptedReference(foldTree(selectElement(x.exp, x.subscripts, x.ty))) : x
+  local out::Vector{IR.Equation} = IR.Equation[]
+  for eq::IR.Equation in unrollIterators(rolled, iterators)
+    push!(out, eq isa IR.SCALAR_EQUATION ?
+                 IR.SCALAR_EQUATION(eq.lhs, IR.mapExp(picked, eq.rhs), eq.ty, eq.source, eq.attributes) : eq)
+  end
+  return out
+end
+
+"""
 `componentDimensions` of the reference `x` in a model with its arrays kept: the leading dimensions of the array
 variable it names that its type does not have and its subscripts do not index; 0 for a reference to no array.
 """
