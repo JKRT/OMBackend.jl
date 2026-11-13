@@ -403,6 +403,16 @@ equation reads after that is no state (`demoteDeadStates!`). Whether an equation
 function dropKnownZeroTerms!(model::IR.Model, view::Scalarized)::Bool
   local variables::IR.VariableSet = view.model.variables
   local values::StartValues = StartValues(variables, view.model.functions; parametersOnly = true)
+  #= a zero of some elements only (a polyphase converter's `N[k].im` at the phase of orientation 0) that takes a
+     derivative out of those iterations: the state of that element is none while its siblings are, so the arrays are
+     split and their equations unrolled; the terms then go out of the scalar equations =#
+  local sliced::Vector{Symbol} = derivativesZeroedInArrays(model, view, values)
+  if !isempty(sliced)
+    splitArrays!(model, view, sliced, Int[])
+    view = scalarizeArrays(model)
+    variables = view.model.variables
+    values = StartValues(variables, view.model.functions; parametersOnly = true)
+  end
   local equations::Vector{IR.Equation} = model.continuous[1].equations
   local dropped::Set{Symbol} = Set{Symbol}()
   for (k::Int, eq::IR.Equation) in enumerate(equations)
@@ -415,7 +425,36 @@ function dropKnownZeroTerms!(model::IR.Model, view::Scalarized)::Bool
     union!(dropped, setdiff(before, after))
   end
   isempty(dropped) || demoteDeadStates!(model, dropped)
-  return !isempty(dropped)
+  return !isempty(dropped) || !isempty(sliced)
+end
+
+"""
+    derivativesZeroedInArrays(model, view, values) -> Vector{Symbol}
+
+The arrays of derivative variables an element of which a parameter known as zero takes out of an iteration of a
+for-equation or array equation (`withoutKnownZeros` of the element view's equation reads it no more): in those
+iterations the plan's structure has no such derivative, in the others it has (`dropKnownZeroTerms!` splits them).
+"""
+function derivativesZeroedInArrays(model::IR.Model, view::Scalarized, values::StartValues)::Vector{Symbol}
+  local variables::IR.VariableSet = view.model.variables
+  local equations::Vector{IR.Equation} = model.continuous[1].equations
+  local rows::Vector{IR.Equation} = view.model.continuous[1].equations
+  local arrayOf::Dict{Symbol, Symbol} = Dict{Symbol, Symbol}()
+  for (array::Symbol, elements::Vector{Symbol}) in view.elements.elements, element::Symbol in elements
+    arrayOf[element] = array
+  end
+  local arrays::Set{Symbol} = Set{Symbol}()
+  for (r::Int, row::IR.Equation) in enumerate(rows)
+    (row isa IR.SCALAR_EQUATION && !(equations[view.origins[r].equation] isa IR.SCALAR_EQUATION)) || continue
+    local folded::IR.SCALAR_EQUATION = withoutKnownZeros(row, variables, values, view.elements)
+    local before::Set{Symbol} = variableReads(row, variables)
+    local after::Set{Symbol} = variableReads(folded, variables)
+    (length(after) < length(before) && issubset(after, before)) || continue
+    for name::Symbol in setdiff(before, after)
+      (variables[name].kind isa IR.STATE_DER && haskey(arrayOf, name)) && push!(arrays, arrayOf[name])
+    end
+  end
+  return sort!(collect(arrays))
 end
 
 """

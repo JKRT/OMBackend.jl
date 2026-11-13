@@ -468,6 +468,16 @@ end
     local (sz, az, _) = _bothWays("ArrayPath.ZeroOrientation", ["Phire", "Phiim"])
     @test isapprox(az, [exp(-1), 0.0]; atol = 1e-6)
     @test maximum(abs.(sz .- az)) < 1e-6
+    #= a zero of one element only (three converters at 0, 2 pi / 3, 4 pi / 3: `Nim[1] = 0`): der(Phiim[1]) leaves
+       the first iteration, the arrays are split and their equations unrolled (`derivativesZeroedInArrays`), Phiim[1]
+       is no state. The scalarized route does not build this model (a structural imbalance of its reduced system) =#
+    local phases::String = _arrayPathTranslate("ArrayPath.ZeroOrientationPhases"; scalarized = false)
+    @test _arrayPathTaken(phases)
+    local solPhases = OMBackend.simulateModel(phases; tspan = (0.0, 1.0))
+    @test solPhases.retcode == ReturnCode.Success
+    local angles::Vector{Float64} = [0.0, 2pi / 3, 4pi / 3]
+    @test isapprox(_values(solPhases, ["Phire[1]", "Phire[2]", "Phire[3]"]), cos.(angles) .* exp(-1); atol = 1e-6)
+    @test isapprox(_values(solPhases, ["Phiim[1]", "Phiim[2]", "Phiim[3]"]), sin.(angles) .* exp(-1); atol = 1e-6)
   end
 
   @testset "A discrete unknown in an algebraic loop: the loop cut at it, the event iteration settles it" begin

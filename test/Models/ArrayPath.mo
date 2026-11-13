@@ -2898,6 +2898,32 @@ package ArrayPath
     Vim = Phiim;
   end ZeroOrientation;
 
+  model ZeroOrientationPhases "three converters at the orientations 0, 2 pi / 3, 4 pi / 3 (MSL FundamentalWave's polyphase converter): Nim[1] = 0 takes der(Phiim[1]) out of the first iteration only, so Phiim[1] is no state while Phiim[2] and Phiim[3] are; every phase: a coil of 1 ohm and a reluctance of 1, Phire[k]^2 + Phiim[k]^2 = exp(-2 t)"
+    parameter Real Nt = 1;
+    parameter Real orientation[3] = {0, 2.0943951023931953, 4.1887902047863905};
+    final parameter Real Nre[3] = {Nt * cos(orientation[k]) for k in 1:3};
+    final parameter Real Nim[3] = {Nt * sin(orientation[k]) for k in 1:3};
+    Real Phire[3](start = {cos(orientation[k]) for k in 1:3}, each fixed = true);
+    Real Phiim[3];
+    Real i[3];
+    Real v[3];
+    Real Vre[3];
+    Real Vim[3];
+    Real w[24](each start = 1, each fixed = true) "arrays that stay arrays beside the split ones";
+  equation
+    for k in 1:3 loop
+      Vre[k] = Nre[k] * i[k];
+      Vim[k] = Nim[k] * i[k];
+      -v[k] = Nre[k] * der(Phire[k]) + Nim[k] * der(Phiim[k]);
+      v[k] = i[k];
+      Vre[k] = Phire[k];
+      Vim[k] = Phiim[k];
+    end for;
+    for j in 1:24 loop
+      der(w[j]) = -w[j];
+    end for;
+  end ZeroOrientationPhases;
+
   model IdealDiodeLoop "MSL IdealSemiconductor's equations, two diodes on sources of opposite phase: the Boolean off[k] = s[k] < 0 is in the loop of s, vd and i (a discrete unknown in an algebraic loop); conducting i = V / (R + Ron), blocking i = Goff V / (1 + R Goff); q(1) = (1 - Goff) / (pi (R + Ron))"
     parameter Real R = 1;
     parameter Real Ron = 1e-5;
