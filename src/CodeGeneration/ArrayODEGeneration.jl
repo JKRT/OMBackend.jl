@@ -81,12 +81,14 @@ module ArrayODEGen
 
 import ModelingToolkit
 import ..CodeGeneration: stripBeginBlocks, ModelicaAssertionError, solveStoppedAtStart, _autoDtReset!
+import ..CodeGeneration: DelayState, delayedValue, emptyDelayHistories!, startDelayHistories!, recordDelayStepEnd!,
+  recordDelayJumps!, delayJumpsDue!
 import ...Passes
 import ...SimCode
 import ...SimCode.Domains: DomainSystem, InstanceTable, EqClass, EvFn, Gen, IR, Lit, LoopBlocks, NotSupported, Op, Pre,
   Ref, Rel, SAssert, SAssign, SBreak, SCall, SFor, SIf, SPreStart, SWhen, SWhile, Slot, Stmt, TimeIR, TornBlock, VarInfo,
   WhenClass,
-  AlgClass,
+  AlgClass, DelaySite,
   _blockFamilies, _callOfParameters, _condElements, _initAlgAssigned, _paramValue!, _parametersOnly, _relationSlots,
   _isTimeRelation, _timeRelationSlots, _continuous,
   domainSystem, ns, Schedule, causalSchedule!, ParameterBinding, parameterBindings, _bindingDeps
@@ -156,11 +158,12 @@ mutable struct ArrayRuntimeState
   atStart::Union{Nothing, ArrayStartState}
   rootLog::Vector{RootLogEntry}
   forced::Bool   #= the buffered relations hold a combination being tried (`_searchRelations!`) =#
+  delays::DelayState   #= the histories of the delay() calls' arguments, one per instance (`delayedValue`, delays.jl) =#
 end
-ArrayRuntimeState(nSamples::Int, strings::Vector{String}) =
+ArrayRuntimeState(nSamples::Int, strings::Vector{String}, nDelays::Int = 0) =
   ArrayRuntimeState(zeros(nSamples), zeros(nSamples), Float64[], Dict{Tuple{Int, Int, Int}, Any}(), Set{Any}(), false, false,
                     (NaN, Float64[]), nothing, (Float64[], Float64[], Bool[], Float64[]), strings, (NaN, Float64[]),
-                    nothing, RootLogEntry[], false)
+                    nothing, RootLogEntry[], false, DelayState(nDelays))
 
 struct ArrayModelParameters
   values::Vector{Float64}
@@ -290,6 +293,8 @@ end
 problem started from the first one's end (its discrete values, the event log, its loops' roots).
 """
 function _restoreStart!(p::ArrayModelParameters)::Nothing
+  #= the delay() histories are a solve's: its initialization reads the arguments themselves =#
+  emptyDelayHistories!(p.state.delays)
   local s::Union{Nothing, ArrayStartState} = p.state.atStart
   s === nothing && return nothing
   p.d .= s.discrete[1]; p.dpre .= s.discrete[2]; p.rel .= s.discrete[3]; p.evv .= s.discrete[4]
@@ -519,9 +524,15 @@ _evInterval(kind::Symbol, v) = kind === :floor ? (v, v + 1) : kind === :ceil ? (
   local v = p.evv[k]
   local eps = p.hyst[1] * (1 + _finiteAbs(q))
   local (lo, hi) = _evInterval(kind, v)
-  if mode && (p.hyst[1] == 0 || q - hi - eps >= 0 || q - lo + eps < 0)
-    v = p.evv[k] = Float64(kind === :floor ? floor(q) : kind === :ceil ? ceil(q) : trunc(q))
-    (lo, hi) = _evInterval(kind, v)
+  if mode
+    local literal::Float64 = Float64(kind === :floor ? floor(q) : kind === :ceil ? ceil(q) : trunc(q))
+    #= an argument that jumped exactly onto an end of the interval (`integer(delay(x, T))` of a logic value going
+       from 3 to 4.0: it stays there and never leaves the band) takes its literal value, as a relation at an exact
+       zero (`_relationAt`) =#
+    if p.hyst[1] == 0 || q - hi - eps >= 0 || q - lo + eps < 0 || ((q == hi || q == lo) && literal != v)
+      v = p.evv[k] = literal
+      (lo, hi) = _evInterval(kind, v)
+    end
   end
   if z !== nothing
     z[k] = q - hi - eps
@@ -668,6 +679,31 @@ function _splitStatements(name::Symbol, args::Vector{Symbol}, passed::Vector{Sym
     push!(calls, fired ? :(_fired = $call || _fired) : call)
   end
   return (defs, calls)
+end
+
+#= ---------------------------------------------------------------- delay() =#
+
+"""
+    _delayRecords(g) -> Tuple{Vector{Any}, Int}
+
+The code that takes the present values of the delay() calls' arguments and delay times (`Gen.delays`), each call
+over its class's domain, into the run's delay state (`_now`, `_times` at the call's base plus the column), and the
+number of histories. Run after the equations (`delayNow!`): the arguments are read where the equations left them.
+"""
+function _delayRecords(g::Gen)::Tuple{Vector{Any}, Int}
+  local body::Vector{Any} = Any[]
+  local total::Int = 0
+  for site::DelaySite in g.delays
+    local n::Int = size(site.domain, 2)
+    local record::Expr = quote
+      _now[$(site.base) + _col] = Float64($(jl(g, site.value)))
+      _times[$(site.base) + _col] = Float64($(jl(g, site.time)))
+    end
+    push!(body, site.nslots == 0 ? Expr(:let, :(_col = 1), record) :
+                                   _loopCode(site.nslots, site.domain, collect(1:n), record))
+    total = site.base + n
+  end
+  return (body, total)
 end
 
 #= ---------------------------------------------------------------- initialization =#
@@ -927,9 +963,24 @@ function jl(g::Gen, x::IR)
   elseif x isa Op
     local args = Any[jl(g, a) for a in x.args]
     x.op == :neg && return :(-$(args[1]))
-    #= a literal table: a subscript computed from variable values is checked (the code runs under @inbounds) =#
-    x.op == :index && return all(_staticSubscript, @view x.args[2:end]) ? Expr(:ref, args...) :
-                                                                         Expr(:call, _checkedIndex, args...)
+    if x.op == :delay
+      #= delay(value, time): the value `time` ago from the instance's history (`_numberDelays!`: its base and the
+         class's column); the present value where the history has no point yet, or within a step longer than `time` =#
+      x.args[1].v >= 0 ||
+        ns("delay() where the array code keeps no history (an algorithm, an assert, an initial equation, a binding)")
+      local history::Expr = :($(x.args[1].v) + _col)
+      return :($(delayedValue)(p.state.delays, $history, Float64(t), Float64($(args[3])), Float64($(args[2]))))
+    end
+    #= a literal table: a subscript computed from variable values is checked (the code runs under @inbounds); an
+       event function's value (`table[integer(delay(x, t))]`, MSL Digital's delays) is a number held as a Real =#
+    if x.op == :index
+      all(_staticSubscript, @view x.args[2:end]) && return Expr(:ref, args...)
+      local subscripts::Vector{Any} = Any[]
+      for k::Int in 2:length(args)
+        push!(subscripts, x.args[k] isa EvFn ? :(round(Int, $(args[k]))) : args[k])
+      end
+      return Expr(:call, _checkedIndex, args[1], subscripts...)
+    end
     x.op == :vect && return Expr(:vect, args...)
     x.op == :if && return Expr(:if, args...)
     x.op == :&& && return Expr(:&&, args...)
@@ -1512,6 +1563,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     (buffer === :d && _readsParameterOf(x, free) && !(get(discreteOwner, k, "") in initAssigned)) &&
       push!(freeStartStmts, :(p.d[$k] = Float64($v); p.dpre[$k] = p.d[$k]))
   end
+  local (delayBody::Vector{Any}, nDelays::Int) = _delayRecords(g)
   local usedParams = collect(keys(g.paramSyms))
   local (paramOrder, rules, bindingKinds) = _parameterRules(g)
   local objectDefs::Vector{Any} = _objectDefinitions(g, modelName)
@@ -1694,6 +1746,8 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     const TIME_SLOT = $(_timeRelationSlots(g, nRelTotal, relBases, whenRelBases, algRelBases))
     const USES_INITIAL = $(g.usesInitial)
     const USES_LEFT = $(g.usesLeft)
+    #= the histories of the delay() calls' instances (`delayNow!`) =#
+    const N_DELAYS = $(nDelays)
     #= the sample() instances (their starts and intervals each problem's, set by sampleSchedule! after the initialization) =#
     const N_SAMPLES = $(length(sampleSchedule))
     #= the round-off of a tick st + k dt, relative to the largest magnitude in it (omc's SAMPLE_EPS 1e-14): ticks within
@@ -1958,6 +2012,49 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
           return nothing
         end
       end)
+
+    #= The present values of the delay() calls' arguments and delay times at (u, t), into the run's delay state. =#
+    function delayNow!(u, p, t)
+      local du = similar(u); local a = similar(u, $nAlg)
+      equations!(du, a, u, p, t, nothing, false)
+      $(paramLocals...)
+      local _now = p.state.delays.now; local _times = p.state.delays.times
+      @inbounds begin
+        $(delayBody...)
+      end
+      return nothing
+    end
+
+    #= The delay() arguments at the integrator's point as left limits: a step's end, the state before an event. =#
+    function _delayLeft!(integrator)
+      delayNow!(integrator.u, integrator.p, integrator.t)
+      $(recordDelayStepEnd!)(integrator.p.state.delays, Float64(integrator.t))
+      return false
+    end
+
+    #= After the events of a step: an argument that changed at its end jumped (due again its delay time later). =#
+    function _delayJumps!(integrator)
+      delayNow!(integrator.u, integrator.p, integrator.t)
+      $(recordDelayJumps!)(() -> nothing, integrator.p.state.delays, Float64(integrator.t), integrator)
+      return false
+    end
+
+    #= At a solve's start, after the other callbacks' initializations: each history's first point. =#
+    function _delayStart!(integrator)
+      delayNow!(integrator.u, integrator.p, integrator.t)
+      $(startDelayHistories!)(integrator.p.state.delays, Float64(integrator.t))
+      return nothing
+    end
+
+    #= A delayed jump is due (delays.jl): the event iteration with the delayed values as right limits, until the
+       recorder after the events (`_delayJumps!`). =#
+    function affectDelay!(integrator)
+      integrator.p.state.delays.rightLimit = true
+      _eventAt!(integrator)
+      _logDiscretes!(integrator.p, integrator.t)
+      DifferentialEquations.u_modified!(integrator, true)
+      return nothing
+    end
 
     #= Residuals of the initial equations at (u, t), du and a from equations!. =#
     function initialResiduals!(res, du, a, u, p, t)
@@ -2265,6 +2362,8 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
        (relations switching back and forth) stops the simulation, as OpenModelica. =#
     function _eventAt!(integrator, sampleInstant::Bool = false)
       local p = integrator.p
+      #= the delay() arguments just before the event: their left limits (a jump is recorded after it, `_delayJumps!`) =#
+      N_DELAYS == 0 || _delayLeft!(integrator)
       #= the state just before the event (a reinit moves it): the asserts' left limit =#
       p.state.leftLimit = (Float64(integrator.t), copy(integrator.u))
       local relBefore::Vector{Bool} = copy(p.rel); local dBefore::Vector{Float64} = copy(p.d)
@@ -2351,6 +2450,8 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
         DifferentialEquations.u_modified!(integrator, false)
         return nothing
       end
+      #= the delay() arguments' left limits, before the relations take their new values =#
+      N_DELAYS == 0 || _delayLeft!(integrator)
       local tl = max(integrator.tprev, t - max(1e-10, 2 * p.hyst[1]) * (1 + abs(t)))
       local ul = tl < t ? integrator(tl) : copy(integrator.uprev)
       local du = similar(ul); local a = similar(ul, $nAlg)
@@ -2382,6 +2483,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
        and the when-conditions take that value too, so the next instant is a rising edge. =#
     function affectSample!(integrator)
       local t = integrator.t; local p = integrator.p; local u = integrator.u
+      N_DELAYS == 0 || _delayLeft!(integrator)
       local tspan = integrator.sol.prob.tspan
       local (starts, intervals, stops) = (p.state.sampleStart, p.state.sampleInterval, p.state.sampleStops)
       local i = searchsortedfirst(stops, t)
@@ -2501,7 +2603,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
                            zeros($nAlg), zeros($nAlg),
                            $(BlockSolver)[$(BlockSolver)(BLOCK_PATTERNS[k], BLOCK_COLORS[k], BLOCK_GUESSES[k]) for k in eachindex(BLOCK_PATTERNS)],
                            Matrix{Float64}[copy(G) for G in LOOP_GUESSES],
-                           $(ArrayRuntimeState)(N_SAMPLES, strings), @__MODULE__)
+                           $(ArrayRuntimeState)(N_SAMPLES, strings, N_DELAYS), @__MODULE__)
     end
 
     #= The problem and its event callbacks, as getMTKProblem returns them. =#
@@ -2579,6 +2681,18 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       (isempty(p.loops) && isempty(p.blocks)) ||
         push!(cbs, DiscreteCallback((u, t, integrator) -> (logStepRoots!(integrator); false), integrator -> nothing;
                                     save_positions = (false, false)))
+      if N_DELAYS > 0
+        #= delay() (delays.jl, as the scalarized path's callbacks): first the step's end as the solver took it (the
+           left limits), then a delayed jump's event; last, after the other callbacks, the values after the events (a
+           jump is due again its delay time later) and, at the start, each history's first point =#
+        pushfirst!(cbs, DiscreteCallback((u, t, integrator) -> $(delayJumpsDue!)(integrator.p.state.delays, Float64(t)),
+                                         affectDelay!; save_positions = (false, false)))
+        pushfirst!(cbs, DiscreteCallback((u, t, integrator) -> _delayLeft!(integrator), integrator -> nothing;
+                                         save_positions = (false, false)))
+        push!(cbs, DiscreteCallback((u, t, integrator) -> _delayJumps!(integrator), integrator -> nothing;
+                                    initialize = (c, u, t, integrator) -> _delayStart!(integrator),
+                                    save_positions = (false, false)))
+      end
       pushfirst!(cbs, DiscreteCallback((u, t, integrator) -> false, integrator -> nothing;
                                        initialize = (c, u, t, integrator) -> $(_restoreStart!)(integrator.p),
                                        save_positions = (false, false)))

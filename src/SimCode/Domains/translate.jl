@@ -738,13 +738,24 @@ end
 
 A call of the simulation code in the domain level's form (`toIR`): `sample` (in a when-condition) and the event
 operators, the built-in functions (event-generating ones as event functions), a Modelica function of the model (a
-scalar result; an array or record one only under a subscript or a field); NotSupported for `delay` and another.
+scalar result; an array or record one only under a subscript or a field), `delay()` as `Op(:delay)`; NotSupported
+for another.
 """
 function _callIRx(g::Gen, e::SC.CALL, ctx::Ctx)::IR
   local fname::String = String(e.name)
   local args::Vector{SC.Exp} = e.args
   local builtin::Bool = e.kind == SC.CALL_BUILTIN
-  builtin && fname in ("delay", "OpenModelica.Internal.delay2", "OpenModelica.Internal.delay3") && ns("delay()")
+  if builtin && fname in ("delay", "OpenModelica.Internal.delay2", "OpenModelica.Internal.delay3")
+    #= delay(value, time[, max]): the value `time` ago, from a history of the run (`_numberDelays!` gives the call
+       its histories; -1 until then) =#
+    length(args) >= 2 || ns("delay() of $(length(args)) arguments")
+    local delayed::IR = Op(:delay, IR[Lit(-1), toIR(g, args[1], ctx), toIR(g, args[2], ctx)])
+    #= the history holds numbers: an Integer or enumeration value again as one (a table's subscript, MSL Digital's
+       `LogicMap[delay(x, t)]`); a Boolean is not supported =#
+    local valueType::SC.SType = _expType(args[1])
+    valueType isa SC.TYPE_BOOL && ns("delay() of a Boolean")
+    return valueType isa Union{SC.TYPE_INTEGER, SC.TYPE_ENUM} ? Op(:Int, IR[delayed]) : delayed
+  end
   if fname == "der"
     ns("der() in a reduced model: $(_str(e))")
   elseif builtin && (fname == "sample" || endswith(fname, ".sample"))
@@ -758,6 +769,10 @@ function _callIRx(g::Gen, e::SC.CALL, ctx::Ctx)::IR
     return Pre(preRef)
   elseif fname == "homotopy"
     return toIR(g, args[1], ctx)
+  elseif builtin && fname == "Integer" && length(args) == 1
+    #= Integer(e) of an enumeration value: its position, the number the code holds the value as, an Integer where
+       it is a table's subscript (MSL Digital's `Integer(pre(x))`, `Integer(delay(x, t))` of the Logic values) =#
+    return Op(:Int, IR[toIR(g, args[1], ctx)])
   elseif fname == "noEvent"
     return toIR(g, args[1], _with(ctx; noEvent = true))
   elseif fname == "smooth"
@@ -1623,7 +1638,7 @@ function domainSystem(sc::SC.SIM_CODE)::DomainSystem
   local g::Gen = Gen(Dict{String, VarInfo}(), 0, 0, 0, Dict{String, Any}(), Dict{String, Symbol}(), Set{String}(),
                 EqClass[], EqClass[], AlgClass[], Tuple{String, String, Bool}[], WhenClass[], AssertClass[], 0, 0, 0, 0,
                 -1000, false, Dict{Int, Int}(), AlgClass[], String[], AssertClass[], functionOutputs, Dict{String, String}(),
-                Set{String}(), Tuple{String, String}[], Tuple{String, IR, String}[], false)
+                Set{String}(), Tuple{String, String}[], Tuple{String, IR, String}[], false, DelaySite[])
   local stateNamesOrdered::Vector{String} = String[]; local algNamesOrdered::Vector{String} = String[]
   local discreteNamesOrdered::Vector{String} = String[]
   local u0::Vector{Float64} = Float64[]; local d0::Vector{Float64} = Float64[]; local a0::Vector{Float64} = Float64[]

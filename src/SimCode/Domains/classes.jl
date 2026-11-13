@@ -248,6 +248,21 @@ struct AssertClass
   msg::IR
 end
 
+"""
+    DelaySite(base, nslots, domain, value, time)
+
+A delay() call of a domain system's equations (`_numberDelays!`): `delay(value, time)` in a class of the domain
+`domain` (`nslots` slots), each column an instance with a history of its own, `base + column` of the run's delay
+state.
+"""
+struct DelaySite
+  base::Int
+  nslots::Int
+  domain::Matrix{Int}
+  value::IR
+  time::IR
+end
+
 mutable struct Gen
   vars::Dict{String, VarInfo}
   nStates::Int
@@ -279,6 +294,7 @@ mutable struct Gen
   #= the external objects the code reads (name, constructor call, destructor): one object per build (`_objectRead`) =#
   objects::Vector{Tuple{String, IR, String}}
   usesLeft::Bool   #= the code reads an algebraic variable's left limit at an event (pre() of it) =#
+  delays::Vector{DelaySite}   #= the delay() calls of the equations and when-equations, numbered (`_numberDelays!`) =#
 end
 
 struct Ctx
@@ -683,12 +699,12 @@ _isTimeRelation(g::Gen, x::Rel)::Bool =
 
 """
 Whether an expression varies in time other than through the unknowns it reads: time, a state, a discrete variable
-(changed at events), a relation or event-generating function, pre(), sample(), initial().
+(changed at events), a relation or event-generating function, pre(), sample(), initial(), delay() (its history).
 """
 function _readsDynamic(g::Gen, x::IR)::Bool
   (x isa TimeIR || x isa Pre || x isa Rel || x isa EvFn) && return true
   x isa Ref && return g.vars[x.name].kind in (:state, :discrete) || x.der || any(s::IR -> _readsDynamic(g, s), x.subs)
-  x isa Op && return x.op in (:sample, :sampleof, :initial) || any(a::IR -> _readsDynamic(g, a), x.args)
+  x isa Op && return x.op in (:sample, :sampleof, :initial, :delay) || any(a::IR -> _readsDynamic(g, a), x.args)
   return false
 end
 
@@ -790,6 +806,56 @@ function _assignedNames(g::Gen)::Set{String}
     push!(names, target.name)
   end
   return names
+end
+
+"""
+    _numberDelays!(g) -> Int
+
+The delay() calls of the equations and the when-equations' bodies numbered (`Gen.delays`, a `DelaySite` each): each
+call's `Op(:delay)` given its base, the run's histories `base + column` its instances'. After the passes (the
+classes as the code generation takes them); the number of histories. A call elsewhere (an algorithm, an assert, an
+initial equation, a parameter's binding) keeps the base -1, which the code generation refuses. NotSupported for a
+relation or an event function in a call's argument or delay time (its events are not numbered here).
+"""
+function _numberDelays!(g::Gen)::Int
+  empty!(g.delays)
+  for (k::Int, c::EqClass) in enumerate(g.classes)
+    local lhs::IR = _numberedDelays!(g, c.lhs, c.nslots, c.domain)
+    local rhs::IR = _numberedDelays!(g, c.rhs, c.nslots, c.domain)
+    g.classes[k] = EqClass(lhs, rhs, c.nslots, c.domain, c.nrel, c.text, c.nsample)
+  end
+  for (k::Int, w::WhenClass) in enumerate(g.whens)
+    local body::Vector{Tuple{Symbol, Ref, IR}} = Tuple{Symbol, Ref, IR}[]
+    for (kind::Symbol, target::Ref, value::IR) in w.body
+      push!(body, (kind, target, _numberedDelays!(g, value, w.nslots, w.domain)))
+    end
+    g.whens[k] = WhenClass(w.cond, body, w.starts, w.nslots, w.domain, w.nrel, w.nsample, w.text, w.everyEvent)
+  end
+  return isempty(g.delays) ? 0 : g.delays[end].base + size(g.delays[end].domain, 2)
+end
+
+"`x` with its delay() calls numbered as those of a class of the domain `domain` (`_numberDelays!`), the inner first."
+function _numberedDelays!(g::Gen, x::IR, nslots::Int, domain::Matrix{Int})::IR
+  if x isa Op
+    local args::Vector{IR} = IR[_numberedDelays!(g, a, nslots, domain) for a in x.args]
+    x.op == :delay || return Op(x.op, args)
+    (_holdsEvent(args[2]) || _holdsEvent(args[3])) && ns("a relation or an event function in delay()")
+    local base::Int = isempty(g.delays) ? 0 : g.delays[end].base + size(g.delays[end].domain, 2)
+    push!(g.delays, DelaySite(base, nslots, domain, args[2], args[3]))
+    return Op(:delay, IR[Lit(base), args[2], args[3]])
+  elseif x isa Rel
+    return Rel(x.op, _numberedDelays!(g, x.lhs, nslots, domain), _numberedDelays!(g, x.rhs, nslots, domain), x.id)
+  elseif x isa EvFn
+    return EvFn(x.kind, _numberedDelays!(g, x.arg, nslots, domain), x.id)
+  end
+  return x
+end
+
+"Whether `x` holds a relation or an event function (an event of its own)."
+function _holdsEvent(x::IR)::Bool
+  x isa Union{Rel, EvFn} && return true
+  x isa Op && return any(_holdsEvent, x.args)
+  return false
 end
 
 """

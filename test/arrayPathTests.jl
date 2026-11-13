@@ -832,6 +832,83 @@ end
     end
   end
 
+  @testset "delay(): histories per instance, jumps as events, the scalarized path's history functions" begin
+    #= the array code refused delay(). It keeps a history per instance of a call in its run state and reads and
+       fills it with the functions of delays.jl the scalarized path uses (`delayedValue`, `recordDelayStepEnd!`,
+       `recordDelayJumps!`, `delayJumpsDue!`): MSL's lossless lines and Digital's transport delays =#
+    local delays = Modelica"""
+      model DelayedDecay "y = x(t - 0.25): exp(-0.75) at t = 1, the start value 1 until 0.25"
+        Real x(start = 1, fixed = true);
+        Real y;
+      equation
+        der(x) = -x;
+        y = delay(x, 0.25);
+      end DelayedDecay;
+
+      model DelayedStep "u steps at 0.3, y = delay(u, 0.2) at 0.5: x, the integral of y, is 0.5 at t = 1"
+        Real u;
+        Real y;
+        Real x(start = 0, fixed = true);
+      equation
+        u = if time > 0.3 then 1 else 0;
+        y = delay(u, 0.2);
+        der(x) = y;
+      end DelayedStep;
+
+      model DelayedPair "each end the other's, delayed: at the start a = 0.5 b, b = 1 + 0.5 a, so a = 2/3, b = 4/3"
+        parameter Real T[2] = {0.1, 0.2};
+        Real a[2];
+        Real b[2];
+        Real x(start = 0, fixed = true);
+      equation
+        for k in 1:2 loop
+          a[k] = sin(time) + 0.5 * delay(b[k], T[k]);
+          b[k] = cos(time) + 0.5 * delay(a[k], T[k]);
+        end for;
+        der(x) = a[1] + b[2];
+      end DelayedPair;
+
+      model DelayedTable "a table read at a delayed logic value: 30 until the step at 0.3 arrives at 0.5, then 40"
+        parameter Real table[5] = {10, 20, 30, 40, 50};
+        Real u;
+        Integer k;
+        Real y;
+      equation
+        u = if time > 0.3 then 4 else 3;
+        k = integer(delay(u, 0.2));
+        y = table[k];
+      end DelayedTable;
+      """
+    #= between the steps the history is linear: the solver's steps at this tolerance leave 1.2e-4 =#
+    local (sd, ad, _) = _bothWaysOf(delays, "DelayedDecay", ["x", "y"]; reltol = 1e-8, abstol = 1e-10)
+    @test isapprox(ad, [exp(-1), exp(-0.75)]; atol = 2e-4)
+    @test maximum(abs.(sd .- ad)) < 1e-6
+    local (_, early, _) = _bothWaysOf(delays, "DelayedDecay", ["y"]; tspan = (0.0, 0.2))
+    @test early == [1.0]
+    #= a jump of the argument is a jump of the delayed value its delay time later: an event there, the left limit
+       recorded before the relations take their new values =#
+    for (stop, expected) in ((0.45, [1.0, 0.0, 0.0]), (1.0, [1.0, 1.0, 0.5]))
+      local (ss, as, _) = _bothWaysOf(delays, "DelayedStep", ["u", "y", "x"]; tspan = (0.0, stop), reltol = 1e-8,
+                                      abstol = 1e-10)
+      @test isapprox(as, expected; atol = 1e-6)
+      @test maximum(abs.(ss .- as)) < 1e-6
+    end
+    #= at the initialization delay(x) is x: the argument is read at the present time, the two ends a loop there =#
+    local (_, start, _) = _bothWaysOf(delays, "DelayedPair", ["a[1]", "b[1]", "a[2]", "b[2]"]; tspan = (0.0, 1e-6))
+    @test isapprox(start, [2 / 3, 4 / 3, 2 / 3, 4 / 3]; atol = 1e-4)
+    local (sp, ap, _) = _bothWaysOf(delays, "DelayedPair", ["a[1]", "b[2]", "x"]; reltol = 1e-8, abstol = 1e-10)
+    @test maximum(abs.(sp .- ap)) < 2e-4
+    #= integer() of a delayed value that jumps exactly onto the next Integer takes it (`_evfn`), and its value is a
+       table's subscript (MSL Digital's delays: 0 variables off omc; before, the logic value stayed). The scalarized
+       path keeps 3 after 0.5 for an Integer variable defined so (its cluster has no trigger at the delayed jump):
+       compared before the jump only =#
+    for (stop, expected) in ((0.45, [3.0, 30.0]), (1.0, [4.0, 40.0]))
+      local (st, at, _) = _bothWaysOf(delays, "DelayedTable", ["k", "y"]; tspan = (0.0, stop))
+      @test at == expected
+      stop < 0.5 && @test st == expected
+    end
+  end
+
   @testset "Function arguments and results: arrays as wholes, the first of several outputs, free parameters" begin
     #= `y = f(x)` of a function of two outputs takes the first, an array, by its elements (`SC.TSUB` under a
        subscript); an array variable or a sum of arrays as the argument is the array of its elements

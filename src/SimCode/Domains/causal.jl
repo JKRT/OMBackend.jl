@@ -87,8 +87,9 @@ end
     domainPasses!(g) -> Gen
 
 The domain level's passes on the domain system `g` (`domainSystem`): its classes rerolled and folded, the alias
-variables read through their roots, semiLinear chains rewritten (MLS 3.7.2.5), and the discrete variables equations
-compute numbered as unknowns of the system (after the states and algebraic variables).
+variables read through their roots, semiLinear chains rewritten (MLS 3.7.2.5), the discrete variables equations
+compute numbered as unknowns of the system (after the states and algebraic variables), and the delay() calls
+numbered (`_numberDelays!`).
 """
 function domainPasses!(g::Gen)::Gen
   g.classes = _reroll(g.classes)
@@ -111,6 +112,7 @@ function domainPasses!(g::Gen)::Gen
       g.discUnknown[info.offset + k] = (nU += 1)
     end
   end
+  _numberDelays!(g)
   return g
 end
 
