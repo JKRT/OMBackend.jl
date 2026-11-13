@@ -367,6 +367,103 @@ function (r::StepRejectingRHS)(du, u, p, t)
   return nothing
 end
 
+"The relative step of a state in the Jacobian's central differences (FiniteDiff's for these), its least 1 times it."
+const JACOBIAN_STEP = cbrt(eps(Float64))
+
+"""
+    ColoredJacobian(rhs, pattern)
+
+The Jacobian of an array model's right-hand side `rhs` by central differences in the sparsity `pattern`: the columns
+that share no row perturbed together (`columnGroups`), each state by its own step, `JACOBIAN_STEP * max(|u[j]|, 1)`
+(as FiniteDiff's of a dense Jacobian). Left to the solver, a sparse prototype takes one step for every state, from
+the norm of the whole state vector (DifferentiationInterface's pushforward): beside a pressure of 1e5 Pa a mass
+fraction of 0.01 was moved by 0.61, and the medium's `log` of a negative fraction rejected every first step (MSL
+Media ReferenceAir MoistAir1; Rodas5P, whose stages need the Jacobian). Where the right-hand side fails on one side
+of a state (a value at the edge of the equations' domain) the difference is the one to the point itself.
+"""
+struct ColoredJacobian{F} <: Function
+  rhs::F
+  groups::Vector{Vector{Int}}
+  steps::Vector{Float64}
+  point::Vector{Float64}
+  above::Vector{Float64}
+  below::Vector{Float64}
+  base::Vector{Float64}
+end
+
+function ColoredJacobian(rhs::F, pattern::_SPARSE.SparseMatrixCSC{Float64, Int}) where {F}
+  local n::Int = size(pattern, 2)
+  return ColoredJacobian{F}(rhs, columnGroups(pattern), zeros(n), zeros(n), zeros(n), zeros(n), zeros(n))
+end
+
+function (c::ColoredJacobian)(J::_SPARSE.SparseMatrixCSC{Float64, Int}, u::AbstractVector{Float64}, p, t)::Nothing
+  local rows::Vector{Int} = _SPARSE.rowvals(J)
+  local values::Vector{Float64} = _SPARSE.nonzeros(J)
+  local (steps::Vector{Float64}, point::Vector{Float64}) = (c.steps, c.point)
+  local (above::Vector{Float64}, below::Vector{Float64}) = (c.above, c.below)
+  local based::Bool = false
+  copyto!(point, u)
+  for group::Vector{Int} in c.groups
+    for j::Int in group
+      steps[j] = JACOBIAN_STEP * max(abs(u[j]), 1.0)
+      point[j] = u[j] + steps[j]
+    end
+    c.rhs(above, point, p, t)
+    for j::Int in group
+      point[j] = u[j] - steps[j]
+    end
+    c.rhs(below, point, p, t)
+    for j::Int in group
+      point[j] = u[j]
+    end
+    local (up::Bool, down::Bool) = (all(isfinite, above), all(isfinite, below))
+    if up != down
+      based || c.rhs(c.base, point, p, t)
+      based = true
+      copyto!(up ? below : above, c.base)
+    end
+    local span::Float64 = up == down ? 2.0 : 1.0
+    for j::Int in group
+      for k::Int in _SPARSE.nzrange(J, j)
+        values[k] = (above[rows[k]] - below[rows[k]]) / (span * steps[j])
+      end
+    end
+  end
+  return nothing
+end
+
+"""
+    columnGroups(pattern) -> Vector{Vector{Int}}
+
+The columns of the sparsity `pattern` in groups whose columns share no row (greedy, in the columns' order: a column
+joins the first group none of whose rows it has): one perturbation of a group's states gives each of their columns.
+"""
+function columnGroups(pattern::_SPARSE.SparseMatrixCSC{Float64, Int})::Vector{Vector{Int}}
+  local rows::Vector{Int} = _SPARSE.rowvals(pattern)
+  local groups::Vector{Vector{Int}} = Vector{Int}[]
+  local taken::Vector{BitVector} = BitVector[]
+  for j::Int in 1:size(pattern, 2)
+    local at::Int = 0
+    for k::Int in eachindex(taken)
+      local free::Bool = true
+      for i::Int in _SPARSE.nzrange(pattern, j)
+        taken[k][rows[i]] && (free = false; break)
+      end
+      free && (at = k; break)
+    end
+    if at == 0
+      push!(groups, Int[])
+      push!(taken, falses(size(pattern, 1)))
+      at = length(groups)
+    end
+    push!(groups[at], j)
+    for i::Int in _SPARSE.nzrange(pattern, j)
+      taken[at][rows[i]] = true
+    end
+  end
+  return groups
+end
+
 """
 Name lookups accept the Modelica name (c[2].T) and the canonical one
 (OMBackend.canonicalName).
@@ -1002,6 +1099,17 @@ function jl(g::Gen, x::IR)
     x.op == :terminal && return :(p.state.terminal)
     x.op == :String && return Expr(:call, _modelicaString, args...)
     x.op == :fcall && return Expr(:call, args...)
+    if x.op == :partial
+      #= a function with inputs bound (`_partialApplicationIRx`): a closure of its free inputs =#
+      local freeInputs::Vector{Symbol} = Symbol[]
+      local callArgs::Vector{Any} = Any[]
+      local boundAt::Int = 2
+      for free::Bool in (x.args[2]::Lit).v
+        free ? push!(freeInputs, Symbol("#pa#", length(freeInputs) + 1)) : (boundAt += 1)
+        push!(callArgs, free ? freeInputs[end] : args[boundAt])
+      end
+      return Expr(:->, Expr(:tuple, freeInputs...), Expr(:call, args[1], callArgs...))
+    end
     #= a relation with the probe of its abs() argument (`_withAbsProbe`): the probe's crossing kept, its value not =#
     x.op == :probed && return Expr(:block, args[2], args[1])
     #= a temporary's value (a tuple equation's call) =#
@@ -1294,7 +1402,14 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
   end
   local familyTemplates::Vector{Vector{Tuple{Int, Int}}} = copy(loops.families)
   local loopDefs::Vector{Any} = Any[]; local loopBodies::Vector{Any} = Any[]
+  #= where each algebraic element is a loop's first guess (by its index among the algebraic variables): a start
+     rule of an algebraic variable sets them (`:a`, a guess computed at the start) =#
+  local guessTargets::Dict{Int, Vector{Any}} = Dict{Int, Vector{Any}}()
   local loopFamily!::Function = function (f::Int, template::Vector{Tuple{Int, Int}}, blocks::Vector{Vector{Int}})
+    for (m::Int, b::Vector{Int}) in enumerate(blocks), j::Int in eachindex(b)
+      local unknown::Int = matchRow[b[j]]
+      unknown > g.nStates && push!(get!(() -> Any[], guessTargets, unknown - g.nStates), :(p.loops[$f][$j, $m]))
+    end
     local (defs::Vector{Any}, code::Expr) = _loopFamilyCode(g, f, template, blocks, el, matchRow, a0, relBases)
     append!(loopDefs, defs)
     push!(loopBodies, code)
@@ -1322,6 +1437,9 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     local ids::Vector{Int} = torn.tears
     push!(blockPatterns, torn.pattern)
     push!(blockGuesses, Float64[u <= g.nStates ? 0.0 : a0[u - g.nStates] for u in ids])
+    for (j::Int, u::Int) in enumerate(ids)
+      u > g.nStates && push!(get!(() -> Any[], guessTargets, u - g.nStates), :(p.blocks[$(length(blockGuesses))].y[$j]))
+    end
     _OMBACKEND.envSwitch("OMBACKEND_ARRAY_TRACE") &&
       println("[arraycode] block of ", length(rs), " instances torn: ", length(ids), " iteration variables, ",
               length(torn.batches), " explicit batches")
@@ -1570,6 +1688,11 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
   end
   for (buffer, k, x) in startRules
     local v = jl(g, x)
+    if buffer === :a
+      #= an algebraic variable's start: the first guess of the loops that iterate on it =#
+      foreach(target -> push!(startStmts, :($target = Float64($v))), get(guessTargets, k, Any[]))
+      continue
+    end
     push!(startStmts, buffer === :u ? :(u0[$k] = Float64($v)) : :(p.d[$k] = Float64($v); p.dpre[$k] = p.d[$k]))
     (buffer === :d && _readsParameterOf(x, free) && !(get(discreteOwner, k, "") in initAssigned)) &&
       push!(freeStartStmts, :(p.d[$k] = Float64($v); p.dpre[$k] = p.d[$k]))
@@ -1607,8 +1730,14 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     any(d -> d in Symbol[g.paramSyms[f] for f in g.freeParams if haskey(g.paramSyms, f)], deps) &&
       ns("a parameter binding depends on a parameter with fixed = false")
   end
-  local initStates = Int[k for k in initUnknowns if k <= g.nStates]
+  local initStates = Int[k for k in initUnknowns if 0 < k <= g.nStates]
   local initParams = Int[layoutOf[freeCols[k - g.nStates][1]][1] + freeCols[k - g.nStates][2] for k in initUnknowns if k > g.nStates]
+  #= the initial equations' instances of the square system, and those beyond the free states (matched to none:
+     checked at the solution, `checkRedundantInitial`), with their equations' texts =#
+  local initRows::Vector{Int} = findall(!=(0), initUnknowns)
+  local initRedundant::Vector{Int} = findall(==(0), initUnknowns)
+  local initTexts::Vector{String} = String[c.text for c in g.initClasses for _ in 1:size(c.domain, 2)]
+  local redundantTexts::Vector{String} = String[first(initTexts[r], 120) for r in initRedundant]
   #= the scalar parameters the initial algorithms computed, from their locals to p.values =#
   local initAlgWriteBack = Any[:(p.values[$(layoutOf[nm][1] + 1)] = $(g.paramSyms[nm]))
                                for nm in sort!(collect(initAlgOuts))
@@ -1748,6 +1877,10 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     const INIT_UNKNOWNS = $(initStates)
     const INIT_PARAMS = $(initParams)   #= fixed = false parameters: positions in p.values =#
     const N_INIT = $(nInit)
+    #= the initial equations' instances the unknowns are solved from, and the ones beyond them =#
+    const INIT_ROWS = $(initRows)
+    const INIT_REDUNDANT = $(initRedundant)
+    const INIT_REDUNDANT_TEXTS = $(redundantTexts)
     const D0 = $(d0)
     const N_RELATIONS = $(nRelTotal)
     #= the relation numbering's relations (not event-generating functions' crossing functions) =#
@@ -2093,7 +2226,13 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
         setUnknowns!(uz, z)
         local duz = similar(uz); local az = similar(uz, $nAlg)
         equations!(duz, az, uz, p, t, nothing, false)
-        initialResiduals!(res, duz, az, uz, p, t)
+        if isempty(INIT_REDUNDANT)
+          initialResiduals!(res, duz, az, uz, p, t)
+        else
+          local every = similar(res, N_INIT)
+          initialResiduals!(every, duz, az, uz, p, t)
+          res .= view(every, INIT_ROWS)
+        end
         return nothing
       end
       #= MLS 8.6, as the MTK path: the relations at the guess, a solve with them, then at the
@@ -2161,6 +2300,23 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       return u
     end
 
+    #= The initial equations beyond the free states (INIT_REDUNDANT) at the initial state: each satisfied by what the
+       others gave, as OpenModelica keeps a model whose redundant initial equations are consistent; an error for
+       one that is not. =#
+    function checkRedundantInitial(u, p, t)
+      local du = similar(u); local a = similar(u, $nAlg)
+      equations!(du, a, u, p, t, nothing, false)
+      local res = zeros(N_INIT)
+      initialResiduals!(res, du, a, u, p, t)
+      for (k, r) in enumerate(INIT_REDUNDANT)
+        abs(res[r]) <= 1.0e-6 ||
+          $(_OMBACKEND.unsupported)("fixed start values or initial equations that the initialization cannot hold",
+                                    string("the initialization is over-determined: ", INIT_REDUNDANT_TEXTS[k],
+                                           " (residual ", res[r], ")"))
+      end
+      return nothing
+    end
+
     #= The asserts of the initial equations, once after the initialization. =#
     function checkInitialAsserts(u, p, t)
       local du = similar(u); local a = similar(u, $nAlg)
@@ -2199,7 +2355,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     end
 
     #= The starts of states and discrete variables that read a parameter, from the parameter values (an override
-       reaches them). =#
+       reaches them); the loops' first guesses that are starts of algebraic variables computed at the start. =#
     function parameterStarts!(u0, p)
       $(paramLocals...)
       @inbounds begin
@@ -2669,7 +2825,8 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
         parameterStarts!(u0, p)
         p.upre .= u0; p.ureinit .= u0
       end
-      N_INIT > 0 && (u0 = initialize(u0, p, tspan[1]))
+      length(INIT_ROWS) > 0 && (u0 = initialize(u0, p, tspan[1]))
+      isempty(INIT_REDUNDANT) || checkRedundantInitial(u0, p, tspan[1])
       $(isempty(initAlgBody) ? nothing : :(initialAlgorithms!(u0, p, tspan[1])))
       $(isempty(freeStartStmts) ? nothing : :(freeParameterStarts!(p)))
       N_SAMPLES == 0 || sampleSchedule!(p)
@@ -2698,7 +2855,18 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
          scalar path (MSL DifferenceAmplifier's x^y of a negative x at a trial point) =#
       #= tgrad! wrapped to one type for every array model (the right-hand side is, AutoSpecialize): the model's own
          function type in the problem compiled the solver again for each model =#
-      local f::ODEFunction = ODEFunction($(StepRejectingRHS)(RHS!); jac_prototype = $jacProto,
+      #= the Jacobian in a sparsity pattern by the array code's own differences, a step per state (ColoredJacobian) =#
+      local jacPattern = $jacProto
+      local rhs = $(StepRejectingRHS)(RHS!)
+      local jac = jacPattern === nothing ? nothing :
+        OMBackend.CodeGeneration.DiffEqBase.wrapfun_jac_iip($(ColoredJacobian)(rhs, jacPattern),
+                                                            (jacPattern, u0, p, Float64(tspan[1])))
+      #= with a Jacobian given and no ForwardDiff, DiffEqBase leaves the right-hand side as it is (`promote_f`: its
+         wrap path needs `f.jac === nothing`): the model's own function type in the problem compiled the solver again
+         for each model (3 s each; the package tests 27 min for 15). Wrapped here then, as DiffEqBase wraps it =#
+      local wrapped = jac === nothing ? rhs :
+        OMBackend.CodeGeneration.DiffEqBase.wrapfun_jac_iip(rhs, (u0, u0, p, Float64(tspan[1])))
+      local f::ODEFunction = ODEFunction(wrapped; jac_prototype = jacPattern, jac = jac,
                                          tgrad = OMBackend.CodeGeneration.DiffEqBase.wrapfun_jac_iip(tgrad!, (u0, u0, p, Float64(tspan[1]))),
                                          sys = $(ArraySystem)(@__MODULE__))
       #= RightRootFind: the event lands just past the root, where the relation has its new value. =#

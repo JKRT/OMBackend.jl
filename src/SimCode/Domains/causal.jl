@@ -40,7 +40,9 @@ The causal level of the initialization (`causalSchedule!`): each instance of the
 order, then by column) matched to an unknown it reaches (a state element that is not fixed, directly or through the
 algebraic unknowns it depends on, or a free parameter's element: unknown `nStates + k` the `k`-th of `freeColumns`), the
 instances' number, the free parameter elements (name, column-major index). Free states no initial equation reaches
-keep their start values (as omc).
+keep their start values (as omc). An instance no unknown is left for has 0: an initial equation beyond the free
+states (two inductors in series, each with `i = 0`: one current is a state), out of the square system and checked
+at the solution (as omc removes a redundant consistent initial equation).
 """
 struct InitialMatching
   matchRow::Vector{Int}
@@ -292,8 +294,9 @@ end
 
 The initial equations as a square system (`InitialMatching`): each instance matched (augmenting paths) to a state
 element that is not fixed (`fixedMask`) and that it depends on (directly or through the algebraic unknowns: `deps` of
-their producing rows), or to an element of a free parameter it reads. NotSupported for an instance without one
-(over-determined) or a model whose dependencies were not computed (a large pattern).
+their producing rows), or to an element of a free parameter it reads. An instance without one is matched to none
+(0: over-determined, held only if the others' solution satisfies it). NotSupported for a model whose dependencies
+were not computed (a large pattern).
 """
 function _initialMatching(g::Gen, deps::Union{Nothing, Vector{Vector{Int}}}, producer::Vector{Int},
                           fixedMask::Vector{Bool})::InitialMatching
@@ -304,7 +307,6 @@ function _initialMatching(g::Gen, deps::Union{Nothing, Vector{Vector{Int}}}, pro
   deps === nothing && ns("initialization of a model with a large dependency pattern")
   #= candidate free states per initial equation instance =#
   local rows::Vector{Vector{Int}} = Vector{Int}[]
-  local rowText::Vector{String} = String[]
   for c in g.initClasses
     local acc::Vector{Ref} = accesses!(accesses!(Ref[], c.lhs), c.rhs)
     for j in 1:size(c.domain, 2)
@@ -334,7 +336,6 @@ function _initialMatching(g::Gen, deps::Union{Nothing, Vector{Vector{Int}}}, pro
         end
       end
       push!(rows, sort!([k for k in cand if k > g.nStates || !fixedMask[k]]))
-      push!(rowText, c.text)
     end
   end
   #= matching rows -> free states (augmenting paths) =#
@@ -342,8 +343,7 @@ function _initialMatching(g::Gen, deps::Union{Nothing, Vector{Vector{Int}}}, pro
   local matchRow::Vector{Int} = zeros(Int, length(rows))
   for r0 in eachindex(rows)
     local visited::Set{Int} = Set{Int}()
-    _augment!(rows, matchCol, matchRow, visited, r0) ||
-      ns("initialization over-determined (an initial equation without a free state): " * first(rowText[r0], 120))
+    _augment!(rows, matchCol, matchRow, visited, r0)
   end
   return InitialMatching(matchRow, length(rows), freeCols)
 end

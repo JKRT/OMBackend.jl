@@ -1654,11 +1654,42 @@ block (`_loopFamilyCode`).
 const NEWTON_BLOCK_SIZE = Base.RefValue(8)
 
 """
+Whether `x` has relations of `time` against what changes only at events only (`_isTimeRelation`: time events) and no
+event function: what has one value while an algebraic loop is solved.
+"""
+function _onlyTimeRelations(g::Gen, x::IR)::Bool
+  x isa Rel && return _isTimeRelation(g, x)
+  x isa EvFn && return false
+  x isa Op && return all((a::IR) -> _onlyTimeRelations(g, a), x.args)
+  return true
+end
+
+"Whether the block `rows` has an equation with relations, and all its relations are of time (`_onlyTimeRelations`)."
+function _timeRelationsOnly(g::Gen, rows::Vector{Int}, el::InstanceTable)::Bool
+  local found::Bool = false
+  for r::Int in rows
+    el.class[r] > 0 || continue
+    local c::EqClass = g.classes[el.class[r]]
+    c.nrel == 0 && continue
+    (_onlyTimeRelations(g, c.lhs) && _onlyTimeRelations(g, c.rhs)) || return false
+    found = true
+  end
+  return found
+end
+
+"""
 The large blocks of `loops` (more than `NEWTON_BLOCK_SIZE` instances: loops that couple the elements, solved by
-`blockSolve!`); NotSupported for a discrete unknown in one.
+`blockSolve!`); NotSupported for a discrete unknown in one. A smaller loop whose equations have relations, all of
+`time` against what changes only at events (`_onlyTimeRelations`: `0 = if time < 0.02 then ... else ...`, a source in
+a loop of MSL's LightningSegmentedTransmissionLine, "relations in an algebraic loop"), is solved the same way:
+`blockSolve!` evaluates relations, the generated Newton of a family does not, and such a relation has one value
+while the loop is solved. Not one with a relation on the loop's variables: routed here, MSL OpAmps' SignalGenerator
+settled at the unstable root of its comparator (v_out = 0, no oscillation), DCPM_withLosses and PumpingSystem
+equalled the scalarized route.
 """
 function _largeBlocks(g::Gen, loops::LoopBlocks, matchRow::Vector{Int}, el::InstanceTable)::BitVector
-  local large::BitVector = BitVector(length(b) > NEWTON_BLOCK_SIZE[] for b in loops.blocks)
+  local large::BitVector =
+    BitVector(length(b) > NEWTON_BLOCK_SIZE[] || _timeRelationsOnly(g, b, el) for b in loops.blocks)
   for (b, rs) in enumerate(loops.blocks)
     large[b] || continue
     local k::Union{Nothing, Int} = findfirst(r::Int -> matchRow[r] > g.nStates + g.nAlg, rs)

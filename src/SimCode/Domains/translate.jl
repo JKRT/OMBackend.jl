@@ -431,6 +431,26 @@ function _objectRead(g::Gen, name::String)::Union{Nothing, IR}
 end
 
 """
+A read of an element of the String parameter array `name` whose elements have one literal (a String parameter of
+rolled components, each with the same value: the `substanceName` of MSL Fluid's trace substance sensors, read as
+`sensors[\$c].substanceName` by an initial algorithm): that literal's read (`_stringRead`), whatever the element. The
+binding one literal for all elements (through references to others, `_stringRoot`) or an array literal of equal ones;
+nothing for another parameter or binding.
+"""
+function _stringElementRead(g::Gen, name::String)::Union{Nothing, IR}
+  local info::Union{Nothing, VarInfo} = get(g.vars, name, nothing)
+  (info !== nothing && info.kind == :param && info.vtype == :other && !isempty(info.dims)) || return nothing
+  local b::Union{Nothing, SC.Exp} = SC.bindingOf(info.var.simVar.varKind)
+  if b isa SC.ARRAY_EXP && !isempty(b.elements) && b.elements[1] isa SC.SCONST
+    local value::String = (b.elements[1]::SC.SCONST).value
+    all((x::SC.Exp) -> x isa SC.SCONST && x.value == value, b.elements) || return nothing
+    return _stringRead(g, name, value)
+  end
+  local root::Union{Nothing, Tuple{String, SC.SCONST}} = _stringRoot(g, name)
+  return root === nothing ? nothing : _stringRead(g, root[1], root[2].value)
+end
+
+"""
 A read of the String parameter `name` of the translated value `value`: its slot in the run state (`Gen.strings`; an
 override reaches it), its value and name (`Op(:stringparam)`; a parameter binding or a static condition reads the value,
 which fixes it).
@@ -454,6 +474,9 @@ function _crefIRx(g::Gen, e::SC.EXP_CREF, ctx::Ctx)::IR
     (own == "time" && !haskey(g.vars, own)) && return TimeIR()
     local root::Union{Nothing, Tuple{String, SC.SCONST}} = _stringRoot(g, own)
     root === nothing || return _stringRead(g, root[1], root[2].value)
+  else
+    local text::Union{Nothing, IR} = _stringElementRead(g, own)
+    text === nothing || return text
   end
   (haskey(g.vars, own) || haskey(g.derOf, own)) || ns("unknown variable $(own)")
   return _elementRefIR(g, own, IR[Lit(k) for k in c.subs])
@@ -487,8 +510,20 @@ function _subscriptedIRx(g::Gen, e::SC.ASUB, ctx::Ctx)::IR
   if base isa SC.ASUB && !any((s::SC.Exp) -> s isa SC.WHOLE_DIMENSION || s isa SC.RANGE, base.subs)
     return _subscriptedIRx(g, SC.ASUB(base.exp, SC.Exp[base.subs; e.subs]), ctx)
   end
+  #= an array literal at a literal first subscript: that element, at the subscripts left (`{X[1], X[2]}[1][2]`, the
+     rows of a matrix variable written out: MSL Fluid's `mediums.state.X`, "partial subscripts on ...") =#
+  if base isa SC.ARRAY_EXP && e.subs[1] isa SC.ICONST && 1 <= e.subs[1].value <= length(base.elements)
+    local picked::SC.Exp = base.elements[e.subs[1].value]
+    return length(e.subs) == 1 ? toIR(g, picked, ctx) : _subscriptedIRx(g, SC.ASUB(picked, e.subs[2:end]), ctx)
+  end
+  if base isa SC.EXP_CREF && isempty(base.cref.subs)
+    local text::Union{Nothing, IR} = _stringElementRead(g, String(base.cref.sym))
+    text === nothing || return text
+  end
   local subs::Vector{IR} = IR[toIR(g, s, ctx) for s in e.subs]
   base isa SC.EXP_CREF && isempty(base.cref.subs) && return _elementRefIR(g, String(base.cref.sym), subs)
+  #= a reference by its leading subscripts (`X[1]`, a row) at the others: the element at all of them =#
+  base isa SC.EXP_CREF && return _elementRefIR(g, String(base.cref.sym), IR[IR[Lit(k) for k in base.cref.subs]; subs])
   base isa SC.DER && return _elementRefIR(g, String(base.cref.sym), subs; der = true)
   #= an element of pre() of an array (a function's array argument, `f(pre(state))`): pre() of the element =#
   if base isa SC.PRE && isempty(base.cref.subs)
@@ -511,7 +546,10 @@ function _subscriptedIRx(g::Gen, e::SC.ASUB, ctx::Ctx)::IR
   if base isa SC.TSUB && base.ty isa SC.TYPE_ARRAY && _isFunctionCall(g, base.exp)
     return Op(:index, IR[Op(:index, IR[_functionCallIRx(g, base.exp::SC.CALL, ctx), Lit(base.index)]); subs])
   end
-  (_isFunctionCall(g, base) || base isa SC.RSUB) || ns("an element of $(_str(base))")
+  #= of a function's array result, a record's array field, a concatenation of vectors (`cat(1, ...)[\$i1]`): the value
+     indexed =#
+  (_isFunctionCall(g, base) || base isa SC.RSUB ||
+   (base isa SC.CALL && base.kind == SC.CALL_BUILTIN && base.name === :cat)) || ns("an element of $(_str(base))")
   return Op(:index, IR[_valueIRx(g, base, ctx); subs])
 end
 
@@ -556,6 +594,48 @@ function _valueIRx(g::Gen, e::SC.Exp, ctx::Ctx)::IR
       return Op(:arrayval, IR[elementsOf[1]; IR[Pre(x::Ref) for x in @view elementsOf[2:end]]])
     end
   end
+  #= cat(1, v1, v2, ...) of vectors (MSL Media's mass fractions, `cat(1, Xi, {1 - sum(Xi)})`): the vector of their
+     elements =#
+  if e isa SC.CALL && e.kind == SC.CALL_BUILTIN && e.name === :cat && length(e.args) >= 2 && e.args[1] isa SC.ICONST &&
+     e.args[1].value == 1
+    local parts::Vector{IR} = IR[]
+    for a::SC.Exp in @view e.args[2:end]
+      #= a parameter vector as a whole (`cat(1, {roughnesses[1]}, roughnesses[:], ...)`, MSL Fluid's pipes): its
+         elements =#
+      local whole::SC.Exp = (a isa SC.ASUB && all((x::SC.Exp) -> x isa SC.WHOLE_DIMENSION, a.subs)) ? a.exp : a
+      local vector::Union{Nothing, VarInfo} =
+        (whole isa SC.EXP_CREF && isempty(whole.cref.subs)) ? get(g.vars, String(whole.cref.sym), nothing) : nothing
+      if vector !== nothing && vector.kind == :param && length(vector.dims) == 1
+        append!(parts, IR[Ref(String(whole.cref.sym), IR[Lit(i)], false) for i in 1:vector.dims[1]])
+        continue
+      end
+      local part::IR = _valueIRx(g, a, ctx)
+      if part isa Op && part.op === :arrayval && length((part.args[1]::Lit).v) == 1
+        append!(parts, @view part.args[2:end])
+      elseif part isa Lit && part.v isa AbstractVector
+        append!(parts, IR[Lit(x) for x in part.v])
+      else
+        ns("cat of $(_str(a))")
+      end
+    end
+    return Op(:arrayval, IR[Lit((length(parts),)); parts])
+  end
+  #= an array by all of each dimension (`v[:]`): the array =#
+  (e isa SC.ASUB && all((x::SC.Exp) -> x isa SC.WHOLE_DIMENSION, e.subs)) && return _valueIRx(g, e.exp, ctx)
+  #= a vector's slice by a range of structural bounds (`{Xi_outflow[2, 1]}[1:Medium.nXi]`, the mass fractions a medium
+     function of MSL Fluid's pipes takes): the vector of the elements it picks =#
+  if e isa SC.ASUB && length(e.subs) == 1 && e.subs[1] isa SC.RANGE
+    local range::SC.RANGE = e.subs[1]
+    local step::Int = range.step === nothing ? 1 : _structuralInt(g, range.step, ctx)
+    step == 0 && ns("a slice of step 0: $(_str(e))")
+    local picks::StepRange{Int, Int} = _structuralInt(g, range.start, ctx):step:_structuralInt(g, range.stop, ctx)
+    local source::IR = _valueIRx(g, e.exp, ctx)
+    local sourceElements::Vector{IR} =
+      (source isa Op && source.op === :arrayval && length((source.args[1]::Lit).v) == 1) ? source.args[2:end] :
+      (source isa Lit && source.v isa AbstractVector) ? IR[Lit(x) for x in source.v] : ns("a slice of $(_str(e.exp))")
+    all(k::Int -> 1 <= k <= length(sourceElements), picks) || ns("a slice outside its vector: $(_str(e))")
+    return Op(:arrayval, IR[Lit((length(picks),)); sourceElements[picks]])
+  end
   #= an array's sum, difference, negation or scaling (`f(v - w)`): the array of its elements =#
   if e isa Union{SC.BINARY, SC.UNARY} && _expType(e) isa SC.TYPE_ARRAY
     local opDims::Vector{Int} = _knownDims(_expType(e), "an array argument of a size not known: $(_str(e))")
@@ -593,6 +673,18 @@ const SCALAR_ARRAY_OPERATORS = Dict{SC.OpKind, Symbol}(
 const ARRAY_SCALAR_OPERATORS = Dict{SC.OpKind, Symbol}(
   SC.OP_ADD_ARRAY_SCALAR => :+, SC.OP_SUB_ARRAY_SCALAR => :-, SC.OP_MUL_ARRAY_SCALAR => :*,
   SC.OP_DIV_ARRAY_SCALAR => :/)
+
+"""
+The Integer value of `e`, an expression of literals and parameters (a slice's bound, `Medium.nXi`): the code depends
+on the parameters it reads (structural, `_evalStatic`). NotSupported for another expression.
+"""
+function _structuralInt(g::Gen, e::SC.Exp, ctx::Ctx)::Int
+  local x::IR = _folded(toIR(g, e, ctx))
+  (_parametersOnly(g, x) && !_readsSlot(x)) || ns("no structural value: $(_str(e))")
+  local value = _evalStatic(g, x, Matrix{Int}(undef, 0, 0), 0)
+  value isa Integer || ns("no Integer value: $(_str(e))")
+  return Int(value)
+end
 
 """
 The element `idx` of an array-valued expression (of a function's argument, `f(v - w)`): of a sum, difference or
@@ -640,7 +732,14 @@ function _recordElementIRx(g::Gen, e::SC.RSUB, ctx::Ctx)::IR
     #= of an if-expression of records its branches' fields (an inlined function's `if k == 0 then Complex(1, 0)
        else Complex(0, 1)`: MSL ComplexBlocks' powerOfJ) =#
     local branches::SC.IFEXP = e.exp
-    return Op(:if, IR[toIR(g, branches.cond, ctx),
+    #= a condition of literals (an inlined `if size(X, 1) == nX then ... else ...`, `1 == 2`: MSL Media's
+       setState_pTX): the branch taken alone =#
+    local condition::IR = _folded(toIR(g, branches.cond, ctx))
+    if condition isa Lit
+      local taken::SC.Exp = condition.v == true ? branches.thenExp : branches.elseExp
+      return _recordElementIRx(g, SC.RSUB(taken, e.index, e.fieldName, e.ty), ctx)
+    end
+    return Op(:if, IR[condition,
                       _recordElementIRx(g, SC.RSUB(branches.thenExp, e.index, e.fieldName, e.ty), ctx),
                       _recordElementIRx(g, SC.RSUB(branches.elseExp, e.index, e.fieldName, e.ty), ctx)])
   end
@@ -667,7 +766,8 @@ the field's variable at the reference's subscripts (the variables of a record ar
 `u.re[1]`).
 """
 function _recordFieldIRx(g::Gen, x::SC.Exp, k::Int, field::String, ctx::Ctx)::IR
-  x isa SC.RECORD && return toIR(g, x.exps[k], ctx)
+  #= a field that is an array its value (`ThermodynamicState(p, T, {Xi[1]}).X`, subscripted by the caller) =#
+  x isa SC.RECORD && return _valueIRx(g, x.exps[k], ctx)
   local c::SC.SimCref = (x::SC.EXP_CREF).cref
   return _elementRefIR(g, string(c.sym, ".", field), IR[Lit(i) for i in c.subs])
 end
@@ -722,10 +822,36 @@ function _argumentsIRx!(out::Vector{IR}, g::Gen, a::SC.Exp, ctx::Ctx)::Nothing
     local object::Union{Nothing, IR} = a.ty.isRecord ? nothing : _objectRead(g, String(a.cref.sym))
     object === nothing && ns("a record argument: $(_str(a))")
     push!(out, object)
+  elseif a isa SC.PARTEVALFUNCTION
+    push!(out, _partialApplicationIRx(g, a, ctx))
   else
     push!(out, _valueIRx(g, a, ctx))
   end
   return nothing
+end
+
+"""
+    _partialApplicationIRx(g, e, ctx) -> IR
+
+A function of the model with inputs bound, an argument of a function that takes a function (`function
+f_nonlinear(p = p, h = h, X = X)`: MSL Media moist air's `T_phX` through `solveOneNonlinearEquation`, in the pipes
+and volumes of MSL Fluid): `Op(:partial, [Lit(name), Lit(free), values...])`, `free` telling of each input of the
+function, in its order, whether it is left free, `values` the bound ones' values in that order. NotSupported for a
+record input (flattened in the function) and a function of more outputs.
+"""
+function _partialApplicationIRx(g::Gen, e::SC.PARTEVALFUNCTION, ctx::Ctx)::IR
+  local name::String = String(e.name)
+  get(g.functions, name, 0) == 1 || ns("a partial application of $(name)")
+  local free::Vector{Bool} = Bool[]
+  local values::Vector{IR} = IR[]
+  for (input::Symbol, ty::SC.SType) in e.inputs
+    ty isa SC.TYPE_COMPLEX && ns("a partial application of $(name), whose input $(input) is a record")
+    local at::Union{Nothing, Int} = findfirst(==(input), e.argNames)
+    push!(free, at === nothing)
+    at === nothing || push!(values, _valueIRx(g, e.args[at], ctx))
+  end
+  length(values) == length(e.args) || ns("a partial application of $(name): bound arguments that are no inputs")
+  return Op(:partial, IR[Lit(Symbol(name)), Lit(free), values...])
 end
 
 """
@@ -1919,11 +2045,14 @@ function domainSystem(sc::SC.SIM_CODE)::DomainSystem
       zeros(n)
     end
     if category == :known
-      #= one the frontend evaluated for the structure (a folded if-equation's condition): the code holds its value =#
-      (sv.irKind isa SC.IR.PARAMETER && sv.irKind.structural) && push!(g.structural, nm)
       #= fixed = false: an unknown of the initialization (its initial equations), from its start =#
       local free::Vector{Bool} = Bool[!x for x in fixedOf(true)]
       (any(free) && !all(free)) && ns("parameter $(nm) with fixed = false on some elements")
+      #= one the frontend evaluated for the structure (a folded if-equation's condition): the code holds its value. Not
+         one with fixed = false: the equations hold the value the frontend took, none of the array code reads it (a
+         subscript an initial algorithm gives, `CVec[ind]` of MSL Fluid's trace substance sensor: `CVec[1]`), and what
+         the array code itself evaluates makes it structural as any other (`_evalStatic`: refused then) =#
+      (sv.irKind isa SC.IR.PARAMETER && sv.irKind.structural && !any(free)) && push!(g.structural, nm)
       local value::Any = nothing
       if all(free)
         SC.bindingOf(sv.varKind) === nothing || ns("parameter $(nm) with fixed = false and a binding")
@@ -1969,7 +2098,17 @@ function domainSystem(sc::SC.SIM_CODE)::DomainSystem
     elseif category in (:algebraic, :derivative, :dummyState)
       vtype == :real || ns("the algebraic variable $(nm), not Real")
       local fixed::Vector{Bool} = fixedOf(false)
-      local algStarts::Vector{Float64} = startOf()
+      #= a guess that does not evaluate at the translation (it reads a parameter computed at the start: MSL Fluid's
+         `medium.h(start = h_start)`, h_start the enthalpy at the start pressure and temperature, a function's): a
+         placeholder; its rule gives the loops their first guesses at each start (the array code's `:a` start rules) =#
+      local algStarts::Vector{Float64} = try
+        startOf()
+      catch err
+        (err isa NotSupported && sv.attributes.startExps !== nothing && !any(fixed)) || rethrow(err)
+        push!(placeholders, nm)
+        push!(startOwners, (:a, g.nAlg, sv))
+        zeros(n)
+      end
       any(fixed) && push!(fixedNonStates, (nm, Any[x for x in fixed], Any[x for x in algStarts]))
       g.vars[nm] = VarInfo(:alg, dims, perPart, g.nAlg, :real, SimVariable(sv, elementNames, nothing))
       g.nAlg += n

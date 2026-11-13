@@ -184,7 +184,18 @@ function blockSolve!(s::BlockSolver, residual!::R, du::AbstractVector, a::Abstra
     fill!(s.x, NaN)
   end
   #= the last evaluation was at the solution unless crossing functions or relation values are asked for =#
-  (ok && z === nothing && !mode) || residual!(s.r, s.x, du, a, u, p, t, z, mode, fire)
+  if ok
+    (z === nothing && !mode) || residual!(s.r, s.x, du, a, u, p, t, z, mode, fire)
+  else
+    #= of a loop that did not solve at its NaN unknowns, for what the equations after it read; a function's assert
+       there (`x0 < x1` of NaN: MSL Fluid's regFun3 in a pipe's friction) is no other failure than the loop's =#
+    try
+      residual!(s.r, s.x, du, a, u, p, t, z, mode, fire)
+    catch err
+      err isa _OMBACKEND.CodeGeneration._RHS_STEP_ERRORS || rethrow()
+      fill!(s.r, NaN)
+    end
+  end
   return nothing
 end
 

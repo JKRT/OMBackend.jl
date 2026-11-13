@@ -451,7 +451,8 @@ result in a branch (a hoisted call equation, an assert's condition: `isNoResultC
 the branches of a lifted one, one whose condition does not depend on time (a state-dependent
 condition crosses in both directions: its branches are evaluated as a continuous product); in a
 for-equation (arrays kept), one that reads its iterator (the array code reads it inline; where such a
-model is scalarized after its reduction, `liftIfExpressions!(model, selected)` lifts it then). The
+model is scalarized after its reduction, `liftIfExpressions!(model, selected)` lifts it then); in an array
+constructor or a reduction, one that reads its iterator. The
 when-equations (their code generation evaluates them in place), the asserts (checked where they are, not in the
 right-hand side: a Boolean if-expression of a condition lifted as a Real variable was read as a Boolean) and
 algorithms are left.
@@ -543,6 +544,16 @@ end
 """
 function lift(lifter::IfExpressionLifter, @nospecialize(e::IR.Expression), timeDependentOnly::Bool)::IR.Expression
   IR.isBuiltinCall(e, :noEvent) && return e
+  #= an array constructor or a reduction with an if-expression that reads its iterator stays as it is, as a
+     for-equation with one (`ifReadsIterator`): lifted, the if-equation read the iterator outside its scope (`{... /
+     (if i == 2 then 3 else 2) ... for i in 2:n - 1}`, the work of the pressure in MSL Fluid's pipes: "unknown
+     variable i") =#
+  if e isa Union{IR.ARRAY_CONSTRUCTOR, IR.REDUCTION}
+    local bound::Set{Symbol} = Set{Symbol}(it.name for it in e.iterators)
+    local readsBound = (@nospecialize(y::IR.Expression)) -> y isa IR.CREF && y.cref.name in bound
+    local ifReads = (@nospecialize(x::IR.Expression)) -> x isa IR.IF_EXPRESSION && IR.anyExp(readsBound, x)
+    IR.anyExp(ifReads, e.body) && return e
+  end
   e isa IR.IF_EXPRESSION || return IR.mapChildren((@nospecialize(x::IR.Expression)) ->
                                                     lift(lifter, x, timeDependentOnly), e)
   local inner = x -> lift(lifter, x, true)

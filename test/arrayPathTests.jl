@@ -1947,4 +1947,291 @@ end
     local plain = I.ComponentRef(I.CrefPart[I.CrefPart(:x, I.Subscript[], vector)])
     @test R.sliceElementCref(plain, at(3)).name === :x_3 || R.sliceElementCref(plain, at(3)).name === Symbol("x[3]")
   end
+
+  @testset "The Jacobian by differences of a step per state" begin
+    #= a pressure of 1e5 beside fractions of 0.01 whose logarithm a derivative takes: the solver's differences in a
+       sparsity pattern took one step for all states from the norm of the state vector (0.61 here), the fraction
+       went negative and `log` rejected every first step (MSL Media ReferenceAir MoistAir1 on the array code:
+       "DomainError with -0.155"). The array code's own differences take a step per state (`ColoredJacobian`) =#
+    local scaled = Modelica"""
+      model ScaledStates
+        Real p(start = 1.0e5, fixed = true);
+        Real x[2](each start = 0.01, each fixed = true);
+      equation
+        der(p) = 1.0e5 - p + 10.0 * log(x[1]);
+        for i in 1:2 loop
+          der(x[i]) = (0.02 - x[i]) * (p / 1.0e5);
+        end for;
+      end ScaledStates;
+      """
+    local (ss, as, _) = _bothWaysOf(scaled, "ScaledStates", ["p", "x[1]", "x[2]"])
+    @test isapprox(as, ss; rtol = 1e-5)
+    @test 0.016 < as[2] < 0.017
+    local G = OMBackend.CodeGeneration.ArrayODEGen
+    #= columns that share no row in one group, greedy in the columns' order =#
+    local band = G._SPARSE.sparse([1, 2, 2, 3, 3, 4], [1, 1, 2, 2, 3, 4], ones(6), 4, 4)
+    @test G.columnGroups(band) == [[1, 3, 4], [2]]
+    #= J = [log(u2) u1 / u2; 1 2 u2], each column by its state's own step =#
+    local rhs! = function (du, u, p, t)
+      du[1] = u[1] * log(u[2])
+      du[2] = u[1] + u[2]^2
+      return nothing
+    end
+    local dense = G._SPARSE.sparse([1, 2, 1, 2], [1, 1, 2, 2], ones(4), 2, 2)
+    local jac = G.ColoredJacobian(G.StepRejectingRHS(rhs!), dense)
+    local J = copy(dense)
+    jac(J, [1.0e5, 0.01], nothing, 0.0)
+    @test isapprox(Matrix(J), [log(0.01) 1.0e7; 1.0 0.02]; rtol = 1e-5)
+    #= a state at the edge of the domain (its step below it leaves it): the difference to the point itself =#
+    jac(J, [1.0e5, 1.0e-7], nothing, 0.0)
+    @test all(isfinite, J.nzval)
+    @test J[1, 2] > 1.0e9
+    OMBackend.CodeGeneration._resetRHSError!()
+  end
+
+  @testset "A function with bound inputs as an argument" begin
+    #= `twice(function line(k = k, w = w), 2.0)`: the array code had no form for a function with inputs bound
+       ("expression PARTEVALFUNCTION": MSL Media moist air's T_phX, `solveOneNonlinearEquation(function
+       f_nonlinear(p = p, h = h, X = X), ...)`, in the pipes of MSL Fluid). A closure of the free inputs
+       (`_partialApplicationIRx`); the bound vector a slice by a structural range =#
+    local curves = Modelica"""
+      package Shapes
+        partial function Curve
+          input Real u;
+          output Real y;
+        end Curve;
+
+        function line
+          extends Curve;
+          input Real k;
+          input Real w[2];
+        algorithm
+          y := k * u + w[1] - w[2];
+        end line;
+
+        function twice
+          input Curve f;
+          input Real u;
+          output Real y;
+        protected
+          Real once;
+        algorithm
+          once := f(u);
+          y := f(once);
+        end twice;
+
+        function curved "as moist air's T_phX: one assignment, inlined into the equation by the arrays-kept passes"
+          input Real k;
+          input Real w[2];
+          output Real y;
+        algorithm
+          y := twice(function line(k = k, w = w), 2.0);
+        end curved;
+      end Shapes;
+
+      model BoundCurve "y[i] = k (2 k + c) + c, k = x[i] = exp(-i t), c = x[1] - x[2]"
+        parameter Integer n = 2;
+        Real x[3](each start = 1.0, each fixed = true);
+        Real y[3];
+      equation
+        for i in 1:3 loop
+          der(x[i]) = -i * x[i];
+          y[i] = Shapes.curved(x[i], x[1:n]);
+        end for;
+      end BoundCurve;
+      """
+    local (sb, ab, _) = _bothWaysOf(curves, "BoundCurve", ["y[1]", "y[2]", "y[3]"]; reltol = 1e-8, abstol = 1e-10)
+    local c::Float64 = exp(-1) - exp(-2)
+    @test isapprox(ab, [exp(-i) * (2 * exp(-i) + c) + c for i in 1:3]; atol = 1e-6)
+    @test maximum(abs.(sb .- ab)) < 1e-6
+  end
+
+  @testset "The array field of a record array of one record" begin
+    #= `reader(states = {state})`: the field's elements were read as `{state.X}[1][i]`, the element of a picked
+       element, and `state.X` is no variable (its elements are): "unknown variable volume.medium.state.X" (MSL
+       Fluid's `heatTransfer.states = {medium.state}` of a volume of moist air). The element form picks through both
+       subscripts, and a for-equation left reading `state.X[i]` is unrolled =#
+    local records = Modelica"""
+      record Mixture
+        Real p;
+        Real X[2];
+      end Mixture;
+
+      model Reader
+        input Mixture states[1];
+        Real weighted[2];
+      equation
+        for i in 1:2 loop
+          weighted[i] = i * states[1].X[i];
+        end for;
+      end Reader;
+
+      model OneRecordArray "weighted = {x, 2 (1 - x)}, x = exp(-t)"
+        Mixture state;
+        Reader reader(states = {state});
+        Real x(start = 1.0, fixed = true);
+      equation
+        der(x) = -x;
+        state.p = 1.0e5 * x;
+        state.X = {x, 1.0 - x};
+      end OneRecordArray;
+      """
+    local (sr, ar, _) = _bothWaysOf(records, "OneRecordArray", ["reader.weighted[1]", "reader.weighted[2]"])
+    @test isapprox(ar, [exp(-1), 2 * (1 - exp(-1))]; atol = 1e-5)
+    @test maximum(abs.(sr .- ar)) < 1e-5
+  end
+
+  @testset "A String parameter of rolled components, an index an initial algorithm gives" begin
+    #= two probes of one class are rolled: their String parameter is an array read by element in the initial
+       algorithm ("parameter first|second.substance of a type the array path does not pass"), and `ind`, fixed =
+       false, is the frontend's structural value in the equations ("with fixed = false used structurally"): MSL
+       Fluid's trace substance sensors in RoomCO2 =#
+    local probes = Modelica"""
+      function sameText
+        input String a;
+        input String b;
+        output Boolean same;
+      algorithm
+        same := a == b;
+      end sameText;
+
+      model Probe
+        parameter String substance = "b";
+        input Real cs[1];
+        Real c;
+      protected
+        parameter Integer ind(fixed = false);
+      initial algorithm
+        ind := -1;
+        for i in 1:1 loop
+          if sameText("b", substance) then
+            ind := i;
+          end if;
+        end for;
+        assert(ind > 0, "Substance '" + substance + "' is not present");
+      equation
+        c = cs[ind];
+      end Probe;
+
+      model TwoProbes "c = x and 2 x, x = exp(-t)"
+        Real x(start = 1.0, fixed = true);
+        Probe near(cs = {x});
+        Probe far(cs = {2.0 * x});
+      equation
+        der(x) = -x;
+      end TwoProbes;
+      """
+    local (sp, ap, _) = _bothWaysOf(probes, "TwoProbes", ["near.c", "far.c"])
+    @test isapprox(ap, [exp(-1), 2 * exp(-1)]; atol = 1e-5)
+    @test maximum(abs.(sp .- ap)) < 1e-5
+  end
+
+  @testset "Initial equations beyond the free states" begin
+    #= inductors in series by pairs, each with `i = 0` at the start: one current is a state, the other's initial
+       equation has no unknown left ("initialization over-determined (an initial equation without a free state)":
+       the four lines in series of MSL's CompareLineTrunks). Out of the square system and checked at its solution, as
+       OpenModelica keeps a model whose redundant initial equations are consistent =#
+    local series = Modelica"""
+      model SeriesInductors "ia[k] = ib[k] = k (1 - exp(-t / 3))"
+        parameter Real L = 1.0;
+        Real ia[2];
+        Real ib[2];
+        Real va[2];
+        Real vb[2];
+      equation
+        for k in 1:2 loop
+          L * der(ia[k]) = va[k];
+          2.0 * L * der(ib[k]) = vb[k];
+          ia[k] = ib[k];
+          va[k] + vb[k] = k - ia[k];
+        end for;
+      initial equation
+        for k in 1:2 loop
+          ia[k] = 0.0;
+          ib[k] = 0.0;
+        end for;
+      end SeriesInductors;
+      """
+    local (ss, as, _) = _bothWaysOf(series, "SeriesInductors", ["ia[1]", "ib[2]", "vb[2]"];
+                                    reltol = 1e-8, abstol = 1e-10)
+    @test isapprox(as, [1 - exp(-1 / 3), 2 * (1 - exp(-1 / 3)), 4 * exp(-1 / 3) / 3]; atol = 1e-6)
+    @test maximum(abs.(ss .- as)) < 1e-6
+    #= one that the others' solution does not satisfy ends the start with its equation =#
+    local clash = Modelica"""
+      model ClashingStarts
+        parameter Real L = 1.0;
+        Real ia[2];
+        Real ib[2];
+        Real va[2];
+        Real vb[2];
+      equation
+        for k in 1:2 loop
+          L * der(ia[k]) = va[k];
+          2.0 * L * der(ib[k]) = vb[k];
+          ia[k] = ib[k];
+          va[k] + vb[k] = k - ia[k];
+        end for;
+      initial equation
+        for k in 1:2 loop
+          ia[k] = 0.0;
+          ib[k] = 1.0;
+        end for;
+      end ClashingStarts;
+      """
+    local name::String = _translateProgram(clash, "ClashingStarts"; scalarized = false)
+    if _arrayPathTaken(name)
+      @test_throws Exception OMBackend.simulateModel(name; tspan = (0.0, 1.0))
+    else
+      @test occursin("the initialization is over-determined: ia[k] = 0.0", OMBackend.scalarizedFallbackReason(name))
+    end
+  end
+
+  @testset "An if-expression on the iterator of an array constructor" begin
+    #= `{x[i] / (if i == 2 then 3 else 2) for i in 2:4}`: the if-expression was lifted to an if-equation of its own,
+       which read `i` outside the constructor ("unknown variable i": the work of the pressure in MSL Fluid's pipes,
+       `Wb_flows[2:n - 1]`). It stays inline, as one that reads a for-equation's iterator =#
+    local weights = Modelica"""
+      model WeightedConstructor "y = {x[2] / 3, x[3] / 2, x[4] / 2}, x[k] = exp(-k t)"
+        Real x[4](each start = 1.0, each fixed = true);
+        Real y[3];
+      equation
+        for k in 1:4 loop
+          der(x[k]) = -k * x[k];
+        end for;
+        y = {x[i] / (if i == 2 then 3 else 2) for i in 2:4};
+      end WeightedConstructor;
+      """
+    local (sw, aw, _) = _bothWaysOf(weights, "WeightedConstructor", ["y[1]", "y[2]", "y[3]"];
+                                    reltol = 1e-8, abstol = 1e-10)
+    @test isapprox(aw, [exp(-2) / 3, exp(-3) / 2, exp(-4) / 2]; atol = 1e-6)
+    @test maximum(abs.(sw .- aw)) < 1e-6
+  end
+
+  @testset "A relation of time in a small algebraic loop" begin
+    #= an if-equation on `time < 0.5` among the equations of a loop of two unknowns: the generated Newton of a loop
+       family has no relations ("relations in an algebraic loop: 0 = if ... (time < 0.02)": the lightning current's
+       source in MSL's LightningSegmentedTransmissionLine). Such a loop is solved as a large one (`blockSolve!`,
+       which evaluates relations); a relation of time has one value while the loop is solved =#
+    local sources = Modelica"""
+      model TimeRelationLoop "a[k] = s / 1.25, s = 1 before 0.5 s and 3 after: x[k] = 1.6 k at 1 s"
+        Real x[2](each start = 0.0, each fixed = true);
+        Real a[2];
+        Real b[2];
+      equation
+        for k in 1:2 loop
+          der(x[k]) = k * a[k];
+          if time < 0.5 then
+            a[k] + 0.5 * b[k] = 1.0;
+          else
+            a[k] + 0.5 * b[k] = 3.0;
+          end if;
+          b[k] = 0.5 * a[k] + 0.0 * a[k] ^ 3;
+        end for;
+      end TimeRelationLoop;
+      """
+    local (st, at, _) = _bothWaysOf(sources, "TimeRelationLoop", ["x[1]", "x[2]", "a[2]", "b[1]"];
+                                    reltol = 1e-8, abstol = 1e-10)
+    @test isapprox(at, [1.6, 3.2, 2.4, 1.2]; atol = 1e-6)
+    @test maximum(abs.(st .- at)) < 1e-6
+  end
 end

@@ -53,7 +53,10 @@ code generation takes; of its first partition (a model of several the generation
     are unrolled (`unrollElementLoops!`);
   - the for-ranges that fold to Integer literals are those literal ranges (`literalRanges!`);
   - the expressions are in their element form: what the code takes per element written so (`elementForm!`), the
-    parameters' bindings that read parameters too.
+    parameters' bindings that read parameters too;
+  - the for-equations the element form left reading the elements of what is no variable are unrolled
+    (`unrollElementLoops!` again: `{state.X}[1][\$i2]`, the field of a record array of one record, is
+    `state.X[\$i2]` only then; MSL Fluid's `heatTransfer.states = {medium.state}` of a moist air volume).
 """
 function arrayCodeForm!(model::IR.Model)::IR.Model
   (length(model.continuous) == 1 && isempty(model.clocked) && isempty(model.modes)) || return model
@@ -66,6 +69,7 @@ function arrayCodeForm!(model::IR.Model)::IR.Model
   unrollElementLoops!(model)
   literalRanges!(model)
   elementForm!(model)
+  unrollElementLoops!(model)
   return model
 end
 
@@ -673,11 +677,29 @@ end
 An element of an array expression (`{155, 155, 155}[\$i1]`, `(R.T * v)[i]`, `resolve1(R, v)[i]`): of element-wise
 arithmetic, a product, a literal by literal subscripts the element distributed (`Evaluation.selectElement`); of an
 array variable its element (the reference subscripted, `composedSubscripts`); of an array literal, a function's array
-result, a record's array field the element of the value. Subscripts that are not all indices as they are.
+result, a record's array field the element of the value; of an element that is picked (`{state.X}[1][2]`, the field
+of a record array of one record: MSL Fluid's `heatTransfer.states = {medium.state}`) the element of what was picked.
+Subscripts that are not all indices as they are.
 """
 function subscriptedForm(e::IR.SUBSCRIPTED, cx::ElementContext)::IR.Expression
   local field::IR.Expression = fieldExpression(e)
   field === e || return elementFormExp(field, cx)
+  if e.exp isa IR.SUBSCRIPTED
+    local inner::IR.Expression = subscriptedForm(e.exp, cx)
+    inner isa IR.SUBSCRIPTED || return elementFormExp(IR.SUBSCRIPTED(inner, e.subscripts, e.ty), cx)
+  end
+  #= of an array constructor of one iterator by a literal first subscript (`{p_a + (p_b - p_a) * (i - 1) / 4 for i in
+     1:5}[2]`, the binding of `ps_start` in MSL Fluid's pipes: "unknown variable i"): its body at that value =#
+  if e.exp isa IR.ARRAY_CONSTRUCTOR && length(e.exp.iterators) == 1
+    local at::Union{Nothing, Int} = IR.literalIndex(e.subscripts[1])
+    local values::Union{Nothing, StepRange{Int, Int}} =
+      IndexReduction.literalRange(IndexReduction.foldTree(e.exp.iterators[1].range))
+    if at !== nothing && values !== nothing && 1 <= at <= length(values)
+      local body::IR.Expression =
+        IndexReduction.withIterators(e.exp.body, Dict{Symbol, Int}(e.exp.iterators[1].name => values[at]))
+      return elementFormExp(length(e.subscripts) == 1 ? body : IR.SUBSCRIPTED(body, e.subscripts[2:end], e.ty), cx)
+    end
+  end
   all((s::IR.Subscript) -> s isa IR.INDEX, e.subscripts) || return e
   local picked::IR.Expression = Evaluation.selectElement(e.exp, e.subscripts, e.ty)
   picked isa IR.SUBSCRIPTED || return elementFormExp(picked, cx)
