@@ -12,6 +12,18 @@ function _arrayPathTranslate(model::String; scalarized::Bool)
   return OMBackend.canonicalName(model)
 end
 
+#= A test's own models written beside it, `Modelica"""..."""` (OMParser 1.0: parsed when this file is loaded), for
+   `_bothWaysOf`; the models of Models/ArrayPath.mo are those of the tests before. =#
+const var"@Modelica_str" = OMFrontend.OMParser.var"@Modelica_str"
+
+"The model `model` of the Modelica text `program` translated (as `_arrayPathTranslate`); its name."
+function _translateProgram(program, model::String; scalarized::Bool)::String
+  local scode = OMFrontend.translateToSCode(program)
+  local (fm, cache) = OMFrontend.instantiateSCodeToFM(model, scode; scalarize = scalarized)
+  OMBackend.translate(fm; functionList = OMFrontend.cacheToFunctionList(cache), scalarized = scalarized)
+  return OMBackend.canonicalName(model)
+end
+
 _arrayPathTaken(name) = name in OMBackend.ARRAY_ODE_MODELS
 _values(sol, names) = [OMBackend.getVariableValues(sol, n)[end] for n in names]
 
@@ -21,6 +33,20 @@ function _bothWays(model, names; tspan = (0.0, 1.0), kwargs...)
   _arrayPathTranslate(model; scalarized = false)
   @test _arrayPathTaken(name)
   local sol::OMBackend.DifferentialEquations.SciMLBase.AbstractODESolution = OMBackend.simulateModel(name; tspan = tspan, kwargs...)
+  @test sol.retcode == ReturnCode.Success
+  return (s, _values(sol, names), sol)
+end
+
+"""
+`_bothWays` of the model `model` of the Modelica text `program`: the values of `names` at the end of `tspan` on the
+scalarizing path and on the array path (which the model must take), and the array path's solution.
+"""
+function _bothWaysOf(program, model::String, names::Vector{String}; tspan = (0.0, 1.0), kwargs...)
+  local name::String = _translateProgram(program, model; scalarized = true)
+  local s::Vector{Float64} = _values(OMBackend.simulateModel(name; tspan = tspan, kwargs...), names)
+  _translateProgram(program, model; scalarized = false)
+  @test _arrayPathTaken(name)
+  local sol = OMBackend.simulateModel(name; tspan = tspan, kwargs...)
   @test sol.retcode == ReturnCode.Success
   return (s, _values(sol, names), sol)
 end
@@ -683,6 +709,92 @@ end
     local (se, ae, _) = _bothWays("ArrayPath.EnumSubscriptCluster", ["y", "k", "x"])
     @test isapprox(ae, [2 * exp(-1) + 2, 2.0, exp(-1)]; atol = 1e-5)
     @test maximum(abs.(se .- ae)) < 1e-5
+  end
+
+  @testset "Initial values of discrete variables: the variable on the right, an initial if-equation" begin
+    #= `y0 = last` and `if x > level then mode = 2; else mode = 1; end if` give a discrete variable its initial value;
+       taken as initial equations to solve they had no free state ("initialization over-determined": MSL Mean's
+       `y0 = y_last`, SoftStarter's modeOfOperation). Initial assignments (`_addInitialEquations!`) =#
+    local reversed = Modelica"""
+      model ReversedInitialAssignment "last = 3 until the sample at 0.5 adds x there"
+        parameter Real y0 = 3;
+        discrete Real last;
+        Real x(start = 1, fixed = true);
+        Real y;
+      initial equation
+        y0 = last;
+      equation
+        der(x) = -x;
+        when sample(0.5, 0.5) then
+          last = pre(last) + x;
+        end when;
+        y = last;
+      end ReversedInitialAssignment;
+      """
+    for (stop, expected) in ((0.4, [3.0, 3.0]), (0.9, [3 + exp(-0.5), 3 + exp(-0.5)]))
+      local (sr, ar, _) = _bothWaysOf(reversed, "ReversedInitialAssignment", ["y", "last"]; tspan = (0.0, stop))
+      @test isapprox(ar, expected; atol = 1e-5)
+      @test maximum(abs.(sr .- ar)) < 1e-5
+    end
+    local branches = Modelica"""
+      model InitialIfAssignment "mode = 2 from the start (x = 1 > level), 3 once x = exp(-t) is below 0.4, at 0.916"
+        parameter Real level = 0.4;
+        Real x(start = 1, fixed = true);
+        discrete Integer mode;
+        Real y;
+      initial equation
+        if x > level then
+          mode = 2;
+        else
+          mode = 1;
+        end if;
+      equation
+        der(x) = -x;
+        when x < level then
+          mode = 3;
+        end when;
+        y = mode * x;
+      end InitialIfAssignment;
+      """
+    for (stop, expected) in ((0.5, [2 * exp(-0.5), 2.0]), (1.0, [3 * exp(-1), 3.0]))
+      local (sf, af, _) = _bothWaysOf(branches, "InitialIfAssignment", ["y", "mode"]; tspan = (0.0, stop))
+      @test isapprox(af, expected; atol = 1e-5)
+      @test maximum(abs.(sf .- af)) < 1e-5
+    end
+  end
+
+  @testset "A String parameter given by a string function of constants" begin
+    #= `c1 = Modelica.Utilities.Strings.substring(group, 1, 1)` is "D", read by the binding of k: the array code had
+       the values of String parameters bound to literals only ("the value of parameter transformerData.V1ph: computed
+       at the start, and its binding has no array code": MSL Machines' nine transformer examples). The runtime
+       library's function is called at the translation (`_stringCallValue`) =#
+    local strings = Modelica"""
+      package Modelica
+        package Utilities
+          package Strings
+            function substring
+              input String string;
+              input Integer startIndex;
+              input Integer endIndex;
+              output String result;
+              external "C" result = ModelicaStrings_substring(string, startIndex, endIndex);
+            end substring;
+          end Strings;
+        end Utilities;
+      end Modelica;
+
+      model StringFunctionParameter "k = 2 for the group D: x = exp(-2 t)"
+        parameter String group = "Dy01";
+        final parameter String c1 = Modelica.Utilities.Strings.substring(group, 1, 1);
+        final parameter Real k = 2 / (if c1 == "D" then 1 else 2);
+        Real x(start = 1, fixed = true);
+      equation
+        der(x) = -k * x;
+      end StringFunctionParameter;
+      """
+    local (ss, as, _) = _bothWaysOf(strings, "StringFunctionParameter", ["x"])
+    @test isapprox(as, [exp(-2)]; atol = 1e-5)
+    @test maximum(abs.(ss .- as)) < 1e-5
   end
 
   @testset "Function arguments and results: arrays as wholes, the first of several outputs, free parameters" begin

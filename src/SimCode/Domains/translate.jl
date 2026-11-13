@@ -347,10 +347,41 @@ function _stringRoot(g::Gen, name::String)::Union{Nothing, Tuple{String, SC.SCON
     (info !== nothing && info.kind == :param && info.vtype == :other) || return nothing
     local b::Union{Nothing, SC.Exp} = SC.bindingOf(info.var.simVar.varKind)
     b isa SC.SCONST && return (nm, b)
+    if b isa SC.CALL
+      local value::Union{Nothing, String} = _stringCallValue(g, b, seen)
+      return value === nothing ? nothing : (nm, SC.SCONST(value))
+    end
     (b isa SC.EXP_CREF && isempty(b.cref.subs)) || return nothing
     nm = String(b.cref.sym)
   end
   return nothing
+end
+
+"""
+The String a call of a Modelica.Utilities function of the runtime library gives for arguments that are literals or
+String parameters with a value (`_stringRoot`): `Modelica.Utilities.Strings.substring("Dy01", 1, 1)`, MSL Machines'
+transformer data `C1`; `substring(group, 1, 1)` of a parameter `group`. Called at the translation; nothing for
+another call, other arguments or another result. `seen`: the parameters whose value is being looked up.
+"""
+function _stringCallValue(g::Gen, call::SC.CALL, seen::Set{String})::Union{Nothing, String}
+  local generation::Module = _OMBACKEND.CodeGeneration
+  local runtime::Union{Nothing, Symbol} =
+    get(generation.AlgorithmicCodeGeneration.MODELICA_UTILITIES_TO_RUNTIME_C, String(call.name), nothing)
+  runtime === nothing && return nothing
+  local arguments::Vector{Any} = Any[]
+  for a::SC.Exp in call.args
+    if a isa Union{SC.SCONST, SC.ICONST, SC.BCONST}
+      push!(arguments, a.value)
+    elseif a isa SC.EXP_CREF && isempty(a.cref.subs) && !(String(a.cref.sym) in seen)
+      local root::Union{Nothing, Tuple{String, SC.SCONST}} = _stringRoot(g, String(a.cref.sym))
+      root === nothing && return nothing
+      push!(arguments, root[2].value)
+    else
+      return nothing
+    end
+  end
+  local value::Any = getfield(generation.OMRuntimeExternalC, runtime)(arguments...)
+  return value isa AbstractString ? String(value) : nothing
 end
 
 """
@@ -909,6 +940,10 @@ function _initialPreStart(g::Gen, lhs::IR, rhs::IR)::Bool
   return all(r::Ref -> r.name != target.name && !(r.name in g.freeParams), accesses!(Ref[], rhs))
 end
 
+"Whether `x` is a discrete variable or element, or pre() of one: what an initial assignment gives its value."
+_isDiscreteTarget(g::Gen, x::IR)::Bool =
+  (x isa Ref && !x.der && g.vars[x.name].kind == :discrete) || (x isa Pre && g.vars[x.ref.name].kind == :discrete)
+
 "Whether the expression reads parameters, literals and iterators only (no variable, no time, no pre() or event)."
 function _ofParameters(g::Gen, x::IR)::Bool
   x isa Union{Lit, Slot} && return true
@@ -936,6 +971,8 @@ function _addInitialEquations!(g::Gen, equations::Vector{SC.Equation})::Nothing
       local lhs::IR = toIR(g, eq.lhs, ctx)
       local rhs::IR = toIR(g, eq.rhs, ctx)
       ctx.nsam[] == 0 || ns("sample() in an equation")
+      #= `value = d`, the discrete variable on the right (MSL Mean's `y0 = y_last`): its initial value, `d = value` =#
+      (_isDiscreteTarget(g, rhs) && !_isDiscreteTarget(g, lhs)) && ((lhs, rhs) = (rhs, lhs))
       push!(pending, (eq, lhs, rhs, ctx.nrel[]))
     else
       _addEquation!(g, eq, String[], NO_SLOTS; initial = true)
@@ -1470,6 +1507,14 @@ function _addIfEquation!(g::Gen, eq::SC.INLINE_IF_EQUATION, iterNames::Vector{St
     local lhs::IR = toIR(g, assigned[key], ctx)
     local rhs::IR = _ifRhs(g, eq, key, ctx)
     ctx.nsam[] == 0 || ns("sample() in an equation")
+    if initial && nIter == 0 && lhs isa Ref && _initialAssignment(g, lhs, rhs) &&
+       !any(r::Ref -> r.name in g.freeParams, accesses!(Ref[], rhs))
+      #= an initial if-equation that gives a discrete variable its initial value in every branch (MSL SoftStarter's
+         `if start then modeOfOperation = Up; else ...`): an initial assignment of the if-expression =#
+      local text::String = "$(key) = if ... ($(_str(eq.conditions[1])))"
+      push!(g.initAlgs, AlgClass(Stmt[SAssign(lhs, rhs)], 0, NO_SLOTS, 0, 0, text))
+      continue
+    end
     push!(initial ? g.initClasses : g.classes,
           EqClass(lhs, rhs, nIter, idom, initial ? 0 : ctx.nrel[], "$(key) = if ... ($(_str(eq.conditions[1])))"))
   end
