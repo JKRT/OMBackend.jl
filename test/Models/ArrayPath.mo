@@ -3179,4 +3179,37 @@ package ArrayPath
     der(x) = -x;
     w = {Complex(x, 0) * quarterTurn(1), Complex(x, 0) * quarterTurn(2)};
   end RecordIfField;
+
+  model SampleCounter "counts the samples of its period, in an algorithm section"
+    parameter Real period = 0.25;
+    Integer n(start = 0, fixed = true);
+  algorithm
+    when sample(period, period) then
+      n := pre(n) + 1;
+    end when;
+  end SampleCounter;
+
+  model ComponentAlgorithms "an array of components with an algorithm section each: with the arrays kept the sections come as one for-statement around the when-statement (MSL Digital's InertialDelaySensitive); until t = 0.95 the periods 0.25 and 0.1 give 3 and 9 samples"
+    SampleCounter c[2](period = {0.25, 0.1});
+    Real x(start = 1, fixed = true);
+  equation
+    der(x) = -x;
+  end ComponentAlgorithms;
+
+  type Logic3 = enumeration(Unknown, Low, High);
+
+  model EnumSubscriptCluster "an array over an enumeration read at a literal (MSL Digital's ResetMap[Logic.'U']), and a discrete equation with a relation of parameters beside one of time: its lifted when-equation has change(tHigh[1] > 0) among its triggers, which never fires. y = gain[High] x + k: 2 exp(-1) + 2 at t = 1"
+    parameter Real gain[Logic3] = {0, 1, 2};
+    parameter Real tBase = 1;
+    parameter Real tHigh[2] = {tBase, 2 * tBase};
+    Boolean b;
+    Integer k;
+    Real x(start = 1, fixed = true);
+    Real y;
+  equation
+    der(x) = -x;
+    b = time > 0.5;
+    k = if tHigh[1] > 0 then (if b then 2 else 1) else 0;
+    y = gain[Logic3.High] * x + k;
+  end EnumSubscriptCluster;
 end ArrayPath;

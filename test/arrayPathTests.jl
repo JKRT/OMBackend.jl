@@ -668,6 +668,23 @@ end
     @test maximum(abs.(sq .- aq)) < 1e-6
   end
 
+  @testset "An array of components with algorithm sections; an enumeration's literal as a subscript" begin
+    #= with the arrays kept the sections of `SampleCounter c[2]` come as one for-statement around the when-statement;
+       none of the lowerings of an algorithm took it and the counters were left without an equation ("1 equations for
+       3 unknowns"; MSL Digital's InertialDelaySensitive). `whenLoopSections` writes the iterations as sections =#
+    local (sa, aa, _) = _bothWays("ArrayPath.ComponentAlgorithms", ["c[1].n", "c[2].n", "x"]; tspan = (0.0, 0.95))
+    @test aa[1:2] == [3.0, 9.0]
+    @test isapprox(aa[3], exp(-0.95); atol = 1e-5)
+    @test maximum(abs.(sa .- aa)) < 1e-5
+    #= `gain[Logic3.High]`, an array over an enumeration at a literal, is the element at the literal's position
+       (`IR.literalIndex`; was "a subscript that is not constant": MSL Digital's ResetMap[Logic.'U']). The lifted
+       when-equation of k has `change(tHigh[1] > 0)` among its triggers, of parameters: no trigger (`_addWhen!`;
+       the Digital registers on array code have 0 variables off omc, the scalarized route 12 of 24) =#
+    local (se, ae, _) = _bothWays("ArrayPath.EnumSubscriptCluster", ["y", "k", "x"])
+    @test isapprox(ae, [2 * exp(-1) + 2, 2.0, exp(-1)]; atol = 1e-5)
+    @test maximum(abs.(se .- ae)) < 1e-5
+  end
+
   @testset "Function arguments and results: arrays as wholes, the first of several outputs, free parameters" begin
     #= `y = f(x)` of a function of two outputs takes the first, an array, by its elements (`SC.TSUB` under a
        subscript); an array variable or a sum of arrays as the argument is the array of its elements

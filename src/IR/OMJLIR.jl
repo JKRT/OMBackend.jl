@@ -1347,11 +1347,15 @@ function upToFirstSubscripted(c::ComponentRef)::ComponentRef
   return c
 end
 
-"The value of a literal Integer subscript (`x[2]`: 2); `nothing` for another."
+"""
+The value of a literal subscript: an Integer's (`x[2]`: 2), an enumeration literal's position in its type
+(`map[Logic.'U']` of an array over the enumeration: 1); `nothing` for another.
+"""
 function literalIndex(s::Subscript)::Union{Nothing, Int}
   s isa INDEX || return nothing
   local e::Expression = s.exp
-  return e isa INTEGER ? e.value : nothing
+  e isa INTEGER && return e.value
+  return e isa ENUM_LITERAL ? e.index : nothing
 end
 
 "Whether `s` is a literal index: an Integer's or an enumeration literal (`x[2]`, `x[E.b]`; `literalIndex` for its Integer value)."

@@ -738,6 +738,9 @@ function _callIRx(g::Gen, e::SC.CALL, ctx::Ctx)::IR
     ns("terminal() in a when-condition: $(_str(e))")
   elseif fname == "edge" || fname == "change"
     local changed::IR = toIR(g, args[1], ctx)
+    #= of an expression of parameters (a lifted cluster's `change(tLH[1] > 0.0)`, MSL Digital's delays): it holds its
+       value through the simulation, so it neither changes nor rises =#
+    (!(changed isa Ref) && _ofParameters(g, changed)) && return Lit(false)
     changed isa Ref || ns("$(fname) of $(_str(args[1]))")
     return fname == "edge" ? Op(:&&, IR[changed, Op(:!, IR[Pre(changed)])]) : Op(:!=, IR[changed, Pre(changed)])
   elseif fname == "semiLinear"
@@ -906,6 +909,15 @@ function _initialPreStart(g::Gen, lhs::IR, rhs::IR)::Bool
   return all(r::Ref -> r.name != target.name && !(r.name in g.freeParams), accesses!(Ref[], rhs))
 end
 
+"Whether the expression reads parameters, literals and iterators only (no variable, no time, no pre() or event)."
+function _ofParameters(g::Gen, x::IR)::Bool
+  x isa Union{Lit, Slot} && return true
+  x isa Ref && return !x.der && g.vars[x.name].kind == :param && all(s::IR -> _ofParameters(g, s), x.subs)
+  x isa Op && return all(a::IR -> _ofParameters(g, a), x.args)
+  x isa Rel && return _ofParameters(g, x.lhs) && _ofParameters(g, x.rhs)
+  return false
+end
+
 "Whether a when-equation assigns the variable `name` (an element of it)."
 _whenAssigned(g::Gen, name::String)::Bool =
   any(w::WhenClass -> any(b::Tuple -> b[1] == :assign && b[2] isa Ref && b[2].name == name, w.body), g.whens)
@@ -1071,16 +1083,25 @@ function _addWhen!(g::Gen, eq::SC.WHEN_EQUATION, iterNames::Vector{String}, idom
   local branch::Union{Nothing, SC.WHEN_STMTS} = eq.whenEquation
   while branch !== nothing
     local triggers::Vector{IR} = IR[]
+    local constant::Bool = false
     for c in _triggers(branch.condition)
       if c isa SC.CALL && c.kind == SC.CALL_BUILTIN && c.name === :change && !_isReference(c.args[1])
         #= change(e) of a Boolean expression (a lifted discrete cluster's trigger): e or not e becomes true =#
         local x::IR = toIR(g, c.args[1], ctx)
+        #= of parameters (`change(tLH[1] > 0.0)`, MSL Digital's delays): no trigger, it never changes =#
+        if _ofParameters(g, x)
+          constant = true
+          continue
+        end
         _isBooleanIR(g, x) || ns("change of $(_str(c.args[1]))")
         append!(triggers, IR[x, Op(:!, IR[x])])
       else
         push!(triggers, _topLevelInitial(toIR(g, c, ctx)))
       end
     end
+    #= every trigger the change of an expression of parameters: the branch never runs (its variables keep what the
+       initialization gives them) =#
+    (isempty(triggers) && constant) && push!(triggers, Lit(false))
     isempty(triggers) && ns("a when-branch without a condition: $(_str(eq))")
     push!(conds, length(triggers) == 1 ? triggers[1] : Op(:vect, triggers))
     push!(starts, length(body) + 1)
