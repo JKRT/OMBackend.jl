@@ -655,14 +655,27 @@ end
     generation.blockSolve!(solver, residual!, zeros(1), zeros(2), zeros(1), nothing, 0.0, nothing, false, false)
     @test solver.failures == 0
     @test isapprox(solver.x, [1.5, 1.5]; atol = 1e-8)
-    #= residuals that throw at the iterate (the cosine of an infinite angle): a failed solve, the unknowns NaN, no
-       exception (thrown on from the asserts' check after a step it ended MSL MultiBody UniversalConstraint's run) =#
+    #= residuals that throw at every iterate (the cosine of an infinite angle; from the varied start values too): a
+       failed solve, the unknowns NaN, no exception (thrown on from the asserts' check after a step it ended MSL
+       MultiBody UniversalConstraint's run) =#
     local throwing! = (res, y, du, a, u, p, t, z, mode, fire) ->
-      (res[1] = cos(1.0 / (y[1] - 1.0)); res[2] = y[2]; nothing)
+      (res[1] = cos(1.0 / (y[1] - y[1])); res[2] = y[2]; nothing)
     local thrown = generation.BlockSolver(generation._SPARSE.sparse(ones(2, 2)), [1, 2], [1.0, 1.0])
     generation.blockSolve!(thrown, throwing!, zeros(1), zeros(2), zeros(1), nothing, 0.0, nothing, false, false)
     @test thrown.failures == 1
     @test all(isnan, thrown.x)
+    #= start values at which a residual is stationary in its unknown (a MOSFET's current, even in the drain-source
+       voltage at zero: the Jacobian's column is zero, the least-norm step is none; MSL Spice3 Nand did not start):
+       solved from the start values varied by 0.1, as OpenModelica varies them (the positive root) =#
+    local even! = (res, y, du, a, u, p, t, z, mode, fire) ->
+      (res[1] = 1.0e-12 * y[2]; res[2] = 1.5e-5 * (y[1]^2 - 25.0); a .= y; nothing)
+    local still = generation.BlockSolver(generation._SPARSE.sparse(ones(2, 2)), [1, 2], [0.0, 0.0])
+    still.x .= still.y
+    @test !(generation._blockAttempt!(still, even!, arguments, :full) && !still.rankDeficient)
+    local varied = generation.BlockSolver(generation._SPARSE.sparse(ones(2, 2)), [1, 2], [0.0, 0.0])
+    generation.blockSolve!(varied, even!, zeros(1), zeros(2), zeros(1), nothing, 0.0, nothing, false, false)
+    @test varied.failures == 0
+    @test isapprox(varied.x, [5.0, 0.0]; atol = 1e-8)
   end
 
   @testset "A function inlined into an equation: its relations generate no events" begin

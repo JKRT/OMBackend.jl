@@ -134,7 +134,9 @@ end
 Solve a large algebraic loop of an array model where the equations reach it: `residual!(res, y, du, a, u, p, t, z,
 mode, fire)` places the iteration variables `y` where the equations read them (du, a), computes the loop's other
 unknowns from them and evaluates its residuals. Newton from the last solution with the kept factorization, else with
-a Jacobian in every step (also from the start values); the relations keep their values during the solve, then the
+a Jacobian in every step (also from the start values), then with differences over a step of the unknowns' size, with
+shortened steps, and for a loop never solved from its start values varied; the relations keep their values during
+the solve, then the
 residuals are evaluated once more at the solution with the caller's `z` and `mode` (crossing functions, relation
 values). Where no solve converges, the unknowns are NaN (the solver rejects the step; an initialization fails). An
 iterate whose last Jacobian was singular is no solution (`rankDeficient`: its steps were least-norm steps, small
@@ -163,6 +165,14 @@ function blockSolve!(s::BlockSolver, residual!::R, du::AbstractVector, a::Abstra
     #= a loop whose full Newton steps overshoot (a pipe's flow, the root of the pressure difference, at zero flow:
        each step lands as far on the other side): steps shortened until the residuals fall (`_blockDamped!`) =#
     s.x .= s.y
+    ok = _blockAttempt!(s, residual!, args, :damped)
+  end
+  if !(ok && !s.rankDeficient) && !s.solved
+    #= start values at which the residuals are stationary in an unknown (a MOSFET's current at a drain-source
+       voltage of zero is even in it: the Jacobian's column is zero and no step leaves the point; MSL Spice3 Nand,
+       its output node at 0 V): from the start values varied by 0.1 of their size, as OpenModelica's "vary the
+       initial values" (nonlinearSolverHybrd.c: x += 0.1 nominal), with shortened steps =#
+    s.x .= s.y .+ 0.1 .* max.(1.0, abs.(s.y))
     ok = _blockAttempt!(s, residual!, args, :damped)
   end
   ok = ok && !s.rankDeficient
