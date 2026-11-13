@@ -3075,4 +3075,54 @@ package ArrayPath
     f = if locked then sa else if startForward then F0 else if startBackward then -F0 else if pre(mode) == 1 then F0 else -F0;
     mode = if (pre(mode) == 1 or startForward) and v > 0 then 1 else if (pre(mode) == -1 or startBackward) and v < 0 then -1 else 0;
   end StickSlip;
+
+  record FlowState "a record of two Reals (as a medium's ThermodynamicState)"
+    Real p;
+    Real T;
+  end FlowState;
+
+  function flowState "the state at a pressure and an enthalpy (not inlined: an algorithm with an if)"
+    input Real p;
+    input Real h;
+    output FlowState state;
+  algorithm
+    if h > 0 then
+      state := FlowState(p = p, T = h / 2);
+    else
+      state := FlowState(p = p, T = 0);
+    end if;
+  end flowState;
+
+  model RecordArrayElements "an array of records set by an array of calls (MSL Fluid's flow models: states = {setState_phX(...), setState_phX(...)}): an equation per field of each element, states[k].p and states[k].T; x = exp(-t), y = states[1].p + states[2].T = 5 x"
+    FlowState states[2];
+    Real x(start = 1, fixed = true);
+    Real y;
+  equation
+    der(x) = -x;
+    states = {flowState(x, 4 * x), flowState(2 * x, 8 * x)};
+    y = states[1].p + states[2].T;
+  end RecordArrayElements;
+
+  model ColorShape "a shape with a Real color (as MSL MultiBody's visualizers)"
+    input Real color[3];
+    Real brightness;
+  equation
+    brightness = color[1] + color[2] + color[3];
+  end ColorShape;
+
+  model ColoredBody "Integer color inputs given on to Real ones, the second by the first (MSL MultiBody Body's sphereColor and cylinderColor)"
+    input Integer sphereColor[3] = {0, 128, 255};
+    input Integer cylinderColor[3] = sphereColor;
+    parameter Real m = 1;
+    ColorShape sphere(color = sphereColor);
+    ColorShape cylinder(color = cylinderColor);
+    Real v(start = 1, fixed = true);
+  equation
+    m * der(v) = -v;
+  end ColoredBody;
+
+  model RolledBodies "two bodies of one class (rolled into arrays over the instances), the second's mass the first's: the equalities of the Integer colors stay as written, and the mass array's second element reads its first; v = exp(-t / 2) in both, the shapes' brightness 383"
+    ColoredBody body1(m = 2);
+    ColoredBody body2(m = body1.m);
+  end RolledBodies;
 end ArrayPath;

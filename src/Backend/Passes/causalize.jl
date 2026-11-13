@@ -763,12 +763,27 @@ function expandEquations(equations::Vector{IR.Equation}; arrays::Bool)::Vector{I
       append!(out, fields !== nothing ? fields : elementEquations(eq, [[k] for k in 1:eq.size], eq.ty))
     elseif arrays && eq isa IR.ARRAY_EQUATION
       local sizes = Int[knownSize(d, eq) for d in eq.ty.dimensions]
-      append!(out, elementEquations(eq, rowMajor(sizes), eq.ty))
+      foreach(element -> append!(out, recordElementEquations(element)), elementEquations(eq, rowMajor(sizes), eq.ty))
     else
       push!(out, eq)
     end
   end
   return out
+end
+
+"""
+    recordElementEquations(eq) -> Vector{Equation}
+
+An element equation of an array equation of records (`{setState_phX(...), setState_phX(...)} = states`, a Complex
+vector's `aw = {...}`: `states[1] = setState_phX(...)`) as the equations of its fields (`fieldEquations`:
+`states[1].p = call[1]`), a reference on one side; `eq` itself for another. Left whole it is one row for the unknowns
+of all its fields (MSL Fluid's flow models, with arrays kept: fewer rows than unknowns).
+"""
+function recordElementEquations(eq::IR.Equation)::Vector{IR.Equation}
+  (eq isa IR.SCALAR_EQUATION && eq.ty isa IR.T_RECORD) || return IR.Equation[eq]
+  local fields::Union{Nothing, Vector{IR.Equation}} =
+    fieldEquations(IR.RECORD_EQUATION(eq.lhs, eq.rhs, eq.ty, length(eq.ty.fields), eq.source, eq.attributes))
+  return fields === nothing ? IR.Equation[eq] : fields
 end
 
 "The size of an equation's dimension; an unknown one is not supported (its equations would be left out)."

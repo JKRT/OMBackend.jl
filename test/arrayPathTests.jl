@@ -487,6 +487,27 @@ end
     @test maximum(abs.(sc .- ac)) < 1e-6
   end
 
+  @testset "An array of records set by an array of calls: an equation per field of each element" begin
+    #= `states = {flowState(...), flowState(...)}` was one equation per element, of the record: one row for the
+       element's two fields (MSL Fluid's flow models: fewer rows than unknowns). `recordElementEquations` =#
+    local (sr, ar, _) = _bothWays("ArrayPath.RecordArrayElements", ["x", "y", "states[1].p", "states[2].T"])
+    @test isapprox(ar, [exp(-1), 5 * exp(-1), exp(-1), 4 * exp(-1)]; atol = 1e-6)
+    @test maximum(abs.(sr .- ar)) < 1e-6
+  end
+
+  @testset "Rolled components: equalities of discrete variables as written, a parameter of the sibling's" begin
+    #= the two bodies are rolled into arrays over the instances. The equalities of a body's Integer colors
+       (`cylinderColor = sphereColor`, `sphere.color = sphereColor`) were chained by the names with the Real ones,
+       `cylinderColor = sphere.color`: an Integer given by a Real, a row without an unknown (MSL MultiBody
+       PointGravity: 880 rows over 874 unknowns). `equalityPair` takes equalities of Reals only. The masses,
+       `body2.m = body1.m`, are the array `m = {2, m[1]}`: its second element reads its first
+       (`_selfReadsResolved`; was "cyclic parameter bindings", MSL MultiBody's Constraints examples) =#
+    local (sb, ab, _) = _bothWays("ArrayPath.RolledBodies",
+                                  ["body1.v", "body2.v", "body1.sphere.brightness", "body2.cylinder.brightness"])
+    @test isapprox(ab, [exp(-0.5), exp(-0.5), 383.0, 383.0]; atol = 1e-6)
+    @test maximum(abs.(sb .- ab)) < 1e-6
+  end
+
   @testset "A discrete unknown in an algebraic loop: the loop cut at it, the event iteration settles it" begin
     #= an ideal diode's `off = s < 0` is in the loop of s, v and i. Its equation reads the continuous variables
        through a relation only, so it is constant between events: the loop is solved for the continuous unknowns with

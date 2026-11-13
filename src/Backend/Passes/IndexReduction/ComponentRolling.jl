@@ -835,13 +835,17 @@ end
 
 The two references of an equality: a scalar equation of two references (shape 0); a for-equation of one body
 `a[i] = b[i]` over its iterator, both subscripted by it alone (shape the range's size `n`), the references the
-whole arrays. `nothing` for another equation.
+whole arrays. `nothing` for another equation, also for an equality with a side that is not Real: it gives a discrete
+variable its value in the direction it is written (MSL MultiBody's `sphereColor = cylinderColor` of Integer inputs
+beside `sphere.color = sphereColor`; chained by the names, `cylinderColor = sphere.color` gave an Integer by a Real,
+a row of the continuous system without an unknown).
 """
 function equalityPair(eq::IR.Equation)::Union{Nothing, Tuple{IR.CREF, IR.CREF, Int}}
   if eq isa IR.SCALAR_EQUATION
     (eq.lhs isa IR.CREF && eq.rhs isa IR.CREF) || return nothing
     (IR.hasSubscripts(eq.lhs.cref) && !literalSubscripts(eq.lhs.cref)) && return nothing
     (IR.hasSubscripts(eq.rhs.cref) && !literalSubscripts(eq.rhs.cref)) && return nothing
+    (isRealReference(eq.lhs) && isRealReference(eq.rhs)) || return nothing
     return (eq.lhs, eq.rhs, 0)
   elseif eq isa IR.FOR_EQUATION && length(eq.body) == 1 && eq.body[1] isa IR.SCALAR_EQUATION
     local body::IR.SCALAR_EQUATION = eq.body[1]
@@ -854,11 +858,15 @@ function equalityPair(eq::IR.Equation)::Union{Nothing, Tuple{IR.CREF, IR.CREF, I
         !any(IR.isSubscripted, @view x.cref.parts[1:end - 1])
     end
     (byIterator(body.lhs) && byIterator(body.rhs)) || return nothing
+    (isRealReference(body.lhs) && isRealReference(body.rhs)) || return nothing
     local whole::Function = (x::IR.CREF) -> IR.CREF(IR.withoutLastSubscripts(x.cref), x.ty)
     return (whole(body.lhs), whole(body.rhs), last(range))
   end
   return nothing
 end
+
+"Whether the reference is a Real's, or an element's or the whole of an array of Reals."
+isRealReference(x::IR.CREF)::Bool = IR.elementType(x.ty) isa IR.T_REAL
 
 "Whether every subscript of the reference is a literal index."
 literalSubscripts(cref::IR.ComponentRef)::Bool =

@@ -152,7 +152,8 @@ function _orderParameters!(g::Gen, nm::String, state::Dict{String, Int}, order::
   get(state, nm, 0) == 2 && return nothing
   get(state, nm, 0) == 1 && ns("cyclic parameter bindings at $(nm)")
   state[nm] = 1
-  foreach((d::String) -> _orderParameters!(g, d, state, order), _bindingDeps(g, g.vars[nm].var))
+  #= an array whose elements read other elements of it is ordered by the others (`_selfReadsResolved`) =#
+  foreach((d::String) -> d == nm || _orderParameters!(g, d, state, order), _bindingDeps(g, g.vars[nm].var))
   _paramValue!(g, nm)
   state[nm] = 2
   push!(order, nm)
@@ -174,11 +175,61 @@ function _parameterBinding(g::Gen, nm::String)::ParameterBinding
       _expType(b) isa SC.TYPE_ARRAY && ns("the array binding of $(nm), not per element")
       return ParameterBinding(nm, deps, :each, IR[toIR(g, b, ctx)])
     end
-    return ParameterBinding(nm, deps, :elements, IR[toIR(g, x, ctx) for x in _rowMajorElements(b)])
+    local elements::Vector{IR} = IR[toIR(g, x, ctx) for x in _rowMajorElements(b)]
+    nm in deps || return ParameterBinding(nm, deps, :elements, elements)
+    #= elements that read other elements of the parameter (a rolled component's parameter bound to another
+       instance's): each as its binding over the other parameters =#
+    return ParameterBinding(nm, filter(!=(nm), deps), :elements, _selfReadsResolved(nm, info.dims, elements))
   catch err
     err isa NotSupported || rethrow(err)
     return ParameterBinding(nm, deps, :none, IR[])
   end
+end
+
+"""
+    _selfReadsResolved(nm, dims, elements) -> Vector{IR}
+
+The elements (row-major, of the dimensions `dims`) of the array binding of the parameter `nm` with each read of an
+element of `nm` itself as that element's binding: MSL MultiBody's `bodyOfConstraint(m = bodyOfJoint.m)`, the two
+bodies rolled into one array, is `m[2] = m[1]`. NotSupported for elements that read each other in a cycle, or one
+read by a subscript that is no literal.
+"""
+function _selfReadsResolved(nm::String, dims::Vector{Int}, elements::Vector{IR})::Vector{IR}
+  local out::Vector{IR} = copy(elements)
+  local state::Vector{Int} = zeros(Int, length(out))
+  for k::Int in eachindex(out)
+    _resolveSelfReads!(out, state, nm, dims, k)
+  end
+  return out
+end
+
+"The element `k` of `out` with its reads of `nm` resolved (`_selfReadsResolved`; `state`: 1 being resolved, 2 done)."
+function _resolveSelfReads!(out::Vector{IR}, state::Vector{Int}, nm::String, dims::Vector{Int}, k::Int)::IR
+  state[k] == 2 && return out[k]
+  state[k] == 1 && ns("cyclic parameter bindings at $(nm)")
+  state[k] = 1
+  out[k] = _withSelfReads(out[k], out, state, nm, dims)
+  state[k] = 2
+  return out[k]
+end
+
+"`x` with each read of an element of the parameter `nm` as that element's resolved binding (`_resolveSelfReads!`)."
+function _withSelfReads(x::IR, out::Vector{IR}, state::Vector{Int}, nm::String, dims::Vector{Int})::IR
+  if x isa Ref
+    x.name == nm || return Ref(x.name, IR[_withSelfReads(s, out, state, nm, dims) for s in x.subs], x.der)
+    (length(x.subs) == length(dims) && all(s::IR -> s isa Lit && s.v isa Integer, x.subs)) ||
+      ns("the parameter $(nm) read in its own binding by a subscript that is no literal")
+    local index::Int = 0
+    for (d::Int, s::IR) in enumerate(x.subs)
+      index = index * dims[d] + (Int((s::Lit).v) - 1)
+    end
+    return _resolveSelfReads!(out, state, nm, dims, index + 1)
+  elseif x isa Op
+    return Op(x.op, IR[_withSelfReads(y, out, state, nm, dims) for y in x.args])
+  elseif x isa Union{Pre, Rel, EvFn}
+    ns("the parameter $(nm) read in its own binding under pre() or a relation")
+  end
+  return x
 end
 
 "The elements of an array literal, row-major (its rows nested)."
