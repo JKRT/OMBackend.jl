@@ -1853,4 +1853,32 @@ end
     @test an ≈ [1.75, 0.0] atol = 1e-6
     @test sn ≈ an atol = 1e-6
   end
+
+  @testset "terminal(): the when-branches of the terminal event" begin
+    #= terminal() is true at the terminal event, after the solve (MLS 8.6): the when-branches with it among their
+       triggers run once at the final time, their values the last of the result (`_terminalEvent!`). It was refused:
+       "terminal() in a when-condition" (MSL's ContinuousSignalExtrema, `when {u <= x, u >= x, terminal()}`).
+       n counts the crossing at 0.5 and the end; `last` is the final time =#
+    local endings = Modelica"""
+      model TerminalCount
+        Real x(start = 0, fixed = true);
+        discrete Real last(start = -1, fixed = true);
+        Integer n(start = 0, fixed = true);
+      equation
+        der(x) = 1;
+        when {x > 0.5, terminal()} then
+          n = pre(n) + 1;
+        end when;
+        when terminal() then
+          last = time;
+        end when;
+      end TerminalCount;
+      """
+    local (st, at, sol) = _bothWaysOf(endings, "TerminalCount", ["n", "last", "x"]; tspan = (0.0, 0.8))
+    @test at ≈ [2.0, 0.8, 0.8] atol = 1e-9
+    @test st ≈ at atol = 1e-9
+    #= not before the end: at 0.6 the crossing only =#
+    local n::Vector{Float64} = OMBackend.getVariableValues(sol, "n")
+    @test n[findlast(<=(0.6), sol.t)] == 1.0
+  end
 end

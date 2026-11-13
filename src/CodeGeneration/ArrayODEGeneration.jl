@@ -160,11 +160,12 @@ mutable struct ArrayRuntimeState
   rootLog::Vector{RootLogEntry}
   forced::Bool   #= the buffered relations hold a combination being tried (`_searchRelations!`) =#
   delays::DelayState   #= the histories of the delay() calls' arguments, one per instance (`delayedValue`, delays.jl) =#
+  terminal::Bool   #= the terminal event, after the solve: terminal() is true (`_terminalEvent!`) =#
 end
 ArrayRuntimeState(nSamples::Int, strings::Vector{String}, nDelays::Int = 0) =
   ArrayRuntimeState(zeros(nSamples), zeros(nSamples), Float64[], Dict{Tuple{Int, Int, Int}, Any}(), Set{Any}(), false, false,
                     (NaN, Float64[]), nothing, (Float64[], Float64[], Bool[], Float64[]), strings, (NaN, Float64[]),
-                    nothing, RootLogEntry[], false, DelayState(nDelays))
+                    nothing, RootLogEntry[], false, DelayState(nDelays), false)
 
 struct ArrayModelParameters
   values::Vector{Float64}
@@ -309,6 +310,7 @@ function _restoreStart!(p::ArrayModelParameters)::Nothing
   end
   resize!(p.state.rootLog, s.nRootLog)
   fill!(p.sampleActive, false)
+  p.state.terminal = false
   p.state.pending = (NaN, Float64[]); p.state.leftLimit = (NaN, Float64[]); p.state.terminated = nothing
   empty!(p.state.whenMemo)
   return nothing
@@ -997,6 +999,7 @@ function jl(g::Gen, x::IR)
       return :(p.sampleActive[$(_whenSampleBase(g, wi)) + (_col - 1) * $(g.whens[wi].nsample) + $(x.args[2].v)])
     end
     x.op == :initial && return :(p.initPhase[1])
+    x.op == :terminal && return :(p.state.terminal)
     x.op == :String && return Expr(:call, _modelicaString, args...)
     x.op == :fcall && return Expr(:call, args...)
     #= a relation with the probe of its abs() argument (`_withAbsProbe`): the probe's crossing kept, its value not =#
@@ -1189,6 +1192,8 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
   #= the domain level's passes and the causal level (SimCode.Domains) =#
   local schedule::Schedule = causalSchedule!(g; keepsArrays, full = FULL[], fixedMask)
   #= a terminate() in a when body or an initial algorithm: the run's stop (`_terminate!`, emitted for such a model only) =#
+  #= a when-branch with terminal() among its triggers: the terminal event after the solve (`_terminalEvent!`) =#
+  local usesTerminal::Bool = any(w::WhenClass -> _hasOp(w.cond, :terminal), g.whens)
   local hasTerminate::Bool = any(w::WhenClass -> any(e -> _hasOp(e[3], :terminate), w.body), g.whens) ||
                              any(ia::AlgClass -> any(st::Stmt -> _stmtHasOp(st, :terminate), ia.body), g.initAlgs)
   #= the starts computed at each start: a placeholder of the translation's (`placeholderStarts`), or a rule that reads a
@@ -2335,6 +2340,23 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
        relations, equations and fired when bodies are evaluated again until they settle (an
        equation reading a variable a when body just set: ch = change(k)); a sweep that changed
        a discrete value starts the next one from the new values, until one changes nothing. =#
+    #= The terminal event (MLS 8.6: terminal() is true at the end of a successful analysis): an event iteration at
+       the final time with terminal() true, in which the when-branches with it among their triggers run (MSL's
+       ContinuousSignalExtrema, `when {u <= x, u >= x, terminal()}`; an FFT's `when terminal()`); the discrete
+       values it gives logged at that time. =#
+    function _terminalEvent!(integrator)
+      local p = integrator.p
+      p.state.terminal = true
+      try
+        eventIteration!(integrator.u, p, integrator.t, true) ||
+          @error string("[events] the terminal event did not settle at t = ", integrator.t)
+        _logDiscretes!(p, integrator.t)
+      finally
+        p.state.terminal = false
+      end
+      return nothing
+    end
+
     function eventIteration!(u, p, t, fire::Bool, sampleInstant::Bool = false)
       local du = similar(u); local a = similar(u, $nAlg)
       #= the algebraic variables' left limit: the equations with the relations and discrete values of before the
@@ -2728,6 +2750,10 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       pushfirst!(cbs, DiscreteCallback((u, t, integrator) -> false, integrator -> nothing;
                                        initialize = (c, u, t, integrator) -> $(_restoreStart!)(integrator.p),
                                        save_positions = (false, false)))
+      #= the terminal event, after the last step (a solve's end: its stop time, a terminate()) =#
+      $(usesTerminal ? :(push!(cbs, DiscreteCallback((u, t, integrator) -> false, integrator -> nothing;
+                                                     finalize = (c, u, t, integrator) -> _terminalEvent!(integrator),
+                                                     save_positions = (false, false)))) : nothing)
       local cb = isempty(cbs) ? nothing : OMBackend.CodeGeneration._joinCallbacks(cbs...)
       $(hasTerminate ? quote
           #= a terminate() at the initialization: the problem ends at its start =#

@@ -793,7 +793,8 @@ function _callIRx(g::Gen, e::SC.CALL, ctx::Ctx)::IR
     g.usesInitial = true
     return Op(:initial, IR[])
   elseif fname == "terminal"
-    ns("terminal() in a when-condition: $(_str(e))")
+    #= true at the terminal event only, after the solve (`Op(:terminal)`, the array code's `_terminalEvent!`) =#
+    return Op(:terminal, IR[])
   elseif fname == "edge" || fname == "change"
     local changed::IR = toIR(g, args[1], ctx)
     #= of an expression of parameters (a lifted cluster's `change(tLH[1] > 0.0)`, MSL Digital's delays): it holds its
@@ -1538,7 +1539,7 @@ end
 function _isBooleanIR(g::Gen, x::IR)::Bool
   x isa Rel && return true
   x isa Lit && return x.v isa Bool
-  x isa Op && return x.op in (:!, :&&, :||, :initial, :probed)
+  x isa Op && return x.op in (:!, :&&, :||, :initial, :terminal, :probed)
   x isa Ref && return g.vars[x.name].vtype == :bool
   x isa Pre && return _isBooleanIR(g, x.ref)
   return false
