@@ -1923,4 +1923,28 @@ end
     @test as ≈ [v2, v3, 2 * v2, 2 * v3, 4.0] atol = 1e-7
     @test ss ≈ as atol = 1e-7
   end
+
+  @testset "an element of a reference whose parts select slices" begin
+    #= a record array equation between slices, `mediums[:].state = statesFM[2:3]` (MSL Fluid's pipes), is written per
+       element; the element i of each side is its slice's member, `mediums[i].state` and `statesFM[1 + i]`
+       (`IndexReduction.sliceElementCref`). With the subscript appended the body read `mediums[:].state[i].p`:
+       "the reference ... of more subscripts than its array's dimensions" =#
+    local R::Module = OMBackend.Passes.IndexReduction
+    local I::Module = OMBackend.OMJLIR
+    local vector = I.T_ARRAY(I.T_REAL(), I.Dimension[I.DIM_SIZE(4)])
+    local whole = I.ComponentRef(I.CrefPart[I.CrefPart(:mediums, I.Subscript[I.WHOLE()], vector),
+                                            I.CrefPart(:state, I.Subscript[], I.T_REAL())])
+    local range = I.RANGE(I.INTEGER(2), nothing, I.INTEGER(3), I.T_ARRAY(I.T_INTEGER(), I.Dimension[I.DIM_SIZE(2)]))
+    local ranged = I.ComponentRef(I.CrefPart[I.CrefPart(:statesFM, I.Subscript[I.SLICE(range)], vector)])
+    local at = (k::Int) -> I.Subscript[I.INDEX(I.INTEGER(k))]
+    local iterator = I.Subscript[I.INDEX(I.CREF(I.ComponentRef(I.CrefPart[I.CrefPart(:i, I.Subscript[], I.T_INTEGER())]),
+                                                I.T_INTEGER()))]
+    @test R.sliceElementCref(whole, at(2)).name === Symbol("mediums[2].state")
+    @test R.sliceElementCref(ranged, at(2)).name === Symbol("statesFM[3]")
+    @test R.sliceElementCref(whole, iterator).name === Symbol("mediums[i].state")
+    @test occursin(r"statesFM\[\(?1 \+ i\)?\]", String(R.sliceElementCref(ranged, iterator).name))
+    #= a reference without slices: the subscripts after its last part's own, as before =#
+    local plain = I.ComponentRef(I.CrefPart[I.CrefPart(:x, I.Subscript[], vector)])
+    @test R.sliceElementCref(plain, at(3)).name === :x_3 || R.sliceElementCref(plain, at(3)).name === Symbol("x[3]")
+  end
 end

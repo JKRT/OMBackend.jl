@@ -1365,8 +1365,50 @@ records is no variable, `elementAt` reads a variable's dimensions; its fields' a
 """
 function recordElementAt(e::IR.Expression, subscripts::Vector{IR.Subscript}, element::IR.ModelicaType,
                          variables::IR.VariableSet)::IR.Expression
-  e isa IR.CREF && return IR.CREF(IR.appendSubscripts(e.cref, subscripts), element)
+  e isa IR.CREF && return IR.CREF(sliceElementCref(e.cref, subscripts), element)
   return elementAt(e, subscripts, element, variables)
+end
+
+"""
+    sliceElementCref(cref, subscripts) -> ComponentRef
+
+The element `subscripts` of the array the reference `cref` names, where its parts select whole dimensions or ranges
+of them: each subscript in place of the reference's next slice, in order (`mediums[:].state` at i is
+`mediums[i].state`; `statesFM[2:3]` at i is `statesFM[1 + i]`, the range's member: `sliceMember`), those left after
+its last part's own (`IR.appendSubscripts`). MSL Fluid's pipes, `mediums[:].state = statesFM[2:3]`: with the
+subscript appended the body read `mediums[:].state[i].p` ("of more subscripts than its array's dimensions").
+"""
+function sliceElementCref(cref::IR.ComponentRef, subscripts::Vector{IR.Subscript})::IR.ComponentRef
+  local next::Int = 0
+  local parts::Vector{IR.CrefPart} = IR.CrefPart[]
+  for p::IR.CrefPart in cref.parts
+    local own::Vector{IR.Subscript} = IR.Subscript[]
+    for s::IR.Subscript in p.subscripts
+      local slice::Bool = s isa Union{IR.WHOLE, IR.SLICE} && next < length(subscripts)
+      push!(own, slice ? sliceMember(s, subscripts[next += 1]) : s)
+    end
+    push!(parts, own == p.subscripts ? p : IR.CrefPart(p.name, own, p.ty))
+  end
+  local resolved::IR.ComponentRef = IR.ComponentRef(parts)
+  return next == length(subscripts) ? resolved : IR.appendSubscripts(resolved, subscripts[(next + 1):end])
+end
+
+"The member `at` of the dimension a slice subscript selects: of the whole dimension `at` itself."
+sliceMember(::IR.WHOLE, at::IR.Subscript)::IR.Subscript = at
+
+"""
+Of a range of Integer literals its member: `first + (at - 1) * step`, a literal for a literal `at` (`2:3` at 2 is 3,
+at `i` it is `1 + i`). NotHandled for a slice that is no such range (an array of indices).
+"""
+function sliceMember(s::IR.SLICE, at::IR.Subscript)::IR.Subscript
+  local range::Union{Nothing, StepRange{Int, Int}} = literalRange(foldTree(s.exp))
+  (range === nothing || !(at isa IR.INDEX)) && throw(NotHandled("an element of a slice that is no range of literals"))
+  local k::Union{Nothing, Int} = IR.literalIndex(at)
+  k === nothing || return IR.INDEX(IR.INTEGER(range[k]))
+  local offset::Int = first(range) - step(range)
+  local scaled::IR.Expression =
+    step(range) == 1 ? at.exp : IR.BINARY(IR.INTEGER(step(range)), IR.MUL, at.exp, IR.T_INTEGER())
+  return IR.INDEX(offset == 0 ? scaled : IR.BINARY(IR.INTEGER(offset), IR.ADD, scaled, IR.T_INTEGER()))
 end
 
 """
