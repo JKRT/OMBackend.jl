@@ -1881,4 +1881,46 @@ end
     local n::Vector{Float64} = OMBackend.getVariableValues(sol, "n")
     @test n[findlast(<=(0.6), sol.t)] == 1.0
   end
+
+  @testset "the inner split of rolled arrays whose inner dimension is a middle part's" begin
+    #= two trunks rolled into one class, each an array of stages: the stages' variables are arrays of the trunks'
+       dimension and the stages' (`a|b.s.v`, [2, 3]), the stages' on the part `s`. The first stage's voltage is
+       given, so of the three it alone is no state: the array is split along the stages (`splitInner!`). The slice
+       is named on the part that carries the dimension, `a|b.s[1].v`, and its derivative after it,
+       `\$DER.a|b.s[1].v`; with the inner subscript on the last part the part `s` kept its dimension ("its reference
+       of more dimensions than 1": MSL's lines, plugs and terminal boxes). v2 = u (t - 1 + exp(-t)),
+       v3 = u (t - 2 + (t + 2) exp(-t)) =#
+    local trunks = Modelica"""
+      model Stage "a resistor into a capacitor to ground"
+        Real vin;
+        Real v(start = 0);
+        Real i;
+      equation
+        i = vin - v;
+        der(v) = i;
+      end Stage;
+
+      model LedTrunk "three stages in a row; the first one's voltage is given"
+        parameter Real u = 1;
+        Stage s[3];
+      initial equation
+        s[2].v = 0;
+        s[3].v = 0;
+      equation
+        s[1].v = u * time;
+        s[2].vin = s[1].v;
+        s[3].vin = s[2].v;
+      end LedTrunk;
+
+      model LedTrunks
+        LedTrunk a(u = 1);
+        LedTrunk b(u = 2);
+      end LedTrunks;
+      """
+    local names::Vector{String} = ["a.s[2].v", "a.s[3].v", "b.s[2].v", "b.s[3].v", "b.s[1].vin"]
+    local (ss, as, _) = _bothWaysOf(trunks, "LedTrunks", names; reltol = 1e-9, abstol = 1e-11)
+    local (v2, v3) = (exp(-1), 3 * exp(-1) - 1)
+    @test as ≈ [v2, v3, 2 * v2, 2 * v3, 4.0] atol = 1e-7
+    @test ss ≈ as atol = 1e-7
+  end
 end
