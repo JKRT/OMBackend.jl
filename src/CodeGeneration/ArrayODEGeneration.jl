@@ -390,6 +390,14 @@ form keeps the truncation error of the smaller step's forward difference away.
 const JACOBIAN_STEP = sqrt(eps(Float64))
 
 """
+The absolute tolerance of an array model's solve when the caller gives none. The array code controls the error of its
+states only; a state far below the solvers' default of 1e-6 was free to be off by its own size. MSL Fluid's
+RoomCO2WithControls: the ducts' trace substance 1 to 5% off omc at 1e-6 (Rodas5P, 400 steps for the day), equal
+with 1e-10 (724 steps); IMC_DOL's currents before its switch closes. omc's DASSL at 1e-6 keeps them.
+"""
+const DEFAULT_ABSTOL = 1.0e-10
+
+"""
     ColoredJacobian(rhs, pattern)
 
 The Jacobian of an array model's right-hand side `rhs` by central differences in the sparsity `pattern`: the columns
@@ -3008,13 +3016,16 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       return (ODEProblem(f, u0, tspan, p), cb)
     end
 
-    function simulate(tspan = (0.0, 1.0), solver = Tsit5(); parameters::AbstractDict = Dict{String, Any}(), kwargs...)
+    function simulate(tspan = (0.0, 1.0), solver = Tsit5(); parameters::AbstractDict = Dict{String, Any}(),
+                      abstol = $(DEFAULT_ABSTOL), kwargs...)
       local (prob, callbacks) = $(Symbol(modelName, "Model"))(tspan; parameters = parameters)
       OMBackend.CodeGeneration._resetRHSError!()
       local sol = $(hasTerminate ?
-                    :(prob.p.state.terminated === nothing ? DifferentialEquations.solve(prob, solver; callback = callbacks, kwargs...) :
-                      $(solveStoppedAtStart)(prob, solver, something(prob.p.state.terminated); callback = callbacks, kwargs...)) :
-                    :(DifferentialEquations.solve(prob, solver; callback = callbacks, kwargs...)))
+                    :(prob.p.state.terminated === nothing ?
+                        DifferentialEquations.solve(prob, solver; callback = callbacks, abstol = abstol, kwargs...) :
+                      $(solveStoppedAtStart)(prob, solver, something(prob.p.state.terminated); callback = callbacks,
+                                             abstol = abstol, kwargs...)) :
+                    :(DifferentialEquations.solve(prob, solver; callback = callbacks, abstol = abstol, kwargs...)))
       #= an error that every smaller step met ends the run =#
       OMBackend.CodeGeneration._rethrowRHSError(sol)
       return sol

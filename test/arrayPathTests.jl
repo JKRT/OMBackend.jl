@@ -2324,4 +2324,28 @@ end
       [(sol.t[i], y[i - 1], y[i]) for i in 2:length(sol.t) if sol.t[i] == sol.t[i - 1] && sol.t[i] > 0]
     @test [(round(t; digits = 6), l, r) for (t, l, r) in steps] == [(0.3, 0.0, 10.0), (0.6, 10.0, 2.0)]
   end
+
+  @testset "The array code's abstol: states far below 1e-6" begin
+    #= the array code controls the error of its states only: a state of 1e-8 under the solvers' abstol of 1e-6 was
+       free to be 100% off (MSL Fluid's RoomCO2WithControls: the ducts' trace substance 1 to 5% off omc; IMC_DOL's
+       currents before its switch closes). The default is 1e-10; a caller's abstol is taken =#
+    local small = Modelica"""
+      model SmallStates "x[k] = 1e-8 k exp(-k (t + (1 - cos(20 t)) / 20))"
+        Real x[2](start = {1.0e-8, 2.0e-8}, each fixed = true);
+      equation
+        for k in 1:2 loop
+          der(x[k]) = -k * (1 + sin(20 * time)) * x[k];
+        end for;
+      end SmallStates;
+      """
+    local name::String = _translateProgram(small, "SmallStates"; scalarized = false)
+    @test _arrayPathTaken(name)
+    local exact::Vector{Float64} = [k * 1.0e-8 * exp(-k * (1 + (1 - cos(20.0)) / 20)) for k in 1:2]
+    local sol = OMBackend.simulateModel(name; tspan = (0.0, 1.0))
+    @test sol.retcode == ReturnCode.Success
+    @test isapprox(_values(sol, ["x[1]", "x[2]"]), exact; rtol = 0.02)
+    #= 1% at 1e-10 (the states 1e-8); at 1e-6 x[2] was 1.2e-8 for 2.6e-9. A caller's abstol is the solver's =#
+    local loose = OMBackend.simulateModel(name; tspan = (0.0, 1.0), abstol = 1e-6)
+    @test length(loose.t) < length(sol.t)
+  end
 end
