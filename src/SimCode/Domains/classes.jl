@@ -2106,6 +2106,65 @@ function _scheduleWithLoops(el::InstanceTable, matchRow::Vector{Int}, nU::Int, p
 end
 
 """
+    _freeParameterDeps(g, el, matchRow, batches, producer, loops) -> Vector{Set{Tuple{String, Int}}}
+
+The elements (name, column-major index) of the parameters with fixed = false that every equation instance reads,
+directly or through the unknowns it reads (in schedule order, as `_stateDeps`; a loop block's instances all of the
+block's): the initialization's unknowns an initial equation of an algebraic variable can determine (MSL
+InitSpringConstant: `rev.a = 0` fixes the spring's c through the equations). Empty sets for a model without them.
+"""
+function _freeParameterDeps(g::Gen, el::InstanceTable, matchRow::Vector{Int},
+                            batches::Vector{Tuple{Tuple{Int, Int}, Vector{Int}}}, producer::Vector{Int},
+                            loops::LoopBlocks)::Vector{Set{Tuple{String, Int}}}
+  local N::Int = length(el.class)
+  local deps::Vector{Set{Tuple{String, Int}}} = [Set{Tuple{String, Int}}() for _ in 1:N]
+  isempty(g.freeParams) && return deps
+  local done::BitVector = falses(N)
+  #= the free parameter elements an instance reads itself =#
+  local own::Function = (r::Int, s::Set{Tuple{String, Int}}) -> begin
+    el.class[r] > 0 || return s
+    local c::EqClass = g.classes[el.class[r]]
+    for a::Ref in accesses!(accesses!(Ref[], c.lhs), c.rhs)
+      a.name in g.freeParams || continue
+      local info::VarInfo = g.vars[a.name]
+      local idx::Vector{Int} = Int[_evalInt(g, x, c.domain, el.col[r]) for x in a.subs]
+      push!(s, (a.name, isempty(info.dims) ? 1 : LinearIndices(Tuple(info.dims))[idx...]))
+    end
+    return s
+  end
+  local through::Function = (r::Int, s::Set{Tuple{String, Int}}, skip::Function) -> begin
+    for i::Int in el.uptr[r]:(el.uptr[r + 1] - 1)
+      local q::Int = producer[el.uid[i]]
+      (q == 0 || skip(q) || !done[q]) && continue
+      union!(s, deps[q])
+    end
+    return s
+  end
+  for ((ci::Int, _), batch::Vector{Int}) in batches
+    if ci == 0
+      for b::Int in batch
+        local rs::Vector{Int} = loops.blocks[b]
+        local s::Set{Tuple{String, Int}} = Set{Tuple{String, Int}}()
+        for r::Int in rs
+          own(r, s)
+          through(r, s, (q::Int) -> loops.blockOf[q] == b)
+        end
+        for r::Int in rs
+          deps[r] = s
+          done[r] = true
+        end
+      end
+      continue
+    end
+    for r::Int in batch
+      deps[r] = through(r, own(r, Set{Tuple{String, Int}}()), (q::Int) -> q == r)
+      done[r] = true
+    end
+  end
+  return deps
+end
+
+"""
 The states every equation instance depends on, through the algebraic unknowns it reads
 (in schedule order; not through a discrete unknown a loop was cut at, which comes after its readers); nothing when
 that would be large.

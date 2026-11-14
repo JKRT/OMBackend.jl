@@ -165,7 +165,8 @@ function causalSchedule!(g::Gen; keepsArrays::Bool, full::Bool, fixedMask::Vecto
   local large::BitVector = _largeBlocks(g, loops, matchRow, el)
   local deps::Union{Nothing, Vector{Vector{Int}}} = _stateDeps(el, matchRow, batches, producer, loops, g.nStates)
   local pattern::Union{Nothing, Tuple{Vector{Int}, Vector{Int}}} = _jacobianPattern(el, matchRow, deps, g.nStates)
-  local initial::InitialMatching = _initialMatching(g, deps, producer, fixedMask)
+  local initial::InitialMatching =
+    _initialMatching(g, deps, producer, fixedMask, _freeParameterDeps(g, el, matchRow, batches, producer, loops))
   #= initial algorithms: what they assign, which initial equations may not read =#
   local initAlgOuts::Set{String} = _initAlgAssigned(g)
   for c in g.initClasses, r in accesses!(accesses!(Ref[], c.lhs), c.rhs)
@@ -290,20 +291,24 @@ function _invariantRows!(solutions::Dict{Tuple{Int, Int}, Union{Nothing, Tuple{R
 end
 
 """
-    _initialMatching(g, deps, producer, fixedMask) -> InitialMatching
+    _initialMatching(g, deps, producer, fixedMask, freeDeps) -> InitialMatching
 
 The initial equations as a square system (`InitialMatching`): each instance matched (augmenting paths) to a state
 element that is not fixed (`fixedMask`) and that it depends on (directly or through the algebraic unknowns: `deps` of
-their producing rows), or to an element of a free parameter it reads. An instance without one is matched to none
-(0: over-determined, held only if the others' solution satisfies it). NotSupported for a model whose dependencies
-were not computed (a large pattern).
+their producing rows), or to an element of a free parameter it reads (directly or through the algebraic unknowns:
+`freeDeps`, `_freeParameterDeps`). An instance without one is matched to none (0: over-determined, held only if the
+others' solution satisfies it). NotSupported for a model whose dependencies were not computed (a large pattern).
 """
 function _initialMatching(g::Gen, deps::Union{Nothing, Vector{Vector{Int}}}, producer::Vector{Int},
-                          fixedMask::Vector{Bool})::InitialMatching
+                          fixedMask::Vector{Bool}, freeDeps::Vector{Set{Tuple{String, Int}}})::InitialMatching
   isempty(g.initClasses) && return InitialMatching(Int[], 0, Tuple{String, Int}[])
   #= a free parameter element (name, column-major index) is unknown g.nStates + k =#
   local freeCols::Vector{Tuple{String, Int}} = Tuple{String, Int}[]
   local freeCol::Dict{Tuple{String, Int}, Int} = Dict{Tuple{String, Int}, Int}()
+  local freeUnknown::Function = (key::Tuple{String, Int}) -> begin
+    haskey(freeCol, key) || (push!(freeCols, key); freeCol[key] = length(freeCols))
+    return g.nStates + freeCol[key]
+  end
   deps === nothing && ns("initialization of a model with a large dependency pattern")
   #= candidate free states per initial equation instance =#
   local rows::Vector{Vector{Int}} = Vector{Int}[]
@@ -317,9 +322,7 @@ function _initialMatching(g::Gen, deps::Union{Nothing, Vector{Vector{Int}}}, pro
           r.name in g.freeParams || continue
           local pidx::Vector{Int} = Int[_evalInt(g, s, c.domain, j) for s in r.subs]
           local lin::Int = isempty(info.dims) ? 1 : LinearIndices(Tuple(info.dims))[pidx...]
-          local key::Tuple{String, Int} = (r.name, lin)
-          haskey(freeCol, key) || (push!(freeCols, key); freeCol[key] = length(freeCols))
-          push!(cand, g.nStates + freeCol[key])
+          push!(cand, freeUnknown((r.name, lin)))
           continue
         end
         local idx::Vector{Int} = Int[_evalInt(g, s, c.domain, j) for s in r.subs]
@@ -329,9 +332,11 @@ function _initialMatching(g::Gen, deps::Union{Nothing, Vector{Vector{Int}}}, pro
         elseif info.kind == :discrete
           local du::Int = get(g.discUnknown, off, 0)
           du > 0 && union!(cand, deps[producer[du]])
+          du > 0 && foreach(key -> push!(cand, freeUnknown(key)), freeDeps[producer[du]])
         else
           local u::Int = info.kind == :alg ? g.nStates + off : off
           union!(cand, deps[producer[u]])
+          foreach(key -> push!(cand, freeUnknown(key)), freeDeps[producer[u]])
           r.der && push!(cand, off)
         end
       end

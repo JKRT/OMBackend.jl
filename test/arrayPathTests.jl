@@ -2431,4 +2431,28 @@ end
     @test isapprox(az, [-0.5, 0.0, 0.0]; atol = 1e-6)
     @test isapprox(sz, az; atol = 1e-6)
   end
+
+  @testset "A fixed = false parameter found through the equations" begin
+    #= a = 0 at the start fixes c (a = 10 - k x[1], k = c): an initial equation of an algebraic variable whose free
+       parameter only the equations read. The initial matching followed the algebraic variable to the states only:
+       `a = 0` counted as over-determined (MSL InitSpringConstant: rev.a = 0 fixes the spring's c) =#
+    local free = Modelica"""
+      model FreeThroughEquations "k = c = 20 makes a = 0: x stays at 0.5"
+        parameter Real c(fixed = false, start = 1);
+        parameter Real k = c;
+        Real a;
+        Real x[2](each start = 0.5, each fixed = true);
+      initial equation
+        a = 0;
+      equation
+        a = 10 - k * x[1];
+        for i in 1:2 loop
+          der(x[i]) = i * a;
+        end for;
+      end FreeThroughEquations;
+      """
+    local (sf, af, _) = _bothWaysOf(free, "FreeThroughEquations", ["x[1]", "x[2]", "a"])
+    @test isapprox(af, [0.5, 0.5, 0.0]; atol = 1e-8)
+    @test isapprox(sf, af; atol = 1e-8)
+  end
 end
