@@ -2374,4 +2374,30 @@ end
     @test isapprox(af, [11.0, 17.0]; rtol = 1e-8)
     @test isapprox(sf, af; rtol = 1e-8)
   end
+
+  @testset "The initial system solved in its blocks" begin
+    #= m and H the states, without start values (0); level and T fixed: level = 0.5 gives m, then T = T0 gives H.
+       Solved as one system from m = H = 0, T = H / (4 m) was NaN there: "the initialization cannot hold" (MSL
+       FluidHeatFlow TestOpenTank). OpenModelica sorts its initial system into blocks =#
+    local sorted = Modelica"""
+      model SortedInit "m = exp(-t / 10), level = m / 2, T = H / (4 m) = 313.15"
+        Real m;
+        Real H;
+        Real level(start = 0.5, fixed = true);
+        Real T(start = 313.15, fixed = true);
+        Real x[2](each start = 0, each fixed = true);
+      equation
+        level = m / 2;
+        T = H / (4 * m);
+        der(m) = -0.1 * m;
+        der(H) = -0.1 * H;
+        for i in 1:2 loop
+          der(x[i]) = i * T;
+        end for;
+      end SortedInit;
+      """
+    local (ss, as, _) = _bothWaysOf(sorted, "SortedInit", ["level", "T", "x[2]"])
+    @test isapprox(as, [0.5 * exp(-0.1), 313.15, 2 * 313.15]; rtol = 1e-6)
+    @test isapprox(ss, as; rtol = 1e-6)
+  end
 end

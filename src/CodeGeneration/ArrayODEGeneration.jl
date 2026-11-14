@@ -94,8 +94,10 @@ import ...SimCode.Domains: DomainSystem, InstanceTable, EqClass, EvFn, Gen, IR, 
   domainSystem, ns, Schedule, causalSchedule!, ParameterBinding, parameterBindings, _bindingDeps
 
 const SII = ModelingToolkit.SymbolicIndexingInterface
+import ..CodeGeneration: NonlinearSolve, ADTypes
 
 include("ArrayBlockSolve.jl")
+include("ArrayInitialBlocks.jl")
 
 #= The parameter argument of an array model's problem: the parameter values (one flat
    vector, laid out by the model's PARAMETER_LAYOUT; one type for every array model, so the
@@ -2322,33 +2324,11 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
          solution again, until they settle (a branch the solved state selects); relations that
          cycle (no consistent branch) keep the first solution =#
       local z = vcat(u0[INIT_UNKNOWNS], p.values[INIT_PARAMS])
-      #= scaled as OpenModelica scales its nonlinear systems: each unknown by its start's magnitude (1 for a zero
-         start), so the finite differences step relative to it (MSL LightningImpulse: T10 ~ 4e-7 and tau ~ 1e-5 beside
-         eta ~ 1), each residual by its largest Jacobian entry at the guess; solved in a trust region (OpenModelica's
-         hybrid dogleg): undamped Newton ran to LightningImpulse's degenerate root (tau1 = tau2, eta = 0). Newton
-         where the trust region fails. =#
+      #= sorted into blocks as OpenModelica's initial system (ArrayInitialBlocks.jl), each solved scaled in a trust
+         region; Newton where that fails =#
       local scale = map(x -> x == 0 ? 1.0 : abs(x), z)
-      local scaledSolve = function (z0)
-        local r0 = similar(z0); local rp = similar(z0); local rows = zeros(length(z0))
-        residual(r0, z0, nothing)
-        for k in eachindex(z0)
-          local zp = copy(z0)
-          local h = 1.0e-7 * max(abs(z0[k]) / scale[k], 1.0)
-          zp[k] += h * scale[k]
-          residual(rp, zp, nothing)
-          rows .= max.(rows, abs.(rp .- r0) ./ h)
-        end
-        rows .= map(r -> (r > 0 && isfinite(r)) ? 1 / r : 1.0, rows)
-        local scaledResidual = function (res, w, _)
-          residual(res, w .* scale, nothing)
-          res .*= rows
-          return nothing
-        end
-        local prob = NonlinearSolve.NonlinearProblem(NonlinearSolve.NonlinearFunction(scaledResidual), z0 ./ scale)
-        local sol = NonlinearSolve.solve(prob, NonlinearSolve.TrustRegion(autodiff = ADTypes.AutoFiniteDiff());
-                                         abstol = 1e-10, reltol = 1e-10)
-        return (DifferentialEquations.SciMLBase.successful_retcode(sol), sol.u .* scale, sol.retcode)
-      end
+      local whole = (res, w) -> residual(res, w, nothing)
+      local scaledSolve = z0 -> $(sortedInitialSolve)(whole, Vector{Float64}(z0), scale)
       local first = nothing
       local seen = Tuple{Vector{Bool}, Vector{Float64}}[]
       for _ in 1:20
