@@ -2762,4 +2762,33 @@ end
     local at = (v::String) -> OMBackend.getVariableValues(sol, v)[end]
     @test isapprox([at("x"), at("r[1,2]"), at("a")], [1 / 3.5, 2 / 3.5, 2.5 / 3.5]; rtol = 1e-5)
   end
+
+  @testset "der() of an expression next to an array" begin
+    #= MSL FluxTubes' Tellinen hysteresis, `dHyst = der(hystR - mu0 * Hstat)` in an if-equation: the plan on the
+       element view expands der() of an expression, the array form refused it ("der() of an expression with arrays
+       kept"). y = 3 h: der(y - h) = 2 der(h), der(y - 2 h) = der(h); h(1) = 1 - exp(-1), h(3) = 1 - exp(-4) =#
+    local program = Modelica"""
+      model DerOfExpression "der() of an expression in an if-equation, an array beside it"
+        Real x[2](each start = 1, each fixed = true);
+        Real h(start = 0, fixed = true);
+        Real y;
+        Real d;
+      equation
+        der(x) = -x;
+        y = 3 * h;
+        if time < 2 then
+          d = der(y - h);
+        else
+          d = der(y - 2 * h);
+        end if;
+        d = 2 * (1 - h);
+      end DerOfExpression;
+      """
+    local name::String = _translateProgram(program, "DerOfExpression"; scalarized = false)
+    @test _arrayPathTaken(name)
+    local sol = OMBackend.simulateModel(name; tspan = (0.0, 3.0))
+    @test sol.retcode == ReturnCode.Success
+    @test isapprox([sol(1.0; idxs = :h), sol(3.0; idxs = :h), sol(3.0; idxs = Symbol("x[2]"))],
+                   [1 - exp(-1.0), 1 - exp(-4.0), exp(-3.0)]; rtol = 1e-4)
+  end
 end

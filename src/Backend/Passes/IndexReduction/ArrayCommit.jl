@@ -44,14 +44,16 @@
 
 What the array form of a plan adds to the model before it is changed: the new variables (derivative arrays, the
 states' derivative arrays `\$STATEDER.x` and scalar ones, the dynamic state sets'), the new kind of each variable
-whose kind changes, the equations to append (the differentiated ones, the states' links, the sets'), and the number
-of dynamic state sets (a family over the elements of arrays counted once).
+whose kind changes, the equations to append (the differentiated ones, the states' links, the sets'), the number
+of dynamic state sets (a family over the elements of arrays counted once), and the partition's equations with der()
+of an expression expanded (`derivativesExpanded`), in their order.
 """
 struct ArrayCommit
   variables::Vector{IR.Variable}
   kinds::Dict{Symbol, IR.VariableKind}
   equations::Vector{IR.Equation}
   sets::Int
+  expanded::Vector{IR.Equation}
 end
 
 """
@@ -962,14 +964,21 @@ function arrayCommit(model::IR.Model, partition::IR.Partition, view::Scalarized,
   local variables = IR.VariableSet(vcat(collect(model.variables), added))
   local E = extendedElements(view.elements, added, variables)
   local derivatives = arrayDerivatives(s, E)
+  #= der() of an expression by the chain rule in array form, as the plan read it (`expandDerivatives!` of `plan` and
+     `commit!`), before the equations are differentiated =#
+  local seeds::Seeds = arraySeeds(s, derivatives, E, variables, model.functions, p.constants)
+  local expanded::Vector{IR.Equation} =
+    IR.Equation[readsDerCall(eq) ? derivativesExpanded(eq, seeds) : eq for eq in partition.equations]
+  local expandedPartition::IR.Partition =
+    IR.Partition(partition.index, partition.association, partition.unknowns, expanded, partition.initialEquations)
   local (links, linkEquations) = stateLinks(s, p.dummies, E, derivatives, variables)
   E = extendedElements(E, links, variables)
   local kinds = arrayKinds(plannedKinds(s, p.dummies), E, variables)
-  local equations = differentiatedArrayEquations(partition, view, p, E, variables, derivatives, model.functions)
+  local equations = differentiatedArrayEquations(expandedPartition, view, p, E, variables, derivatives, model.functions)
   append!(equations, linkEquations)
   local (setVariables, setEquations, sets) = stateSets(model, p, E, variables, view.model.variables)
   append!(equations, setEquations)
-  return ArrayCommit(vcat(added, links, setVariables), kinds, equations, sets)
+  return ArrayCommit(vcat(added, links, setVariables), kinds, equations, sets, expanded)
 end
 
 "Whether the equation reads der() of an expression (a call introduceDerivatives left)."
@@ -980,11 +989,23 @@ function readsDerCall(eq::IR.Equation)::Bool
 end
 
 """
+A copy of the equation `eq` with der() of an expression replaced by its time derivative in array form (`seeds`:
+`arraySeeds`), as `expandDerivatives!` replaces it on the element view: MSL FluxTubes' Tellinen hysteresis
+`dHyst = der(hystR - mu0 * Hstat)` is `dHyst = \$DER.hystR - mu0 * \$DER.Hstat`.
+"""
+function derivativesExpanded(eq::IR.Equation, seeds::Seeds)::IR.Equation
+  local expand::Function = (@nospecialize(e::IR.Expression)) ->
+    IR.isBuiltinCall(e, :der) ? differentiate(only((e::IR.CALL).arguments), seeds) : e
+  return IR.mapEquation!(expand, deepcopy(eq))
+end
+
+"""
     commitArrays!(model, partition, c)
 
 The array form of a plan applied (`arrayCommit`): the new variables added, the kinds set, the equations appended.
 """
 function commitArrays!(model::IR.Model, partition::IR.Partition, c::ArrayCommit)::Nothing
+  partition.equations = c.expanded
   foreach(v -> push!(model.variables, v), c.variables)
   for (name, kind) in c.kinds
     model.variables[name].kind = kind
@@ -1027,12 +1048,12 @@ code reads them): false. With `arrays` (the default) false, the model not change
 arrays; without, a model of scalars is reduced the same way (a scalar is the array form's variable of no
 dimensions: MSL Rotational ElasticBearing, of index 3 and no array, for the array code). An array whose elements the
 plan treats differently (slicing) is split into its elements first (`splitArrays!`), and the plan committed again.
-NotHandled where the array form does not take the plan (der() of an expression, a split down to no array equations:
-the caller takes the scalarized path and discards the model, which a split may have changed).
+NotHandled where the array form does not take the plan (a split down to no array equations, der() of an expression
+whose derivative it does not write: the caller takes the scalarized path and discards the model, which a split may
+have changed).
 """
 function reduceIndexArrays!(model::IR.Model; arrays::Bool = true)::Bool
   (arrays && !hasContinuousArrays(model)) && return false
-  any(readsDerCall, model.continuous[1].equations) && throw(NotHandled("der() of an expression with arrays kept"))
   local view::Scalarized = scalarizeArrays(model)
   #= the equations as the plan's structure reads them (the terms of parameters known as zero) =#
   dropKnownZeroTerms!(model, view) && (view = scalarizeArrays(model))
@@ -1083,7 +1104,6 @@ A model without continuous arrays (on the arrays-kept route, for the array code)
 links. False, the model not changed, where its index is above one (the scalarized path reduces it).
 """
 function commitIndexOne!(model::IR.Model)::Bool
-  any(readsDerCall, model.continuous[1].equations) && throw(NotHandled("der() of an expression"))
   local view::Scalarized = scalarizeArrays(model)
   local written::Plan = plan(view.model, view.model.continuous[1]; indexOne = true)
   isempty(written.differentiated) || return false
