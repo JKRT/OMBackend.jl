@@ -106,6 +106,32 @@ function removeSmooth!(model::IR.Model)::IR.Model
 end
 
 """
+    freeDependentParameters!(model) -> Model
+
+A scalar parameter whose binding reads a parameter with fixed = false, directly or through other bindings, gets its
+value from the initialization as that one does (OpenModelica's initial system): fixed = false, its binding the initial
+equation `p = binding`. MSL's noise blocks: `actualGlobalSeed = if useGlobalSeed then globalSeed.seed else 0`, the
+seed an initial equation's (GlobalSeed); the array code had the value the translation computed for the binding.
+For the arrays-kept route.
+"""
+function freeDependentParameters!(model::IR.Model)::IR.Model
+  local initial::Vector{IR.Equation} = model.continuous[1].initialEquations
+  for v::IR.Variable in model.variables
+    (v.kind isa IR.PARAMETER && v.binding !== nothing &&
+     v.ty isa Union{IR.T_REAL, IR.T_INTEGER, IR.T_BOOLEAN}) || continue
+    local fixed::Union{Nothing, IR.Expression} = v.attributes.fixed
+    (fixed === nothing || (fixed isa IR.BOOLEAN && fixed.value)) || continue
+    IndexReduction.readsFreeParameter(v.binding, model.variables, Set{Symbol}([v.name])) || continue
+    push!(initial, IR.SCALAR_EQUATION(IR.CREF(v.cref, v.ty), v.binding, v.ty, IR.NO_SOURCE, IR.DEFAULT_ATTRIBUTES))
+    local a::IR.VariableAttributes = v.attributes
+    v.attributes = IR.VariableAttributes(a.start, IR.BOOLEAN(false), a.nominal, a.min, a.max, a.unit, a.displayUnit,
+                                         a.quantity, a.stateSelect)
+    v.binding = nothing
+  end
+  return model
+end
+
+"""
     streamsWithoutEvents!(model) -> Model
 
 actualStream as the frontend writes it, `smooth(0, m * (if m > 0 then a else b))` and `smooth(0, if m > 0 then a else

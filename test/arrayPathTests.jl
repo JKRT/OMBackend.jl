@@ -2348,4 +2348,30 @@ end
     local loose = OMBackend.simulateModel(name; tspan = (0.0, 1.0), abstol = 1e-6)
     @test length(loose.t) < length(sol.t)
   end
+
+  @testset "A parameter bound to one with fixed = false" begin
+    #= `k = 3 s`, s (fixed = false) from an initial equation: k is computed by the initialization too (OpenModelica's
+       initial system). The array code refused ("a parameter binding depends on a parameter with fixed = false":
+       MSL's noise blocks, `actualGlobalSeed = if useGlobalSeed then globalSeed.seed else 0`) =#
+    local free = Modelica"""
+      model FreeDependent "s = 2, k = 3 s, n = 5, m = n if use: x[i] = (i k + m) t"
+        parameter Boolean use = true;
+        parameter Real s(fixed = false, start = 0.5);
+        parameter Real k = 3 * s;
+        parameter Integer n(fixed = false, start = 0);
+        parameter Integer m = if use then n else 0;
+        Real x[2](each start = 0, each fixed = true);
+      initial equation
+        s = 2;
+        n = 5;
+      equation
+        for i in 1:2 loop
+          der(x[i]) = i * k + m;
+        end for;
+      end FreeDependent;
+      """
+    local (sf, af, _) = _bothWaysOf(free, "FreeDependent", ["x[1]", "x[2]"])
+    @test isapprox(af, [11.0, 17.0]; rtol = 1e-8)
+    @test isapprox(sf, af; rtol = 1e-8)
+  end
 end

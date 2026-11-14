@@ -118,6 +118,8 @@ before `expandEquations`, which splits the others), its for-equations' if-equati
 the values taking each branch (`IndexReduction.splitStaticIfs!`): what the array form of index reduction takes.
 """
 function runPassesKeepingArrays!(model::IR.Model)::IR.Model
+  #= a parameter bound to one with fixed = false: computed by the initialization too =#
+  model = freeDependentParameters!(model)
   for (name, pass) in PIPELINE
     #= every parameter of the array code can be overridden (its parameterValues): a binding that references another
        parameter keeps the reference, as a tunable one's does (an override of the referenced one reached nothing) =#
