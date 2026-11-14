@@ -594,6 +594,16 @@ function _valueIRx(g::Gen, e::SC.Exp, ctx::Ctx)::IR
       return Op(:arrayval, IR[elementsOf[1]; IR[Pre(x::Ref) for x in @view elementsOf[2:end]]])
     end
   end
+  #= pre() of an array expression of variables (a slice, `pre(u_buffer[1:2])`: MSL Clocked's FIR buffers; the slice's
+     type is its element type): the array of pre() of the elements of its value =#
+  if e isa SC.CALL && e.kind == SC.CALL_BUILTIN && e.name === :pre && length(e.args) == 1 &&
+     (_expType(e.args[1]) isa SC.TYPE_ARRAY ||
+      (e.args[1] isa SC.ASUB && any((s::SC.Exp) -> s isa Union{SC.RANGE, SC.WHOLE_DIMENSION}, e.args[1].subs)))
+    local inner::IR = _valueIRx(g, e.args[1], ctx)
+    (inner isa Op && inner.op === :arrayval && all((x::IR) -> x isa Ref, @view inner.args[2:end])) ||
+      ns("pre of $(_str(e.args[1]))")
+    return Op(:arrayval, IR[inner.args[1]; IR[Pre(x::Ref) for x in @view inner.args[2:end]]])
+  end
   #= cat(1, v1, v2, ...) of vectors (MSL Media's mass fractions, `cat(1, Xi, {1 - sum(Xi)})`): the vector of their
      elements =#
   if e isa SC.CALL && e.kind == SC.CALL_BUILTIN && e.name === :cat && length(e.args) >= 2 && e.args[1] isa SC.ICONST &&
@@ -1471,7 +1481,6 @@ function _addWhen!(g::Gen, eq::SC.WHEN_EQUATION, iterNames::Vector{String}, idom
   local conds::Vector{IR} = IR[]
   local body::Vector{Tuple{Symbol, Ref, IR}} = Tuple{Symbol, Ref, IR}[]
   local starts::Vector{Int} = Int[]
-  local noTarget::Ref = Ref("", IR[], false)
   local branch::Union{Nothing, SC.WHEN_STMTS} = eq.whenEquation
   while branch !== nothing
     local triggers::Vector{IR} = IR[]
@@ -1497,37 +1506,143 @@ function _addWhen!(g::Gen, eq::SC.WHEN_EQUATION, iterNames::Vector{String}, idom
     isempty(triggers) && ns("a when-branch without a condition: $(_str(eq))")
     push!(conds, length(triggers) == 1 ? triggers[1] : Op(:vect, triggers))
     push!(starts, length(body) + 1)
-    for st in branch.body
-      if st isa SC.ASSIGN && st.left isa SC.TUPLE && _isFunctionCall(g, st.right)
-        #= (r, state) = f(pre(state)): the call once, each target from its output (Buildings.Occupants' random numbers) =#
-        append!(body, _whenTupleAssignments(g, st.left, toIR(g, st.right, ctx), _expType(st.right), ctx))
-      elseif st isa SC.ASSIGN && _wholeArrayElements(g, st.left) !== nothing
-        append!(body, _wholeArrayAssignments(g, st, ctx))
-      elseif st isa SC.ASSIGN
-        _isReference(st.left) || ns("a when-statement assigning $(_str(st.left))")
-        local target::IR = toIR(g, st.left, ctx)
-        (target isa Ref && g.vars[target.name].kind == :discrete) || ns("when assigns a non-discrete variable: $(_str(st.left))")
-        push!(body, (:assign, target, toIR(g, st.right, ctx)))
-      elseif st isa SC.REINIT
-        #= of an element of an array state: the state at the element's subscripts =#
-        local stateRef::SC.Exp = SC.EXP_CREF(st.stateVar, SC.TYPE_REAL())
-        local state::IR = toIR(g, isempty(st.subscripts) ? stateRef : SC.ASUB(stateRef, st.subscripts), ctx)
-        (state isa Ref && g.vars[state.name].kind == :state) || ns("reinit of a non-state: $(_str(eq))")
-        #= of a dynamic state set's state: the set's switch, in effect with the selection the body assigns =#
-        local ref::Union{Nothing, SC.IR.ComponentRef} = st.stateVar.ref
-        local switch::Bool = ref !== nothing && Passes.IndexReduction.isStateSetRef(ref)
-        push!(body, (switch ? :switch : :reinit, state, toIR(g, st.value, ctx)))
-      elseif st isa Union{SC.ASSERT, SC.NORETCALL, SC.TERMINATE, SC.IF}
-        push!(body, (:call, noTarget, _whenEffect(g, st, ctx)))
-      else
-        ns("a when-statement $(nameof(typeof(st))): $(_str(eq))")
-      end
-    end
+    _whenStatements!(body, g, branch.body, nothing, ctx, eq)
     branch = branch.elsewhenPart
   end
   local cond::IR = length(conds) == 1 ? conds[1] : Op(:elsewhen, conds)
   push!(g.whens, WhenClass(cond, body, starts, length(iterNames), idom, ctx.nrel[], ctx.nsam[], _str(eq), eq.attr.everyEvent))
   return nothing
+end
+
+"""
+    _whenStatements!(body, g, statements, guard, ctx, eq)
+
+A when-branch's statements onto its body (`_addWhen!`), in order. `guard`: `nothing` at the branch's top level; in a
+branch of an if-statement that assigns (`_whenIf!`) the temporary that holds whether that branch is taken: each
+assignment then `x := if taken then value else x`, each effect under it (`_guarded`).
+"""
+function _whenStatements!(body::Vector{Tuple{Symbol, Ref, IR}}, g::Gen, statements::Vector{SC.Statement},
+                          guard::Union{Nothing, Slot}, ctx::Ctx, eq::SC.WHEN_EQUATION)::Nothing
+  local noTarget::Ref = Ref("", IR[], false)
+  local entries::Vector{Tuple{Symbol, Ref, IR}} = Tuple{Symbol, Ref, IR}[]
+  for st in statements
+    empty!(entries)
+    if st isa SC.ASSIGN && st.left isa SC.TUPLE && st.right isa SC.IFEXP
+      #= a tuple of an if-expression (a subsampled clock's `(noise, seedState) := if tick then random(pre(seedState))
+         else (pre(noise), pre(seedState))`: MSL Clocked's Noise in ClockedWith_AD_DA_Effects): the if-statement of
+         the tuple assignments =#
+      local branch::SC.Branch = SC.Branch(st.right.cond, SC.Statement[SC.ASSIGN(st.left, st.right.thenExp, st.source)])
+      _whenIf!(body, g, SC.IF([branch], SC.Statement[SC.ASSIGN(st.left, st.right.elseExp, st.source)], st.source),
+               guard, ctx, eq)
+    elseif st isa SC.ASSIGN && st.left isa SC.TUPLE && st.right isa SC.TUPLE
+      append!(entries, _tupleOfPreAssignments(g, st, ctx))
+    elseif st isa SC.ASSIGN && st.left isa SC.TUPLE && _isFunctionCall(g, st.right)
+      #= (r, state) = f(pre(state)): the call once, each target from its output (Buildings.Occupants' random numbers) =#
+      append!(entries, _whenTupleAssignments(g, st.left, toIR(g, st.right, ctx), _expType(st.right), ctx))
+    elseif st isa SC.ASSIGN && _wholeArrayElements(g, st.left) !== nothing
+      append!(entries, _wholeArrayAssignments(g, st, ctx))
+    elseif st isa SC.ASSIGN
+      _isReference(st.left) || ns("a when-statement assigning $(_str(st.left))")
+      local target::IR = toIR(g, st.left, ctx)
+      (target isa Ref && g.vars[target.name].kind == :discrete) ||
+        ns("when assigns a non-discrete variable: $(_str(st.left))")
+      push!(entries, (:assign, target, toIR(g, st.right, ctx)))
+    elseif st isa SC.REINIT
+      guard === nothing || ns("reinit in an if-statement of a when-statement: $(_str(eq))")
+      #= of an element of an array state: the state at the element's subscripts =#
+      local stateRef::SC.Exp = SC.EXP_CREF(st.stateVar, SC.TYPE_REAL())
+      local state::IR = toIR(g, isempty(st.subscripts) ? stateRef : SC.ASUB(stateRef, st.subscripts), ctx)
+      (state isa Ref && g.vars[state.name].kind == :state) || ns("reinit of a non-state: $(_str(eq))")
+      #= of a dynamic state set's state: the set's switch, in effect with the selection the body assigns =#
+      local ref::Union{Nothing, SC.IR.ComponentRef} = st.stateVar.ref
+      local switch::Bool = ref !== nothing && Passes.IndexReduction.isStateSetRef(ref)
+      push!(entries, (switch ? :switch : :reinit, state, toIR(g, st.value, ctx)))
+    elseif st isa SC.IF && _assignsIn(st)
+      _whenIf!(body, g, st, guard, ctx, eq)
+    elseif st isa Union{SC.ASSERT, SC.NORETCALL, SC.TERMINATE, SC.IF}
+      push!(entries, (:call, noTarget, _whenEffect(g, st, ctx)))
+    else
+      ns("a when-statement $(nameof(typeof(st))): $(_str(eq))")
+    end
+    foreach(e::Tuple{Symbol, Ref, IR} -> push!(body, _guarded(e, guard)), entries)
+  end
+  return nothing
+end
+
+"""
+A tuple's assignment from a tuple of pre() values, `(noise, seedState) := (pre(noise), pre(seedState))` (a subsampled
+clock's hold, `_whenStatements!`): each target from its value, in order (the values read no target's value of this
+instant); a whole array target element by element.
+"""
+function _tupleOfPreAssignments(g::Gen, st::SC.ASSIGN, ctx::Ctx)::Vector{Tuple{Symbol, Ref, IR}}
+  local targets::Vector{SC.Exp} = (st.left::SC.TUPLE).elements
+  local values::Vector{SC.Exp} = (st.right::SC.TUPLE).elements
+  local isPre::Function = (v::SC.Exp) -> v isa SC.PRE || (v isa SC.CALL && v.kind == SC.CALL_BUILTIN && v.name === :pre)
+  (length(targets) == length(values) && all(isPre, values)) || ns("a when-statement assigning $(_str(st.left))")
+  local out::Vector{Tuple{Symbol, Ref, IR}} = Tuple{Symbol, Ref, IR}[]
+  for (t::SC.Exp, v::SC.Exp) in zip(targets, values)
+    t isa SC.WILD && continue
+    local single::SC.ASSIGN = SC.ASSIGN(t, v, st.source)
+    if _wholeArrayElements(g, t) !== nothing
+      append!(out, _wholeArrayAssignments(g, single, ctx))
+    else
+      local target::IR = toIR(g, t, ctx)
+      (target isa Ref && g.vars[target.name].kind == :discrete) ||
+        ns("when assigns a non-discrete variable: $(_str(t))")
+      push!(out, (:assign, target, toIR(g, v, ctx)))
+    end
+  end
+  return out
+end
+
+"Whether the if-statement `st` assigns a variable or reinitializes a state in one of its branches (nested too)."
+function _assignsIn(st::SC.IF)::Bool
+  local assigns::Function = (x::SC.Statement) -> x isa Union{SC.ASSIGN, SC.REINIT} || (x isa SC.IF && _assignsIn(x))
+  return any((b::SC.Branch) -> any(assigns, b.body), st.branches) || any(assigns, st.elseBody)
+end
+
+"""
+    _whenIf!(body, g, st, guard, ctx, eq)
+
+An if-statement that assigns, in a when-branch (MSL SignalExtrema's `if y_min < pre(y_min) then t_min = time; t_max =
+pre(t_max); elseif ... end if` in its when-equation): its conditions evaluated first, at the instant (noEvent, as
+`_whenEffect`'s), into temporaries, each whether its branch is taken (its condition holds, no earlier one's does, and
+the enclosing `guard`); then each branch's statements under its temporary (`_whenStatements!`), the else-branch's
+under none of the conditions holding.
+"""
+function _whenIf!(body::Vector{Tuple{Symbol, Ref, IR}}, g::Gen, st::SC.IF, guard::Union{Nothing, Slot}, ctx::Ctx,
+                  eq::SC.WHEN_EQUATION)::Nothing
+  local actx::Ctx = _with(ctx; noEvent = true)
+  local noTarget::Ref = Ref("", IR[], false)
+  local open::Union{Nothing, Slot} = guard   #= no earlier branch taken (and the guard) =#
+  local taken::Vector{Slot} = Slot[]
+  for b in st.branches
+    local condition::IR = toIR(g, b.condition, actx)
+    local slot::Slot = Slot(g.tmpSlot -= 1)
+    push!(body, (:call, noTarget, Op(:setlocal, IR[slot, open === nothing ? condition : Op(:&&, IR[open, condition])])))
+    push!(taken, slot)
+    local rest::Slot = Slot(g.tmpSlot -= 1)
+    push!(body, (:call, noTarget, Op(:setlocal, IR[rest, open === nothing ? Op(:!, IR[slot]) :
+                                                         Op(:&&, IR[open, Op(:!, IR[slot])])])))
+    open = rest
+  end
+  for (b, slot) in zip(st.branches, taken)
+    _whenStatements!(body, g, b.body, slot, ctx, eq)
+  end
+  isempty(st.elseBody) || _whenStatements!(body, g, st.elseBody, open, ctx, eq)
+  return nothing
+end
+
+"""
+A when body's entry under `guard` (`_whenStatements!`): itself without one; an assignment `x := if guard then value
+else x`, a statement for its effects (a call, a temporary's value) `if guard then ... end`.
+"""
+function _guarded(entry::Tuple{Symbol, Ref, IR}, guard::Union{Nothing, Slot})::Tuple{Symbol, Ref, IR}
+  guard === nothing && return entry
+  local (kind::Symbol, target::Ref, value::IR) = entry
+  kind === :assign && return (kind, target, Op(:if, IR[guard, value, target]))
+  kind === :call && return (kind, target, Op(:if, IR[guard, value, Op(:seq, IR[])]))
+  ns("a when-statement $(kind) in an if-statement")
 end
 
 """
@@ -1540,7 +1655,8 @@ function _wholeArrayAssignments(g::Gen, st::SC.ASSIGN, ctx::Ctx)::Vector{Tuple{S
   local targets::Vector{SC.Exp} = something(_wholeArrayElements(g, st.left))
   local values::Union{Nothing, Vector{SC.Exp}} =
     st.right isa SC.ARRAY_EXP ? _rowMajorElements(st.right) : _wholeArrayElements(g, st.right)
-  (values === nothing || length(values) != length(targets)) &&
+  values === nothing && return _arrayValueAssignments(g, targets, st, ctx)
+  length(values) != length(targets) &&
     ns("a when-statement assigning the array $(_str(st.left)) the value $(_str(st.right))")
   local out::Vector{Tuple{Symbol, Ref, IR}} = Tuple{Symbol, Ref, IR}[]
   for (t::SC.Exp, v::SC.Exp) in zip(targets, values)
@@ -1549,6 +1665,40 @@ function _wholeArrayAssignments(g::Gen, st::SC.ASSIGN, ctx::Ctx)::Vector{Tuple{S
     push!(out, (:assign, target, toIR(g, v, ctx)))
   end
   return out
+end
+
+"""
+A when body's assignment to an array variable as a whole (its elements `targets`, row-major) from an array expression
+evaluated as one value (`_arrayValueIRx`: MSL Clocked's FIR buffer `u_buffer := if pre(first) then cat(1, {u}, u *
+cBufStart) else cat(1, {u}, pre(u_buffer[1:2]))`): the value into a temporary (a `:call` entry), as an assignment
+evaluates its right-hand side before it assigns, then each element from it.
+"""
+function _arrayValueAssignments(g::Gen, targets::Vector{SC.Exp}, st::SC.ASSIGN,
+                                ctx::Ctx)::Vector{Tuple{Symbol, Ref, IR}}
+  local what::String = "a when-statement assigning the array $(_str(st.left)) the value $(_str(st.right))"
+  local dims::Vector{Int} = _knownDims(_expType(st.left), what)
+  _knownDims(_expType(st.right), what) == dims || ns(what)
+  local value::Slot = Slot(g.tmpSlot -= 1)
+  local out::Vector{Tuple{Symbol, Ref, IR}} =
+    Tuple{Symbol, Ref, IR}[(:call, Ref("", IR[], false), Op(:setlocal, IR[value, _arrayValueIRx(g, st.right, ctx)]))]
+  for (t::SC.Exp, subs) in zip(targets, _elementSubscripts(dims))
+    local target::IR = toIR(g, t, ctx)
+    (target isa Ref && g.vars[target.name].kind == :discrete) || ns("when assigns a non-discrete variable: $(_str(t))")
+    push!(out, (:assign, target, Op(:index, IR[value; IR[Lit(k) for k in subs]])))
+  end
+  return out
+end
+
+"""
+The value of an array expression (`_arrayValueAssignments`): of an if-expression the if of its branches' values (its
+condition a scalar's), of `noEvent(e)` that of `e` without events, of another `_valueIRx`.
+"""
+function _arrayValueIRx(g::Gen, e::SC.Exp, ctx::Ctx)::IR
+  e isa SC.IFEXP &&
+    return Op(:if, IR[toIR(g, e.cond, ctx), _arrayValueIRx(g, e.thenExp, ctx), _arrayValueIRx(g, e.elseExp, ctx)])
+  (e isa SC.CALL && e.kind == SC.CALL_BUILTIN && e.name === :noEvent && length(e.args) == 1) &&
+    return _arrayValueIRx(g, e.args[1], _with(ctx; noEvent = true))
+  return _valueIRx(g, e, ctx)
 end
 
 """

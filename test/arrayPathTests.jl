@@ -965,24 +965,33 @@ end
        the elements as the target, which the when's and the tuple's translation refused. An initial array equation
        `pre(s) = seedPair(seed)` has its elements in that orientation (as lowered it is `rhs = lhs`): with
        `seedPair(seed)[k] = pre(s[k])` the scalarized model did not build. The two tuple models are the array
-       code's since it takes pre() of an array as a function's argument (`arrayCode`); the same values =#
-    for (model, names, T, expected, arrayCode) in
-        (("ArrayPath.WhenArrayTarget", ["d[1]", "d[2]"], 1.0, [6.0, 8.0], false),
-         ("ArrayPath.WhenIfArrayTarget", ["d[1]", "d[2]"], 1.0, [8.0, 10.0], false),
-         ("ArrayPath.TupleArrayTarget", ["r", "s[1]", "s[2]"], 0.9, [5.0, 3.0, 3.0], true),
-         ("ArrayPath.PreArrayStart", ["r", "s[1]", "s[2]"], 0.9, [2.000000005e9, 2.000000003e9, 3.0], true))
+       code's since it takes pre() of an array as a function's argument, the two when models since it takes an
+       array assigned as a whole in a when-equation and in an if-equation in one (`_whenStatements!`): the backend's
+       scalarization of the when models checked with the array code off (`whenModel`); the same values =#
+    for (model, names, T, expected, whenModel) in
+        (("ArrayPath.WhenArrayTarget", ["d[1]", "d[2]"], 1.0, [6.0, 8.0], true),
+         ("ArrayPath.WhenIfArrayTarget", ["d[1]", "d[2]"], 1.0, [8.0, 10.0], true),
+         ("ArrayPath.TupleArrayTarget", ["r", "s[1]", "s[2]"], 0.9, [5.0, 3.0, 3.0], false),
+         ("ArrayPath.PreArrayStart", ["r", "s[1]", "s[2]"], 0.9, [2.000000005e9, 2.000000003e9, 3.0], false))
       #= the route of OM's translate (`translateReducedArrays`: `nothing` is its caller's second flatten) =#
       local name::String = _arrayPathTranslate(model; scalarized = false)
       local (fm, cache) = OMFrontend.instantiateSCodeToFM(model, _ARRAY_PATH_SCODE[]; scalarize = false)
       @test OMBackend.translateReducedArrays(fm; functionList = OMFrontend.cacheToFunctionList(cache)) !== nothing
-      @test _arrayPathTaken(name) == arrayCode
-      if !arrayCode
-        @test name in OMBackend.BACKEND_SCALARIZED_MODELS
-        #= switched off: `nothing` (the caller's scalarizing flatten), the reason recorded =#
-        withenv("OMBACKEND_BACKEND_SCALARIZATION" => "false") do
-          @test OMBackend.translateReducedArrays(fm; functionList = OMFrontend.cacheToFunctionList(cache)) === nothing
-          @test !(name in OMBackend.BACKEND_SCALARIZED_MODELS)
-          @test occursin("backend scalarization: switched off", OMBackend.scalarizedFallbackReason(name))
+      @test _arrayPathTaken(name)
+      if whenModel
+        OMBackend.ARRAY_ODE_GENERATION[] = false
+        try
+          @test OMBackend.translateReducedArrays(fm; functionList = OMFrontend.cacheToFunctionList(cache)) !== nothing
+          @test name in OMBackend.BACKEND_SCALARIZED_MODELS
+          @test _values(OMBackend.simulateModel(name; tspan = (0.0, T)), names) ≈ expected atol = 1e-9
+          #= switched off: `nothing` (the caller's scalarizing flatten), the reason recorded =#
+          withenv("OMBACKEND_BACKEND_SCALARIZATION" => "false") do
+            @test OMBackend.translateReducedArrays(fm; functionList = OMFrontend.cacheToFunctionList(cache)) === nothing
+            @test !(name in OMBackend.BACKEND_SCALARIZED_MODELS)
+            @test occursin("backend scalarization: switched off", OMBackend.scalarizedFallbackReason(name))
+          end
+        finally
+          OMBackend.ARRAY_ODE_GENERATION[] = true
         end
       end
       _arrayPathTranslate(model; scalarized = false)
@@ -2703,6 +2712,75 @@ end
     @test sol.retcode == ReturnCode.Success
     local at = (v::String) -> OMBackend.getVariableValues(sol, v)[end]
     @test isapprox([at("y[1]"), at("y[2]"), at("a"), at("ys[2]"), at("w")], [10.0, 20.0, 20.0, 1.8, 21.8]; rtol = 1e-9)
+  end
+
+  @testset "When-equations assigning arrays: if-equations, if-expressions of arrays, slices of pre(), tuples" begin
+    #= Refused for array code ("a when-statement ASSIGN", "a when-statement assigning the array ... the value ...",
+       "a when-statement assigning (r, s)"): an if-equation in a when-equation (MSL SignalExtrema, PreisachEverett's
+       `aSav = cat(1, {alpha}, pre(aSav[1:end - 1]))`; an array assigned there is discrete, `whenAssignedDiscrete!`),
+       a clocked buffer's if-expression of arrays with a slice of previous() (MSL Clocked's FIR filters), a function of
+       two outputs in a subsampled partition (`(r, s) := if tick then f(...) else (pre(r), pre(s))`, MSL Clocked's
+       Noise). Ticks at 0.1, ..., 0.9 (the sample()), 0, 0.1, ..., 0.9 (Clock(0.1)), 0, 0.2, ..., 0.8 (subSample 2) =#
+    local program = Modelica"""
+      model ShiftOnTicks "an if-equation in a when-equation shifts an array"
+        Real buf[3](each start = 0, each fixed = true);
+        Integer k(start = 0, fixed = true);
+        Real tk(start = 0, fixed = true);
+      equation
+        when sample(0.1, 0.1) then
+          k = pre(k) + 1;
+          if pre(k) >= 2 then
+            buf = cat(1, {k}, pre(buf[1:2]));
+            tk = time;
+          else
+            buf = pre(buf);
+            tk = pre(tk);
+          end if;
+        end when;
+      end ShiftOnTicks;
+
+      model ClockedShift "a clocked buffer: an if-expression of arrays, a slice of previous()"
+        Real u = sample(time, Clock(0.1));
+        Real b[3](each start = 0);
+        Boolean first(start = true);
+        Real y = hold(b[3]);
+      equation
+        first = false;
+        b = if previous(first) then {u, u, u} else cat(1, {u}, previous(b[1:2]));
+      end ClockedShift;
+
+      model SubsampledTuple "a function of two outputs in a subsampled partition"
+        function twice
+          input Real s;
+          output Real r;
+          output Real sNext;
+        algorithm
+          r := 2 * s;
+          sNext := s + 1;
+        end twice;
+        Real v = sample(time, Clock(0.1));
+        Real vs = subSample(v, 2);
+        Real s(start = 1);
+        Real r(start = 0);
+        Real y = hold(r);
+      equation
+        (r, s) = twice(previous(s) + vs);
+      end SubsampledTuple;
+      """
+    #= buf shifted at the ticks from the third on: {9, 8, 7} after the ninth =#
+    local (ss, as, _) = _bothWaysOf(program, "ShiftOnTicks", ["k", "tk", "buf[1]", "buf[2]", "buf[3]"];
+                                    tspan = (0.0, 0.95))
+    @test as ≈ [9.0, 0.9, 9.0, 8.0, 7.0] atol = 1e-9
+    @test ss ≈ as atol = 1e-9
+    #= b = {u, u, u} at the first tick, then u in front: {0.9, 0.8, 0.7} after the tick at 0.9 =#
+    local (sb, ab, _) = _bothWaysOf(program, "ClockedShift", ["b[1]", "b[2]", "b[3]", "y"]; tspan = (0.0, 0.95))
+    @test ab ≈ [0.9, 0.8, 0.7, 0.7] atol = 1e-9
+    @test sb ≈ ab atol = 1e-9
+    #= r = 2 (s + v), s + v + 1 the next s: (1, 0) -> r = 2, s = 2; (2, 0.2) -> 4.4, 3.2; (3.2, 0.4) -> 7.2, 4.6;
+       (4.6, 0.6) -> 10.4, 6.2; (6.2, 0.8) -> 14, 8 =#
+    local (st, at, _) = _bothWaysOf(program, "SubsampledTuple", ["r", "s", "y"]; tspan = (0.0, 0.95))
+    @test at ≈ [14.0, 8.0, 14.0] atol = 1e-9
+    @test st ≈ at atol = 1e-9
   end
 
   @testset "Rotated constant currents through an inductance" begin
