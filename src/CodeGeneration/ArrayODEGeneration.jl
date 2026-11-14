@@ -3131,11 +3131,16 @@ until those stay) and then once with the relations evaluated on that solution. T
 itself back is left in place: true. OpenModelica solves a mixed system so (a friction element's `startForward` and
 `locked` with the torque that decides them); the scalarized path's `_search!` (discreteClusters.jl). False, the values
 before the sweeps restored, where none does or more than 12 relations changed.
+Also searched: the relations within their hysteresis band (their literal value differs, `_literalChanges!`): two
+relations of one threshold in different units are not both past their bands at an event (MSL OpenTank's port at the
+level: `fluidLevel >= height` within its band, `s > 0` with `s = (p - ps) / p_default * (height - fluidLevel)` past
+its own; the port's `inFlow` switched every pass, TanksWithOverflow stopped at 2025 s).
 """
 function _searchRelations!(equations!::F, whens!::W, du::AbstractVector, a::AbstractVector, u::AbstractVector,
                            p::ArrayModelParameters, t::Real, fire::Bool, rel0::Vector{Bool}, d0::Vector{Float64},
                            flips::BitVector)::Bool where {F <: Function, W <: Function}
-  local slots::Vector{Int} = findall(flips)
+  local slots::Vector{Int} =
+    sort!(union(findall(flips), _literalChanges!(equations!, whens!, du, a, u, p, t, fire, rel0, d0)))
   local trace::Bool = _OMBACKEND.envSwitch("OMBACKEND_ARRAY_TRACE")
   trace && println("[arraycode] relation search at t = ", t, ": relations ", slots)
   (isempty(slots) || length(slots) > 12) && return false
@@ -3173,6 +3178,39 @@ function _searchRelations!(equations!::F, whens!::W, du::AbstractVector, a::Abst
   p.rel .= rel0
   p.d .= d0
   return false
+end
+
+"""
+    _literalChanges!(equations!, whens!, du, a, u, p, t, fire, rel0, d0) -> Vector{Int}
+
+The relations whose literal value (no hysteresis) at (u, t), with the relations `rel0` and the discrete values `d0`,
+differs from theirs: those within their hysteresis band (`_relationAt`). The equations and the lifted clusters of
+discrete equations (`whens!`: a Boolean `regular = x >= 6`) evaluated once; the relations, discrete values,
+event-generating functions' values, when-conditions and reinit values are restored.
+"""
+function _literalChanges!(equations!::F, whens!::W, du::AbstractVector, a::AbstractVector, u::AbstractVector,
+                          p::ArrayModelParameters, t::Real, fire::Bool, rel0::Vector{Bool},
+                          d0::Vector{Float64})::Vector{Int} where {F <: Function, W <: Function}
+  local hyst::Float64 = p.hyst[1]
+  local (evv::Vector{Float64}, wnew::Vector{Bool}, ureinit::Vector{Float64}) =
+    (copy(p.evv), copy(p.wnew), copy(p.ureinit))
+  p.rel .= rel0
+  p.d .= d0
+  p.hyst[1] = 0.0
+  local changed::Vector{Int} = Int[]
+  try
+    equations!(du, a, u, p, t, nothing, true, fire)
+    whens!(du, a, u, p, t, nothing, true, fire)
+    changed = findall(p.rel .!= rel0)
+  finally
+    p.hyst[1] = hyst
+    p.rel .= rel0
+    p.d .= d0
+    p.evv .= evv
+    p.wnew .= wnew
+    p.ureinit .= ureinit
+  end
+  return changed
 end
 
 "Whether `x` has an operation `op` (`Op`, in the operations' arguments)."

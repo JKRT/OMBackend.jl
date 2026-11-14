@@ -140,7 +140,8 @@ the solve, then the
 residuals are evaluated once more at the solution with the caller's `z` and `mode` (crossing functions, relation
 values). Where no solve converges, the unknowns are NaN (the solver rejects the step; an initialization fails). An
 iterate whose last Jacobian was singular is no solution (`rankDeficient`: its steps were least-norm steps, small
-where the residuals are not).
+where the residuals are not), but where all else fails one whose residuals are zero to round-off
+(`_consistentIterate`: a loop singular in its mode and consistent).
 """
 function blockSolve!(s::BlockSolver, residual!::R, du::AbstractVector, a::AbstractVector, u::AbstractVector, p, t::Real,
                      z, mode::Bool, fire::Bool)::Nothing where {R <: Function}
@@ -175,6 +176,18 @@ function blockSolve!(s::BlockSolver, residual!::R, du::AbstractVector, a::Abstra
     s.x .= s.y .+ 0.1 .* max.(1.0, abs.(s.y))
     ok = _blockAttempt!(s, residual!, args, :damped)
   end
+  if !(ok && !s.rankDeficient)
+    #= a loop singular in its present mode but consistent (MSL OpenTank's ports above the level, both closed:
+       `m_flow = 0` from either side, the pressures free up to the pipe's equation): an iterate of least-norm steps
+       whose residuals are zero to round-off, as OpenModelica's solver accepts it (MSL TanksWithOverflow's overflow
+       pipe at the start); one whose residuals stay (rows without a derivative) is none =#
+    for kind in (:full, :damped)
+      s.x .= s.y
+      ok = _blockAttempt!(s, residual!, args, kind) && (!s.rankDeficient || _consistentIterate(s))
+      ok && break
+    end
+    ok && (s.rankDeficient = false)
+  end
   ok = ok && !s.rankDeficient
   if ok
     s.y .= s.x
@@ -197,6 +210,22 @@ function blockSolve!(s::BlockSolver, residual!::R, du::AbstractVector, a::Abstra
     end
   end
   return nothing
+end
+
+"""
+    _consistentIterate(s) -> Bool
+
+Whether the residuals `s.r` at the iterate `s.x` are zero to round-off: each within 1e-8 of what the row's terms move
+by over the unknowns' size (its Jacobian row's entries times the unknowns, at least 1); a row without a derivative has
+to be zero.
+"""
+function _consistentIterate(s::BlockSolver)::Bool
+  local J::_SPARSE.SparseMatrixCSC{Float64, Int} = s.J
+  local scale::Vector{Float64} = zeros(length(s.r))
+  for j in axes(J, 2), k in _SPARSE.nzrange(J, j)
+    scale[J.rowval[k]] += abs(J.nzval[k]) * max(1.0, abs(s.x[j]))
+  end
+  return all(i::Int -> isfinite(s.r[i]) && abs(s.r[i]) <= 1.0e-8 * scale[i], eachindex(s.r))
 end
 
 """

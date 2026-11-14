@@ -2564,4 +2564,88 @@ end
     @test isapprox(at, [exp(-1.0), exp(-1.0) / 1.5]; rtol = 1e-5)
     @test isapprox(st, at; rtol = 1e-5)
   end
+
+  @testset "A loop singular in its mode but consistent" begin
+    #= MSL OpenTank's ports above the level, both closed (TanksWithOverflow's overflow pipe at the start): `m = 0`
+       from either end, the pressures free up to the pipe's equations. The loop's Jacobian is singular; the solver
+       refused the iterate of least-norm steps, so the initialization failed ("the algebraic loop 1 of 14 unknowns
+       has no solution from its start values"). Its residuals are zero to round-off: accepted, as OpenModelica's
+       solver does. Open from t = 10: m = -0.1 / sqrt(0.1 + 1e-6), x(20) = 10 m; 14 unknowns: a large block. =#
+    local program = Modelica"""
+      model ModeSingular "closed ends until t = 10: m = 0; then m = -0.1 / sqrt(0.1 + 1e-6)"
+        parameter Real p0 = 1;
+        parameter Real G = 1;
+        Real p[11](each start = 1);
+        Real m;
+        Real sA;
+        Real sB;
+        Real x(start = 0, fixed = true);
+        Real y(start = 0, fixed = true);
+        Boolean opened(start = false);
+      equation
+        der(y) = 1;
+        opened = y > 10;
+        for i in 1:10 loop
+          m = (p[i] - p[i + 1] - G / 10) / sqrt(abs(p[i] - p[i + 1] - G / 10) + 1e-6);
+        end for;
+        if opened then
+          p[1] = p0;
+          sA = m;
+        else
+          m = 0;
+          sA = p[1] - p0;
+        end if;
+        if opened then
+          p[11] = p0;
+          sB = -m;
+        else
+          -m = 0;
+          sB = p[11] - p0;
+        end if;
+        der(x) = m;
+      end ModeSingular;
+      """
+    local name::String = _translateProgram(program, "ModeSingular"; scalarized = false)
+    @test _arrayPathTaken(name)
+    local sol = OMBackend.simulateModel(name; tspan = (0.0, 20.0))
+    @test sol.retcode == ReturnCode.Success
+    local x::Vector{Float64} = OMBackend.getVariableValues(sol, "x")
+    local dp::Vector{Float64} = OMBackend.getVariableValues(sol, "p[1]") .- OMBackend.getVariableValues(sol, "p[11]")
+    local mOpen::Float64 = -0.1 / sqrt(0.1 + 1e-6)
+    @test isapprox(x[end], 10 * mOpen; rtol = 1e-6)
+    @test isapprox(dp[1], 1.0; rtol = 1e-8)
+    @test isapprox(OMBackend.getVariableValues(sol, "m")[end], mOpen; rtol = 1e-8)
+  end
+
+  @testset "Two relations of one threshold within their hysteresis bands" begin
+    #= MSL OpenTank's port reached by the level (TanksWithOverflow at 2025 s): `regular = x >= 6`, and the port's
+       `s > 0` with s = 0.48 (x - 6) while closed. At the event of `s > 0` (its band H), x - 6 = 2.1 H, within the band
+       of `x >= 6` (7 H): `inFlow` true gives s = -0.16, false again gives s > 0, every pass; the run stopped
+       ("the event iteration did not settle"). The relations within their bands are searched too: regular.
+       x(10) = 6 + 5 * 0.1 =#
+    local program = Modelica"""
+      model BandedSwitch "x rises at 0.2 to 6 (t = 5), then at 0.1: x(10) = 6.5"
+        Real x(start = 5, fixed = true);
+        Real s(start = 20);
+        Boolean regular;
+        Boolean inFlow(start = false);
+      equation
+        regular = x >= 6;
+        inFlow = not regular and s > 0;
+        if regular then
+          s = x - 6;
+        elseif inFlow then
+          s = -0.16;
+        else
+          s = 0.48 * (x - 6);
+        end if;
+        der(x) = if regular then 0.1 else 0.2;
+      end BandedSwitch;
+      """
+    local name::String = _translateProgram(program, "BandedSwitch"; scalarized = false)
+    @test _arrayPathTaken(name)
+    local sol = OMBackend.simulateModel(name; tspan = (0.0, 10.0))
+    @test sol.retcode == ReturnCode.Success
+    @test isapprox(OMBackend.getVariableValues(sol, "x")[end], 6.5; rtol = 1e-6)
+  end
 end
