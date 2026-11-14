@@ -36,7 +36,7 @@
 #= The plan of index reduction, made without changing the model, and its commit. =#
 
 """
-    Plan(structure, differentiated, dummies, sets, known, carried)
+    Plan(structure, differentiated, dummies, sets, known, carried, constants)
 
 What index reduction changes in a partition: the structure Pantelides' algorithm grew (its new
 derivative variables), the differentiated equations (by the index of the equation they are
@@ -45,7 +45,8 @@ state sets; the simulation code's values it was made with (`KNOWN_VALUES`; empty
 written), which the derivatives' solve reads too (`solveDerivatives!`); the start values carried
 through the explicit relations for the variables that declare none (`carriedStarts`), which the
 commit writes as the guesses of the states among them, of those with an alias that declares one, and of the
-sets' states.
+sets' states; the variables the structure read as constants (`withKnownValuesAndConstants`: no derivative variable,
+their derivatives zero where an equation that reads them is differentiated as written, `arraySeeds`).
 """
 struct Plan
   structure::Structure
@@ -54,6 +55,7 @@ struct Plan
   sets::Vector{DynamicSet}
   known::Dict{Symbol, IR.Expression}
   carried::CarriedStarts
+  constants::Set{Symbol}
 end
 
 """
@@ -83,7 +85,7 @@ function plan(model::IR.Model, partition::IR.Partition;
   any(v -> v.ty isa IR.T_ARRAY && !(v.kind isa Union{IR.PARAMETER, IR.CONSTANT}), model.variables) &&
     throw(NotHandled("array variables (the arrays-kept path; scalarized models only)"))
   #= the structure the code generators see: the known values substituted =#
-  local folded = withKnownValues(model, partition; known)
+  local (folded::IR.Partition, constants::Set{Symbol}) = withKnownValuesAndConstants(model, partition; known)
   local functions = Dict{Symbol, IR.ModelicaFunction}(f.name => f for f in model.functions)
   local derived::Vector{Symbol} = expandDerivatives!(folded.equations, continuousNames(model.variables, folded), model.variables, functions)
   local s = Structure(model.variables, folded, model.functions; derived)
@@ -91,16 +93,16 @@ function plan(model::IR.Model, partition::IR.Partition;
   nRows == unknownCount(s) ||
     throw(NotHandled("a continuous system of $(nRows) rows over $(unknownCount(s)) unknowns (not square as the structure reads it)"))
   local preferred = artificialStates!(s, folded, model.variables; prefer = envSwitch("OMBACKEND_PREFER_STATES"))
-  preferred == 0 && return planStructure(s, nRows, folded, model; trace, known, indexOne)
+  preferred == 0 && return planStructure(s, nRows, folded, model; trace, known, indexOne, constants)
   try
-    return planStructure(s, nRows, folded, model; trace, known, indexOne)
+    return planStructure(s, nRows, folded, model; trace, known, indexOne, constants)
   catch e
     e isa NotHandled || rethrow()
     #= the artificial states of StateSelect.prefer given up where their equations do not differentiate, as
        OpenModelica's sanityCheckArtificialStates (all of them here) =#
     local t = Structure(model.variables, folded, model.functions; derived)
     artificialStates!(t, folded, model.variables; prefer = false)
-    return planStructure(t, nRows, folded, model; trace, known, indexOne)
+    return planStructure(t, nRows, folded, model; trace, known, indexOne, constants)
   end
 end
 
@@ -110,16 +112,16 @@ end
 The plan of `plan` from the structure `s` of `partition` (its first `nRows` rows the partition's, its artificial
 states' derivatives added): Pantelides' algorithm, the differentiated equations, the dummy derivatives; where nothing
 is differentiated `nothing`, or with `indexOne` the plan of no differentiation. `known`: the simulation code's values
-the plan is made with.
+the plan is made with; `constants`: the variables `partition` was folded with as constants.
 """
 function planStructure(s::Structure, nRows::Int, partition::IR.Partition, model::IR.Model;
                        trace::Union{Nothing, Vector{BlockTrace}} = nothing,
                        known::Dict{Symbol, IR.Expression} = Dict{Symbol, IR.Expression}(),
-                       indexOne::Bool = false)::Union{Nothing, Plan}
+                       indexOne::Bool = false, constants::Set{Symbol} = Set{Symbol}())::Union{Nothing, Plan}
   pantelides!(s)
   if length(s.rows) == nRows
     indexOne || return nothing
-    return Plan(s, Dict{Int, Vector{IR.Equation}}(), Set{Int}(), DynamicSet[], known, CarriedStarts())
+    return Plan(s, Dict{Int, Vector{IR.Equation}}(), Set{Int}(), DynamicSet[], known, CarriedStarts(), constants)
   end
   local differentiated = differentiatedEquations(s, partition, model.functions)
   local sets = DynamicSet[]
@@ -129,7 +131,7 @@ function planStructure(s::Structure, nRows::Int, partition::IR.Partition, model:
   foreach(set -> union!(dummies, set.candidates, set.linked...), sets)
   local carried::CarriedStarts =
     carriedStarts(s, partition, differentiated, model.variables, model.functions, start)
-  return Plan(s, differentiated, dummies, sets, known, carried)
+  return Plan(s, differentiated, dummies, sets, known, carried, constants)
 end
 
 "The names of the continuous variables of `partition` (`isContinuousVariable`)."

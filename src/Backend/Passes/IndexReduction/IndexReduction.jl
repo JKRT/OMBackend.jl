@@ -91,7 +91,7 @@ import ...LowerUtil: assignedCrefs
 import ..Evaluation: arithmetic, asRecord, divide, elementOf, evaluate, foldScalar, genericOffset,
        genericValues, ifThenElse, inlineBody, isLiteral, isOne, isZero, isZeroExp, literalCondition,
        literalValue, minus, negate, ONE, ownValues, plus, power, real, selectElement, StartValues, subscripted,
-       times, withKnownValues, functionDefinedValues, ZERO, zeroOf
+       times, withKnownValues, withKnownValuesAndConstants, functionDefinedValues, ZERO, zeroOf
 const IR = OMJLIR
 
 include("Structure.jl")

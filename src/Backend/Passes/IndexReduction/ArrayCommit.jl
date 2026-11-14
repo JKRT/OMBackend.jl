@@ -251,14 +251,15 @@ function arrayDerivatives(s::Structure, E::Elements)::Dict{Symbol, Symbol}
 end
 
 """
-    arraySeeds(s, derivatives, E, variables, functions) -> Seeds
+    arraySeeds(s, derivatives, E, variables, functions, constants) -> Seeds
 
 The time derivative in array form: of an array variable the derivative array (`derivatives`; `x[i]` is then
 `\$DER.x[i]`, `arrayElementDerivative`), of an element or a scalar the structure's derivative as a reference into its
-array; NotHandled for an array of continuous variables whose elements' derivatives are not one array.
+array, of one the plan's structure read as a constant (`constants`) zero; NotHandled for an array of continuous
+variables whose elements' derivatives are not one array.
 """
 function arraySeeds(s::Structure, derivatives::Dict{Symbol, Symbol}, E::Elements, variables::IR.VariableSet,
-                    functions::Vector{IR.ModelicaFunction})::Seeds
+                    functions::Vector{IR.ModelicaFunction}, constants::Set{Symbol})::Seeds
   local variable = (name::Symbol) -> begin
     local members = get(E.elements, name, nothing)
     if members !== nothing
@@ -271,6 +272,7 @@ function arraySeeds(s::Structure, derivatives::Dict{Symbol, Symbol}, E::Elements
     local v = get(s.index, name, 0)
     v == 0 && return nothing
     local d = s.derivative[v]
+    (d == 0 && name in constants) && return ZERO
     d == 0 && throw(NotHandled("the derivative of $(name), which Pantelides' algorithm gave none"))
     return IR.CREF(arrayElementRef(s.variables[d], E, variables), IR.T_REAL())
   end
@@ -890,8 +892,8 @@ function differentiatedArrayEquations(partition::IR.Partition, view::Scalarized,
     push!(get!(() -> Int[], rowsOf, origin.equation), r)
   end
   local functionsByName = Dict{Symbol, IR.ModelicaFunction}(f.name => f for f in functions)
-  local seeds = arraySeeds(p.structure, derivatives, E, variables, functions)
-  local planSeeds = derivativeSeeds(p.structure, functions)
+  local seeds = arraySeeds(p.structure, derivatives, E, variables, functions, p.constants)
+  local planSeeds = derivativeSeeds(p.structure, functions; constants = p.constants)
   local known::StartValues = StartValues(view.model.variables, view.model.functions; parametersOnly = true)
   local out = IR.Equation[]
   for i in sort!(unique(Int[view.origins[r].equation for r in keys(p.differentiated)]))

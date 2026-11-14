@@ -281,17 +281,20 @@ function singularMessage(s::Structure, rows::Vector{Int})::String
 end
 
 """
-    derivativeSeeds(s, functions) -> Seeds
+    derivativeSeeds(s, functions; constants) -> Seeds
 
 The seeds of d/dt in the structure: a variable's derivative is its derivative variable (a
 reference of type Real); a name outside the structure (a parameter, a constant, a discrete
-variable) has none (0).
+variable) has none (0); one of `constants` (the variables the plan's structure read as constants,
+`Plan.constants`) the derivative 0.
 """
-function derivativeSeeds(s::Structure, functions::Vector{IR.ModelicaFunction})::Seeds
+function derivativeSeeds(s::Structure, functions::Vector{IR.ModelicaFunction};
+                         constants::Set{Symbol} = Set{Symbol}())::Seeds
   local variable = name -> begin
     local v = get(s.index, name, 0)
     v == 0 && return nothing
     local d = s.derivative[v]
+    (d == 0 && name in constants) && return ZERO
     d == 0 && throw(NotHandled("the derivative of $(name), which Pantelides' algorithm gave none"))
     return IR.CREF(s.crefs[d], IR.T_REAL())
   end

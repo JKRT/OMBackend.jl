@@ -2683,4 +2683,36 @@ end
     local at = (v::String) -> OMBackend.getVariableValues(sol, v)[end]
     @test isapprox([at("y[1]"), at("y[2]"), at("a"), at("ys[2]"), at("w")], [10.0, 20.0, 20.0, 1.8, 21.8]; rtol = 1e-9)
   end
+
+  @testset "Rotated constant currents through an inductance" begin
+    #= MSL's SMPM_CurrentSource and SMR_CurrentSource: dqToThreePhase's rotator turns the constant references
+       u = {id, iq} by the rotor angle, the result prescribes the stator currents. The plan's structure reads u as
+       constants (`u[1] = id` folded), so Pantelides' algorithm gave no derivative of u[1], and the array form refused
+       the differentiated rotator ("index reduction does not handle the derivative of u[1]"). A constant's derivative
+       is zero. v = L di/dt with i = R(t) u: v = L (-id sin t - iq cos t, id cos t - iq sin t). =#
+    local program = Modelica"""
+      model RotatedCurrent "constant currents rotated by phi = time, prescribed through an inductance"
+        parameter Real L = 0.5;
+        parameter Real id = 2;
+        parameter Real iq = 3;
+        Real phi(start = 0, fixed = true);
+        Real u[2];
+        Real i[2];
+        Real v[2];
+      equation
+        der(phi) = 1;
+        u[1] = id;
+        u[2] = iq;
+        i = {{cos(phi), -sin(phi)}, {sin(phi), cos(phi)}} * u;
+        v = L * der(i);
+      end RotatedCurrent;
+      """
+    local name::String = _translateProgram(program, "RotatedCurrent"; scalarized = false)
+    @test _arrayPathTaken(name)
+    local sol = OMBackend.simulateModel(name; tspan = (0.0, 1.0))
+    @test sol.retcode == ReturnCode.Success
+    local at = (v::String) -> OMBackend.getVariableValues(sol, v)[end]
+    local expected::Vector{Float64} = [0.5 * (-2 * sin(1.0) - 3 * cos(1.0)), 0.5 * (2 * cos(1.0) - 3 * sin(1.0))]
+    @test isapprox([at("v[1]"), at("v[2]")], expected; rtol = 1e-5)
+  end
 end
