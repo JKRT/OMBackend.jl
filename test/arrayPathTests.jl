@@ -2483,4 +2483,85 @@ end
     @test isapprox(ac, [2.0, 4.0, 2.0]; rtol = 1e-8)
     @test isapprox(sc, ac; rtol = 1e-8)
   end
+
+  @testset "An initial equation reads a parameter an initial assignment computes" begin
+    #= `c = 2*p0` is an initial assignment of parameters (an initial algorithm), `x[1] = c` an initial equation that
+       reads c: the assignment runs before the initial system. It ran after it, so the array code refused: "initial
+       equation reads c, which an initial algorithm assigns" (MSL Engine1b_analytic's `prismatic.length`, bound to
+       `rod1.rodLength(fixed = false)`, read by `positiveBranch = selectBranch(length, ...)`) =#
+    local assign = Modelica"""
+      model EarlyAssign "c = 4: x = 4 exp(-i t)"
+        parameter Real p0 = 2;
+        parameter Real c(fixed = false);
+        Real x[2](each start = 0);
+      initial equation
+        c = 2*p0;
+        x[1] = c;
+        x[2] = c;
+      equation
+        for i in 1:2 loop
+          der(x[i]) = -i*x[i];
+        end for;
+      end EarlyAssign;
+      """
+    local (sa, aa, _) = _bothWaysOf(assign, "EarlyAssign", ["x[1]", "x[2]"])
+    @test isapprox(aa, 4 .* exp.(-[1.0, 2.0]); rtol = 1e-5)
+    @test isapprox(sa, aa; rtol = 1e-5)
+    #= Engine1b's form: a Boolean parameter with fixed = false from a function of the assigned parameter (through a
+       binding) and a variable: pos = 6 > 2, x = exp(-i t) =#
+    local branch = Modelica"""
+      model EarlyBranch "L = 6 > y = 2: pos, x = exp(-i t)"
+        function pick
+          input Real L;
+          input Real y;
+          output Boolean pos;
+        algorithm
+          pos := L > y;
+        end pick;
+        parameter Real r = 3;
+        parameter Real L(fixed = false, start = 1);
+        parameter Real len = L;
+        parameter Boolean pos(fixed = false);
+        Real x[2](each start = 1, each fixed = true);
+        Real y;
+      initial equation
+        L = 2*r;
+        pos = pick(len, y);
+      equation
+        y = x[1] + x[2];
+        for i in 1:2 loop
+          der(x[i]) = if pos then -i*x[i] else i*x[i];
+        end for;
+      end EarlyBranch;
+      """
+    local (sb, ab, _) = _bothWaysOf(branch, "EarlyBranch", ["x[1]", "x[2]"])
+    @test isapprox(ab, exp.(-[1.0, 2.0]); rtol = 1e-5)
+    @test isapprox(sb, ab; rtol = 1e-5)
+  end
+
+  @testset "A parameter with fixed = false as a divisor in a torn loop" begin
+    #= a Boolean with fixed = false in a large algebraic loop (more than NEWTON_BLOCK_SIZE instances, torn), d[i] in
+       both branches as Engine1b's `distance = -k1 + (if positiveBranch then k2 else -k2)`: solving for d[i] divides by
+       `if pos then 1 else -1`, which the tearing evaluated at the translation with pos at its start, 0.0 (TypeError:
+       non-boolean used in boolean context). pos = true: d = x / 1.5, der(x) = -x =#
+    local torn = Modelica"""
+      model TornBranch "pos = x > 0: d = x / 1.5, x = exp(-t)"
+        parameter Boolean pos(fixed = false);
+        Real x(start = 1, fixed = true);
+        Real s[5];
+        Real d[5];
+      initial equation
+        pos = x > 0;
+      equation
+        for i in 1:5 loop
+          x = s[i] + (if pos then d[i] else -d[i]);
+          s[i] = 0.1 * sum(d);
+        end for;
+        der(x) = -1.5 * d[1];
+      end TornBranch;
+      """
+    local (st, at, _) = _bothWaysOf(torn, "TornBranch", ["x", "d[1]"])
+    @test isapprox(at, [exp(-1.0), exp(-1.0) / 1.5]; rtol = 1e-5)
+    @test isapprox(st, at; rtol = 1e-5)
+  end
 end

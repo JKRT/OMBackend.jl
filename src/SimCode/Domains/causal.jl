@@ -167,8 +167,8 @@ function causalSchedule!(g::Gen; keepsArrays::Bool, full::Bool, fixedMask::Vecto
   local pattern::Union{Nothing, Tuple{Vector{Int}, Vector{Int}}} = _jacobianPattern(el, matchRow, deps, g.nStates)
   local initial::InitialMatching =
     _initialMatching(g, deps, producer, fixedMask, _freeParameterDeps(g, el, matchRow, batches, producer, loops))
-  #= initial algorithms: what they assign, which initial equations may not read =#
-  local initAlgOuts::Set{String} = _initAlgAssigned(g)
+  #= initial algorithms that run after the initial system: what they assign, which initial equations may not read =#
+  local initAlgOuts::Set{String} = _initAlgAssigned(g, .!_parameterAlgorithms(g))
   for c in g.initClasses, r in accesses!(accesses!(Ref[], c.lhs), c.rhs)
     r.name in initAlgOuts && ns("initial equation reads $(r.name), which an initial algorithm assigns")
   end
@@ -296,8 +296,9 @@ end
 The initial equations as a square system (`InitialMatching`): each instance matched (augmenting paths) to a state
 element that is not fixed (`fixedMask`) and that it depends on (directly or through the algebraic unknowns: `deps` of
 their producing rows), or to an element of a free parameter it reads (directly or through the algebraic unknowns:
-`freeDeps`, `_freeParameterDeps`). An instance without one is matched to none (0: over-determined, held only if the
-others' solution satisfies it). NotSupported for a model whose dependencies were not computed (a large pattern).
+`freeDeps`, `_freeParameterDeps`; not one an initial algorithm computes before: `_initialFreeParams`). An instance
+without one is matched to none (0: over-determined, held only if the others' solution satisfies it). NotSupported
+for a model whose dependencies were not computed (a large pattern).
 """
 function _initialMatching(g::Gen, deps::Union{Nothing, Vector{Vector{Int}}}, producer::Vector{Int},
                           fixedMask::Vector{Bool}, freeDeps::Vector{Set{Tuple{String, Int}}})::InitialMatching
@@ -310,6 +311,7 @@ function _initialMatching(g::Gen, deps::Union{Nothing, Vector{Vector{Int}}}, pro
     return g.nStates + freeCol[key]
   end
   deps === nothing && ns("initialization of a model with a large dependency pattern")
+  local free::Set{String} = _initialFreeParams(g)
   #= candidate free states per initial equation instance =#
   local rows::Vector{Vector{Int}} = Vector{Int}[]
   for c in g.initClasses
@@ -319,7 +321,7 @@ function _initialMatching(g::Gen, deps::Union{Nothing, Vector{Vector{Int}}}, pro
       for r in acc
         local info::VarInfo = g.vars[r.name]
         if info.kind == :param
-          r.name in g.freeParams || continue
+          r.name in free || continue
           local pidx::Vector{Int} = Int[_evalInt(g, s, c.domain, j) for s in r.subs]
           local lin::Int = isempty(info.dims) ? 1 : LinearIndices(Tuple(info.dims))[pidx...]
           push!(cand, freeUnknown((r.name, lin)))

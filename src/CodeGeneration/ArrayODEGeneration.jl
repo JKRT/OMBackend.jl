@@ -89,7 +89,8 @@ import ...SimCode.Domains: DomainSystem, InstanceTable, EqClass, EvFn, Gen, IR, 
   Ref, Rel, SAssert, SAssign, SBreak, SCall, SFor, SIf, SPreStart, SWhen, SWhile, Slot, Stmt, TimeIR, TornBlock, VarInfo,
   WhenClass,
   AlgClass, DelaySite,
-  _blockFamilies, _callOfParameters, _condElements, _initAlgAssigned, _paramValue!, _parametersOnly, _relationSlots,
+  _blockFamilies, _callOfParameters, _condElements, _initAlgAssigned, _parameterAlgorithms, _paramValue!,
+  _parametersOnly, _relationSlots,
   _isTimeRelation, _timeRelationSlots, _continuous,
   domainSystem, ns, Schedule, causalSchedule!, ParameterBinding, parameterBindings, _bindingDeps
 
@@ -1363,11 +1364,29 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     append!(clusterPre, (g.vars[nm].offset + 1):(g.vars[nm].offset + prod(g.vars[nm].dims; init = 1)))
   end
   g.relBase = 0; g.relCount = 0
+  #= the initial algorithms in their order: those that compute parameters from parameters before the initial system
+     (`_parameterAlgorithms`, `parameterAlgorithms!`), the others after it; a refresh of the equations before an
+     early one is the next late one's =#
+  local early::BitVector = _parameterAlgorithms(g)
+  local earlyAlgs::Vector{AlgClass} = g.initAlgs[early]
+  local paramAlgOuts::Set{String} = _initAlgAssigned(g, early)
   local initAlgBody = Any[]
-  local (initAlgOrdered::Vector{AlgClass}, initAlgRefresh::BitVector) = _initAlgPlan(g)
-  for ia in initAlgOrdered
+  local paramAlgBody = Any[]
+  local (initAlgOrdered::Vector{AlgClass}, planRefresh::BitVector) = _initAlgPlan(g)
+  local initAlgRefresh::BitVector = falses(0)
+  local carried::Bool = false
+  for (k::Int, ia::AlgClass) in enumerate(initAlgOrdered)
     local blk = Expr(:block, _stmtCode(g, ia.body, 0, 0)...)
-    push!(initAlgBody, ia.nslots == 0 ? Expr(:let, :(_col = 1), blk) : _loopCode(ia.nslots, ia.domain, collect(1:size(ia.domain, 2)), blk))
+    local code = ia.nslots == 0 ? Expr(:let, :(_col = 1), blk) :
+      _loopCode(ia.nslots, ia.domain, collect(1:size(ia.domain, 2)), blk)
+    if any(e::AlgClass -> e === ia, earlyAlgs)
+      push!(paramAlgBody, code)
+      carried |= planRefresh[k]
+    else
+      push!(initAlgBody, code)
+      push!(initAlgRefresh, carried || planRefresh[k])
+      carried = false
+    end
   end
   #= Relation numbering: per class (then per when) a block of nrel x instances. =#
   local relBases = Int[]; local nRelTotal = 0
@@ -1796,6 +1815,9 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
   local initAlgWriteBack = Any[:(p.values[$(layoutOf[nm][1] + 1)] = $(g.paramSyms[nm]))
                                for nm in sort!(collect(initAlgOuts))
                                if nm in g.freeParams && haskey(layoutOf, nm) && !(g.params[nm] isa AbstractArray)]
+  local paramAlgWriteBack = Any[:(p.values[$(layoutOf[nm][1] + 1)] = $(g.paramSyms[nm]))
+                                for nm in sort!(collect(paramAlgOuts))
+                                if nm in g.freeParams && haskey(layoutOf, nm) && !(g.params[nm] isa AbstractArray)]
   #= the initial algorithms in their order; before one that reads what the equations compute from an earlier one's
      assignments (`_initAlgPlan`), the equations again, with the parameters assigned so far =#
   local initAlgCode = Any[]
@@ -2391,6 +2413,23 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       return nothing
     end
 
+    #= The initial algorithms that compute parameters from parameters (`_parameterAlgorithms`), once at the start,
+       before the initial system that reads them. =#
+    function parameterAlgorithms!(u, p, t)
+      $(paramLocals...)
+      local z = nothing; local mode = true; local fire = false; local _fired = false
+      p.checking[1] = true
+      try
+        @inbounds begin
+          $(paramAlgBody...)
+        end
+        $(paramAlgWriteBack...)
+      finally
+        p.checking[1] = false
+      end
+      return nothing
+    end
+
     #= The initial algorithms, once at the start (asserts checked); the variables they read that the equations
        compute, from the equations at the initial state (evaluated again where an earlier algorithm's assignments
        reach them). =#
@@ -2891,6 +2930,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
         parameterStarts!(u0, p)
         p.upre .= u0; p.ureinit .= u0
       end
+      $(isempty(paramAlgBody) ? nothing : :(parameterAlgorithms!(u0, p, tspan[1])))
       length(INIT_ROWS) > 0 && (u0 = initialize(u0, p, tspan[1]))
       isempty(INIT_REDUNDANT) || checkRedundantInitial(u0, p, tspan[1])
       $(isempty(initAlgBody) ? nothing : :(initialAlgorithms!(u0, p, tspan[1])))

@@ -801,8 +801,8 @@ function _aliasTerms(c::EqClass)::Union{Nothing, Tuple{Ref, Ref, Bool}}
   return (x, y, n1 == n2)
 end
 
-"The variables the initial algorithms assign."
-function _initAlgAssigned(g::Gen)::Set{String}
+"The variables the initial algorithms assign (`which`: those of the algorithms it marks)."
+function _initAlgAssigned(g::Gen, which::BitVector = trues(length(g.initAlgs)))::Set{String}
   local names::Set{String} = Set{String}()
   local visit!::Function = function (stmts::Vector{Stmt})
     for st in stmts
@@ -811,9 +811,70 @@ function _initAlgAssigned(g::Gen)::Set{String}
       (st isa SFor || st isa SWhile) && visit!(st.body)
     end
   end
-  foreach(a::AlgClass -> visit!(a.body), g.initAlgs)
+  for (k::Int, a::AlgClass) in enumerate(g.initAlgs)
+    which[k] && visit!(a.body)
+  end
   return names
 end
+
+"""
+    _parameterAlgorithms(g) -> BitVector
+
+The initial algorithms that compute parameters from parameters: they assign parameters only and read literals,
+iterators and parameters, each parameter with fixed = false among them one such an algorithm assigns. They run before
+the initial system, which reads what they assign (MSL Engine1b_analytic: `rodLength = length(rRod_ia)`, `length =
+rodLength`, then the initial equation `positiveBranch = selectBranch(length, ...)`). The others run after it.
+"""
+function _parameterAlgorithms(g::Gen)::BitVector
+  local early::BitVector = falses(length(g.initAlgs))
+  local isParam::Function = (r::Ref) -> g.vars[r.name].kind == :param && !r.der
+  local reads::Vector{Vector{Ref}} = Vector{Ref}[Ref[] for _ in g.initAlgs]
+  local exp!::Function = (acc::Vector{Ref}, x::IR) -> begin
+    if x isa Ref
+      push!(acc, x)
+      foreach(s::IR -> exp!(acc, s), x.subs)
+    elseif x isa Rel
+      exp!(acc, x.lhs); exp!(acc, x.rhs)
+    elseif x isa Op
+      x.op in (:sample, :initial) && return false
+      all(a::IR -> exp!(acc, a), x.args) || return false
+    elseif !(x isa Lit || x isa Slot)
+      return false
+    end
+    return true
+  end
+  local stmts!::Function = (acc::Vector{Ref}, body::Vector{Stmt}) -> all(body) do st::Stmt
+    if st isa SAssign
+      isParam(st.target) && all(s::IR -> exp!(acc, s), st.target.subs) && exp!(acc, st.value)
+    elseif st isa SIf
+      all(b::Tuple{IR, Vector{Stmt}} -> exp!(acc, b[1]) && stmts!(acc, b[2]), st.branches)
+    elseif st isa SFor
+      stmts!(acc, st.body)
+    else
+      false
+    end
+  end
+  local candidate::BitVector = BitVector([stmts!(reads[k], a.body) && all(isParam, reads[k])
+                                          for (k::Int, a::AlgClass) in enumerate(g.initAlgs)])
+  #= a parameter with fixed = false it reads: assigned by such an algorithm (a fixed point, from all candidates) =#
+  early .= candidate
+  local changed::Bool = true
+  while changed
+    local known::Set{String} = _initAlgAssigned(g, early)
+    local next::BitVector = BitVector([early[k] && all(r::Ref -> !(r.name in g.freeParams) || r.name in known, reads[k])
+                                       for k in eachindex(early)])
+    changed = next != early
+    early = next
+  end
+  return early
+end
+
+"""
+The parameters with fixed = false the initial system solves for: those the parameter algorithms
+(`_parameterAlgorithms`) do not compute before it.
+"""
+_initialFreeParams(g::Gen)::Set{String} =
+  setdiff(Set{String}(g.freeParams), _initAlgAssigned(g, _parameterAlgorithms(g)))
 
 "The variables algorithms (also initial ones) and when-equations assign."
 function _assignedNames(g::Gen)::Set{String}
@@ -1747,10 +1808,13 @@ end
 
 """
 Whether the divisors of an explicit solve (`_explicitDivisors`) are all nonzero at the instance column `col` of the
-class `c` (with the parameters' values; one that cannot be evaluated counts as zero).
+class `c` (with the parameters' values; one that cannot be evaluated counts as zero, as one that reads a parameter
+with fixed = false: the initialization computes it, MSL PrismaticWithLengthConstraint's `if positiveBranch then k2
+else -k2`).
 """
 function _nonzeroDivisors(g::Gen, divisors::Vector{IR}, c::EqClass, col::Int)::Bool
   for d in divisors
+    any(r::Ref -> r.name in g.freeParams, accesses!(Ref[], d)) && return false
     local value::Any = try
       _evalStatic(g, d, c.domain, col; structural = false)
     catch err
@@ -2122,13 +2186,14 @@ function _freeParameterDeps(g::Gen, el::InstanceTable, matchRow::Vector{Int},
   local N::Int = length(el.class)
   local deps::Vector{Set{Tuple{String, Int}}} = [Set{Tuple{String, Int}}() for _ in 1:N]
   isempty(g.freeParams) && return deps
+  local free::Set{String} = _initialFreeParams(g)
   local done::BitVector = falses(N)
   #= the free parameter elements an instance reads itself =#
   local own::Function = (r::Int, s::Set{Tuple{String, Int}}) -> begin
     el.class[r] > 0 || return s
     local c::EqClass = g.classes[el.class[r]]
     for a::Ref in accesses!(accesses!(Ref[], c.lhs), c.rhs)
-      a.name in g.freeParams || continue
+      a.name in free || continue
       local info::VarInfo = g.vars[a.name]
       local idx::Vector{Int} = Int[_evalInt(g, x, c.domain, el.col[r]) for x in a.subs]
       push!(s, (a.name, isempty(info.dims) ? 1 : LinearIndices(Tuple(info.dims))[idx...]))
