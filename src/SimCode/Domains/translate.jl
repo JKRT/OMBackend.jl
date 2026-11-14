@@ -1416,8 +1416,8 @@ end
 _isReference(e::SC.Exp)::Bool = e isa Union{SC.EXP_CREF, SC.DER} || (e isa SC.ASUB && e.exp isa Union{SC.EXP_CREF, SC.DER})
 
 """
-The elements (row-major) of an array variable referred to as a whole, `v` or `pre(v)`; nothing for another
-expression.
+The elements (row-major) of an array variable referred to as a whole, `v` or `pre(v)` (a call or `SC.PRE`); nothing
+for another expression.
 """
 function _wholeArrayElements(g::Gen, e::SC.Exp)::Union{Nothing, Vector{SC.Exp}}
   if e isa SC.CALL && e.kind == SC.CALL_BUILTIN && e.name === :pre && length(e.args) == 1
@@ -1425,6 +1425,14 @@ function _wholeArrayElements(g::Gen, e::SC.Exp)::Union{Nothing, Vector{SC.Exp}}
     inner === nothing && return nothing
     local preType::SC.SType = e.ty isa SC.TYPE_ARRAY ? e.ty.elementType : e.ty
     return SC.Exp[SC.CALL(e.name, SC.Exp[x], preType, e.kind) for x in inner]
+  end
+  #= pre() of an array variable as a whole (a clocked partition's `previous(u)`, `sample(u)` at the tick) =#
+  if e isa SC.PRE && isempty(e.cref.subs) && e.ty isa SC.TYPE_ARRAY
+    local preInfo::Union{Nothing, VarInfo} = get(g.vars, String(e.cref.sym), nothing)
+    (preInfo === nothing || isempty(preInfo.dims)) && return nothing
+    local preElementType::SC.SType = (e.ty::SC.TYPE_ARRAY).elementType
+    return SC.Exp[SC.PRE(SC.SimCref(e.cref.sym, Int[t...], e.cref.ref), preElementType)
+                  for t in _elementSubscripts(preInfo.dims)]
   end
   (e isa SC.EXP_CREF && isempty(e.cref.subs) && e.ty isa SC.TYPE_ARRAY) || return nothing
   local info::Union{Nothing, VarInfo} = get(g.vars, String(e.cref.sym), nothing)
@@ -1490,6 +1498,8 @@ function _addWhen!(g::Gen, eq::SC.WHEN_EQUATION, iterNames::Vector{String}, idom
       if st isa SC.ASSIGN && st.left isa SC.TUPLE && _isFunctionCall(g, st.right)
         #= (r, state) = f(pre(state)): the call once, each target from its output (Buildings.Occupants' random numbers) =#
         append!(body, _whenTupleAssignments(g, st.left, toIR(g, st.right, ctx), _expType(st.right), ctx))
+      elseif st isa SC.ASSIGN && _wholeArrayElements(g, st.left) !== nothing
+        append!(body, _wholeArrayAssignments(g, st, ctx))
       elseif st isa SC.ASSIGN
         _isReference(st.left) || ns("a when-statement assigning $(_str(st.left))")
         local target::IR = toIR(g, st.left, ctx)
@@ -1515,6 +1525,27 @@ function _addWhen!(g::Gen, eq::SC.WHEN_EQUATION, iterNames::Vector{String}, idom
   local cond::IR = length(conds) == 1 ? conds[1] : Op(:elsewhen, conds)
   push!(g.whens, WhenClass(cond, body, starts, length(iterNames), idom, ctx.nrel[], ctx.nsam[], _str(eq), eq.attr.everyEvent))
   return nothing
+end
+
+"""
+A when body's assignment to an array variable as a whole, element by element: `y := u` (MSL Clocked's
+AssignClockVectorized, its clocked when-clause lowered to a when-equation) `y[1] := u[1]; y[2] := u[2]`. The value an
+array variable as a whole or pre() of one (`_wholeArrayElements`), or an array literal (UpSample2's `FIR1.a :=
+{1.0, 1.0, 1.0}`), of as many elements; both row-major.
+"""
+function _wholeArrayAssignments(g::Gen, st::SC.ASSIGN, ctx::Ctx)::Vector{Tuple{Symbol, Ref, IR}}
+  local targets::Vector{SC.Exp} = something(_wholeArrayElements(g, st.left))
+  local values::Union{Nothing, Vector{SC.Exp}} =
+    st.right isa SC.ARRAY_EXP ? _rowMajorElements(st.right) : _wholeArrayElements(g, st.right)
+  (values === nothing || length(values) != length(targets)) &&
+    ns("a when-statement assigning the array $(_str(st.left)) the value $(_str(st.right))")
+  local out::Vector{Tuple{Symbol, Ref, IR}} = Tuple{Symbol, Ref, IR}[]
+  for (t::SC.Exp, v::SC.Exp) in zip(targets, values)
+    local target::IR = toIR(g, t, ctx)
+    (target isa Ref && g.vars[target.name].kind == :discrete) || ns("when assigns a non-discrete variable: $(_str(t))")
+    push!(out, (:assign, target, toIR(g, v, ctx)))
+  end
+  return out
 end
 
 """

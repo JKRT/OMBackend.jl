@@ -2648,4 +2648,39 @@ end
     @test sol.retcode == ReturnCode.Success
     @test isapprox(OMBackend.getVariableValues(sol, "x")[end], 6.5; rtol = 1e-6)
   end
+
+  @testset "A clocked partition of arrays read by their elements" begin
+    #= MSL Clocked's AssignClockVectorized, SampleVectorizedAndClocked, Sample2, UpSample with the arrays kept: an
+       element reference `y[2]` (no variable of that name) did not tie its equation to the array's partition ("a
+       clocked partition whose clock cannot be inferred"); the elements' equations `u[1] = ...`, `u[2] = ...` were
+       matched to whole variables ("a clocked equation that is not an assignment of one of its partition's
+       variables"); the when body's `y := u` and `ys := pre({time, 2 time})` assigned arrays as a whole ("the array
+       y as a whole in an equation of scalars"). Ticks at 0, 0.1, ..., 0.9: y[1] = 10, y[2] = a = 20, ys[2] = 1.8,
+       w = 21.8 (OpenModelica 1.27.1's values) =#
+    local program = Modelica"""
+      model ClockedVector "a clocked when-clause over arrays, elements read by equations; Clock(0.1)"
+        Clock c = Clock(0.1);
+        Real u[2];
+        Real y[2](each start = 0);
+        Real ys[2];
+        Real a;
+        Real w;
+      equation
+        when c then
+          y = u;
+        end when;
+        u[1] = previous(y[1]) + 1;
+        u[2] = 2 * u[1];
+        a = y[2];
+        ys = sample({time, 2 * time}, c);
+        w = hold(a) + hold(ys[2]);
+      end ClockedVector;
+      """
+    local name::String = _translateProgram(program, "ClockedVector"; scalarized = false)
+    @test _arrayPathTaken(name)
+    local sol = OMBackend.simulateModel(name; tspan = (0.0, 0.95))
+    @test sol.retcode == ReturnCode.Success
+    local at = (v::String) -> OMBackend.getVariableValues(sol, v)[end]
+    @test isapprox([at("y[1]"), at("y[2]"), at("a"), at("ys[2]"), at("w")], [10.0, 20.0, 20.0, 1.8, 21.8]; rtol = 1e-9)
+  end
 end
