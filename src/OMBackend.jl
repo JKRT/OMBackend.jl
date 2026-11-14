@@ -66,4 +66,6 @@ include("backendAPI.jl")
 _collectSourceModules!(@__MODULE__)
 #= Precompile workload: warm shared MTK/OrdinaryDiffEq build+solve instances. =#
 include("precompile.jl")
+"The logging switches from the loading process's environment (`readLoggingSwitches!`), not the precompile cache's."
+__init__() = readLoggingSwitches!()
 end #=OMBackend=#
