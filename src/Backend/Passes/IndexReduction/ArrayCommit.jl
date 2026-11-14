@@ -992,6 +992,30 @@ function commitArrays!(model::IR.Model, partition::IR.Partition, c::ArrayCommit)
 end
 
 """
+    exposeArrayLinearConstraints!(model, view) -> Bool
+
+`exposeLinearConstraints!` for an arrays-kept model: the hidden linear constraints of its element view `view`
+(`linearConstraints`) written into `model`, each in place of the equation it combines, where that one is a scalar
+equation of `model` (the constraint's elements as references into their arrays: `arrayEquation`). Whether one was
+written. A star point of a polyphase winding that is not grounded: its current balance and a zero-sequence inductor's
+`i0 = sum(i) / m` give `i0 = 0`; as written, of index 1 with i0 a state, the algebraic loop of the winding's voltages
+was singular (MSL FundamentalWave's polyphase machines: "the initialization cannot hold"). A constraint in place of
+an element of a for- or array equation is left: one element of an array equation cannot be replaced in array form.
+"""
+function exposeArrayLinearConstraints!(model::IR.Model, view::Scalarized)::Bool
+  envSwitch("OMBACKEND_LINEAR_CONSTRAINTS") || return false
+  local equations::Vector{IR.Equation} = model.continuous[1].equations
+  local written::Bool = false
+  for (i::Int, constraint::IR.SCALAR_EQUATION) in linearConstraints(view.model, view.model.continuous[1])
+    local origin::EquationOrigin = view.origins[i]
+    (isempty(origin.path) && isempty(origin.element) && equations[origin.equation] isa IR.SCALAR_EQUATION) || continue
+    equations[origin.equation] = arrayEquation(constraint, view.elements, model.variables)
+    written = true
+  end
+  return written
+end
+
+"""
     reduceIndexArrays!(model) -> Bool
 
 Index reduction of an arrays-kept model in array form: planned on its element view (`scalarizeArrays`, `knownPlan`),
@@ -1010,6 +1034,7 @@ function reduceIndexArrays!(model::IR.Model; arrays::Bool = true)::Bool
   local view::Scalarized = scalarizeArrays(model)
   #= the equations as the plan's structure reads them (the terms of parameters known as zero) =#
   dropKnownZeroTerms!(model, view) && (view = scalarizeArrays(model))
+  exposeArrayLinearConstraints!(model, view) && (view = scalarizeArrays(model))
   local partition::IR.Partition = view.model.continuous[1]
   local written::Plan = plan(view.model, partition; indexOne = true)
   #= the array form of the plan as written first: a plan it does not take is refused before the simulation code's

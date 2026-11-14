@@ -2400,4 +2400,35 @@ end
     @test isapprox(as, [0.5 * exp(-0.1), 313.15, 2 * 313.15]; rtol = 1e-6)
     @test isapprox(ss, as; rtol = 1e-6)
   end
+
+  @testset "A hidden linear constraint through sum() of an array" begin
+    #= a zero-sequence inductor (`3 i0 = sum(i)`, v0 = L0 der(i0)) on a star point that is not grounded (sum(i) = 0):
+       i0 = 0, no state. The element view writes `sum(i)` as a call the linear rows did not read: of index 1 with i0 a
+       state, the loop of the voltages singular (MSL FundamentalWave's polyphase machines). OpenModelica differentiates
+       the constraint =#
+    local zero = Modelica"""
+      model ZeroSequence "u = k t, vs = mean(u) = 2 t, i = (u - vs) / R: x = {-1/2, 0}"
+        parameter Real R = 1;
+        parameter Real L0 = 0.01;
+        Real i[3];
+        Real i0;
+        Real v0;
+        Real vs;
+        Real x[2](each start = 0, each fixed = true);
+      equation
+        for k in 1:3 loop
+          R * i[k] + v0 = k * time - vs;
+        end for;
+        3 * i0 = sum(i);
+        v0 = L0 * der(i0);
+        sum(i) = 0;
+        for k in 1:2 loop
+          der(x[k]) = i[k];
+        end for;
+      end ZeroSequence;
+      """
+    local (sz, az, _) = _bothWaysOf(zero, "ZeroSequence", ["x[1]", "x[2]", "i0"])
+    @test isapprox(az, [-0.5, 0.0, 0.0]; atol = 1e-6)
+    @test isapprox(sz, az; atol = 1e-6)
+  end
 end
