@@ -1764,6 +1764,63 @@ function _stmtIR(g::Gen, st::SC.Statement, ctx::Ctx)::Stmt
 end
 
 """
+The if-equation `eq` on a variable condition with its branches in the form `_ifAssigned` and `_ifEquationCount` take
+(`_branchEquations`), its nested if-equations' too.
+"""
+_branchForm(eq::SC.INLINE_IF_EQUATION)::SC.INLINE_IF_EQUATION =
+  SC.INLINE_IF_EQUATION(eq.conditions, Vector{SC.Equation}[_branchEquations(b) for b in eq.branchesTrue],
+                        _branchEquations(eq.branchElse), eq.source, eq.attr)
+
+"""
+The equations of a branch of an if-equation on a variable condition, element by element: a for-equation over a literal
+range unrolled, the iterator its value in each (MSL LossyGear's `if ideal then ... else for i in 1:4 loop
+interpolation_result[1, i] = ... end for`); an element of an array equality the lowering wrote `value = reference`
+(`{{1, 1, 0, 0}}[1, 1] = interpolation_result[1, 1]`) as `reference = value`. Another equation as it is.
+"""
+function _branchEquations(body::Vector{SC.Equation})::Vector{SC.Equation}
+  local out::Vector{SC.Equation} = SC.Equation[]
+  for b in body
+    local range::Union{Nothing, StepRange{Int, Int}} = b isa SC.FOR_EQUATION ? _literalRange(b.iterator.range) : nothing
+    if range !== nothing
+      local loop::SC.FOR_EQUATION = b::SC.FOR_EQUATION
+      for value in range
+        append!(out, _branchEquations(SC.Equation[_withIteratorValue(x, loop.iterator.name, value) for x in loop.body]))
+      end
+    elseif b isa SC.INLINE_IF_EQUATION
+      push!(out, _branchForm(b))
+    elseif b isa SC.EQUATION && !_isReference(b.lhs) && _isReference(b.rhs)
+      push!(out, SC.EQUATION(b.rhs, b.lhs, b.source, b.attr))
+    else
+      push!(out, b)
+    end
+  end
+  return out
+end
+
+"""
+The equation `eq` of a for-equation's body with the iterator `name` its value `value` (`_branchEquations`); a nested
+for-equation of the same iterator keeps its own in its body.
+"""
+function _withIteratorValue(eq::SC.Equation, name::Symbol, value::Int)::SC.Equation
+  local isIterator::Function = (x::SC.Exp) -> x isa SC.EXP_CREF && x.cref.sym === name && isempty(x.cref.subs)
+  local valued::Function = (e::SC.Exp) -> first(SC.traverseExpTopDown(e, (x::SC.Exp, acc::Nothing) ->
+    isIterator(x) ? (SC.ICONST(value), false, acc) : (x, true, acc), nothing))
+  local valuedAll::Function = (eqs::Vector{SC.Equation}) ->
+    SC.Equation[_withIteratorValue(x, name, value) for x in eqs]
+  if eq isa SC.EQUATION
+    return SC.EQUATION(valued(eq.lhs), valued(eq.rhs), eq.source, eq.attr)
+  elseif eq isa SC.FOR_EQUATION
+    local body::Vector{SC.Equation} = eq.iterator.name === name ? eq.body : valuedAll(eq.body)
+    return SC.FOR_EQUATION(SC.Iterator(eq.iterator.name, valued(eq.iterator.range)), body, eq.source, eq.attr)
+  elseif eq isa SC.INLINE_IF_EQUATION
+    return SC.INLINE_IF_EQUATION(SC.Exp[valued(c) for c in eq.conditions],
+                                 Vector{SC.Equation}[valuedAll(b) for b in eq.branchesTrue], valuedAll(eq.branchElse),
+                                 eq.source, eq.attr)
+  end
+  ns("if-equation on a variable condition: branch equation $(_eqText(eq)) in a for-equation")
+end
+
+"""
 The variables the branches of an if-equation on a variable condition assign, each with its left side: `v = e`, or an
 if-equation in a branch that assigns them likewise (MSL KinematicPTP's phases). The same variables in every branch
 and the else, each once; NotSupported otherwise.
@@ -1898,6 +1955,7 @@ function _addIfEquation!(g::Gen, eq::SC.INLINE_IF_EQUATION, iterNames::Vector{St
     end
     return
   end
+  eq = _branchForm(eq)
   local assigned::Union{Nothing, Dict{String, SC.Exp}} = try
     _ifAssigned(eq)
   catch err

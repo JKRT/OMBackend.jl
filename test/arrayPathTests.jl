@@ -2715,4 +2715,51 @@ end
     local expected::Vector{Float64} = [0.5 * (-2 * sin(1.0) - 3 * cos(1.0)), 0.5 * (2 * cos(1.0) - 3 * sin(1.0))]
     @test isapprox([at("v[1]"), at("v[2]")], expected; rtol = 1e-5)
   end
+
+  @testset "An if-equation on a Boolean variable with a for-equation in a branch" begin
+    #= MSL's LossyGear (LossyGearDemo1, LossyGearDemo3, ActuatorWithNoise): `if ideal then interpolation_result =
+       [1, 1, 0, 0]; ... else for i in 1:4 loop interpolation_result[1, i] = if smoothness == ... then
+       getTable1DValueNoDer(tableID, i, ...) ...`, `ideal` a Boolean variable. Three refusals: the if-expression on the
+       smoothness, lifted out of its loop, read `i` there; the Integer matrix literal's element `cat(2, {{1}}, {{1}})[1,
+       1]` was not picked ("function cat"); the branches, a for-equation and `{{1, 1}}[1, 1] = r[1, 1]`, were no
+       `v = e` ("if-equation on a variable condition: branch equation for i in 1:2 loop ..."). a = 2.5 x,
+       der(x) = -2.5 x^2: x(1) = 1 / 3.5 =#
+    local program = Modelica"""
+      function isOne "whether every element of the first row but the first is one"
+        input Real t[:, :];
+        output Boolean result = true;
+      algorithm
+        for j in 2:size(t, 2) loop
+          result := result and abs(t[1, j] - 1) < 1e-15;
+        end for;
+      end isOne;
+
+      model IdealOrTable "LossyGear's ideal or table: an if-equation on a Boolean variable"
+        parameter Real table[1, 3] = [0, 0.5, 2];
+        parameter Integer smoothness = 1;
+        Boolean ideal;
+        Real r[1, 2];
+        Real a;
+        Real x(start = 1, fixed = true);
+      equation
+        ideal = isOne(table);
+        if ideal then
+          r = [1, 1];
+          a = 1;
+        else
+          for i in 1:2 loop
+            r[1, i] = if smoothness == 1 then table[1, i + 1] * x else i * x;
+          end for;
+          a = r[1, 1] + r[1, 2];
+        end if;
+        der(x) = -a * x;
+      end IdealOrTable;
+      """
+    local name::String = _translateProgram(program, "IdealOrTable"; scalarized = false)
+    @test _arrayPathTaken(name)
+    local sol = OMBackend.simulateModel(name; tspan = (0.0, 1.0))
+    @test sol.retcode == ReturnCode.Success
+    local at = (v::String) -> OMBackend.getVariableValues(sol, v)[end]
+    @test isapprox([at("x"), at("r[1,2]"), at("a")], [1 / 3.5, 2 / 3.5, 2.5 / 3.5]; rtol = 1e-5)
+  end
 end
