@@ -110,11 +110,11 @@ The algebraic loops' roots at a time of a run (`ArrayRuntimeState.rootLog`): the
 const RootLogEntry = Tuple{Float64, Vector{Matrix{Float64}}, Vector{Vector{Float64}}}
 
 """
-    ArrayStartState(discrete, wcond, wnew, ndlog, upre, ureinit, loops, blocks, nRootLog)
+    ArrayStartState(discrete, wcond, wnew, ndlog, upre, ureinit, loops, blocks, nRootLog, nObjectLog)
 
 A problem's state after its initialization (`ArrayRuntimeState.atStart`): the discrete state (`_discreteState`), the
 when-conditions, the length of the event log, the pre() and reinit buffers of the states, the loops' roots (the
-families' and the large blocks' guesses) and the length of their log.
+families' and the large blocks' guesses) and the length of their log, the length of the external objects' call log.
 """
 struct ArrayStartState
   discrete::Tuple{Vector{Float64}, Vector{Float64}, Vector{Bool}, Vector{Float64}}
@@ -126,6 +126,7 @@ struct ArrayStartState
   loops::Vector{Matrix{Float64}}
   blocks::Vector{Vector{Float64}}
   nRootLog::Int
+  nObjectLog::Int
 end
 
 """
@@ -141,7 +142,10 @@ that ends at an event the asserts read it), the String parameters' values (`Gen.
 state just before the last event (`leftLimit`: its time and state, a reinit moved it after), the problem's state after
 its initialization (`atStart`, `ArrayStartState`: a solve of the problem starts from it again), the loops' roots at
 the start and at each accepted step (`rootLog`, `_logRoots!`: a loop with several roots, a quaternion's
-`Q * Q = 1`, is read after the run on the root the run was on at that time, `_rootsAt`).
+`Q * Q = 1`, is read after the run on the root the run was on at that time, `_rootsAt`), the calls of the when-bodies
+that read an external object (`objectLog`: time, call, instance, as the run made them) and how many of them the objects
+are at (`objectAt`): an MSL table keeps the event interval of its last `getNextTimeEvent` call, and a read of the
+solution at a time makes the calls again up to that time (`replayObjects!`).
 """
 mutable struct ArrayRuntimeState
   sampleStart::Vector{Float64}
@@ -161,11 +165,13 @@ mutable struct ArrayRuntimeState
   forced::Bool   #= the buffered relations hold a combination being tried (`_searchRelations!`) =#
   delays::DelayState   #= the histories of the delay() calls' arguments, one per instance (`delayedValue`, delays.jl) =#
   terminal::Bool   #= the terminal event, after the solve: terminal() is true (`_terminalEvent!`) =#
+  objectLog::Vector{Tuple{Float64, Int, Int}}
+  objectAt::Int
 end
 ArrayRuntimeState(nSamples::Int, strings::Vector{String}, nDelays::Int = 0) =
   ArrayRuntimeState(zeros(nSamples), zeros(nSamples), Float64[], Dict{Tuple{Int, Int, Int}, Any}(), Set{Any}(), false, false,
                     (NaN, Float64[]), nothing, (Float64[], Float64[], Bool[], Float64[]), strings, (NaN, Float64[]),
-                    nothing, RootLogEntry[], false, DelayState(nDelays), false)
+                    nothing, RootLogEntry[], false, DelayState(nDelays), false, Tuple{Float64, Int, Int}[], 0)
 
 struct ArrayModelParameters
   values::Vector{Float64}
@@ -212,7 +218,8 @@ _discreteState(p::ArrayModelParameters)::Tuple{Vector{Float64}, Vector{Float64},
 "The state of `p` after its initialization (`ArrayStartState`)."
 _startState(p::ArrayModelParameters)::ArrayStartState =
   ArrayStartState(_discreteState(p), copy(p.wcond), copy(p.wnew), length(p.dlog), copy(p.upre), copy(p.ureinit),
-                  map(copy, p.loops), Vector{Float64}[copy(b.y) for b in p.blocks], length(p.state.rootLog))
+                  map(copy, p.loops), Vector{Float64}[copy(b.y) for b in p.blocks], length(p.state.rootLog),
+                  length(p.state.objectLog))
 
 """
     _checkBlocksSolved(p)
@@ -302,6 +309,11 @@ function _restoreStart!(p::ArrayModelParameters)::Nothing
   p.d .= s.discrete[1]; p.dpre .= s.discrete[2]; p.rel .= s.discrete[3]; p.evv .= s.discrete[4]
   p.wcond .= s.wcond; p.wnew .= s.wnew; p.upre .= s.upre; p.ureinit .= s.ureinit
   resize!(p.dlog, s.ndlog)
+  #= the external objects as the initialization left them: its calls made again (before the loops' roots are
+     restored: the calls' arguments are evaluated) =#
+  resize!(p.state.objectLog, s.nObjectLog)
+  p.state.objectAt = typemax(Int)
+  Base.invokelatest(p.model.replayObjects!, s.upre, p, Inf)
   for (G, start) in zip(p.loops, s.loops)
     G .= start
   end
@@ -1533,6 +1545,9 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
   end
   #= When-equations: each instance fires when its condition becomes true. =#
   local whenBody = Any[]; local whenConds = Any[]
+  #= the when-bodies' calls that read an external object, one entry per branch that has any: its when-equation and the
+     calls (`objectCall!`, `replayObjects!`) =#
+  local objectCalls = Tuple{Int, Expr}[]
   #= sample(start, interval): per instance, code for its start and interval from the parameters,
      run after the initialization (a start may be a parameter with fixed = false that an initial
      algorithm computes: CDL Logical.Sources.Pulse) =#
@@ -1562,6 +1577,16 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     end
     local branchConds = (w.cond isa Op && w.cond.op == :elsewhen) ? w.cond.args : IR[w.cond]
     local stmtsOf = [Any[] for _ in branchConds]
+    #= per branch: the number of its object calls (0: none) and the calls =#
+    local callIds::Vector{Int} = zeros(Int, length(branchConds))
+    for b in eachindex(branchConds)
+      local reads::Vector{Any} = Any[jl(g, value) for (i, (kind, _, value)) in enumerate(w.body)
+                                     if findlast(st -> st <= i, w.starts) == b && kind != :reinit && kind != :switch &&
+                                        _hasOp(value, :object)]
+      isempty(reads) && continue
+      push!(objectCalls, (wi, Expr(:block, reads...)))
+      callIds[b] = length(objectCalls)
+    end
     for (i, (kind, target, value)) in enumerate(w.body)
       local b = findlast(st -> st <= i, w.starts)
       if kind == :call
@@ -1602,7 +1627,10 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       pos += n
     end
     for b in length(branchConds):-1:1
-      local blk = Expr(:block, stmtsOf[b]..., :(_fired = true))
+      local logged::Vector{Any} = callIds[b] == 0 ? Any[] :
+        Any[:(push!(p.state.objectLog, (Float64(t), $(callIds[b]), _col))),
+            :(p.state.objectAt = length(p.state.objectLog))]
+      local blk = Expr(:block, logged..., stmtsOf[b]..., :(_fired = true))
       #= a lifted cluster of discrete equations (`everyEvent`): wherever the discrete equations run in event mode, at
          every pass of every event and of the start's iteration (pre() the initial values), its conditions the events'
          sources =#
@@ -1611,6 +1639,15 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     end
     push!(whenConds, w.nslots == 0 ? Expr(:let, :(_col = 1), cond) : _loopCode(w.nslots, w.domain, collect(1:size(w.domain, 2)), cond))
     push!(whenBody, w.nslots == 0 ? Expr(:let, :(_col = 1), inst) : _loopCode(w.nslots, w.domain, collect(1:size(w.domain, 2)), inst))
+  end
+  #= the object calls of one logged firing: its entry `_id`, its instance `_which` =#
+  local objectCases::Vector{Any} = Any[]
+  for (id::Int, (wi::Int, calls::Expr)) in enumerate(objectCalls)
+    local w::WhenClass = g.whens[wi]
+    local one::Expr = :(if _col == _which; $calls; end)
+    local instances::Expr = w.nslots == 0 ? Expr(:let, :(_col = 1), one) :
+      _loopCode(w.nslots, w.domain, collect(1:size(w.domain, 2)), one)
+    push!(objectCases, :(if _id == $id; $instances; end))
   end
   #= the classes' sample() calls (classSampleBases), after the when-equations' =#
   for (ci, c) in enumerate(g.classes)
@@ -2005,6 +2042,37 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
         $(whenBody...)
       end
       return _fired
+    end
+
+    #= The when-bodies' calls that read an external object, made again for a read of the solution (`algebraics`) and
+       for a second solve (`_restoreStart!`): an MSL table keeps the event interval of its last `getNextTimeEvent`
+       call, after a solve the last one (a CombiTimeTable's outputs read the last segment's value at every time). Its
+       C code moves the interval forward by one at a call (an event), and starts again at a call before the last =#
+    const POSITIONS_OBJECTS = $(!isempty(objectCalls))
+    function objectCall!(du, a, u, p, t, z, mode::Bool, fire::Bool, _id::Int, _which::Int)
+      $(paramLocals...)
+      @inbounds begin
+        $(objectCases...)
+      end
+      return nothing
+    end
+
+    #= The objects as the run left them at time `tau`: the logged calls up to it made again in their order, from
+       where the objects are (`objectAt`) or, for an earlier time, from the first; each with the variables of
+       its time (the state `u` is the read's: the calls' arguments are functions of time) =#
+    function replayObjects!(u, p, tau)
+      POSITIONS_OBJECTS || return nothing
+      local log = p.state.objectLog
+      local m = searchsortedlast(log, (Float64(tau), typemax(Int), typemax(Int)))
+      local from = m >= p.state.objectAt ? p.state.objectAt + 1 : 1
+      local a = zeros($nAlg); local du = similar(u)
+      for i in from:m
+        local (ti, id, which) = log[i]
+        equations!(du, a, u, p, ti, nothing, false)
+        objectCall!(du, a, u, p, ti, nothing, false, false, id, which)
+      end
+      p.state.objectAt = m
+      return nothing
     end
 
     const ASSERTS = $(assertTexts)
@@ -2447,11 +2515,13 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
 
     #= The algebraic variables at a point (u, t) of a solution: the discrete, relation and
        event-function values of that time from the event log (after a solve p holds the final
-       ones), on a copy of the discrete state; the loops started from the run's roots of that time (_rootsAt). =#
+       ones), on a copy of the discrete state; the loops started from the run's roots of that time (_rootsAt).
+       The external objects the when-bodies call as the run left them at the log entry's time (`replayObjects!`). =#
     function algebraics(u, p, t, right::Bool = false)
       local a = similar(u, $nAlg)
       local times = first.(p.dlog)
-      local entry = isempty(times) ? vcat(p.d, Float64.(p.rel), p.evv) : p.dlog[$(_dlogIndex)(times, t, p.tend[1], right)][2]
+      local k = isempty(times) ? 0 : $(_dlogIndex)(times, t, p.tend[1], right)
+      local entry = k == 0 ? vcat(p.d, Float64.(p.rel), p.evv) : p.dlog[k][2]
       local nD = length(p.d); local nR = length(p.rel)
       local d = entry[1:nD]
       local rel = entry[(nD + 1):(nD + nR)] .!= 0
@@ -2459,6 +2529,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       local q = $(paramsType)(p.values, rel, d, copy(d), copy(p.wcond), copy(p.sampleActive),
                               [false], [false], copy(p.upre), copy(p.ureinit), copy(p.wnew), p.dlog, evv, copy(p.hyst), copy(p.tend),
                               zeros($nAlg), copy(p.aleft), p.blocks, $(_rootsAt)(p, t, right), p.state, p.model)
+      POSITIONS_OBJECTS && k > 0 && replayObjects!(u, q, times[k])
       equations!(similar(u), a, u, q, t, nothing, false)
       return a
     end

@@ -2808,6 +2808,30 @@ package ArrayPath
     der(z) = tmax;
   end TableDrive;
 
+  function timeTableNextEvent "Modelica.Blocks.Tables.Internal.getNextTimeEvent"
+    input TimeTable tableID;
+    input Real timeIn;
+    output Real nextTimeEvent;
+  external "C" nextTimeEvent = ModelicaStandardTables_CombiTimeTable_nextTimeEvent(tableID, timeIn)
+    annotation(Library = {"ModelicaStandardTables", "ModelicaIO", "ModelicaMatIO", "zlib"});
+  end timeTableNextEvent;
+
+  model TableSegments "a time table of constant segments with its time events (MSL CombiTimeTable, ConstantSegments): y = 0, 10, 2 from 0, 0.3, 0.6; x[i] = i (10 * 0.3 + 2 * 0.4) at 1"
+    parameter Real data[4, 2] = [0, 0; 0.3, 10; 0.6, 2; 1, 2];
+    parameter TimeTable tableID = TimeTable("NoName", "NoName", data, 0.0, {2}, 3, 2, 0.0, 1, false, ",", 0);
+    discrete Real nextEvent(start = 0, fixed = true);
+    Real y;
+    Real x[2](each start = 0, each fixed = true);
+  equation
+    when {time >= pre(nextEvent), initial()} then
+      nextEvent = timeTableNextEvent(tableID, time);
+    end when;
+    y = timeTableValue(tableID, 1, time, nextEvent, pre(nextEvent));
+    for i in 1:2 loop
+      der(x[i]) = i * y;
+    end for;
+  end TableSegments;
+
   function differences "two outputs, the first an array (MSL Machines' ToSpacePhasor)"
     input Real x[3];
     output Real y[2];

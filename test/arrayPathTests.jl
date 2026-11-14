@@ -2307,4 +2307,21 @@ end
     @test isapprox(as, [1.0, 2.0, 1.0e5]; rtol = 1e-5)
     @test isapprox(as, ss; rtol = 1e-6)
   end
+
+  @testset "A table's output read after the solve" begin
+    #= an MSL table keeps the event interval of its last getNextTimeEvent call: after the solve the last one, and a
+       read of the solution gave the last segment's value at every time (MSL Fluid's RoomCO2WithControls: the number
+       of people 0 all day, 42 of 606 variables off omc). A read makes the run's calls again up to its time =#
+    local name = _arrayPathTranslate("ArrayPath.TableSegments"; scalarized = false)
+    @test _arrayPathTaken(name)
+    local sol = OMBackend.simulateModel(name; tspan = (0.0, 1.0))
+    @test sol.retcode == ReturnCode.Success
+    @test isapprox(_values(sol, ["x[1]", "x[2]"]), [3.8, 7.6]; rtol = 1e-6)
+    @test [sol(t; idxs = :y) for t in (0.2, 0.45, 0.8, 0.1)] == [0.0, 10.0, 2.0, 0.0]
+    #= at the events the left and the right value =#
+    local y::Vector{Float64} = OMBackend.getVariableValues(sol, "y")
+    local steps::Vector{Tuple{Float64, Float64, Float64}} =
+      [(sol.t[i], y[i - 1], y[i]) for i in 2:length(sol.t) if sol.t[i] == sol.t[i - 1] && sol.t[i] > 0]
+    @test [(round(t; digits = 6), l, r) for (t, l, r) in steps] == [(0.3, 0.0, 10.0), (0.6, 10.0, 2.0)]
+  end
 end
