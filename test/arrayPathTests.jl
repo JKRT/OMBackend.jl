@@ -2455,4 +2455,32 @@ end
     @test isapprox(af, [0.5, 0.5, 0.0]; atol = 1e-8)
     @test isapprox(sf, af; atol = 1e-8)
   end
+
+  @testset "An if-equation on a parameter with fixed = false" begin
+    #= `if big then`, big from an initial algorithm: its value is the initialization's, so the condition is evaluated
+       when the model runs. The array code evaluated it at the translation (a parameter's condition) and refused:
+       "parameter big with fixed = false used structurally" (MSL DCPowerSupply's `if cp then`) =#
+    local cond = Modelica"""
+      model FreeCondition "big = P0 > 1 = true: y = 2, x = {2, 4} at t = 1"
+        parameter Real P0 = 2;
+        parameter Boolean big(fixed = false);
+        Real y;
+        Real x[2](each start = 0, each fixed = true);
+      initial algorithm
+        big := P0 > 1;
+      equation
+        if big then
+          y = 2;
+        else
+          y = 1;
+        end if;
+        for i in 1:2 loop
+          der(x[i]) = i * y;
+        end for;
+      end FreeCondition;
+      """
+    local (sc, ac, _) = _bothWaysOf(cond, "FreeCondition", ["x[1]", "x[2]", "y"])
+    @test isapprox(ac, [2.0, 4.0, 2.0]; rtol = 1e-8)
+    @test isapprox(sc, ac; rtol = 1e-8)
+  end
 end

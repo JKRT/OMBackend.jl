@@ -452,11 +452,14 @@ end
 
 """
 Whether a condition depends on loop indices and parameters only, by what `_evalStatic` evaluates (no call of a
-Modelica function, `:fcall`: such a condition is evaluated when the model runs).
+Modelica function, `:fcall`: such a condition is evaluated when the model runs). Not a parameter with fixed = false:
+the initialization computes it, so a condition on it is evaluated when the model runs (MSL DCPowerSupply's
+`if cp then`, cp from an initial algorithm).
 """
 _isStatic(g::Gen, x::IR)::Bool =
   x isa Lit || x isa Slot ||
-  (x isa Ref && !x.der && g.vars[x.name].kind == :param && all(s -> _isStatic(g, s), x.subs)) ||
+  (x isa Ref && !x.der && g.vars[x.name].kind == :param && !(x.name in g.freeParams) &&
+   all(s -> _isStatic(g, s), x.subs)) ||
   (x isa Op && !(x.op in (:initial, :sample, :fcall)) && all(a -> _isStatic(g, a), x.args))
 
 """
