@@ -678,6 +678,27 @@ end
     @test isapprox(varied.x, [5.0, 0.0]; atol = 1e-8)
   end
 
+  @testset "A large loop through a limiter of high gain: differences over the unknowns' own size" begin
+    #= a current of 1.6 mA into a limiter of gain 1e9 (an op-amp's V0 times a resistance), its solution 0.1 below
+       the limit of 10: the standard difference's step, sqrt(eps) of at least 1, moves the limiter's input by 15 and
+       crosses the limit, its derivative 2/3 of the true one. Newton's steps then leave the linear window, and the
+       damped ones fall short (MSL DifferentialAmplifier Unstable at 8 ms). `blockSolve!` then takes differences
+       over sqrt(eps) of each unknown's own size (`_differenceStep`) =#
+    local generation::Module = OMBackend.CodeGeneration.ArrayODEGen
+    local limiter! = (res, y, du, a, u, p, t, z, mode, fire) ->
+      (res[1] = clamp(1.0e9 * (y[1] - 1.6e-3), -10.0, 10.0) - y[2]; res[2] = y[2] - 9.9; a .= y; nothing)
+    local arguments::Tuple = (zeros(1), zeros(2), zeros(1), nothing, 0.0, nothing, false, false)
+    for kind in (:full, :coarse, :damped)
+      local plain = generation.BlockSolver(generation._SPARSE.sparse(ones(2, 2)), [1, 2], [1.6e-3, 0.0])
+      plain.x .= plain.y
+      @test !(generation._blockAttempt!(plain, limiter!, arguments, kind) && !plain.rankDeficient)
+    end
+    local solver = generation.BlockSolver(generation._SPARSE.sparse(ones(2, 2)), [1, 2], [1.6e-3, 0.0])
+    generation.blockSolve!(solver, limiter!, zeros(1), zeros(2), zeros(1), nothing, 0.0, nothing, false, false)
+    @test solver.failures == 0
+    @test isapprox(solver.x, [1.6e-3 + 9.9e-9, 9.9]; rtol = 1e-12)
+  end
+
   @testset "A function inlined into an equation: its relations generate no events" begin
     #= `dp = squareBothWays(q, 1, 4)`, inlined `if q >= 0 then q^2 else -4 q^2`, in the loop of q: as an event's
        relation its branch was held during the loop's solve (the residual kinked at zero flow: MSL AST_BatchPlant
