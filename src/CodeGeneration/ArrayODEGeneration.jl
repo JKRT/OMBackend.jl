@@ -90,7 +90,7 @@ import ...SimCode.Domains: DomainSystem, InstanceTable, EqClass, EvFn, Gen, IR, 
   WhenClass,
   AlgClass, DelaySite,
   _blockFamilies, _callOfParameters, _condElements, _initAlgAssigned, _parameterAlgorithms, _paramValue!,
-  _parametersOnly, _relationSlots,
+  _parametersOnly, _relationSlots, _relationInstances,
   _isTimeRelation, _timeRelationSlots, _continuous,
   domainSystem, ns, Schedule, causalSchedule!, ParameterBinding, parameterBindings, _bindingDeps
 
@@ -192,6 +192,7 @@ struct ArrayModelParameters
   evv::Vector{Float64}         #= values of the event-generating functions (_evfn), by relation number =#
   hyst::Vector{Float64}        #= [H]: the relations' hysteresis (_rel); 0 (literal relations) while initializing =#
   tend::Vector{Float64}        #= [stop time]: a solution read there gives the final values (_dlogIndex) =#
+  homotopy::Vector{Float64}    #= [λ] of homotopy(): 1 (actual) but in the continuation (homotopyStart!) =#
   abuf::Vector{Float64}        #= the algebraic variables of a right-hand side evaluated on Float64 (RHS!): no buffer per call =#
   aleft::Vector{Float64}       #= the algebraic variables before the event's sweep: pre() of one (its left limit) =#
   blocks::Vector{BlockSolver}  #= the large algebraic loops' solvers (blockSolve!), in the order of the schedule =#
@@ -873,8 +874,12 @@ each by Newton's method on the residuals of its instances (lhs - rhs, by the tem
 columns), the unknowns set in place (a state derivative in du, an algebraic variable in a), the Jacobian by forward
 differences; the last solution kept as the next guess (in Float64 solves); residuals or a Jacobian not finite, or a
 singular Jacobian, make the unknowns NaN (the solver rejects the step); a solve that does not converge is made again
-with damped steps, from the last solution and then from the start values. Not relations in a loop (events), nor a
-discrete unknown.
+with damped steps, from the last solution and then from the start values. Not a discrete unknown.
+Relations in the loop hold their values in Newton's iterations (MLS 8.5: a relation changes at events only; `z`,
+`mode` shadowed: no crossing written, no relation changed); the residuals once more at the solution write the crossings
+and, at an event, the relations, whose change the event iteration sweeps again (`_settle!`; a combination of relations
+`_searchRelations!` tries is solved with, not replaced by the relations at the point a solve starts from). MSL's
+FluxTubes hysteresis, `\$DER.ifEq_tmp1 = if core.Hstat < -650.0 then ...`; a comparator in an op-amp's loop.
 """
 function _loopFamilyCode(g::Gen, f::Int, template::Vector{Tuple{Int, Int}}, blocks::Vector{Vector{Int}}, el::InstanceTable,
                          matchRow::Vector{Int}, a0::Vector{Float64}, relBases::Vector{Int})::Tuple{Vector{Any}, Expr}
@@ -890,16 +895,18 @@ function _loopFamilyCode(g::Gen, f::Int, template::Vector{Tuple{Int, Int}}, bloc
     guess[j, m] = u <= nS ? 0.0 : a0[u - nS]
   end
   local (C::Symbol, I::Symbol, G::Symbol) = (Symbol("LOOP_COLS_", f), Symbol("LOOP_IDS_", f), Symbol("LOOP_GUESS_", f))
-  local residuals::Function = function (rv::Symbol)
+  local hasRelations::Bool = any(((ci, _),) -> g.classes[ci].nrel > 0, template)
+  local residuals::Function = function (rv::Symbol, held::Bool = true)
     local parts::Vector{Any} = Any[]
     for (j, (ci, _)) in enumerate(template)
       local c::EqClass = g.classes[ci]
-      c.nrel == 0 || ns("relations in an algebraic loop: $(c.text)")
       g.relBase = relBases[ci]; g.relCount = c.nrel
       local sets::Vector{Any} = Any[:(_col = $C[$j, _m]); Any[:($(Symbol("s", q)) = $(c.domain)[$q, _col]) for q in 1:c.nslots]]
       push!(parts, Expr(:let, Expr(:block, sets...), :($rv[$j] = $(jl(g, c.lhs)) - $(jl(g, c.rhs)))))
     end
-    return Expr(:block, parts...)
+    local block::Expr = Expr(:block, parts...)
+    #= in Newton's iterations the relations hold their values: no crossing written, none changed =#
+    return (held && hasRelations) ? Expr(:let, Expr(:block, :(z = nothing), :(mode = false)), block) : block
   end
   local set::Expr = :(for _j in 1:$k
     local _id::Int = $I[_j, _m]
@@ -996,6 +1003,8 @@ function _loopFamilyCode(g::Gen, f::Int, template::Vector{Tuple{Int, Int}}, bloc
         end
       end
       $set
+      #= the relations at the solution: their crossings, at an event their values =#
+      $(hasRelations ? residuals(:_r, false) : nothing)
       #= the solution as the next guess: not a failed solve's NaN, nor the last iterate of a solve that did not
          converge (unknowns that hold no solution, as a state set's selection read with the other side's states: the
          next solve went to another root from there) =#
@@ -1151,6 +1160,9 @@ function jl(g::Gen, x::IR)
     x.op == :object && return Symbol("OBJECT_", x.args[1].v)
     x.op == :seq && return Expr(:block, args...)
     x.op == :noEvent && return args[1]
+    #= homotopy(actual, simplified): actual at λ = 1, the blend in the continuation (`homotopyStart!`) =#
+    x.op == :homotopy &&
+      return :(let _λ = p.homotopy[1]; _λ >= 1 ? $(args[1]) : _λ * $(args[1]) + (1 - _λ) * $(args[2]) end)
     x.op == :arrayval && return length(args[1]) == 1 ? Expr(:vect, args[2:end]...) :
                                 :(reshape($(Expr(:vect, args[2:end]...)), $(args[1]...)))
     x.op == :Int && return :(round(Int, $(args[1])))
@@ -1961,10 +1973,13 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     const N_RELATIONS = $(nRelTotal)
     #= the relation numbering's relations (not event-generating functions' crossing functions) =#
     const RELATION_SLOT = $(_relationSlots(g, nRelTotal, relBases, whenRelBases, algRelBases))
+    #= per slot the first slot of its equation instance: the relations of one if-expression (`_searchRelations!`) =#
+    const RELATION_INSTANCE = $(_relationInstances(g, nRelTotal, relBases, whenRelBases, algRelBases))
     #= the slots of relations of time and what changes only at events (`_timeRel`): their crossings are time events =#
     const TIME_SLOT = $(_timeRelationSlots(g, nRelTotal, relBases, whenRelBases, algRelBases))
     const USES_INITIAL = $(g.usesInitial)
     const USES_LEFT = $(g.usesLeft)
+    const USES_HOMOTOPY = $(g.usesHomotopy)
     #= the histories of the delay() calls' instances (`delayNow!`) =#
     const N_DELAYS = $(nDelays)
     #= the sample() instances (their starts and intervals each problem's, set by sampleSchedule! after the initialization) =#
@@ -2555,6 +2570,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       local evv = entry[(nD + nR + 1):end]
       local q = $(paramsType)(p.values, rel, d, copy(d), copy(p.wcond), copy(p.sampleActive),
                               [false], [false], copy(p.upre), copy(p.ureinit), copy(p.wnew), p.dlog, evv, copy(p.hyst), copy(p.tend),
+                              copy(p.homotopy),
                               zeros($nAlg), copy(p.aleft), p.blocks, $(_rootsAt)(p, t, right), p.state, p.model)
       POSITIONS_OBJECTS && k > 0 && replayObjects!(u, q, times[k])
       equations!(similar(u), a, u, q, t, nothing, false)
@@ -2580,7 +2596,8 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       #= relations that keep changing (a mixed system that cycles: a bridge's commutation): the combination of their
          values that gives itself back, then the sweeps from it =#
       searched && return false
-      $(_searchRelations!)(equations!, whens!, du, a, u, p, t, fire, rel0, d0, flips) || return false
+      $(_searchRelations!)(equations!, whens!, du, a, u, p, t, fire, rel0, d0, flips, RELATION_INSTANCE,
+                           RELATION_SLOT) || return false
       return _settle!(du, a, u, p, t, fire, true)
     end
 
@@ -2594,6 +2611,32 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       p.ureinit .= u
       p.wcond .= p.wnew
       return true
+    end
+
+    #= homotopy() (MLS 3.7.4.4), as OpenModelica's default and the scalarized route (`_homotopyContinuation`): the
+       start solved at λ = 0 (the simplified expressions), then from each solution at λ = 1/3 and 2/3, the relations
+       and the loops' guesses at each step's solution; the initialization at λ = 1 follows from the last. MSL's
+       IdealizedOpAmpLimited (SignalGenerator): from the start values the limiter's loop went to the unstable linear
+       solution, all values 0 (OpenModelica: saturated). A step that fails: the initialization from the start values. =#
+    function homotopyStart!(u0, p, t)
+      local u = copy(u0)
+      local before = $(_discreteState)(p); local wcond = copy(p.wcond); local guesses = deepcopy(p.loops)
+      try
+        for λ in (0.0, 1 / 3, 2 / 3)
+          p.homotopy[1] = λ
+          length(INIT_ROWS) > 0 && (u = initialize(u, p, t))
+          startSolution!(u, p, t, false)
+        end
+      catch e
+        $(_OMBACKEND._fallback)(e, :arrayHomotopyContinuation, impact = :result)
+        u = copy(u0)
+        p.d .= before[1]; p.dpre .= before[2]; p.rel .= before[3]; p.evv .= before[4]
+        p.wcond .= wcond
+        foreach(((g, g0),) -> copyto!(g, g0), zip(p.loops, guesses))
+      finally
+        p.homotopy[1] = 1.0
+      end
+      return u
     end
 
     #= Event iteration at (u, t), in sweeps as OpenModelica's updateDiscreteSystem (and the MTK
@@ -2915,7 +2958,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
                            zeros(Bool, N_RELATIONS), copy(D0), copy(D0), zeros(Bool, N_WHENS),
                            zeros(Bool, N_SAMPLES), [false], [false], copy(U0), copy(U0),
                            zeros(Bool, N_WHENS), Tuple{Float64, Vector{Float64}}[], zeros(N_RELATIONS), [0.0], [Float64(tspan[2])],
-                           zeros($nAlg), zeros($nAlg),
+                           [1.0], zeros($nAlg), zeros($nAlg),
                            $(BlockSolver)[$(BlockSolver)(BLOCK_PATTERNS[k], BLOCK_COLORS[k], BLOCK_GUESSES[k]) for k in eachindex(BLOCK_PATTERNS)],
                            Matrix{Float64}[copy(G) for G in LOOP_GUESSES],
                            $(ArrayRuntimeState)(N_SAMPLES, strings, N_DELAYS), @__MODULE__)
@@ -2931,6 +2974,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
         p.upre .= u0; p.ureinit .= u0
       end
       $(isempty(paramAlgBody) ? nothing : :(parameterAlgorithms!(u0, p, tspan[1])))
+      USES_HOMOTOPY && (u0 = homotopyStart!(u0, p, tspan[1]))
       length(INIT_ROWS) > 0 && (u0 = initialize(u0, p, tspan[1]))
       isempty(INIT_REDUNDANT) || checkRedundantInitial(u0, p, tspan[1])
       $(isempty(initAlgBody) ? nothing : :(initialAlgorithms!(u0, p, tspan[1])))
@@ -3135,12 +3179,35 @@ Also searched: the relations within their hysteresis band (their literal value d
 relations of one threshold in different units are not both past their bands at an event (MSL OpenTank's port at the
 level: `fluidLevel >= height` within its band, `s > 0` with `s = (p - ps) / p_default * (height - fluidLevel)` past
 its own; the port's `inFlow` switched every pass, TanksWithOverflow stopped at 2025 s).
+Where no combination of those does, again with the other relations of their equation instances (`instance`: per slot
+the first slot of its instance; `relation`: the slots that are relations): an if-expression's other conditions, which
+did not change in the sweeps. MSL IdealizedOpAmpLimited's `if V0*v_in > vps then vps elseif V0*v_in < vns then vns else
+V0*v_in` in SignalGenerator's comparator loop: at the fold the lower limit and the linear branch each gave the other,
+the upper limit (the jump to +15 V) is the solution.
 """
 function _searchRelations!(equations!::F, whens!::W, du::AbstractVector, a::AbstractVector, u::AbstractVector,
                            p::ArrayModelParameters, t::Real, fire::Bool, rel0::Vector{Bool}, d0::Vector{Float64},
-                           flips::BitVector)::Bool where {F <: Function, W <: Function}
+                           flips::BitVector, instance::Vector{Int},
+                           relation::BitVector)::Bool where {F <: Function, W <: Function}
   local slots::Vector{Int} =
     sort!(union(findall(flips), _literalChanges!(equations!, whens!, du, a, u, p, t, fire, rel0, d0)))
+  _searchCombinations!(equations!, whens!, du, a, u, p, t, fire, rel0, d0, slots) && return true
+  local instances::Set{Int} = Set{Int}(instance[s] for s in slots)
+  local wider::Vector{Int} = filter(s::Int -> relation[s] && instance[s] in instances, eachindex(instance))
+  length(wider) > length(slots) || return false
+  return _searchCombinations!(equations!, whens!, du, a, u, p, t, fire, rel0, d0, wider)
+end
+
+"""
+    _searchCombinations!(equations!, whens!, du, a, u, p, t, fire, rel0, d0, slots) -> Bool
+
+The combinations of the relations `slots` for `_searchRelations!`, fewest changes from `rel0` first; the first that
+gives itself back left in place (true), else the relations and discrete values `rel0` and `d0` restored (false); none
+tried for none or more than 12 slots.
+"""
+function _searchCombinations!(equations!::F, whens!::W, du::AbstractVector, a::AbstractVector, u::AbstractVector,
+                              p::ArrayModelParameters, t::Real, fire::Bool, rel0::Vector{Bool}, d0::Vector{Float64},
+                              slots::Vector{Int})::Bool where {F <: Function, W <: Function}
   local trace::Bool = _OMBACKEND.envSwitch("OMBACKEND_ARRAY_TRACE")
   trace && println("[arraycode] relation search at t = ", t, ": relations ", slots)
   (isempty(slots) || length(slots) > 12) && return false

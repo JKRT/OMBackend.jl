@@ -906,7 +906,10 @@ function _callIRx(g::Gen, e::SC.CALL, ctx::Ctx)::IR
     preRef isa Ref || ns("pre of $(_str(e))")
     return Pre(preRef)
   elseif fname == "homotopy"
-    return toIR(g, args[1], ctx)
+    #= homotopy(actual, simplified) (MLS 3.7.4.4): the blend in the initialization's λ (`homotopyStart!`) =#
+    length(args) == 2 || ns("homotopy with $(length(args)) arguments")
+    g.usesHomotopy = true
+    return Op(:homotopy, IR[toIR(g, args[1], ctx), toIR(g, args[2], ctx)])
   elseif builtin && fname == "Integer" && length(args) == 1
     #= Integer(e) of an enumeration value: its position, the number the code holds the value as, an Integer where
        it is a table's subscript (MSL Digital's `Integer(pre(x))`, `Integer(delay(x, t))` of the Logic values) =#
@@ -2097,7 +2100,7 @@ function domainSystem(sc::SC.SIM_CODE)::DomainSystem
   local g::Gen = Gen(Dict{String, VarInfo}(), 0, 0, 0, Dict{String, Any}(), Dict{String, Symbol}(), Set{String}(),
                 EqClass[], EqClass[], AlgClass[], Tuple{String, String, Bool}[], WhenClass[], AssertClass[], 0, 0, 0, 0,
                 -1000, false, Dict{Int, Int}(), AlgClass[], String[], AssertClass[], functionOutputs, Dict{String, String}(),
-                Set{String}(), Tuple{String, String}[], Tuple{String, IR, String}[], false, DelaySite[])
+                Set{String}(), Tuple{String, String}[], Tuple{String, IR, String}[], false, DelaySite[], false)
   local stateNamesOrdered::Vector{String} = String[]; local algNamesOrdered::Vector{String} = String[]
   local discreteNamesOrdered::Vector{String} = String[]
   local u0::Vector{Float64} = Float64[]; local d0::Vector{Float64} = Float64[]; local a0::Vector{Float64} = Float64[]

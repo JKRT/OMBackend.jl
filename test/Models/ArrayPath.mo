@@ -490,7 +490,7 @@ package ArrayPath
       y[i] ^ 3 + y[i] = x[i];
     end for;
   end Cubic;
-  model LoopWithEvent "a loop per element through a relation (events in a loop): outside the array path, scalarized as before"
+  model LoopWithEvent "a loop per element through a relation (events in a loop)"
     parameter Integer N = 3;
     Real x[N](each start = 1, each fixed = true);
     Real y[N];

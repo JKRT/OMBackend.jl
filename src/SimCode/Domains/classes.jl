@@ -295,6 +295,7 @@ mutable struct Gen
   objects::Vector{Tuple{String, IR, String}}
   usesLeft::Bool   #= the code reads an algebraic variable's left limit at an event (pre() of it) =#
   delays::Vector{DelaySite}   #= the delay() calls of the equations and when-equations, numbered (`_numberDelays!`) =#
+  usesHomotopy::Bool   #= the code calls homotopy(): the initialization's continuation in its λ (`homotopyStart!`) =#
 end
 
 struct Ctx
@@ -686,6 +687,31 @@ function _sourceSlots(g::Gen, nRelTotal::Int, relBases::Vector{Int}, whenRelBase
     a.nrel == 0 || mark!(_sourceIds!(Set{Int}(), a.body, want), algRelBases[ai], a.nrel, size(a.domain, 2))
   end
   return slots
+end
+
+"""
+The first slot of each slot's equation instance in the relation numbering: a class's, a when-equation's or an
+algorithm's at one column of its domain, whose relations are the slots from its base (`base + (col - 1) * nrel + id`).
+The relations of one instance (an if-expression's conditions) have the same; a slot of no instance its own.
+"""
+function _relationInstances(g::Gen, nRelTotal::Int, relBases::Vector{Int}, whenRelBases::Vector{Int},
+                            algRelBases::Vector{Int})::Vector{Int}
+  local first::Vector{Int} = collect(1:nRelTotal)
+  local mark!::Function = function (base::Int, nrel::Int, ncols::Int)
+    for col in 1:ncols, id in 1:nrel
+      first[base + (col - 1) * nrel + id] = base + (col - 1) * nrel + 1
+    end
+  end
+  for (ci, c) in enumerate(g.classes)
+    c.nrel == 0 || mark!(relBases[ci], c.nrel, size(c.domain, 2))
+  end
+  for (wi, w) in enumerate(g.whens)
+    w.nrel == 0 || mark!(whenRelBases[wi], w.nrel, size(w.domain, 2))
+  end
+  for (ai, a) in enumerate(g.algs)
+    a.nrel == 0 || mark!(algRelBases[ai], a.nrel, size(a.domain, 2))
+  end
+  return first
 end
 
 """

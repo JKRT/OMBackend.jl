@@ -369,7 +369,7 @@ end
     @test w ≈ v .- x atol = 1e-12
   end
 
-  @testset "Models of scalars: algebraic loops, index above one, a clock; outside the scope: scalarized" begin
+  @testset "Models of scalars: algebraic loops, index above one, a clock; a loop through a relation" begin
     local tight::NamedTuple = (reltol = 1e-9, abstol = 1e-9)
     #= a model without arrays is the array code's (its variables arrays of no dimensions): a loop of scalars
        (y = 0.75 x, z = 0.25 x, x' = -0.75 x), a nonlinear one, an index of two reduced in the array form
@@ -390,12 +390,11 @@ end
     local (sc, ac, _) = _bothWays("ArrayPath.ClockedSampleHold", ["xs", "xd", "y"]; tspan = (0.0, 0.25), tight...)
     @test ac ≈ [exp(-0.2), exp(-0.1), exp(-0.1)] atol = 1e-7
     @test maximum(abs.(sc .- ac)) < 1e-7
-    #= a loop through a relation (events in a loop): scalarized as before =#
-    local name::String = _arrayPathTranslate("ArrayPath.LoopWithEvent"; scalarized = false)
-    @test !_arrayPathTaken(name)
-    local sol::OMBackend.DifferentialEquations.SciMLBase.AbstractODESolution =
-      OMBackend.simulateModel(name; tspan = (0.0, 1.0))
-    @test sol.retcode == ReturnCode.Success
+    #= a loop through a relation (events in a loop), scalarized before ("relations in an algebraic loop"): y = 0.75 x
+       above x = 0.5, 0.6 x below; x = 0.5 at t1 = ln(2) / 0.75, x(1) = 0.5 exp(-0.6 (1 - t1)) =#
+    local (se, ae, _) = _bothWays("ArrayPath.LoopWithEvent", ["x[1]", "y[1]"]; tight...)
+    @test ae ≈ [1.0, 0.6] .* (0.5 * exp(-0.6 * (1 - log(2) / 0.75))) atol = 1e-6
+    @test maximum(abs.(se .- ae)) < 1e-6
   end
 
   @testset "Complex values: record equations in for bodies, array equations of records" begin
@@ -584,8 +583,9 @@ end
     local whens! = (du, a, u, q, t, z, mode, fire) -> nothing
     local a::Vector{Float64} = zeros(length(p.abuf))
     a[1] = 2.0
+    #= each relation its own instance: no other relations to search with =#
     @test generation._searchRelations!(equations!, whens!, zeros(1), a, zeros(1), p, 0.0, true, copy(p.rel), copy(p.d),
-                                       flips)
+                                       flips, collect(1:length(p.rel)), trues(length(p.rel)))
     @test p.rel[1] && p.rel[2]
   end
 
@@ -2790,5 +2790,36 @@ end
     @test sol.retcode == ReturnCode.Success
     @test isapprox([sol(1.0; idxs = :h), sol(3.0; idxs = :h), sol(3.0; idxs = Symbol("x[2]"))],
                    [1 - exp(-1.0), 1 - exp(-4.0), exp(-3.0)]; rtol = 1e-4)
+  end
+  @testset "Comparators with positive feedback in an algebraic loop" begin
+    #= MSL SignalGenerator's IdealizedOpAmpLimited: the limiter `if V0*e > 1 then 1 elseif V0*e < -1 then -1 else
+       V0*e` of the output in a loop with its input e = v/2 - x. The array code refused relations in an algebraic
+       loop; homotopy() kept only its actual expression, and the loop solved from the start values went to the
+       unstable linear root (v = 0, all values 0; x[2] grew away from v = 1/2); at the fold, the lower limit and the
+       linear branch each gave the other: the jump to the upper limit is the other condition of the if-expression.
+       From v = -1 (homotopy's simplified expression): x = x0 - t until e = -1/V0, i.e. x = -0.499, then a triangle
+       between -0.499 and 0.499 at slope 1 =#
+    local program = Modelica"""
+      model Comparators "relaxation oscillators: comparators with positive feedback, homotopy() at the start"
+        parameter Real V0 = 1000 "the comparators' gain";
+        Real x[2](start = {0, 0.25}, each fixed = true);
+        Real e[2];
+        Real v[2];
+      equation
+        der(x) = v;
+        e = 0.5 * v - x;
+        for i in 1:2 loop
+          v[i] = homotopy(actual = if V0 * e[i] > 1 then 1 elseif V0 * e[i] < -1 then -1 else V0 * e[i],
+                          simplified = -1);
+        end for;
+      end Comparators;
+      """
+    local name::String = _translateProgram(program, "Comparators"; scalarized = false)
+    @test _arrayPathTaken(name)
+    local sol = OMBackend.simulateModel(name; tspan = (0.0, 2.0))
+    @test sol.retcode == ReturnCode.Success
+    @test isapprox([sol(t; idxs = Symbol("x[1]")) for t in (0.25, 1.0, 2.0)], [-0.25, 0.002, -0.004]; atol = 1e-4)
+    @test isapprox([sol(t; idxs = Symbol("x[2]")) for t in (0.5, 1.0)], [-0.25, -0.248]; atol = 1e-4)
+    @test [sol(t; idxs = Symbol("v[1]")) for t in (0.25, 1.0, 2.0)] ≈ [-1.0, 1.0, -1.0]
   end
 end
