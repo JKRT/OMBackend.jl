@@ -367,15 +367,22 @@ function (r::StepRejectingRHS)(du, u, p, t)
   return nothing
 end
 
-"The relative step of a state in the Jacobian's central differences (FiniteDiff's for these), its least 1 times it."
-const JACOBIAN_STEP = cbrt(eps(Float64))
+"""
+The relative step of a state in the Jacobian's central differences, its least 1 times it: the square root of the
+machine precision (1.5e-8; OpenModelica's numerical Jacobians step by about as much). The cube root, FiniteDiff's
+for central differences (6e-6), is 0.6 Pa on a pressure of 1e5 Pa: a duct's flow into a room follows pressure
+differences of 1e-3 Pa with a time constant of 2e-6 s, the Jacobian over 0.6 Pa missed that stiffness, and MSL
+Fluid's RoomCO2WithControls took 40000 steps for 2 s after its fan started (38 for 100 s with 1e-8). The central
+form keeps the truncation error of the smaller step's forward difference away.
+"""
+const JACOBIAN_STEP = sqrt(eps(Float64))
 
 """
     ColoredJacobian(rhs, pattern)
 
 The Jacobian of an array model's right-hand side `rhs` by central differences in the sparsity `pattern`: the columns
-that share no row perturbed together (`columnGroups`), each state by its own step, `JACOBIAN_STEP * max(|u[j]|, 1)`
-(as FiniteDiff's of a dense Jacobian). Left to the solver, a sparse prototype takes one step for every state, from
+that share no row perturbed together (`columnGroups`), each state by its own step, `JACOBIAN_STEP * max(|u[j]|, 1)`.
+Left to the solver, a sparse prototype takes one step for every state, from
 the norm of the whole state vector (DifferentiationInterface's pushforward): beside a pressure of 1e5 Pa a mass
 fraction of 0.01 was moved by 0.61, and the medium's `log` of a negative fraction rejected every first step (MSL
 Media ReferenceAir MoistAir1; Rodas5P, whose stages need the Jacobian). Where the right-hand side fails on one side

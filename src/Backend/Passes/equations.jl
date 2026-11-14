@@ -106,6 +106,46 @@ function removeSmooth!(model::IR.Model)::IR.Model
 end
 
 """
+    streamsWithoutEvents!(model) -> Model
+
+actualStream as the frontend writes it, `smooth(0, m * (if m > 0 then a else b))` and `smooth(0, if m > 0 then a else
+b)` (its factor `m` outside), with its condition in `noEvent`, in the equations of the main partition: for the
+arrays-kept route. The value is continuous in `m` (what `smooth(0, ...)` says), OpenModelica makes no event in
+`smooth`, and the array code computes a port's flow from the states at each point: two pressures of 1e5 Pa whose
+round-off, 3e-10 Pa, times a port's conductance of 0.3 kg/s/Pa is a flow of 1e-10 kg/s, the relation's hysteresis.
+After an event that starts a flow from rest the sign of such a flow is noise, each flip was an event, and MSL
+Fluid's RoomCO2WithControls stopped at its table's first event (59888 steps in 0.3 s; the scalarized route, whose
+flows are variables of the solver, 618 for the day).
+"""
+function streamsWithoutEvents!(model::IR.Model)::IR.Model
+  local quiet = (@nospecialize(e::IR.Expression)) -> begin
+    (IR.isBuiltinCall(e, :smooth) && length(e.arguments) == 2 && e.arguments[1] isa IR.INTEGER &&
+     e.arguments[1].value == 0) || return e
+    local streamed::IR.Expression = withQuietFlowDirection(e.arguments[2])
+    streamed === e.arguments[2] && return e
+    return IR.CALL(e.name, IR.Expression[e.arguments[1], streamed], e.ty, e.attributes)
+  end
+  foreach(eq -> IR.mapEquation!(quiet, eq), model.continuous[1].equations)
+  return model
+end
+
+"`if m > 0 then a else b`, alone or as the factor of `m`, with its condition in noEvent; another expression itself."
+function withQuietFlowDirection(@nospecialize(e::IR.Expression))::IR.Expression
+  if e isa IR.IF_EXPRESSION && isFlowDirection(e.condition)
+    return IR.IF_EXPRESSION(builtinCall(:noEvent, IR.Expression[e.condition], IR.T_BOOLEAN()), e.thenExp, e.elseExp, e.ty)
+  elseif e isa IR.BINARY && e.op === IR.MUL && e.exp2 isa IR.IF_EXPRESSION && isFlowDirection(e.exp2.condition) &&
+         e.exp1 == e.exp2.condition.exp1
+    return IR.BINARY(e.exp1, e.op, withQuietFlowDirection(e.exp2), e.ty)
+  end
+  return e
+end
+
+"Whether `c` is `m > 0` or `m >= 0` of a variable `m` (a flow's direction)."
+isFlowDirection(@nospecialize(c::IR.Expression))::Bool =
+  c isa IR.RELATION && (c.op === IR.GREATER || c.op === IR.GREATEREQ) && c.exp1 isa IR.CREF &&
+  ((c.exp2 isa IR.REAL && c.exp2.value == 0.0) || (c.exp2 isa IR.INTEGER && c.exp2.value == 0))
+
+"""
     equationKey(eq)
 
 A structural hash of an equation: its kind, its expressions, its source and attributes, its

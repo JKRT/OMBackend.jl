@@ -2260,4 +2260,51 @@ end
     @test R.foldTree(I.SIZE(a, I.INTEGER(2))) isa I.SIZE
     @test R.foldTree(I.SIZE(real(:a), I.INTEGER(1))) isa I.SIZE
   end
+
+  @testset "actualStream without events" begin
+    #= `smooth(0, m * (if m > 0 then a else b))` (actualStream, both forms): OpenModelica makes no event in it. The
+       array code computes flows from interpolated states; at the flow's hysteresis their round-off (1e-10 kg/s)
+       switched the relation at every step (MSL Fluid's RoomCO2WithControls after its fan started at 32400 s). The
+       condition is a `noEvent` on the arrays-kept route: no relations in the array code =#
+    local streams = Modelica"""
+      model ReversingStreams "the enthalpy flows of flows that reverse"
+        Real x[2](each start = 1.0, each fixed = true);
+        Real m[2];
+        Real H[2];
+        Real G[2];
+      equation
+        for k in 1:2 loop
+          m[k] = cos(6.283185307179586 * k * time);
+          H[k] = smooth(0, m[k] * (if m[k] > 0 then 2.0 else x[k]));
+          G[k] = smooth(0, if m[k] >= 0.0 then m[k] * x[k] else 0.0);
+          der(x[k]) = H[k] + G[k] - x[k];
+        end for;
+      end ReversingStreams;
+      """
+    local (ss, as, _) = _bothWaysOf(streams, "ReversingStreams", ["x[1]", "x[2]"]; reltol = 1e-8, abstol = 1e-10)
+    @test OMBackend.CodeGeneration.ArrayODEGen.LAST_STATS[].relations == 0
+    @test maximum(abs.(ss .- as)) < 1e-6
+  end
+
+  @testset "The Jacobian's step at the scale of a pressure difference" begin
+    #= pressures of 1e5 whose flow saturates beyond 0.01 Pa of their difference: a step of 6e-6 relative (0.6 Pa)
+       sees the flow's slope as 1.7e3 for 1e5, Newton left the solution (m = -1000 for 1). The step 1.5e-8 relative
+       (1.5e-3 Pa) sees it (MSL Fluid's RoomCO2WithControls: 40000 steps for 2 s after its fan started) =#
+    local lines = Modelica"""
+      model StiffLines "two pressures of 1e5 per line"
+        Real p[2](each start = 1.0e5, each fixed = true);
+        Real q[2](each start = 1.0e5, each fixed = true);
+        Real m[2];
+      equation
+        for k in 1:2 loop
+          m[k] = 1.0e3 * tanh(1.0e2 * (p[k] - q[k]));
+          der(p[k]) = k - m[k];
+          der(q[k]) = m[k] - k;
+        end for;
+      end StiffLines;
+      """
+    local (ss, as, _) = _bothWaysOf(lines, "StiffLines", ["m[1]", "m[2]", "p[2]"])
+    @test isapprox(as, [1.0, 2.0, 1.0e5]; rtol = 1e-5)
+    @test isapprox(as, ss; rtol = 1e-6)
+  end
 end
