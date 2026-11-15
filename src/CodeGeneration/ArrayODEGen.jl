@@ -80,7 +80,7 @@ What the front half does not (yet) handle it reports with the reason, and the ca
 module ArrayODEGen
 
 import ModelingToolkit
-import ..CodeGeneration: stripBeginBlocks, ModelicaAssertionError, solveStoppedAtStart, _autoDtReset!
+import ..CodeGeneration: stripBeginBlocks, ModelicaAssertionError, solveStoppedAtStart, _autoDtReset!, _finiteFirstStep!
 import ..CodeGeneration: DelayState, delayedValue, emptyDelayHistories!, startDelayHistories!, recordDelayStepEnd!,
   recordDelayJumps!, delayJumpsDue!
 import ...Passes
@@ -2756,6 +2756,8 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
         (relBefore == p.rel && dBefore == p.d && rBefore == p.ureinit && wBefore == p.wnew && eBefore == p.evv) &&
           return true
         pass > 25 && (flips .|= relBefore .!= p.rel)
+        pass > 46 && $(_traceSettlePass)(t, pass, (relBefore, dBefore, eBefore, wBefore, rBefore),
+                                         (p.rel, p.d, p.evv, p.wnew, p.ureinit))
       end
       #= relations that keep changing (a mixed system that cycles: a bridge's commutation): the combination of their
          values that gives itself back, then the sweeps from it =#
@@ -2929,19 +2931,22 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
        exactly on its threshold, where the exact-zero rule made it true already: the when on it took its rising
        edge before the event and never fired (MSL 4.1 Trapezoid's `time >= (pre(count) + 1)*period +
        startTime`: OpAmps.Differentiator's source stayed in its first period). =#
-    #= Whether t is a sample instant. A relation's change there belongs to the tick's event (`affectSample!` takes
-       the relations literal at the instant), which follows at this time: handled first as an event of its own, the
-       tick read the values of after the change (a clocked `sample(u)` at the instant of u's step takes u's left limit,
-       MLS 16.5.1: MSL Clocked BooleanSignals.Sample1). At: within 1e-12 of the run's time scale (its span, or the
-       time where larger), not of a second: a pulse edge 1e-13 s after a tick is no part of the tick (MSL Spice3
-       Inverter, a run of 1e-11 s: its sources' edges were dropped). =#
+    #= Whether t is the instant of the sample tick still to come (`sampleStops[2]`). A relation's change there
+       belongs to the tick's event (`affectSample!` takes the relations literal at the instant), which follows at this
+       time: handled first as an event of its own, the tick read the values of after the change (a clocked `sample(u)`
+       at the instant of u's step takes u's left limit, MLS 16.5.1: MSL Clocked BooleanSignals.Sample1). At: within
+       1e-12 of the run's time scale (its span, or the time where larger), not of a second: a pulse edge 1e-13 s after
+       a tick is no part of the tick (MSL Spice3 Inverter, a run of 1e-11 s: its sources' edges were dropped). Not a
+       tick that ran (`sampleStops[1]`): it took the relations at its time, and a threshold an ulp after it is a
+       crossing of its own (MSL SawTooth's `time >= (pre(count) + 1)*period + startTime` at 1251 * 25e-6, an ulp after
+       the tick of a sample of the same period: dropped, the reset waited for the end of the step after it, 1e-7 s, and
+       ChopperBuckBoost_DutyCycle's switching every other period with it). =#
     function _atSampleInstant(p, t, tspan)
       N_SAMPLES > 0 || return false
       local stops = p.state.sampleStops
       local span = abs(tspan[2] - tspan[1])
       local w = 1.0e-12 * (isfinite(span) ? max(span, abs(t)) : 1 + abs(t))
-      local near = searchsortedfirst(stops, t - w)
-      return near <= length(stops) && abs(stops[near] - t) <= w
+      return length(stops) >= 2 && abs(stops[2] - t) <= w
     end
 
     function affectCrossing!(integrator, events::AbstractVector{Int8})
@@ -3245,6 +3250,10 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       pushfirst!(cbs, DiscreteCallback((u, t, integrator) -> false, integrator -> nothing;
                                        initialize = (c, u, t, integrator) -> $(_restoreStart!)(integrator.p),
                                        save_positions = (false, false)))
+      #= the first step, after the other callbacks' initializations: finite (`_finiteFirstStep!`) =#
+      push!(cbs, DiscreteCallback((u, t, integrator) -> false, integrator -> nothing;
+                                  initialize = (c, u, t, integrator) -> $(_finiteFirstStep!)(integrator),
+                                  save_positions = (false, false)))
       #= the terminal event, after the last step (a solve's end: its stop time, a terminate()) =#
       $(usesTerminal ? :(push!(cbs, DiscreteCallback((u, t, integrator) -> false, integrator -> nothing;
                                                      finalize = (c, u, t, integrator) -> _terminalEvent!(integrator),
@@ -3339,6 +3348,26 @@ function _readsParameterOf(x::IR, names::Set{String})::Bool
   x isa EvFn && return _readsParameterOf(x.arg, names)
   x isa Pre && return _readsParameterOf(x.ref, names)
   return false
+end
+
+"""
+    _traceSettlePass(t, pass, before, after)
+
+The changes of one of the last passes of an event iteration's sweep that does not settle (`_settle!`), with
+OMBACKEND_ARRAY_TRACE: the slots of the relations, discrete values, event-generating functions' values,
+when-conditions and reinit values that changed. `before` and `after` hold those five, in that order.
+"""
+function _traceSettlePass(t::Real, pass::Int, before::NTuple{5, AbstractVector},
+                          after::NTuple{5, AbstractVector})::Nothing
+  _OMBACKEND.envSwitch("OMBACKEND_ARRAY_TRACE") || return nothing
+  local labels::NTuple{5, String} = ("relations", "discretes", "event functions", "when-conditions", "reinit")
+  local parts::Vector{String} = String[]
+  for (label::String, b::AbstractVector, x::AbstractVector) in zip(labels, before, after)
+    local changed::Vector{Int} = findall(b .!= x)
+    isempty(changed) || push!(parts, string(label, " ", changed, ": ", b[changed], " -> ", x[changed]))
+  end
+  println("[arraycode] sweep at t = ", t, ", pass ", pass, ": ", join(parts, "; "))
+  return nothing
 end
 
 """

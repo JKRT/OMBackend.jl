@@ -2808,6 +2808,30 @@ package ArrayPath
     der(z) = tmax;
   end TableDrive;
 
+  model TableIntegrator "a component holding its own table (MSL RadioButtonSource's BooleanTable)"
+    parameter Real k = 1;
+    parameter Real data[2, 2] = [0, 0; 1, 2];
+    parameter TimeTable tableID = TimeTable("NoName", "NoName", data, 0.0, {2}, 1, 2, 0.0, 3, false, ",", 0);
+    Real x(start = 0, fixed = true);
+  equation
+    der(x) = k * timeTableValue(tableID, 1, time, 1e60, 1e60);
+  end TableIntegrator;
+
+  model OverflowingProbe "a capacitor charged through two opposed junctions from 0 V (MSL Spice3BenchmarkRtlInverter's transistor): OrdinaryDiffEq's first-step probe lands at 1e9 V, where both currents overflow, their difference NaN, the step NaN; v -> 0.025 ln(I / 0.9e-14) = 0.98123"
+    parameter Real I = 1e3;
+    parameter Real C = 1e-12;
+    Real v(start = 0, fixed = true);
+    Real i1 = 1e-14 * exp(v / 0.025);
+    Real i2 = 1e-15 * exp(v / 0.025);
+  equation
+    C * der(v) = I - i1 + i2;
+  end OverflowingProbe;
+
+  model RolledTables "two components each with an external object (MSL Interaction1's start and stop): not rolled, the array form has no arrays of external objects; x = k t^2: 1, 2"
+    TableIntegrator a(k = 1);
+    TableIntegrator b(k = 2);
+  end RolledTables;
+
   function timeTableNextEvent "Modelica.Blocks.Tables.Internal.getNextTimeEvent"
     input TimeTable tableID;
     input Real timeIn;

@@ -79,7 +79,8 @@ end
 The solver of one large algebraic loop of an array model (`blockSolve!`): the columns of each color of its residuals'
 sparsity in its iteration variables, the Jacobian on that sparsity and its factorization, kept between calls (dense
 up to `DENSE_BLOCK_SIZE` variables: the factors in place with their pivots; else sparse), the last solution (the next
-call's guess; the start values until a solve succeeded) and counters (residual evaluations, Jacobians, failed solves).
+call's guess; the start values until a solve succeeded), the largest of its residuals (`rsolved`; -1 before the
+first) and counters (residual evaluations, Jacobians, failed solves).
 `rankDeficient`: the dense Jacobian was singular and `factors` holds its pseudo-inverse (`_blockJacobian!`).
 """
 mutable struct BlockSolver
@@ -99,6 +100,7 @@ mutable struct BlockSolver
   const dx::Vector{Float64}
   const h::Vector{Float64}
   solved::Bool
+  rsolved::Float64
   residuals::Int
   jacobians::Int
   failures::Int
@@ -113,7 +115,8 @@ function Base.deepcopy_internal(s::BlockSolver, dict::IdDict)::BlockSolver
   local c::BlockSolver = BlockSolver(Vector{Int}[copy(g) for g in s.groups], copy(s.J), s.dense, copy(s.factors), copy(s.pivots),
                                      nothing, s.dense && s.factored, s.rankDeficient, copy(s.y), copy(s.x), copy(s.r),
                                      copy(s.rp), copy(s.xp),
-                                     copy(s.dx), copy(s.h), s.solved, s.residuals, s.jacobians, s.failures)
+                                     copy(s.dx), copy(s.h), s.solved, s.rsolved, s.residuals, s.jacobians,
+                                     s.failures)
   dict[s] = c
   return c
 end
@@ -125,7 +128,7 @@ function BlockSolver(pattern::_SPARSE.SparseMatrixCSC{Float64, Int}, colors::Vec
   local dense::Bool = n <= DENSE_BLOCK_SIZE
   return BlockSolver(groups, copy(pattern), dense, zeros(dense ? n : 0, dense ? n : 0), zeros(_LINALG.BlasInt, dense ? n : 0),
                      nothing, false, false, copy(guess), zeros(n), zeros(n), zeros(n), zeros(n), zeros(n), zeros(n),
-                     false, 0, 0, 0)
+                     false, -1.0, 0, 0, 0)
 end
 
 """
@@ -197,6 +200,7 @@ function blockSolve!(s::BlockSolver, residual!::R, du::AbstractVector, a::Abstra
   if ok
     s.y .= s.x
     s.solved = true
+    s.rsolved = maximum(abs, s.r; init = 0.0)
   else
     s.failures += 1
     fill!(s.x, NaN)
@@ -268,8 +272,9 @@ calls with ten), else a Jacobian at the current iterate. Within 1e-10 of their v
 absolute near zero) the steps go on while they contract at least twofold, to round-off (1e-15): a solve's last digits
 then do not depend on its guess (a relation on a loop's unknown flipped back and forth between the passes of an event
 iteration and the checks after the steps, its hysteresis 1e-12 at a tolerance of 1e-8, below the loop's 1e-10). The
-guess is kept when its first step is at round-off already; the steps of a Jacobian of this call that stop contracting
-end within 1e-5 (EngineV6's forces of 1e9 cancel to zero only that far).
+guess is kept when its first step is at round-off already, or its residuals are no larger than at the solution last
+accepted (`rsolved`: a solve from its own solution returns it); the steps of a Jacobian of this call that stop
+contracting end within 1e-5 (EngineV6's forces of 1e9 cancel to zero only that far).
 """
 function _blockNewton!(s::BlockSolver, residual!::R, args::Tuple, full::Bool;
                        differences::Symbol = :standard)::Bool where {R <: Function}
@@ -291,8 +296,12 @@ function _blockNewton!(s::BlockSolver, residual!::R, args::Tuple, full::Bool;
       step = max(step, abs(dx[i]) / (1.0e-10 * (1.0 + abs(x[i]))))
     end
     #= EngineV6's piston speed at top dead center, zero to round-off, flipped a relation in every pass of the event
-       iteration while each solve stepped again =#
-    if iteration == 1 && step <= 1.0e-5
+       iteration while each solve stepped again. A badly conditioned loop's step at its solution is round-off times
+       the condition, beyond 1e-15 of the values: a guess whose residuals are no larger than those at the solution
+       last accepted (`rsolved`, at the same guess the same ones) is kept too. MSL ThyristorBridge2mPulse_DC_Drive, a
+       commutating pair of thyristors (1e-5 ohm against 1e5): residuals of 2e-15 to 6e-15 of their terms, steps of
+       1e-10 back and forth, a thyristor's `s < 0` at s = +-1.1e-10 flipped in every pass =#
+    if iteration == 1 && (step <= 1.0e-5 || maximum(abs, r; init = 0.0) <= s.rsolved)
       #= a Jacobian of this call evaluated last at its perturbed points (the equations' du and a there): back at the
          iterate =#
       if fresh

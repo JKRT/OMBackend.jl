@@ -877,7 +877,67 @@ function _autoDtReset!(integrator)
   isempty(tstops) && return nothing
   local stepDt = integrator.dt
   ModelingToolkit.SciMLBase.auto_dt_reset!(integrator)
+  isfinite(integrator.dtpropose) || (integrator.dtpropose = _finiteInitialStep(integrator, integrator.dtpropose))
   integrator.dt = stepDt
+  return nothing
+end
+
+"""
+    _finiteInitialStep(integrator, estimate) -> step
+
+OrdinaryDiffEq's initial step `estimate` (`auto_dt_reset!`, Hairer's) where it is finite; else Hairer's estimate again,
+its probe kept where the right-hand side is finite. The probe is an explicit Euler step of 1e-6 s (at most the next
+stop) from the state, and the right-hand side there gave the estimate: from junction voltages of 0, a derivative of
+5e19 V/s took the probe to 5e12 V, where the diode's exponential is not finite and the estimate NaN (MSL
+Spice3BenchmarkRtlInverter: DtNaN at the start; a given first step of 1e-15 s solves it). Here the probe 10 times
+shorter until the change of the right-hand side there has a finite norm. `estimate` unchanged for a problem with a
+mass matrix, whose right-hand side is no derivative, and where none of 30 probes is finite.
+"""
+function _finiteInitialStep(integrator, estimate::Float64)::Float64
+  local f = integrator.f
+  (OrdinaryDiffEq.OrdinaryDiffEqCore._is_identity_massmatrix(f.mass_matrix) && !isempty(integrator.opts.tstops)) ||
+    return estimate
+  local (u0::Vector{Float64}, t::Float64, p) = (integrator.u, Float64(integrator.t), integrator.p)
+  local tdir::Float64 = Float64(integrator.tdir)
+  local opts = integrator.opts
+  local f0::Vector{Float64} = similar(u0)
+  f(f0, u0, p, t)
+  local scale::Vector{Float64} = opts.abstol .+ abs.(u0) .* opts.reltol
+  local d1::Float64 = opts.internalnorm(f0 ./ scale, t)
+  isfinite(d1) || return estimate
+  local order::Int = OrdinaryDiffEq.OrdinaryDiffEqCore.alg_order(integrator.alg)
+  local dtmax::Float64 = min(abs(opts.dtmax), abs(OrdinaryDiffEq.OrdinaryDiffEqCore.first_tstop(integrator) - t))
+  local h::Float64 = min(1.0e-6, dtmax)
+  local f1::Vector{Float64} = similar(u0)
+  for _ in 1:30
+    f(f1, u0 .+ (tdir * h) .* f0, p, t + tdir * h)
+    #= finite, and its norm too: 9e162 V/s at the probe of 2e-19 s overflowed to Inf, the step 0 =#
+    local d2::Float64 = opts.internalnorm((f1 .- f0) ./ scale, t) / h
+    if isfinite(d2)
+      local d::Float64 = max(d1, d2)
+      local dt1::Float64 = d <= 1.0e-15 ? max(1.0e-6, 1.0e-3 * h) : 10.0^(-(2 + log10(d)) / order)
+      return tdir * max(abs(opts.dtmin), min(100 * h, dt1, dtmax))
+    end
+    h /= 10
+  end
+  return estimate
+end
+
+"""
+    _finiteFirstStep!(integrator)
+
+At a solve's start (a callback's `initialize`, before OrdinaryDiffEq sizes the first step): the first step
+(`_finiteInitialStep`) where OrdinaryDiffEq's estimate is not finite, set as a given one; nothing otherwise, nor for
+a given step.
+"""
+function _finiteFirstStep!(integrator)::Nothing
+  (iszero(integrator.dt) && integrator.opts.adaptive && !isempty(integrator.opts.tstops)) || return nothing
+  local estimate::Float64 = OrdinaryDiffEq.OrdinaryDiffEqCore._determine_initdt(integrator)
+  isfinite(estimate) && return nothing
+  local dt::Float64 = _finiteInitialStep(integrator, estimate)
+  isfinite(dt) || return nothing
+  integrator.dt = dt
+  integrator.dtpropose = dt
   return nothing
 end
 

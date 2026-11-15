@@ -335,6 +335,57 @@ end
     @test a == c
   end
 
+  #= a solve from its own solution returns it: a loop whose residual at the solution is round-off of a term of 300
+     (an ulp of 5.7e-14) against a slope of 1e-5, its Newton step 6e-9 of noise. Each solve stepped again, x moved
+     between -6e-10 and 5e-9: a relation on it flipped in every pass of an event iteration (MSL
+     ThyristorBridge2mPulse_DC_Drive's commutating thyristors) =#
+  @testset "A block solve from its own solution keeps it" begin
+    local AG::Module = OMBackend.CodeGeneration.ArrayODEGen
+    local SA::Module = OMBackend.CodeGeneration.Symbolics.SparseArrays
+    local S::SA.SparseMatrixCSC{Float64, Int} = SA.sparse(ones(1, 1))
+    local s::AG.BlockSolver = AG.BlockSolver(S, AG.columnColors(S), [0.0])
+    local residual!(r, y, du, a, u, p, t, z, mode, fire) = (a .= y; r[1] = (300.0 + 1.0e-5 * y[1]) - 300.0 - 3.0e-14;
+                                                            nothing)
+    local (du::Vector{Float64}, a::Vector{Float64}) = (zeros(1), zeros(1))
+    local xs::Vector{Float64} = Float64[]
+    for _ in 1:4
+      AG.blockSolve!(s, residual!, du, a, Float64[], nothing, 0.0, nothing, false, false)
+      push!(xs, a[1])
+    end
+    @test abs(xs[1]) < 1.0e-8
+    @test all(==(xs[1]), xs)
+  end
+
+  @testset "A time relation an ulp after a sample tick: an event of its own" begin
+    #= MSL SawTooth's reset, `time >= (pre(count) + 1) * period`, at 6 * 0.1 = 0.6000000000000001; the tick of
+       sample(0.1, 0.1) at 0.1 + 5 * 0.1 = 0.6. The tick took the relation false; its crossing an ulp later was dropped
+       as part of the tick, and the reset waited for the end of the step after it (MSL ChopperBuckBoost_DutyCycle's
+       switching 1e-7 s late every other period, through the sawtooth) =#
+    local saw = Modelica"""
+      model SawToothBehindTick "T_start = 0.6 from the reset at 0.6000000000000001"
+        parameter Real period = 0.1;
+        discrete Real T_start(start = 0, fixed = true);
+        discrete Integer count(start = 0, fixed = true);
+        discrete Real ticks(start = 0, fixed = true);
+        Real x(start = 0, fixed = true);
+      equation
+        when time >= (pre(count) + 1) * period then
+          count = pre(count) + 1;
+          T_start = time;
+        end when;
+        when sample(period, period) then
+          ticks = pre(ticks) + 1;
+        end when;
+        der(x) = (time - T_start) / period;
+      end SawToothBehindTick;
+      """
+    local (s::Vector{Float64}, a::Vector{Float64}, _) =
+      _bothWaysOf(saw, "SawToothBehindTick", ["T_start", "count", "ticks"]; tspan = (0.0, 0.65))
+    @test a[2:3] == [6.0, 6.0]
+    @test abs(a[1] - 0.6) < 1.0e-12
+    @test maximum(abs.(s .- a)) < 1.0e-12
+  end
+
   @testset "Algebraic loops: per element by Newton, through the elements as a DAE" begin
     local tight::NamedTuple = (reltol = 1e-10, abstol = 1e-10)
     #= an equation nonlinear in its unknown; a nonlinear loop of two per element =#
@@ -471,6 +522,18 @@ end
     local (st, at, _) = _bothWays("ArrayPath.TableDrive", ["x[1]", "x[2]", "z"])
     @test isapprox(at, [1.0, 2.0, 1.0]; atol = 1e-6)
     @test maximum(abs.(st .- at)) < 1e-6
+    #= components that hold external objects are not rolled into arrays: rolled, the array form refused the array of
+       their objects and the model left the array code =#
+    local (sr, ar, _) = _bothWays("ArrayPath.RolledTables", ["a.x", "b.x"])
+    @test isapprox(ar, [1.0, 2.0]; atol = 1e-6)
+    @test maximum(abs.(sr .- ar)) < 1e-6
+  end
+
+  @testset "The first step where OrdinaryDiffEq's probe for it leaves the right-hand side's domain" begin
+    #= its estimate was NaN and the run ended at the start (DtNaN): `_finiteFirstStep!` =#
+    local (so, ao, _) = _bothWays("ArrayPath.OverflowingProbe", ["v"])
+    @test isapprox(ao, [0.025 * log(1e3 / 0.9e-14)]; rtol = 1e-6)
+    @test maximum(abs.(so .- ao)) < 1e-6
   end
 
   @testset "Small loops: a solve that does not converge is made again, damped, from the last solution and the starts" begin
