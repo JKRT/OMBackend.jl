@@ -354,6 +354,17 @@ end
     end
     @test abs(xs[1]) < 1.0e-8
     @test all(==(xs[1]), xs)
+    #= a guess far from the solution (a step of 1e-7, beyond 1e-8) whose residuals are no larger than at the last
+       solution (a loop of a small scale, `rsolved` 1e-6 here) is solved from, not kept (MSL ThyristorBridge2mPulse_R:
+       steps up to 7e14 kept, its mean values off) =#
+    local target::Base.RefValue{Float64} = Base.RefValue{Float64}(0.0)
+    local shifted!(r, y, du, a, u, p, t, z, mode, fire) = (a .= y; r[1] = y[1] - target[]; nothing)
+    local f::AG.BlockSolver = AG.BlockSolver(S, AG.columnColors(S), [0.0])
+    AG.blockSolve!(f, shifted!, du, a, Float64[], nothing, 0.0, nothing, false, false)
+    f.rsolved = 1.0e-6
+    target[] = 1.0e-7
+    AG.blockSolve!(f, shifted!, du, a, Float64[], nothing, 0.0, nothing, false, false)
+    @test a[1] == 1.0e-7
   end
 
   @testset "A time relation an ulp after a sample tick: an event of its own" begin

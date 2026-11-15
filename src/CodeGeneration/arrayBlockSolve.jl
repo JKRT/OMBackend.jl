@@ -272,8 +272,8 @@ calls with ten), else a Jacobian at the current iterate. Within 1e-10 of their v
 absolute near zero) the steps go on while they contract at least twofold, to round-off (1e-15): a solve's last digits
 then do not depend on its guess (a relation on a loop's unknown flipped back and forth between the passes of an event
 iteration and the checks after the steps, its hysteresis 1e-12 at a tolerance of 1e-8, below the loop's 1e-10). The
-guess is kept when its first step is at round-off already, or its residuals are no larger than at the solution last
-accepted (`rsolved`: a solve from its own solution returns it); the steps of a Jacobian of this call that stop
+guess is kept when its first step is at round-off already, or within 1e-8 with its residuals no larger than at the
+solution last accepted (`rsolved`: a solve from its own solution returns it); the steps of a Jacobian of this call that stop
 contracting end within 1e-5 (EngineV6's forces of 1e9 cancel to zero only that far).
 """
 function _blockNewton!(s::BlockSolver, residual!::R, args::Tuple, full::Bool;
@@ -300,8 +300,11 @@ function _blockNewton!(s::BlockSolver, residual!::R, args::Tuple, full::Bool;
        the condition, beyond 1e-15 of the values: a guess whose residuals are no larger than those at the solution
        last accepted (`rsolved`, at the same guess the same ones) is kept too. MSL ThyristorBridge2mPulse_DC_Drive, a
        commutating pair of thyristors (1e-5 ohm against 1e5): residuals of 2e-15 to 6e-15 of their terms, steps of
-       1e-10 back and forth, a thyristor's `s < 0` at s = +-1.1e-10 flipped in every pass =#
-    if iteration == 1 && (step <= 1.0e-5 || maximum(abs, r; init = 0.0) <= s.rsolved)
+       1e-10 back and forth, a thyristor's `s < 0` at s = +-1.1e-10 flipped in every pass. Only where the step is
+       within 1e-8 of the values (`step <= 100`): DC_Drive's are up to 10; a guess far from the solution whose
+       residuals are small for the loop's scale was kept as well (MSL ThyristorBridge2mPulse_R: steps up to 7e14, the
+       mean values off from the first period) =#
+    if iteration == 1 && (step <= 1.0e-5 || (step <= 100.0 && maximum(abs, r; init = 0.0) <= s.rsolved))
       #= a Jacobian of this call evaluated last at its perturbed points (the equations' du and a there): back at the
          iterate =#
       if fresh
