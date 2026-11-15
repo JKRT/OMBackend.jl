@@ -310,14 +310,18 @@ struct Ctx
   #= the relations numbered in this template: an equal relation in the same scope is the same relation, one slot
      (`toIR`) =#
   relations::Dict{RelationKey, IR}
+  #= an initial algorithm's: its relations of continuous values literal, a tie to rounding the exact tie
+     (`Op(:startRelation)`) =#
+  atStart::Bool
 end
 
-Ctx(iters, elem) = Ctx(iters, elem, Base.RefValue(0), false, Base.RefValue(0), Dict{RelationKey, IR}())
+Ctx(iters, elem) = Ctx(iters, elem, Base.RefValue(0), false, Base.RefValue(0), Dict{RelationKey, IR}(), false)
 
-Ctx(iters, elem, nrel, noEvent) = Ctx(iters, elem, nrel, noEvent, Base.RefValue(0), Dict{RelationKey, IR}())
+Ctx(iters, elem, nrel, noEvent) =
+  Ctx(iters, elem, nrel, noEvent, Base.RefValue(0), Dict{RelationKey, IR}(), false)
 
-_with(ctx::Ctx; elem = ctx.elem, noEvent = ctx.noEvent) =
-  Ctx(ctx.iters, elem, ctx.nrel, noEvent, ctx.nsam, ctx.relations)
+_with(ctx::Ctx; elem = ctx.elem, noEvent = ctx.noEvent, atStart = ctx.atStart) =
+  Ctx(ctx.iters, elem, ctx.nrel, noEvent, ctx.nsam, ctx.relations, atStart)
 
 function _paramValue!(g::Gen, name::String)
   haskey(g.params, name) && return g.params[name]

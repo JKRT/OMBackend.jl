@@ -321,7 +321,11 @@ function toIR(g::Gen, e::SC.Exp, ctx::Ctx)::IR
     local op::Symbol = _relationOp(e.op)
     local l::IR = toIR(g, e.exp1, ctx)
     local r::IR = toIR(g, e.exp2, ctx)
-    (ctx.noEvent || !(_continuous(g, l) || _continuous(g, r))) && return Op(op, IR[l, r])
+    local continuous::Bool = _continuous(g, l) || _continuous(g, r)
+    #= an initial algorithm's (a lifted cluster's initial arm): MSL RobotR3's bearing friction at w = -5e-32 from the
+       solve, `initial() and w < 0` made it start Backward (omc and the MTK path, `_tieLiteral`: Stuck) =#
+    (ctx.atStart && continuous && op in (:<, :<=, :>, :>=)) && return Op(:startRelation, IR[Lit(op), l, r])
+    (ctx.noEvent || !continuous) && return Op(op, IR[l, r])
     op in (:(==), :!=) && ns("equality relation on continuous variables")
     ctx.nrel[] += 1
     return ctx.relations[key] = _withAbsProbe(g, Rel(op, l, r, ctx.nrel[]), op in (:<, :<=) ? l : r, ctx)
@@ -932,7 +936,7 @@ function _callIRx(g::Gen, e::SC.CALL, ctx::Ctx)::IR
        it is a table's subscript (MSL Digital's `Integer(pre(x))`, `Integer(delay(x, t))` of the Logic values) =#
     return Op(:Int, IR[toIR(g, args[1], ctx)])
   elseif fname == "noEvent"
-    return toIR(g, args[1], _with(ctx; noEvent = true))
+    return toIR(g, args[1], _with(ctx; noEvent = true, atStart = false))
   elseif fname == "smooth"
     return toIR(g, args[2], ctx)
   elseif fname == "initial"
@@ -1871,7 +1875,8 @@ discrete variables and parameters with fixed = false (`_initAlgTargets`).
 function _addInitialWhen!(g::Gen, eq::SC.INITIAL_WHEN_EQUATION, iterNames::Vector{String}, idom::Matrix{Int})::Nothing
   local w::SC.WHEN_STMTS = eq.whenEquation
   (w.elsewhenPart === nothing && isempty(_triggers(w.condition))) || ns("an initial when-equation with triggers: $(_str(eq))")
-  local ctx::Ctx = Ctx(Dict{String, Int}(n => k for (k, n) in enumerate(iterNames)), Int[], Base.RefValue(0), true)
+  local ctx::Ctx = Ctx(Dict{String, Int}(n => k for (k, n) in enumerate(iterNames)), Int[], Base.RefValue(0), true,
+                       Base.RefValue(0), Dict{RelationKey, IR}(), true)
   local body::Vector{Stmt} = Stmt[_stmtIR(g, st, ctx) for st in w.body]
   ctx.nsam[] == 0 || ns("sample() in an initial algorithm: $(_str(eq))")
   _initAlgTargets(g, body)
@@ -1906,7 +1911,7 @@ function _stmtIR(g::Gen, st::SC.Statement, ctx::Ctx)::Stmt
     range === nothing && ns("for range $(_str(st.iterator.range))")
     local k::Int = (g.tmpSlot -= 1)
     local inner::Ctx = Ctx(merge(ctx.iters, Dict{String, Int}(String(st.iterator.name) => k)), ctx.elem, ctx.nrel,
-                           ctx.noEvent, ctx.nsam, ctx.relations)
+                           ctx.noEvent, ctx.nsam, ctx.relations, ctx.atStart)
     return SFor(k, collect(range), Stmt[_stmtIR(g, x, inner) for x in st.body])
   elseif st isa SC.WHILE
     return SWhile(toIR(g, st.condition, _with(ctx; noEvent = true)), Stmt[_stmtIR(g, x, ctx) for x in st.body])

@@ -92,7 +92,7 @@ import ...SimCode.Domains: DomainSystem, InstanceTable, EqClass, EvFn, Gen, IR, 
   _blockFamilies, _callOfParameters, _condElements, _initAlgAssigned, _parameterAlgorithms, _paramValue!,
   _parametersOnly, _relationSlots, _relationInstances,
   _isTimeRelation, _timeRelationSlots, _continuous,
-  domainSystem, ns, Schedule, causalSchedule!, ParameterBinding, parameterBindings, _bindingDeps
+  domainSystem, ns, Schedule, causalSchedule!, ParameterBinding, parameterBindings, _bindingDeps, InitialSystem
 
 const SII = ModelingToolkit.SymbolicIndexingInterface
 import ..CodeGeneration: NonlinearSolve, ADTypes
@@ -176,6 +176,37 @@ ArrayRuntimeState(nSamples::Int, strings::Vector{String}, nDelays::Int = 0) =
                     (NaN, Float64[]), nothing, (Float64[], Float64[], Bool[], Float64[]), strings, (NaN, Float64[]),
                     nothing, RootLogEntry[], false, DelayState(nDelays), false, Tuple{Float64, Int, Int}[], 0)
 
+"""
+    InitialPass(on, x, r)
+
+The algebraic loops in the initial solve (`InitialSystem`): while `on`, a loop the initial system holds (a family's
+member, a large block) takes its unknowns from `x` and writes its residuals to `r` (at its offset), not solved in the
+equations.
+"""
+mutable struct InitialPass
+  on::Bool
+  x::Vector{Float64}
+  r::Vector{Float64}
+end
+
+"""
+    _passBlock!(s, residual!, pass, base, du, a, u, p, t, fire)
+
+A large algebraic loop in the initial solve (`InitialPass`): its iteration variables from the solve's unknowns at
+`base`, its residuals to the solve's rows there; the relations hold their values.
+"""
+function _passBlock!(s::BlockSolver, residual!::R, pass::InitialPass, base::Int, du::AbstractVector, a::AbstractVector,
+                     u::AbstractVector, p, t::Real, fire::Bool)::Nothing where {R <: Function}
+  for j::Int in eachindex(s.x)
+    s.x[j] = pass.x[base + j]
+  end
+  residual!(s.r, s.x, du, a, u, p, t, nothing, false, fire)
+  for j::Int in eachindex(s.r)
+    pass.r[base + j] = s.r[j]
+  end
+  return nothing
+end
+
 struct ArrayModelParameters
   values::Vector{Float64}
   rel::Vector{Bool}
@@ -198,6 +229,7 @@ struct ArrayModelParameters
   blocks::Vector{BlockSolver}  #= the large algebraic loops' solvers (blockSolve!), in the order of the schedule =#
   #= per loop family its members' guesses (unknown, member): the run's last solutions =#
   loops::Vector{Matrix{Float64}}
+  pass::InitialPass            #= the loops the initial solve holds (`initialize`) =#
   state::ArrayRuntimeState     #= the run's state (samples, memo, warnings, asserts, terminate) =#
   model::Module
 end
@@ -635,6 +667,18 @@ floating-point resolution of its operands (none at the initialization): of their
   _relationAt(z, p, mode, k, x, y, op, p.hyst[1] == 0,
               8 * eps(Float64) * max(_finiteAbs(x), _finiteAbs(y), floatmin(Float64)))
 
+"""
+A relation of continuous values in an initial algorithm (a lifted cluster's initial arm, `Op(:startRelation)`):
+literal (MLS 8.5); on its boundary to rounding the exact tie's value, a non-strict relation true, a strict one false,
+whichever side the initialization's solve left it on (the MTK path's `_tieLiteral`, the same bound). MSL RobotR3's
+bearing friction: `initial() and w_relfric < 0` at w = -5e-32 started it Backward; omc: Stuck.
+"""
+@inline function _startRelation(x, y, op)::Bool
+  local zc::Float64 = float(x) - float(y)
+  abs(zc) <= 1.0e-12 * max(_finiteAbs(x), _finiteAbs(y), 1.0) && return op === (<=) || op === (>=)
+  return op(x, y)
+end
+
 "A relation of the hysteresis `band`, evaluated literally where `literal` (`_rel`, `_timeRel`)."
 @inline function _relationAt(z, p, mode::Bool, k::Int, x, y, op, literal::Bool, band::Float64)
   #= as Float64: the difference of two native Integers (an opaque function's result) wraps around beyond 2^63 =#
@@ -865,7 +909,7 @@ end
 #= ---------------------------------------------------------------- loop families =#
 
 """
-    _loopFamilyCode(g, f, template, blocks, el, matchRow, a0, relBases) -> Tuple{Vector{Any}, Expr}
+    _loopFamilyCode(g, f, template, blocks, el, matchRow, a0, relBases, bases) -> Tuple{Vector{Any}, Expr}
 
 The solve of the loop family `f` (`LOOPFAMILY_f!`): its tables (each member's instance columns and unknowns, the first
 guess per unknown: the start values; a run keeps its last solutions as the next guesses in its parameters, `p.loops`)
@@ -880,9 +924,12 @@ Relations in the loop hold their values in Newton's iterations (MLS 8.5: a relat
 and, at an event, the relations, whose change the event iteration sweeps again (`_settle!`; a combination of relations
 `_searchRelations!` tries is solved with, not replaced by the relations at the point a solve starts from). MSL's
 FluxTubes hysteresis, `\$DER.ifEq_tmp1 = if core.Hstat < -650.0 then ...`; a comparator in an op-amp's loop.
+In the initial solve (`p.pass.on`) a member the initial system holds (`bases`: its unknowns' offset there, -1 for
+none) takes its unknowns from it and gives it its residuals (`InitialPass`).
 """
 function _loopFamilyCode(g::Gen, f::Int, template::Vector{Tuple{Int, Int}}, blocks::Vector{Vector{Int}}, el::InstanceTable,
-                         matchRow::Vector{Int}, a0::Vector{Float64}, relBases::Vector{Int})::Tuple{Vector{Any}, Expr}
+                         matchRow::Vector{Int}, a0::Vector{Float64}, relBases::Vector{Int},
+                         bases::Vector{Int})::Tuple{Vector{Any}, Expr}
   local k::Int = length(template); local M::Int = length(blocks)
   local nS::Int = g.nStates
   local cols::Matrix{Int} = Matrix{Int}(undef, k, M); local ids::Matrix{Int} = Matrix{Int}(undef, k, M)
@@ -895,6 +942,7 @@ function _loopFamilyCode(g::Gen, f::Int, template::Vector{Tuple{Int, Int}}, bloc
     guess[j, m] = u <= nS ? 0.0 : a0[u - nS]
   end
   local (C::Symbol, I::Symbol, G::Symbol) = (Symbol("LOOP_COLS_", f), Symbol("LOOP_IDS_", f), Symbol("LOOP_GUESS_", f))
+  local B::Symbol = Symbol("LOOP_INITIAL_", f)
   local hasRelations::Bool = any(((ci, _),) -> g.classes[ci].nrel > 0, template)
   local residuals::Function = function (rv::Symbol, held::Bool = true)
     local parts::Vector{Any} = Any[]
@@ -922,6 +970,20 @@ function _loopFamilyCode(g::Gen, f::Int, template::Vector{Tuple{Int, Int}}, bloc
     local _G::Matrix{Float64} = p.loops[$f]
     local _xs::AbstractVector = similar(a, $k)
     for _m in members
+      $(any(>=(0), bases) ? quote
+          if p.pass.on && $B[_m] >= 0
+            local _b::Int = $B[_m]
+            for _j in 1:$k
+              _x[_j] = p.pass.x[_b + _j]
+            end
+            $set
+            $(residuals(:_r))
+            for _j in 1:$k
+              p.pass.r[_b + _j] = _r[_j]
+            end
+            continue
+          end
+        end : nothing)
       local _converged::Bool = false
       #= from the last solution; where that does not converge, again with the step damped (halved until the residuals
          decrease), then so from the start values. A piecewise equation's Newton step from a solution on another piece
@@ -1015,7 +1077,7 @@ function _loopFamilyCode(g::Gen, f::Int, template::Vector{Tuple{Int, Int}}, bloc
       end
     end
   end
-  return (Any[:(const $C = $cols), :(const $I = $ids), :(const $G = $guess)], code)
+  return (Any[:(const $C = $cols), :(const $I = $ids), :(const $G = $guess), :(const $B = $bases)], code)
 end
 
 #= ---------------------------------------------------------------- code =#
@@ -1125,6 +1187,7 @@ function jl(g::Gen, x::IR)
       end
       return Expr(:call, _checkedIndex, args[1], subscripts...)
     end
+    x.op == :startRelation && return :($(_startRelation)($(args[2]), $(args[3]), $(getfield(Base, x.args[1].v))))
     x.op == :vect && return Expr(:vect, args...)
     x.op == :if && return Expr(:if, args...)
     x.op == :&& && return Expr(:&&, args...)
@@ -1360,6 +1423,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
   local (needed::BitVector, relNeeded::BitVector, invariant::BitVector) = (schedule.needed, schedule.relNeeded, schedule.invariant)
   local (initUnknowns::Vector{Int}, nInit::Int, freeCols::Vector{Tuple{String, Int}}) =
     (schedule.initial.matchRow, schedule.initial.nRows, schedule.initial.freeColumns)
+  local initialSystem::InitialSystem = schedule.initialSystem
   local (initBody::Vector{Any}, _) = _initialResiduals(g)
   #= initial algorithms: code, and what they assign =#
   local initAlgOuts::Set{String} = _initAlgAssigned(g)
@@ -1455,22 +1519,29 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
   #= the loop families: the scheduled blocks' (LoopBlocks), then single instances an equation determines only
      implicitly (nonlinear in its unknown); their solves' code (_loopFamilyCode), the members of each call =#
   local familyBlocks::Vector{Vector{Vector{Int}}} = [Vector{Int}[] for _ in loops.families]
+  local familyBases::Vector{Vector{Int}} = [Int[] for _ in loops.families]
   local blockMember::Vector{Int} = zeros(Int, length(loops.blocks))
   for (b, f) in enumerate(_blockFamilies(el, pos, loops))
     push!(familyBlocks[f], loops.blocks[b])
+    push!(familyBases[f], initialSystem.blockBase[b])
     blockMember[b] = length(familyBlocks[f])
   end
+  #= per unknown of the loops in the initial solve (`InitialSystem`) its guess: (family, position, member) of
+     p.loops, (-k, position, 0) of the k-th large block's =#
+  local initPlaces::Vector{Tuple{Int, Int, Int}} = fill((0, 0, 0), initialSystem.nLoop)
   local familyTemplates::Vector{Vector{Tuple{Int, Int}}} = copy(loops.families)
   local loopDefs::Vector{Any} = Any[]; local loopBodies::Vector{Any} = Any[]
   #= where each algebraic element is a loop's first guess (by its index among the algebraic variables): a start
      rule of an algebraic variable sets them (`:a`, a guess computed at the start) =#
   local guessTargets::Dict{Int, Vector{Any}} = Dict{Int, Vector{Any}}()
-  local loopFamily!::Function = function (f::Int, template::Vector{Tuple{Int, Int}}, blocks::Vector{Vector{Int}})
+  local loopFamily!::Function = function (f::Int, template::Vector{Tuple{Int, Int}}, blocks::Vector{Vector{Int}},
+                                          bases::Vector{Int})
     for (m::Int, b::Vector{Int}) in enumerate(blocks), j::Int in eachindex(b)
       local unknown::Int = matchRow[b[j]]
       unknown > g.nStates && push!(get!(() -> Any[], guessTargets, unknown - g.nStates), :(p.loops[$f][$j, $m]))
+      bases[m] >= 0 && (initPlaces[bases[m] + j] = (f, j, m))
     end
-    local (defs::Vector{Any}, code::Expr) = _loopFamilyCode(g, f, template, blocks, el, matchRow, a0, relBases)
+    local (defs::Vector{Any}, code::Expr) = _loopFamilyCode(g, f, template, blocks, el, matchRow, a0, relBases, bases)
     append!(loopDefs, defs)
     push!(loopBodies, code)
   end
@@ -1479,7 +1550,8 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
   for (b, f) in enumerate(_blockFamilies(el, pos, loops))
     largeFamily[f] = large[b]
   end
-  foreach(f::Int -> largeFamily[f] ? push!(loopBodies, :(nothing)) : loopFamily!(f, familyTemplates[f], familyBlocks[f]),
+  foreach(f::Int -> largeFamily[f] ? push!(loopBodies, :(nothing)) :
+                                      loopFamily!(f, familyTemplates[f], familyBlocks[f], familyBases[f]),
           eachindex(familyTemplates))
   local callFamily!::Function = function (f::Int, members::Vector{Int}, neededMembers::Vector{Int}, crossingMembers::Vector{Int})
     push!(body, :($(Symbol("LOOPFAMILY_", f, "!"))(du, a, u, p, t, z, mode, fire, $(members))))
@@ -1533,8 +1605,15 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
                    _loopCode(c.nslots, c.domain, Int[el.col[rs[torn.residuals[t]]] for t in byClass[ci]], code))
     end
     push!(blockBodies, Expr(:block, parts...))
-    local call::Expr = :($(blockSolve!)(p.blocks[$(length(blockBodies))], $(Symbol("BLOCK_", length(blockBodies), "!")),
-                                        du, a, u, p, t, z, mode, fire))
+    local kb::Int = length(blockBodies)
+    local call::Expr = :($(blockSolve!)(p.blocks[$kb], $(Symbol("BLOCK_", kb, "!")), du, a, u, p, t, z, mode, fire))
+    #= held by the initial solve: its unknowns from it, its residuals to it (`InitialPass`) =#
+    local base::Int = initialSystem.blockBase[b]
+    if base >= 0
+      foreach(j::Int -> (initPlaces[base + j] = (-kb, j, 0)), eachindex(ids))
+      call = :(p.pass.on ? $(_passBlock!)(p.blocks[$kb], $(Symbol("BLOCK_", kb, "!")), p.pass, $base, du, a, u, p, t,
+                                          fire) : $call)
+    end
     push!(body, call)
     needed[rs[1]] && push!(rhsBody, copy(call))
     relNeeded[rs[1]] && push!(condBody, copy(call))
@@ -1571,7 +1650,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
          solved by Newton on its residual, as a loop of one =#
       push!(familyTemplates, [(ci, p)])
       local f::Int = length(familyTemplates)
-      loopFamily!(f, familyTemplates[f], [[r] for r in batch])
+      loopFamily!(f, familyTemplates[f], [[r] for r in batch], Int[get(initialSystem.rowBase, r, -1) for r in batch])
       callFamily!(f, collect(1:length(batch)), Int[k for (k, r) in enumerate(batch) if needed[r]],
                   Int[k for (k, r) in enumerate(batch) if relNeeded[r]])
       continue
@@ -1969,6 +2048,11 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     const INIT_ROWS = $(initRows)
     const INIT_REDUNDANT = $(initRedundant)
     const INIT_REDUNDANT_TEXTS = $(redundantTexts)
+    #= the loops the initial solve holds (`InitialSystem`): their unknowns' number and guesses' places, and per row of
+       the solve the unknowns it reads (`nothing`: from finite differences) =#
+    const N_INIT_LOOPS = $(initialSystem.nLoop)
+    const INIT_LOOP_PLACES = $(initPlaces)
+    const INIT_READS = $(initialSystem.reads)
     const D0 = $(d0)
     const N_RELATIONS = $(nRelTotal)
     #= the relation numbering's relations (not event-generating functions' crossing functions) =#
@@ -2330,15 +2414,30 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       return nothing
     end
 
+    #= The loops' unknowns of the initial solve (INIT_LOOP_PLACES): their guesses, and the guesses set to them. =#
+    function loopGuesses(p)
+      return Float64[f > 0 ? p.loops[f][j, m] : p.blocks[-f].y[j] for (f, j, m) in INIT_LOOP_PLACES]
+    end
+    function loopGuesses!(p, x)
+      for (k, (f, j, m)) in enumerate(INIT_LOOP_PLACES)
+        f > 0 ? (p.loops[f][j, m] = x[k]) : (p.blocks[-f].y[j] = x[k])
+      end
+      return p
+    end
+
     #= The initial state: the free states (and fixed = false parameters, into p.values) the
-       initial equations determine, solved for them. =#
-    function initialize(u0, p, t)
+       initial equations determine, solved for them with the unknowns of the loops the initial equations reach
+       (`InitialSystem`, from `guesses`; the loops' residuals rows of the solve), as OpenModelica's initial system;
+       the loops solved again in the equations at the solution, from it. =#
+    function initialize(u0, p, t, guesses = loopGuesses(p))
       local nS = length(INIT_UNKNOWNS)
+      local nR = nS + length(INIT_PARAMS)
       local u = copy(u0)
       local du = similar(u); local a = similar(u, $nAlg)
       local setUnknowns! = function (uu, z)
         uu[INIT_UNKNOWNS] .= view(z, 1:nS)
-        p.values[INIT_PARAMS] .= view(z, (nS + 1):length(z))
+        p.values[INIT_PARAMS] .= view(z, (nS + 1):nR)
+        loopGuesses!(p, view(z, (nR + 1):length(z)))
         return uu
       end
       #= the relations keep their values during a solve =#
@@ -2347,25 +2446,32 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
         uz .= u0
         setUnknowns!(uz, z)
         local duz = similar(uz); local az = similar(uz, $nAlg)
-        equations!(duz, az, uz, p, t, nothing, false)
+        p.pass.x .= view(z, (nR + 1):length(z))
+        p.pass.on = true
+        try
+          equations!(duz, az, uz, p, t, nothing, false)
+        finally
+          p.pass.on = false
+        end
         if isempty(INIT_REDUNDANT)
-          initialResiduals!(res, duz, az, uz, p, t)
+          initialResiduals!(view(res, 1:nR), duz, az, uz, p, t)
         else
           local every = similar(res, N_INIT)
           initialResiduals!(every, duz, az, uz, p, t)
-          res .= view(every, INIT_ROWS)
+          view(res, 1:nR) .= view(every, INIT_ROWS)
         end
+        view(res, (nR + 1):length(res)) .= p.pass.r
         return nothing
       end
       #= MLS 8.6, as the MTK path: the relations at the guess, a solve with them, then at the
          solution again, until they settle (a branch the solved state selects); relations that
          cycle (no consistent branch) keep the first solution =#
-      local z = vcat(u0[INIT_UNKNOWNS], p.values[INIT_PARAMS])
+      local z = vcat(u0[INIT_UNKNOWNS], p.values[INIT_PARAMS], guesses)
       #= sorted into blocks as OpenModelica's initial system (arrayInitialBlocks.jl), each solved scaled in a trust
          region; Newton where that fails =#
       local scale = map(x -> x == 0 ? 1.0 : abs(x), z)
       local whole = (res, w) -> residual(res, w, nothing)
-      local scaledSolve = z0 -> $(sortedInitialSolve)(whole, Vector{Float64}(z0), scale)
+      local scaledSolve = z0 -> $(sortedInitialSolve)(whole, Vector{Float64}(z0), scale, INIT_READS)
       local first = nothing
       local seen = Tuple{Vector{Bool}, Vector{Float64}}[]
       for _ in 1:20
@@ -2471,6 +2577,32 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       return nothing
     end
 
+    #= The start's mixed system (MLS 8.6: pre() the start values), as OpenModelica and the MTK path
+       (`_settleInitialDiscretes!`): the initial system was solved with the lifted clusters' variables at `used`
+       (their start values); their initial arms (`initialAlgorithms!`) gave their values at that solution. Where
+       those differ, the initial system again from the start values `uStart` with them, pre() of them the start
+       values `preStart`, until they stay (a cycle or 10 passes: the last solution stands, the start's event
+       iteration settles them). MSL RobotR3's bearing friction: solved unlocked (`a = sa + tau0_max`), the steady
+       start held the motor at the friction's limit (La.i = -0.43, omc 0); locked, sa keeps its start in the
+       initial system (`InitialSystem`). =#
+    $(isempty(clusterPre) ? nothing : quote
+        function initialClusters!(uStart, u, p, t, preStart::Vector{Float64}, used::Vector{Float64},
+                                  guessStart::Vector{Float64})
+          length(INIT_ROWS) > 0 || return u
+          local seen = Vector{Float64}[used]
+          for _ in 1:10
+            local now::Vector{Float64} = p.d[$clusterPre]
+            now in seen && return u
+            push!(seen, now)
+            p.dpre[$clusterPre] .= preStart
+            u = initialize(copy(uStart), p, t, copy(guessStart))
+            isempty(INIT_REDUNDANT) || checkRedundantInitial(u, p, t)
+            initialAlgorithms!(u, p, t)
+          end
+          return u
+        end
+      end)
+
     #= The starts of states and discrete variables that read a parameter, from the parameter values (an override
        reaches them); the loops' first guesses that are starts of algebraic variables computed at the start. =#
     function parameterStarts!(u0, p)
@@ -2571,7 +2703,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       local q = $(paramsType)(p.values, rel, d, copy(d), copy(p.wcond), copy(p.sampleActive),
                               [false], [false], copy(p.upre), copy(p.ureinit), copy(p.wnew), p.dlog, evv, copy(p.hyst), copy(p.tend),
                               copy(p.homotopy),
-                              zeros($nAlg), copy(p.aleft), p.blocks, $(_rootsAt)(p, t, right), p.state, p.model)
+                              zeros($nAlg), copy(p.aleft), p.blocks, $(_rootsAt)(p, t, right), p.pass, p.state, p.model)
       POSITIONS_OBJECTS && k > 0 && replayObjects!(u, q, times[k])
       equations!(similar(u), a, u, q, t, nothing, false)
       return a
@@ -2961,6 +3093,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
                            [1.0], zeros($nAlg), zeros($nAlg),
                            $(BlockSolver)[$(BlockSolver)(BLOCK_PATTERNS[k], BLOCK_COLORS[k], BLOCK_GUESSES[k]) for k in eachindex(BLOCK_PATTERNS)],
                            Matrix{Float64}[copy(G) for G in LOOP_GUESSES],
+                           $(InitialPass)(false, zeros(N_INIT_LOOPS), zeros(N_INIT_LOOPS)),
                            $(ArrayRuntimeState)(N_SAMPLES, strings, N_DELAYS), @__MODULE__)
     end
 
@@ -2975,9 +3108,13 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       end
       $(isempty(paramAlgBody) ? nothing : :(parameterAlgorithms!(u0, p, tspan[1])))
       USES_HOMOTOPY && (u0 = homotopyStart!(u0, p, tspan[1]))
+      $(isempty(clusterPre) ? nothing :
+        :(local (uStart, preStart, used, guessStart) =
+            (copy(u0), p.dpre[$clusterPre], p.d[$clusterPre], loopGuesses(p))))
       length(INIT_ROWS) > 0 && (u0 = initialize(u0, p, tspan[1]))
       isempty(INIT_REDUNDANT) || checkRedundantInitial(u0, p, tspan[1])
       $(isempty(initAlgBody) ? nothing : :(initialAlgorithms!(u0, p, tspan[1])))
+      $(isempty(clusterPre) ? nothing : :(u0 = initialClusters!(uStart, u0, p, tspan[1], preStart, used, guessStart)))
       $(isempty(freeStartStmts) ? nothing : :(freeParameterStarts!(p)))
       N_SAMPLES == 0 || sampleSchedule!(p)
       if N_RELATIONS > 0 || N_WHENS > 0 || N_DISCRETE_UNKNOWNS > 0

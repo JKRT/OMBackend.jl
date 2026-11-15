@@ -42,15 +42,16 @@ function scaledTrustRegionSolve(residual!::Function, z0::Vector{Float64},
 end
 
 """
-    sortedInitialSolve(residual!, z0, scale) -> (ok, z, retcode)
+    sortedInitialSolve(residual!, z0, scale, reads) -> (ok, z, retcode)
 
-The initial system `residual!(res, z) = 0` solved in its blocks (`initialBlocks`), each by `scaledTrustRegionSolve`
-with the unknowns of the blocks before it known; solved whole from `z0` where it has one block, is not structurally
-regular, or a block has no solution.
+The initial system `residual!(res, z) = 0` solved in its blocks (`initialBlocks`; `reads`: each row's unknowns from the
+structure, `nothing`: from finite differences), each by `scaledTrustRegionSolve` with the unknowns of the blocks
+before it known; solved whole from `z0` where it has one block, is not structurally regular, or a block has no
+solution.
 """
-function sortedInitialSolve(residual!::Function, z0::Vector{Float64},
-                            scale::Vector{Float64})::Tuple{Bool, Vector{Float64}, Any}
-  local blocks::Union{Nothing, Vector{Tuple{Vector{Int}, Vector{Int}}}} = initialBlocks(residual!, z0, scale)
+function sortedInitialSolve(residual!::Function, z0::Vector{Float64}, scale::Vector{Float64},
+                            reads::Union{Nothing, Vector{Vector{Int}}})::Tuple{Bool, Vector{Float64}, Any}
+  local blocks::Union{Nothing, Vector{Tuple{Vector{Int}, Vector{Int}}}} = initialBlocks(residual!, z0, scale, reads)
   if blocks !== nothing
     local z::Vector{Float64} = copy(z0)
     local full::Vector{Float64} = similar(z0)
@@ -73,18 +74,21 @@ function sortedInitialSolve(residual!::Function, z0::Vector{Float64},
 end
 
 """
-    initialBlocks(residual!, z, scale) -> Union{Nothing, Vector{Tuple{Vector{Int}, Vector{Int}}}}
+    initialBlocks(residual!, z, scale, structure) -> Union{Nothing, Vector{Tuple{Vector{Int}, Vector{Int}}}}
 
 The blocks of the initial system `residual!(res, z) = 0` in the order they are solved: (residual rows, unknowns), from
-a perfect matching of the rows to the unknowns they read (`_initialIncidence`) and the strongly connected components of
-the rows (Tarjan: a row's block after the blocks of the unknowns it reads). `nothing` for a system without a perfect
-matching, without an incidence, or of one block.
+a perfect matching of the rows to the unknowns they read (`structure`, the code generation's `InitialSystem`: every
+branch of an if-expression read, as OpenModelica's matching; where it has none `_initialIncidence`) and the strongly
+connected components of the rows (Tarjan: a row's block after the blocks of the unknowns it reads). `nothing` for a
+system without a perfect matching, without an incidence, or of one block.
 """
-function initialBlocks(residual!::Function, z::Vector{Float64},
-                       scale::Vector{Float64})::Union{Nothing, Vector{Tuple{Vector{Int}, Vector{Int}}}}
+function initialBlocks(residual!::Function, z::Vector{Float64}, scale::Vector{Float64},
+                       structure::Union{Nothing, Vector{Vector{Int}}}
+                       )::Union{Nothing, Vector{Tuple{Vector{Int}, Vector{Int}}}}
   local n::Int = length(z)
   n > 1 || return nothing
-  local reads::Union{Nothing, Vector{Vector{Int}}} = _initialIncidence(residual!, z, scale)
+  local reads::Union{Nothing, Vector{Vector{Int}}} =
+    structure === nothing ? _initialIncidence(residual!, z, scale) : structure
   reads === nothing && return nothing
   local colOfRow::Vector{Int} = zeros(Int, n)
   local rowOfCol::Vector{Int} = zeros(Int, n)

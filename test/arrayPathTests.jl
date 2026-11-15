@@ -2880,6 +2880,64 @@ end
     @test s ≈ a rtol = 1e-5
   end
 
+  @testset "A locked friction at the start: the loops in the initial system" begin
+    #= MSL RobotR3's bearing friction at the start: locked (pre(mode) = 3), so `a = 0` whatever sa is, and the load
+       tauL is held by the motor's current i, by the friction torque tau = sa, or shared. omc solves the friction's
+       equation for sa alone after der(w) = 0 fixed a: its residual is zero at sa's start, sa = 0 stays, the motor
+       holds the load (i = x = 2) and the shaft rests. A solve of the states alone kept i at its start and the loop
+       gave sa = -2 < -tau0max: the shaft slid backward. omc: i = x = 2, sa = 0 at 0 and at 0.2. =#
+    local program = Modelica"""
+      model LockedLoad "a locked friction at the start under a constant load a motor with a PI controller can hold"
+        parameter Real J = 1;
+        parameter Real tauL = 2;
+        parameter Real tau0max = 0.5;
+        parameter Real L = 0.1;
+        parameter Real R = 1;
+        parameter Real k = 1;
+        parameter Real kp = 1;
+        parameter Real T = 0.1;
+        Real phi(start = 0, fixed = true);
+        Real w(start = 0, fixed = true);
+        Real i(start = 0);
+        Real x(start = 0);
+        Real v;
+        Real a;
+        Real sa;
+        Real tau;
+        Boolean startForward(start = false, fixed = true);
+        Boolean startBackward(start = false, fixed = true);
+        Boolean locked(start = false, fixed = true);
+        Integer mode(start = 3, fixed = true);
+      initial equation
+        der(w) = 0;
+        der(i) = 0;
+      equation
+        der(phi) = w;
+        der(w) = a;
+        J * a = k * i - tau - tauL;
+        L * der(i) = v - R * i - k * w;
+        der(x) = -w / T;
+        v = kp * (x - w);
+        startForward = pre(mode) == 0 and (sa > tau0max or pre(startForward) and sa > tau0max)
+                       or pre(mode) == -1 and w > 1e10 or initial() and w > 0;
+        startBackward = pre(mode) == 0 and (sa < -tau0max or pre(startBackward) and sa < -tau0max)
+                        or pre(mode) == 1 and w < -1e10 or initial() and w < 0;
+        locked = not (pre(mode) == 1 or startForward or pre(mode) == -1 or startBackward);
+        a = if locked then 0 else if startForward then sa - tau0max else if startBackward then sa + tau0max
+            else if pre(mode) == 1 then sa - tau0max else sa + tau0max;
+        tau = if locked then sa else if startForward then tau0max else if startBackward then -tau0max
+              else if pre(mode) == 1 then tau0max else -tau0max;
+        mode = if (pre(mode) == 1 or startForward) and w > 0 then 1
+               else if (pre(mode) == -1 or startBackward) and w < 0 then -1 else 0;
+      end LockedLoad;
+      """
+    local (s, a, sol) = _bothWaysOf(program, "LockedLoad", ["i", "x", "sa", "w"]; tspan = (0.0, 0.2))
+    @test a ≈ [2.0, 2.0, 0.0, 0.0] atol = 1e-8
+    @test s ≈ a atol = 1e-8
+    @test OMBackend.getVariableValues(sol, "i")[1] ≈ 2.0 atol = 1e-8
+    @test OMBackend.getVariableValues(sol, "sa")[1] ≈ 0.0 atol = 1e-8
+  end
+
   @testset "Rotated constant currents through an inductance" begin
     #= MSL's SMPM_CurrentSource and SMR_CurrentSource: dqToThreePhase's rotator turns the constant references
        u = {id, iq} by the rotor angle, the result prescribes the stator currents. The plan's structure reads u as
