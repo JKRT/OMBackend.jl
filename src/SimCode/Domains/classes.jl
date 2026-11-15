@@ -35,7 +35,7 @@
 
 #= The domain level's classes and their expression form, its passes (rerolling, folding, alias elimination, semiLinear
    chains) and the causal level (elements, matching, scheduling with loops, tearing, solving for an unknown): moved
-   from CodeGeneration's ArrayODEGeneration.jl (2026-11-01), unchanged. =#
+   from CodeGeneration's ArrayODEGen.jl (2026-11-01), unchanged. =#
 
 struct NotSupported <: Exception
   msg::String

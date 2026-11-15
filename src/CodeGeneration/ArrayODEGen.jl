@@ -97,8 +97,8 @@ import ...SimCode.Domains: DomainSystem, InstanceTable, EqClass, EvFn, Gen, IR, 
 const SII = ModelingToolkit.SymbolicIndexingInterface
 import ..CodeGeneration: NonlinearSolve, ADTypes
 
-include("ArrayBlockSolve.jl")
-include("ArrayInitialBlocks.jl")
+include("arrayBlockSolve.jl")
+include("arrayInitialBlocks.jl")
 
 #= The parameter argument of an array model's problem: the parameter values (one flat
    vector, laid out by the model's PARAMETER_LAYOUT; one type for every array model, so the
@@ -2361,7 +2361,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
          solution again, until they settle (a branch the solved state selects); relations that
          cycle (no consistent branch) keep the first solution =#
       local z = vcat(u0[INIT_UNKNOWNS], p.values[INIT_PARAMS])
-      #= sorted into blocks as OpenModelica's initial system (ArrayInitialBlocks.jl), each solved scaled in a trust
+      #= sorted into blocks as OpenModelica's initial system (arrayInitialBlocks.jl), each solved scaled in a trust
          region; Newton where that fails =#
       local scale = map(x -> x == 0 ? 1.0 : abs(x), z)
       local whole = (res, w) -> residual(res, w, nothing)

@@ -1134,7 +1134,7 @@ own (MTK's: an if-equation's pure time events, NoInit): the event iteration
 solves its algebraic unknowns again after such an event too, after the
 step-end recorder took the left limit (withDelayRecords). Without the
 iteration nothing did, but the merged continuous callback's re-solve with
-the integrator's algorithm (DirectRHSGeneration.jl `_mergeableReinit`),
+the integrator's algorithm (directRHSGeneration.jl `_mergeableReinit`),
 inside the callback: there delay() recorded no jump, and where that re-solve
 is gone, the unknowns kept their old values until the next step's end (a
 `time > 1.5` branch read by delay() recorded a ramp over the step).

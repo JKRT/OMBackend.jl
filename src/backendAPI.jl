@@ -209,7 +209,7 @@ end
     In-backend MTK path. Same module/codegen as MTK_MODE, but additionally
     constructs the System and runs structural_simplify in the backend at
     translate time and dumps the post-simplify System. Simulate reuses the
-    existing module interface. Implementation in CodeGeneration/iMTKGen.jl.
+    existing module interface. Implementation in CodeGeneration/IMTKGen.jl.
   =#
   IMTK_MODE = 5
 end

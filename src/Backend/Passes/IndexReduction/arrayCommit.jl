@@ -32,7 +32,7 @@
 * See the full OSMC Public License conditions for more details.
 *
 */ =#
-#= The plan made on the element view of an arrays-kept model (Arrays.jl), committed in array form: the arrays
+#= The plan made on the element view of an arrays-kept model (arrays.jl), committed in array form: the arrays
    whose elements the plan treats alike keep one kind, a for-equation whose iterations it differentiates alike is
    differentiated once, symbolically, its iterator kept (Otter and Elmqvist, Modelica Conference 2017, Theorem 2:
    under full incidence every element of an array equation is differentiated equally). Where the plan treats the
