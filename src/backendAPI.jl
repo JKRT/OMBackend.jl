@@ -528,7 +528,20 @@ function reducedArrayModel(lower::Function, name::String)::Union{Nothing, OMJLIR
        assignments in their order) =#
     local model::OMJLIR.Model = Passes.runPassesKeepingArrays!(lowered)
     local rolled::Bool = roll && reduction.rollComponents!(model) > 0
-    if own || rolled
+    if rolled
+      #= the rolled instances' elements treated differently by the plan (a gear between rolled inertias, one of them
+         no state: slicing that splits most of the rolled arrays), or another form the rolled arrays do not take:
+         the components as declared (rolling only saves equations); the model is lowered again, the reduction's
+         splits changed it =#
+      try
+        reduction.reduceIndexArrays!(model)
+      catch err
+        err isa reduction.NotHandled || rethrow()
+        @info "[index reduction] $(name): rolled components not taken ($(sprint(showerror, err))), as declared"
+        model = Passes.runPassesKeepingArrays!(lower())
+        reduction.reduceIndexArrays!(model; arrays = own)
+      end
+    elseif own
       reduction.reduceIndexArrays!(model)
     else
       #= none to keep: its index reduced, or its states committed, in the array form all the same (the array code

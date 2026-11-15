@@ -529,6 +529,61 @@ end
     @test maximum(abs.(sr .- ar)) < 1e-6
   end
 
+  @testset "Rolled components the plan treats differently: taken as declared" begin
+    #= three inertias rolled into arrays, a gear between the first two: one of them is no state, and the plan split
+       most of the rolled arrays ("slicing that splits most of the arrays"); the array form refused the model, and the
+       backend's scalarization of the rolled form did not build (OMBackend's precompile workload Drive) =#
+    local geared = Modelica"""
+      model GearedInertias
+        connector Flange
+          Real phi;
+          flow Real tau;
+        end Flange;
+        model Inertia
+          parameter Real J = 1;
+          Flange a;
+          Flange b;
+          Real phi(start = 0, fixed = true);
+          Real w(start = 0, fixed = true);
+        equation
+          phi = a.phi;
+          phi = b.phi;
+          der(phi) = w;
+          J * der(w) = a.tau + b.tau;
+        end Inertia;
+        model IdealGear
+          parameter Real ratio = 2;
+          Flange a;
+          Flange b;
+        equation
+          a.phi = ratio * b.phi;
+          0 = ratio * a.tau + b.tau;
+        end IdealGear;
+        model Spring
+          parameter Real c = 100;
+          Flange a;
+          Flange b;
+        equation
+          b.tau = c * (b.phi - a.phi);
+          a.tau = -b.tau;
+        end Spring;
+        Inertia j1(J = 0.1);
+        IdealGear gear;
+        Inertia j2(J = 2, phi(fixed = false), w(fixed = false));
+        Spring spring;
+        Inertia j3(phi(start = 0.1));
+      equation
+        connect(j1.b, gear.a);
+        connect(gear.b, j2.a);
+        connect(j2.b, spring.a);
+        connect(spring.b, j3.a);
+      end GearedInertias;
+      """
+    local (sg::Vector{Float64}, ag::Vector{Float64}, _) =
+      _bothWaysOf(geared, "GearedInertias", ["j1.phi", "j2.w", "j3.phi"]; reltol = 1e-8, abstol = 1e-8)
+    @test maximum(abs.(sg .- ag)) < 1e-6
+  end
+
   @testset "The first step where OrdinaryDiffEq's probe for it leaves the right-hand side's domain" begin
     #= its estimate was NaN and the run ended at the start (DtNaN): `_finiteFirstStep!` =#
     local (so, ao, _) = _bothWays("ArrayPath.OverflowingProbe", ["v"])
