@@ -857,19 +857,31 @@ end
 """
     _parameterAlgorithms(g) -> BitVector
 
-The initial algorithms that compute parameters from parameters: they assign parameters only and read literals,
-iterators and parameters, each parameter with fixed = false among them one such an algorithm assigns. They run before
-the initial system, which reads what they assign (MSL Engine1b_analytic: `rodLength = length(rRod_ia)`, `length =
-rodLength`, then the initial equation `positiveBranch = selectBranch(length, ...)`). The others run after it.
+The initial algorithms that compute parameters and discrete values from parameters: they assign parameters, discrete
+variables (their initial value or pre() of it) no lifted cluster of discrete equations assigns, and the local of a
+tuple-valued call only, and read literals, iterators, parameters and discrete values, each parameter with fixed = false
+and each discrete value (or pre() of one) among them one such an algorithm assigns. They run before the initial
+system, which reads what they assign (MSL Engine1b_analytic: `rodLength = length(rRod_ia)`, `length = rodLength`, then
+the initial equation `positiveBranch = selectBranch(length, ...)`; MSL Noise's `r_raw = generator.random(pre(state))`,
+read by Variance's `mu = u`). The others run after it.
 """
 function _parameterAlgorithms(g::Gen)::BitVector
   local early::BitVector = falses(length(g.initAlgs))
+  #= the discrete variables of lifted clusters: their initialized values come with the clusters (`initialClusters!`) =#
+  local clusterNames::Set{String} = Set{String}()
+  for w::WhenClass in g.whens, (kind::Symbol, target::Ref, _) in w.body
+    (w.everyEvent && kind == :assign) && push!(clusterNames, target.name)
+  end
+  local isDiscrete::Function = (r::Ref) -> g.vars[r.name].kind == :discrete && !r.der
   local isParam::Function = (r::Ref) -> g.vars[r.name].kind == :param && !r.der
+  local isTarget::Function = (r::Ref) -> isParam(r) || (isDiscrete(r) && !(r.name in clusterNames))
   local reads::Vector{Vector{Ref}} = Vector{Ref}[Ref[] for _ in g.initAlgs]
   local exp!::Function = (acc::Vector{Ref}, x::IR) -> begin
     if x isa Ref
       push!(acc, x)
       foreach(s::IR -> exp!(acc, s), x.subs)
+    elseif x isa Pre
+      exp!(acc, x.ref)
     elseif x isa Rel
       exp!(acc, x.lhs); exp!(acc, x.rhs)
     elseif x isa Op
@@ -881,25 +893,31 @@ function _parameterAlgorithms(g::Gen)::BitVector
     return true
   end
   local stmts!::Function = (acc::Vector{Ref}, body::Vector{Stmt}) -> all(body) do st::Stmt
-    if st isa SAssign
-      isParam(st.target) && all(s::IR -> exp!(acc, s), st.target.subs) && exp!(acc, st.value)
+    if st isa SAssign || st isa SPreStart
+      isTarget(st.target) && all(s::IR -> exp!(acc, s), st.target.subs) && exp!(acc, st.value)
     elseif st isa SIf
       all(b::Tuple{IR, Vector{Stmt}} -> exp!(acc, b[1]) && stmts!(acc, b[2]), st.branches)
     elseif st isa SFor
       stmts!(acc, st.body)
+    elseif st isa SCall && st.call isa Op && st.call.op == :setlocal
+      #= the local of a tuple-valued call, its outputs assigned from it: (cr, c0, c1) = f(...) (MSL
+         Blocks.Continuous.Filter's coefficients, read by its steady-state initial equations der(x) = 0) =#
+      exp!(acc, st.call)
     else
       false
     end
   end
-  local candidate::BitVector = BitVector([stmts!(reads[k], a.body) && all(isParam, reads[k])
+  local readable::Function = (r::Ref) -> isParam(r) || isDiscrete(r)
+  local candidate::BitVector = BitVector([stmts!(reads[k], a.body) && all(readable, reads[k])
                                           for (k::Int, a::AlgClass) in enumerate(g.initAlgs)])
-  #= a parameter with fixed = false it reads: assigned by such an algorithm (a fixed point, from all candidates) =#
+  #= a parameter with fixed = false or a discrete value it reads: assigned by such an algorithm (a fixed point, from
+     all candidates) =#
   early .= candidate
   local changed::Bool = true
   while changed
     local known::Set{String} = _initAlgAssigned(g, early)
-    local next::BitVector = BitVector([early[k] && all(r::Ref -> !(r.name in g.freeParams) || r.name in known, reads[k])
-                                       for k in eachindex(early)])
+    local given::Function = (r::Ref) -> !(r.name in g.freeParams || isDiscrete(r)) || r.name in known
+    local next::BitVector = BitVector([early[k] && all(given, reads[k]) for k in eachindex(early)])
     changed = next != early
     early = next
   end

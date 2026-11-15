@@ -541,9 +541,33 @@ function _nameIndex(names::Vector{String})::Dict{String, Int}
 end
 
 """
+    _parameterIndex(model) -> Dict{String, Int}
+
+The positions in `p.values` of the generated model's scalar parameters and parameter elements, by their names
+(`PARAMETER_NAMES`, `PARAMETER_ELEMENTS`: Modelica's and canonical), in `PARAMETER_LAYOUT`'s column-major order: the
+parameters a solution is indexed by (a reference signal of MSL Utilities.Examples.readRealParameterModel: `J`).
+"""
+function _parameterIndex(model::Module)::Dict{String, Int}
+  local layout::Dict{Symbol, Tuple{Int, Int, Vector{Int}}} =
+    Dict{Symbol, Tuple{Int, Int, Vector{Int}}}(sym => (off, len, dims)
+                                               for (sym, off, len, dims) in model.PARAMETER_LAYOUT)
+  local index::Dict{String, Int} = Dict{String, Int}()
+  for (name::String, sym::Symbol) in model.PARAMETER_NAMES
+    local (off::Int, len::Int, _) = get(layout, sym, (0, 0, Int[]))
+    len == 1 && (index[name] = off + 1)
+  end
+  for (name::String, (sym::Symbol, t::Tuple)) in model.PARAMETER_ELEMENTS
+    haskey(layout, sym) || continue
+    local (off::Int, _, dims::Vector{Int}) = layout[sym]
+    index[name] = off + LinearIndices(Tuple(dims))[t...]
+  end
+  return index
+end
+
+"""
     variableValues(sol, name)
 
-The values of a state, algebraic or discrete variable element (`"c[2].T"`) at the time
+The values of a state, algebraic or discrete variable element (`"c[2].T"`), or a parameter, at the time
 points of a solution of an array model; `nothing` for an unknown name.
 """
 variableValues(sol, name::String) = Base.invokelatest(_variableValues, sol, name)
@@ -566,16 +590,19 @@ function _variableValues(sol, name::String)
     local after(i) = i > 1 && sol.t[i - 1] == sol.t[i]
     return [p.dlog[_dlogIndex(times, sol.t[i], p.tend[1], after(i))][2][k] for i in eachindex(sol.t)]
   end
+  local params::Dict{String, Int} = _parameterIndex(m)
+  local q::Int = get(params, name, get(params, key, 0))
+  q > 0 && return fill(p.values[q], length(sol.t))
   return nothing
 end
 
 #= The symbolic system of an array model's ODEFunction: names for solution indexing
    (sol[:x], sol(t; idxs = Symbol("c[2].T"))), states as variables, algebraic and discrete
-   variables as observed. Names as Modelica writes them or canonical (c[2]_T). =#
+   variables and parameters as observed. Names as Modelica writes them or canonical (c[2]_T). =#
 struct ArraySystem
   states::Dict{Symbol, Int}
   stateSyms::Vector{Symbol}
-  observed::Dict{Symbol, Tuple{Symbol, Int}}   #= (:alg or :discrete, index) =#
+  observed::Dict{Symbol, Tuple{Symbol, Int}}   #= (:alg, :discrete or :param, index; :param in p.values) =#
   model::Module
 end
 
@@ -595,6 +622,10 @@ function ArraySystem(model::Module)
   end
   for (k, v) in model.DISCRETE_INDEX
     observed[Symbol(k)] = (:discrete, v)
+  end
+  for (k::String, v::Int) in _parameterIndex(model)
+    local s::Symbol = Symbol(k)
+    (haskey(states, s) || haskey(observed, s)) || (observed[s] = (:param, v))
   end
   return ArraySystem(states, Symbol.(model.STATE_NAMES), observed, model)
 end
@@ -632,6 +663,7 @@ function SII.observed(sys::ArraySystem, x)
     #= the binding read in the latest world too: the module is newer than the caller =#
     return (u, p, t) -> (Base.@invokelatest model.algebraics(u, p, t))[i]
   end
+  kind == :param && return (u, p, t) -> p.values[i]
   return (u, p, t) -> begin
     local times = first.(p.dlog)
     isempty(times) ? NaN : p.dlog[_dlogIndex(times, t, p.tend[1])][2][i]
@@ -2795,11 +2827,11 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       return nothing
     end
 
-    function eventIteration!(u, p, t, fire::Bool, sampleInstant::Bool = false)
+    function eventIteration!(u, p, t, fire::Bool, sampleInstant::Bool = false; left::Bool = true)
       local du = similar(u); local a = similar(u, $nAlg)
       #= the algebraic variables' left limit: the equations with the relations and discrete values of before the
-         event =#
-      if USES_LEFT
+         event (`left`; a crossing computed it already, before its relations changed: `affectCrossing!`) =#
+      if USES_LEFT && left
         equations!(du, a, u, p, t, nothing, false)
         p.aleft .= a
       end
@@ -2825,14 +2857,14 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
 
     #= The event iteration at an event during the solve: a model that does not settle
        (relations switching back and forth) stops the simulation, as OpenModelica. =#
-    function _eventAt!(integrator, sampleInstant::Bool = false)
+    function _eventAt!(integrator, sampleInstant::Bool = false; left::Bool = true)
       local p = integrator.p
       #= the delay() arguments just before the event: their left limits (a jump is recorded after it, `_delayJumps!`) =#
       N_DELAYS == 0 || _delayLeft!(integrator)
       #= the state just before the event (a reinit moves it): the asserts' left limit =#
       p.state.leftLimit = (Float64(integrator.t), copy(integrator.u))
       local relBefore::Vector{Bool} = copy(p.rel); local dBefore::Vector{Float64} = copy(p.d)
-      if eventIteration!(integrator.u, p, integrator.t, true, sampleInstant)
+      if eventIteration!(integrator.u, p, integrator.t, true, sampleInstant; left)
         #= After an event that changed the equations the next step starts small (`_restartStep!`). A relation's
            crossing changed them; a sample instant did where a relation, a discrete variable or the state changed. =#
         (!sampleInstant || relBefore != p.rel || dBefore != p.d || p.state.leftLimit[2] != integrator.u) &&
@@ -2928,6 +2960,12 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       equations!(du, a, ul, p, tl, nothing, true)
       whens!(du, a, ul, p, tl, nothing, true, false)
       p.wcond .= p.wnew
+      #= the algebraic variables' left limit at t, with the relations of before the crossing: pre(u) of
+         u = if time < T then ... is u before the switch (MSL DemonstrateContinuousSignalExtrema's pulse edges) =#
+      if USES_LEFT
+        equations!(du, a, integrator.u, p, t, nothing, false)
+        p.aleft .= a
+      end
       local timed::Bool = false
       for k in eachindex(events)
         (events[k] != 0 && RELATION_SLOT[k] && p.rel[k] == before[k] && p.rel[k] == (events[k] > 0)) && (p.rel[k] = !p.rel[k])
@@ -2936,7 +2974,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       local _hyst = p.hyst[1]
       timed && (p.hyst[1] = 0.0)
       try
-        _eventAt!(integrator)
+        _eventAt!(integrator; left = false)
       finally
         p.hyst[1] = _hyst
       end

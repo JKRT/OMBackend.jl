@@ -956,6 +956,24 @@ end
     local (sp, ap, _) = _bothWays("ArrayPath.FreeParameterTuple", ["x[1]", "x[2]"])
     @test isapprox(ap, [3 - 2 * exp(-1), 1.5 - 0.5 * exp(-2)]; atol = 1e-6)
     @test maximum(abs.(sp .- ap)) < 1e-6
+    #= ... that runs before the initial system where its parameters are read there (der(x) = 0): after it, the steady
+       state was solved with a = b = 0 and x stayed at 0 =#
+    local (ss, as, _) = _bothWays("ArrayPath.FreeParameterTupleSteady", ["x[1]", "x[2]"])
+    @test isapprox(as, [3.0, 1.5]; atol = 1e-6)
+    @test maximum(abs.(ss .- as)) < 1e-6
+    #= initial values of discrete variables from parameters (an initial algorithm each) the initial system reads: they
+       ran after it, and mu = y read r's start, 0 =#
+    local (sd, ad, _) = _bothWays("ArrayPath.InitialDiscreteChain", ["mu"])
+    @test isapprox(ad, [0.72]; atol = 1e-9)
+    @test maximum(abs.(sd .- ad)) < 1e-9
+  end
+
+  @testset "pre() of an algebraic variable at a time event: its value before the relation switches" begin
+    #= a crossing took the relations' new values before the left limit was computed: pre(u) was u after the
+       step and the maxima missed it (y_max -1.4, z_max 2.2) =#
+    local (sl, al, _) = _bothWays("ArrayPath.LeftLimitAtTimeEvent", ["y_max", "z_max"])
+    @test isapprox(al, [1.6, 2.8]; atol = 1e-6)
+    @test maximum(abs.(sl .- al)) < 1e-6
   end
 
   @testset "Scalarized by the backend: array targets of when-equations and of an algorithm's tuple" begin

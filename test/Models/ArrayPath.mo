@@ -2877,6 +2877,83 @@ package ArrayPath
     end for;
   end FreeParameterTuple;
 
+  model FreeParameterTupleSteady "(a, b) = f(k) in an initial equation read by the steady-state start der(x) = 0 (MSL Blocks.Examples.Filter): the tuple runs before the initial system; x[i] = b / a[i] at all times: 3, 1.5"
+    parameter Real k = 1;
+    parameter Real a[2](each fixed = false);
+    parameter Real b(fixed = false);
+    Real x[2];
+  initial equation
+    (a, b) = twoGains(k);
+    der(x) = zeros(2);
+  equation
+    for i in 1:2 loop
+      der(x[i]) = -a[i] * x[i] + b;
+    end for;
+  end FreeParameterTupleSteady;
+
+  function seedState "a generator's state from its seed (MSL Xorshift128plus.initialState)"
+    input Integer seed;
+    output Integer state[2];
+  algorithm
+    state := {seed, 2 * seed};
+  end seedState;
+
+  function drawNumber "a number and the next state (MSL Xorshift128plus.random)"
+    input Integer stateIn[2];
+    output Real r;
+    output Integer stateOut[2];
+  algorithm
+    r := 0.1 * stateIn[1] + 0.01 * stateIn[2];
+    stateOut := {stateIn[2], stateIn[1] + 1};
+  end drawNumber;
+
+  model InitialDiscreteChain "the initial values of discrete variables from parameters, read by the initial system (MSL NormalNoiseProperties: localSeed, pre(state), r_raw, r, then Variance's mu = u): they are given before it; mu = y at the start, 0.72, at all times"
+    parameter Integer fixedSeed = 3;
+    final parameter Integer localSeed(fixed = false);
+    Integer state[2];
+    discrete Real r_raw;
+    discrete Real r;
+    Real y;
+    Real mu;
+  initial equation
+    localSeed = fixedSeed;
+    pre(state) = seedState(localSeed);
+    r_raw = drawNumber(pre(state));
+    r = 2 * r_raw;
+    mu = y;
+  equation
+    when sample(0, 0.1) then
+      (r_raw, state) = drawNumber(pre(state));
+      r = 2 * r_raw;
+    end when;
+    y = r;
+    der(mu) = 0;
+  end InitialDiscreteChain;
+
+  model LeftLimitAtTimeEvent "pre(u) of u = if time < tStep then .. else ..: u's value before the time relation switches (MSL DemonstrateContinuousSignalExtrema's pulse edges): the step at 0.3 gives y_max = 1.6; with a discrete step time moved from 0.3 to 0.9 at 0.6, z_max = 2.8"
+    parameter Real T = 1e-6;
+    parameter Real tStep = 0.3;
+    discrete Real tEnd(start = 0.3, fixed = true);
+    Real u = 2 * time + (if time < tStep then 1 else -2);
+    Real v = 2 * time + (if time < tEnd then 1 else -2);
+    Real x(start = 1, fixed = true);
+    Real w(start = 1, fixed = true);
+    Real y_max(start = -10, fixed = true);
+    Real z_max(start = -10, fixed = true);
+  equation
+    der(x) = (u - x) / T;
+    der(w) = (v - w) / T;
+    when time >= 0.6 then
+      tEnd = 0.9;
+    end when;
+    when {u <= x, u >= x} then
+      y_max = max({pre(y_max), u, pre(u)});
+    end when;
+    when {v <= w, v >= w} then
+      z_max = max({pre(z_max), v, pre(v)});
+    end when;
+  end LeftLimitAtTimeEvent;
+
   model SaturatedLoop "an amplifier with a limited output in a loop (MSL IdealizedOpAmpLimited as a voltage follower): after the input's step at 0.5 the last solution is on the saturated piece (y = 15), from where Newton's method cycles between two points that are no solutions; y = K / (1 + K) u after it, x(1) = 7.5 + 0.5 K / (1 + K)"
     parameter Real K = 1000;
     Real u = if time < 0.5 then 100 else 1;
