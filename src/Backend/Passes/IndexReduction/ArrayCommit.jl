@@ -1011,7 +1011,35 @@ function commitArrays!(model::IR.Model, partition::IR.Partition, c::ArrayCommit)
     model.variables[name].kind = kind
   end
   append!(partition.equations, c.equations)
+  partition.initialEquations =
+    IR.Equation[initialDummyDerivatives(eq, model.variables) for eq in partition.initialEquations]
   return nothing
+end
+
+"""
+The initial equation `eq` with der() of a dummy state (DUMMY_STATE: index reduction's, or one of the variables the
+initial equations read der() of, `initialDerivatives!`) its derivative variable: `der(v) = 0` reads `\$DER.v`, an
+element `der(x[2])` the element `\$DER.x[2]`; `eq` itself where it reads none.
+"""
+function initialDummyDerivatives(eq::IR.Equation, variables::IR.VariableSet)::IR.Equation
+  local isDummy::Function = (@nospecialize(x::IR.Expression)) -> begin
+    IR.isBuiltinCall(x, :der) || return false
+    local a::IR.Expression = only((x::IR.CALL).arguments)
+    a isa IR.CREF || return false
+    #= a variable of its own (`x[2]` of a model of scalars), else the element of an array =#
+    local v::Union{Nothing, IR.Variable} = get(variables, a.cref.name, nothing)
+    v === nothing && (v = get(variables, IR.withoutSubscripts(a.cref).name, nothing))
+    return v !== nothing && v.kind isa IR.DUMMY_STATE
+  end
+  local found::Bool = false
+  IR.foreachRootExp(eq) do @nospecialize(e::IR.Expression)
+    found || (found = IR.anyExp(isDummy, e))
+    nothing
+  end
+  found || return eq
+  local replace::Function = (@nospecialize(x::IR.Expression)) ->
+    isDummy(x) ? IR.CREF(IR.derivativeCref(only((x::IR.CALL).arguments).cref), IR.T_REAL()) : x
+  return IR.mapEquation!(replace, deepcopy(eq))
 end
 
 """
@@ -1059,7 +1087,7 @@ function reduceIndexArrays!(model::IR.Model; arrays::Bool = true)::Bool
   dropKnownZeroTerms!(model, view) && (view = scalarizeArrays(model))
   exposeArrayLinearConstraints!(model, view) && (view = scalarizeArrays(model))
   local partition::IR.Partition = view.model.continuous[1]
-  local written::Plan = plan(view.model, partition; indexOne = true)
+  local written::Plan = plan(view.model, partition; indexOne = true, initialDerivatives = true)
   #= the array form of the plan as written first: a plan it does not take is refused before the simulation code's
      values are computed for the plan again (`knownPlan`). Arrays whose elements it treats differently (slicing) are
      split into their elements, until it takes it. The element view stays (the splits keep the model's meaning), so
@@ -1073,7 +1101,7 @@ function reduceIndexArrays!(model::IR.Model; arrays::Bool = true)::Bool
     try
       arrayCommit(model, model.continuous[1], view, written)
       stale || break
-      written = plan(view.model, partition; indexOne = true)
+      written = plan(view.model, partition; indexOne = true, initialDerivatives = true)
       stale = false
       arrayCommit(model, model.continuous[1], view, written)
       break
@@ -1105,7 +1133,7 @@ links. False, the model not changed, where its index is above one (the scalarize
 """
 function commitIndexOne!(model::IR.Model)::Bool
   local view::Scalarized = scalarizeArrays(model)
-  local written::Plan = plan(view.model, view.model.continuous[1]; indexOne = true)
+  local written::Plan = plan(view.model, view.model.continuous[1]; indexOne = true, initialDerivatives = true)
   isempty(written.differentiated) || return false
   commitArrayPlan!(model, view, written)
   return true
@@ -1146,7 +1174,7 @@ function commitArrayPlan!(model::IR.Model, view::Scalarized, written::Plan)::Boo
   if !isempty(known)
     #= the model as the plan with these values reads it: without the terms a function's zero output takes out =#
     dropFunctionZeroTerms!(model, view, known) && (view = scalarizeArrays(model))
-    p = plan(view.model, view.model.continuous[1]; known, indexOne = true)
+    p = plan(view.model, view.model.continuous[1]; known, indexOne = true, initialDerivatives = true)
   end
   local reduced::Bool = !isempty(p.differentiated)
   local c = arrayCommit(model, model.continuous[1], view, p)

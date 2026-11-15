@@ -2783,6 +2783,45 @@ end
     @test st ≈ at atol = 1e-9
   end
 
+  @testset "Initial equations on derivatives of variables that are no states" begin
+    #= Refused for array code ("der of non-state ..."): an initial equation der(v) = c of an algebraic v. MSL
+       Rotational's InitializeFlange sets `der(flange.phi) = w_start` on a flange whose angle is an alias of a state
+       (here negated too); FundamentalWave's IMC_Initialize starts steady, `der(airGap.V_mrr.re) = 0` of an algebraic
+       variable. v's equation is differentiated down to the states (`initialDerivatives!`), the initial equation
+       reads the derivative. x'' = 1 - x, x(0) = 0.5: der(-x) = -2 gives x'(0) = 2; der(x + 2 x') = 0 gives
+       x'(0) = 2 (x(0) - 1) = -1. x = 1 - 0.5 cos t + x'(0) sin t =#
+    local program = Modelica"""
+      model AliasStart "der() of a negated alias of a state in an initial equation"
+        Real x(start = 0.5, fixed = true);
+        Real w;
+        Real flangePhi;
+      initial equation
+        der(flangePhi) = -2;
+      equation
+        flangePhi = -x;
+        der(x) = w;
+        der(w) = 1 - x;
+      end AliasStart;
+
+      model SteadyAlgebraicStart "der() of an algebraic variable in an initial equation: a steady start"
+        Real x(start = 0.5, fixed = true);
+        Real w;
+        Real y;
+      initial equation
+        der(y) = 0;
+      equation
+        y = x + 2 * w;
+        der(x) = w;
+        der(w) = 1 - x;
+      end SteadyAlgebraicStart;
+      """
+    for (model, w0) in (("AliasStart", 2.0), ("SteadyAlgebraicStart", -1.0))
+      local (s, a, _) = _bothWaysOf(program, model, ["x", "w"])
+      @test a ≈ [1 - 0.5 * cos(1.0) + w0 * sin(1.0), 0.5 * sin(1.0) + w0 * cos(1.0)] rtol = 1e-5
+      @test s ≈ a rtol = 1e-5
+    end
+  end
+
   @testset "Rotated constant currents through an inductance" begin
     #= MSL's SMPM_CurrentSource and SMR_CurrentSource: dqToThreePhase's rotator turns the constant references
        u = {id, iq} by the rotor angle, the result prescribes the stator currents. The plan's structure reads u as
