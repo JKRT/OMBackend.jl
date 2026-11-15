@@ -765,6 +765,14 @@ function _recordElementIRx(g::Gen, e::SC.RSUB, ctx::Ctx)::IR
                       _recordElementIRx(g, SC.RSUB(branches.elseExp, e.index, e.fieldName, e.ty), ctx)])
   end
   _isRecordValue(e.exp) && return _recordFieldIRx(g, e.exp, e.index, e.fieldName, ctx)
+  #= a field of an element of a vector of record literals at a literal subscript (MSL Media's `cp_T(data[1], T)` inlined
+     after index reduction, `data` evaluated: `{DataRecord(...), DataRecord(...)}[1].Tlimit`): the record's field =#
+  if e.exp isa SC.ASUB && length(e.exp.subs) == 1 && e.exp.subs[1] isa SC.ICONST && e.exp.exp isa SC.ARRAY_EXP
+    local records::Vector{SC.Exp} = e.exp.exp.elements
+    local at::Int = (e.exp.subs[1]::SC.ICONST).value
+    (1 <= at <= length(records) && records[at] isa SC.RECORD) &&
+      return _recordElementIRx(g, SC.RSUB(records[at], e.index, e.fieldName, e.ty), ctx)
+  end
   _isFunctionCall(g, e.exp) || ns("a field of $(_str(e.exp))")
   local rty::SC.SType = (e.exp::SC.CALL).ty
   (rty isa SC.TYPE_COMPLEX && rty.isRecord) || ns("a field of $(_str(e.exp)), not a record")

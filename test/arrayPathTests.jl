@@ -973,7 +973,8 @@ end
          ("ArrayPath.WhenIfArrayTarget", ["d[1]", "d[2]"], 1.0, [8.0, 10.0], true),
          ("ArrayPath.TupleArrayTarget", ["r", "s[1]", "s[2]"], 0.9, [5.0, 3.0, 3.0], false),
          ("ArrayPath.PreArrayStart", ["r", "s[1]", "s[2]"], 0.9, [2.000000005e9, 2.000000003e9, 3.0], false))
-      #= the route of OM's translate (`translateReducedArrays`: `nothing` is its caller's second flatten) =#
+      #= the route of OM's translate (`translateReducedArrays`: `nothing` is its caller's
+         `ARRAY_PRESERVING_CODEGEN_NOT_SUPPORTED`) =#
       local name::String = _arrayPathTranslate(model; scalarized = false)
       local (fm, cache) = OMFrontend.instantiateSCodeToFM(model, _ARRAY_PATH_SCODE[]; scalarize = false)
       @test OMBackend.translateReducedArrays(fm; functionList = OMFrontend.cacheToFunctionList(cache)) !== nothing
@@ -984,7 +985,7 @@ end
           @test OMBackend.translateReducedArrays(fm; functionList = OMFrontend.cacheToFunctionList(cache)) !== nothing
           @test name in OMBackend.BACKEND_SCALARIZED_MODELS
           @test _values(OMBackend.simulateModel(name; tspan = (0.0, T)), names) ≈ expected atol = 1e-9
-          #= switched off: `nothing` (the caller's scalarizing flatten), the reason recorded =#
+          #= switched off: `nothing` (the caller's error), the reason recorded =#
           withenv("OMBACKEND_BACKEND_SCALARIZATION" => "false") do
             @test OMBackend.translateReducedArrays(fm; functionList = OMFrontend.cacheToFunctionList(cache)) === nothing
             @test !(name in OMBackend.BACKEND_SCALARIZED_MODELS)
@@ -3075,5 +3076,85 @@ end
     @test isapprox([sol(t; idxs = Symbol("x[1]")) for t in (0.25, 1.0, 2.0)], [-0.25, 0.002, -0.004]; atol = 1e-4)
     @test isapprox([sol(t; idxs = Symbol("x[2]")) for t in (0.5, 1.0)], [-0.25, -0.248]; atol = 1e-4)
     @test [sol(t; idxs = Symbol("v[1]")) for t in (0.25, 1.0, 2.0)] ≈ [-1.0, 1.0, -1.0]
+  end
+  @testset "A homotopy() continuation that throws: the loops' guesses restored" begin
+    #= The continuation (`homotopyStart!`) fails at λ = 0 (sqrt of a negative number); the initialization from the
+       start values follows, with the loops' guesses from before it. The guesses were restored by a closure with a
+       destructured argument, which the generated module called with the pair as the function ("objects of type
+       Tuple{Matrix{Float64}, Matrix{Float64}} are not callable"): the model did not start and lost the array code
+       (MSL BranchingDynamicPipes). =#
+    local program = Modelica"""
+      model HomotopyThrows "a homotopy() whose simplified expression throws at the start of the continuation"
+        parameter Real V0 = 1000;
+        Real x[2](start = {0, 0.25}, each fixed = true);
+        Real e[2];
+        Real v[2];
+      equation
+        der(x) = v;
+        e = 0.5 * v - x;
+        for i in 1:2 loop
+          v[i] = homotopy(actual = if V0 * e[i] > 1 then 1 elseif V0 * e[i] < -1 then -1 else V0 * e[i],
+                          simplified = sqrt(e[i] - 10));
+        end for;
+      end HomotopyThrows;
+      """
+    delete!(OMBackend.FALLBACKS, :arrayHomotopyContinuation)
+    local name::String = _translateProgram(program, "HomotopyThrows"; scalarized = false)
+    @test _arrayPathTaken(name)
+    @test OMBackend.FALLBACKS[:arrayHomotopyContinuation].exceptionType == "DomainError"
+    local sol = OMBackend.simulateModel(name; tspan = (0.0, 1.0))
+    @test sol.retcode == ReturnCode.Success
+    @test sol.u[1] == [0.0, 0.25]
+  end
+  @testset "A constant array of records read through inlined functions" begin
+    #= MSL Media's `data` (MixtureGases): cp_X, inlined by the frontend after its constants were evaluated, kept
+       `{cp_T(data[i], T) for i in 1:nX}` with the package constants `data` and `nX`; the index reduction refused the
+       array of records (and its scalarization with it, the model had no array preserving code). With the body's
+       constants evaluated, cp_T inlined after index reduction reads `{Data(...), Data(...)}[1].Tlimit`, a field the
+       array code took only of a record value. =#
+    local program = Modelica"""
+      package RecordData
+        record Data
+          Real MM;
+          Real cp;
+          Real a[2];
+          Real Tlimit = 1000;
+        end Data;
+        package Gases
+          constant Data N2(MM = 0.028, cp = 1040.0, a = {1.0, 2.0});
+          constant Data O2(MM = 0.032, cp = 918.0, a = {3.0, 4.0});
+        end Gases;
+        function cp_T "one statement: inlined after index reduction"
+          input Data data;
+          input Real T;
+          output Real cp;
+        algorithm
+          cp := smooth(0, if T < data.Tlimit then data.cp + data.a[1] * T else data.cp);
+          annotation(Inline = false, smoothOrder = 2);
+        end cp_T;
+        package Medium
+          constant Integer nX = 2;
+          constant Data data[nX] = {Gases.N2, Gases.O2};
+          function cp_X "one statement: inlined by the frontend"
+            input Real T;
+            input Real X[nX];
+            output Real cp;
+          algorithm
+            cp := {cp_T(data[i], T) for i in 1:nX} * X;
+          end cp_X;
+        end Medium;
+        model Mixture
+          Real T(start = 300, fixed = true);
+          Real X[2] = {0.7, 0.3};
+          Real cp = Medium.cp_X(T, X);
+        equation
+          der(T) = 1;
+        end Mixture;
+      end RecordData;
+      """
+    #= cp = 0.7 (1040 + T) + 0.3 (918 + 3 T) = 1003.4 + 1.6 T, T = 301 at the end =#
+    local (s, a, _) = _bothWaysOf(program, "RecordData.Mixture", ["cp"])
+    @test a ≈ [1003.4 + 1.6 * 301] rtol = 1e-9
+    @test s ≈ a rtol = 1e-9
   end
 end

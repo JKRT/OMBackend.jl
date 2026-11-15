@@ -295,7 +295,8 @@ const BACKEND_SCALARIZED_MODELS = Set{String}()
 
 """
 Why the arrays-kept paths did not take a model at its last translate (canonical name => path => reason): what OM's
-translate reports when it falls back to the scalarizing flatten (`scalarizedFallbackReason`).
+translate reports in its error where none takes the model (`scalarizedFallbackReason`, OM's
+`ARRAY_PRESERVING_CODEGEN_NOT_SUPPORTED`).
 """
 const ARRAY_PATH_REASONS = Dict{String, Dict{String, String}}()
 
@@ -311,8 +312,9 @@ end
 """
     scalarizedFallbackReason(name) -> String
 
-Why the model `name` (canonical) goes through the scalarizing flatten: the reasons the arrays-kept
-paths gave at its last translate (array index reduction, the array code after it, the backend's scalarization).
+Why no arrays-kept path took the model `name` (canonical): the reasons the arrays-kept paths gave at its last
+translate (array index reduction, the array code after it, the backend's scalarization). OM's translate throws them
+(`ARRAY_PRESERVING_CODEGEN_NOT_SUPPORTED`); it no longer flattens a second time with scalarization (JKRT 2026-11-15).
 """
 function scalarizedFallbackReason(name::String)::String
   local reasons = get(ARRAY_PATH_REASONS, name, Dict{String, String}())
@@ -577,7 +579,7 @@ passes with index reduction (`Passes.runPasses!`): what the frontend's scalarizi
 passes, gives, without flattening again. For the models the array form does not take (`reducedArrayModel`).
 `nothing` where the element view does not take the model (switched off, OMBACKEND_BACKEND_SCALARIZATION; what it
 does not handle: logged; another error: a warning), the reason recorded (`declineArrayPath!`, "backend
-scalarization"): the frontend scalarizes then.
+scalarization"): OM's translate throws then (`ARRAY_PRESERVING_CODEGEN_NOT_SUPPORTED`).
 """
 function backendScalarizedModel(lower::Function, name::String)::Union{Nothing, OMJLIR.Model}
   local decline::Function = (reason::String) -> declineArrayPath!(name, "backend scalarization", reason)

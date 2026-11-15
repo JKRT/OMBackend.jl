@@ -863,14 +863,21 @@ end
    start), if smaller than the current step. Not for a DAE problem: DFBDF
    restarted from a smaller step ended in NaN (DAEIfReinit). =#
 """
-OrdinaryDiffEq's initial step estimate after an event (auto_dt_reset!). It reads the next
-tstop: at an event on the last one there is none left (MSL 4 RobotR3: a BoundsError in
-first_tstop), and no step to size either.
+OrdinaryDiffEq's initial step estimate after an event (auto_dt_reset!), proposed for the next step
+(`dtpropose`, which OrdinaryDiffEqCore's `apply_step!` takes). It reads the next tstop: at an event on
+the last one there is none left (MSL 4 RobotR3: a BoundsError in first_tstop), and no step to size
+either. `integrator.dt` keeps the length of the step that ended at the event: the step's interpolation
+divides by it, and a callback after this one that interpolates the step read it with the estimate
+instead (the array path's asserts, `_assertPending!`: MSL BranchingDynamicPipes, a restart of 2.2e-6 s
+in a step of 0.013 s, values 3000 steps out, a medium at 4125 K and a DomainError in its saturation
+pressure).
 """
 function _autoDtReset!(integrator)
   local tstops = integrator.opts.tstops
   isempty(tstops) && return nothing
+  local stepDt = integrator.dt
   ModelingToolkit.SciMLBase.auto_dt_reset!(integrator)
+  integrator.dt = stepDt
   return nothing
 end
 
@@ -918,8 +925,8 @@ function _restartStepSize!(integrator::OrdinaryDiffEq.OrdinaryDiffEqCore.ODEInte
     stall[] = start <= t <= start + window ? (start, count + 1) : (t, 1)
     last(stall[]) > 1 && (dt = min(_instantLength(t), cap))
   end
-  integrator.dt = integrator.tdir * dt
-  integrator.dtpropose = integrator.dt
+  #= proposed: `integrator.dt` stays the step's that ended at the event (`_autoDtReset!`) =#
+  integrator.dtpropose = integrator.tdir * dt
   return nothing
 end
 

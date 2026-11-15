@@ -71,7 +71,7 @@ end
 """
 OMJL's `translate` of the model `name` of `scode`: the frontend's flatten with the arrays kept and
 `translateReducedArrays` (the array code, else the scalarized reduced model, else the kept arrays scalarized by the
-backend), else the scalarizing flatten and `translate`.
+backend); an error where none takes the model (OMJL's `ARRAY_PRESERVING_CODEGEN_NOT_SUPPORTED`: no second flatten).
 """
 function _precompileTranslate(scode::OMFrontend.SCode.Program, name::String,
                               mode::OMBackend.BackendMode)::Union{Nothing, Tuple{String, Expr}}
@@ -81,10 +81,7 @@ function _precompileTranslate(scode::OMFrontend.SCode.Program, name::String,
                            warnMissingStartValues = nothing, eliminateNonDynamic = true, observedFilter = nothing,
                            checkSimCode = true)
   reduced === nothing || return reduced
-  (fm, cache) = OMFrontend.instantiateSCodeToFM(name, scode; scalarize = true)
-  return translate(fm; functionList = OMFrontend.cacheToFunctionList(cache), BackendMode = mode,
-                   warnMissingStartValues = nothing, eliminateNonDynamic = true, observedFilter = nothing,
-                   checkSimCode = true, scalarized = true)
+  error("$(name): array preserving codegen not supported ($(OMBackend.scalarizedFallbackReason(canonicalName(name))))")
 end
 
 """

@@ -284,7 +284,8 @@ transient of 1e-4 s, `a` 12 for 0). The step is OrdinaryDiffEq's estimate of a f
 solved inside the right-hand side, so a state that follows its input through a high gain has a derivative of
 round-off size at the event, and the estimate from it steps far over the transient (MSL OpAmps.Differentiator,
 V0 = 15000: 5e-3 s over a transient of 2e-6 s, the capacitor's voltage 0.02 V behind over the ramp). No step
-follows an event at the last stop.
+follows an event at the last stop. The step is proposed (`dtpropose`): `integrator.dt` stays the length of the step
+that ended at the event, which the assert checks after the event interpolate (`_assertPending!`, `_autoDtReset!`).
 """
 function _restartStep!(integrator)::Nothing
   isempty(integrator.opts.tstops) && return nothing
@@ -292,8 +293,7 @@ function _restartStep!(integrator)::Nothing
   _autoDtReset!(integrator)
   local span::Float64 = abs(integrator.sol.prob.tspan[2] - integrator.sol.prob.tspan[1])
   local cap::Float64 = 1.0e-6 * (isfinite(span) ? span : 1.0)
-  integrator.dt = integrator.tdir * min(abs(integrator.dt), cap, before)
-  integrator.dtpropose = integrator.dt
+  integrator.dtpropose = integrator.tdir * min(abs(integrator.dtpropose), cap, before)
   return nothing
 end
 
@@ -2764,7 +2764,9 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
         u = copy(u0)
         p.d .= before[1]; p.dpre .= before[2]; p.rel .= before[3]; p.evv .= before[4]
         p.wcond .= wcond
-        foreach(((g, g0),) -> copyto!(g, g0), zip(p.loops, guesses))
+        for (g, g0) in zip(p.loops, guesses)
+          copyto!(g, g0)
+        end
       finally
         p.homotopy[1] = 1.0
       end
