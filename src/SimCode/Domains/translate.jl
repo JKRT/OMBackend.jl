@@ -311,13 +311,20 @@ function toIR(g::Gen, e::SC.Exp, ctx::Ctx)::IR
     local lop::Symbol = e.op == SC.OP_AND ? :&& : e.op == SC.OP_OR ? :|| : ns("logical operator $(e.op)")
     return Op(lop, IR[toIR(g, e.exp1, ctx), toIR(g, e.exp2, ctx)])
   elseif e isa SC.RELATION
+    #= an equal relation in the same scope: the same relation, its slot (OpenModelica's relations and the MTK path's
+       are unique by expression). A discrete cluster's inlined siblings repeat them: MSL Clutch's `locked` and `mode`
+       read `startBackward`'s `sa < -tau0_max`; a copy that a short-circuit skipped kept an old value, the locked
+       combination was never consistent (MSL Rotational's Friction stopped at the clutch's sticking, 0.109). =#
+    local key::RelationKey = (SC.RELATION(e.exp1, e.op, e.exp2, 0), ctx.iters, ctx.elem)
+    local known::Union{Nothing, IR} = ctx.noEvent ? nothing : get(ctx.relations, key, nothing)
+    known === nothing || return known
     local op::Symbol = _relationOp(e.op)
     local l::IR = toIR(g, e.exp1, ctx)
     local r::IR = toIR(g, e.exp2, ctx)
     (ctx.noEvent || !(_continuous(g, l) || _continuous(g, r))) && return Op(op, IR[l, r])
     op in (:(==), :!=) && ns("equality relation on continuous variables")
     ctx.nrel[] += 1
-    return _withAbsProbe(g, Rel(op, l, r, ctx.nrel[]), op in (:<, :<=) ? l : r, ctx)
+    return ctx.relations[key] = _withAbsProbe(g, Rel(op, l, r, ctx.nrel[]), op in (:<, :<=) ? l : r, ctx)
   elseif e isa SC.IFEXP
     return Op(:if, IR[toIR(g, e.cond, ctx), toIR(g, e.thenExp, ctx), toIR(g, e.elseExp, ctx)])
   elseif e isa SC.TSUB
@@ -1898,7 +1905,8 @@ function _stmtIR(g::Gen, st::SC.Statement, ctx::Ctx)::Stmt
     local range::Union{Nothing, StepRange{Int, Int}} = _literalRange(st.iterator.range)
     range === nothing && ns("for range $(_str(st.iterator.range))")
     local k::Int = (g.tmpSlot -= 1)
-    local inner::Ctx = Ctx(merge(ctx.iters, Dict{String, Int}(String(st.iterator.name) => k)), ctx.elem, ctx.nrel, ctx.noEvent, ctx.nsam)
+    local inner::Ctx = Ctx(merge(ctx.iters, Dict{String, Int}(String(st.iterator.name) => k)), ctx.elem, ctx.nrel,
+                           ctx.noEvent, ctx.nsam, ctx.relations)
     return SFor(k, collect(range), Stmt[_stmtIR(g, x, inner) for x in st.body])
   elseif st isa SC.WHILE
     return SWhile(toIR(g, st.condition, _with(ctx; noEvent = true)), Stmt[_stmtIR(g, x, ctx) for x in st.body])

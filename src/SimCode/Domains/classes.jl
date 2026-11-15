@@ -298,19 +298,26 @@ mutable struct Gen
   usesHomotopy::Bool   #= the code calls homotopy(): the initialization's continuation in its λ (`homotopyStart!`) =#
 end
 
+"A relation of a template by its expression and scope (the iterators' slots, the element-wise dimensions)."
+const RelationKey = Tuple{SC.Exp, Dict{String, Int}, Vector{Int}}
+
 struct Ctx
   iters::Dict{String, Int}  #= frontend iterator name -> slot =#
   elem::Vector{Int}         #= slots of the element-wise dimensions =#
   nrel::Base.RefValue{Int}  #= relations numbered so far in this template =#
   noEvent::Bool
   nsam::Base.RefValue{Int}  #= sample() calls numbered so far in this template =#
+  #= the relations numbered in this template: an equal relation in the same scope is the same relation, one slot
+     (`toIR`) =#
+  relations::Dict{RelationKey, IR}
 end
 
-Ctx(iters, elem) = Ctx(iters, elem, Base.RefValue(0), false, Base.RefValue(0))
+Ctx(iters, elem) = Ctx(iters, elem, Base.RefValue(0), false, Base.RefValue(0), Dict{RelationKey, IR}())
 
-Ctx(iters, elem, nrel, noEvent) = Ctx(iters, elem, nrel, noEvent, Base.RefValue(0))
+Ctx(iters, elem, nrel, noEvent) = Ctx(iters, elem, nrel, noEvent, Base.RefValue(0), Dict{RelationKey, IR}())
 
-_with(ctx::Ctx; elem = ctx.elem, noEvent = ctx.noEvent) = Ctx(ctx.iters, elem, ctx.nrel, noEvent, ctx.nsam)
+_with(ctx::Ctx; elem = ctx.elem, noEvent = ctx.noEvent) =
+  Ctx(ctx.iters, elem, ctx.nrel, noEvent, ctx.nsam, ctx.relations)
 
 function _paramValue!(g::Gen, name::String)
   haskey(g.params, name) && return g.params[name]

@@ -2822,6 +2822,64 @@ end
     end
   end
 
+  @testset "A friction element sticking again: one slot per relation" begin
+    #= MSL Rotational's Clutch (PartialFriction) in MSL's Friction example: the discrete cluster inlines startForward
+       and startBackward into locked and mode, so `sa < -tau0max` stood three times. Each copy had its own relation
+       slot; the copy in locked, skipped by a short-circuit while the clutch slid backward, kept `true` from the
+       break-away at 0.0068. At the sticking (0.109) locked stayed false in every combination the event iteration
+       tried: "did not settle", the simulation stopped. Equal relations of a template now share their slot.
+       omc: w3(1) = 94.73865, w1(1) = 95.29922. =#
+    local program = Modelica"""
+      model ClutchSticking "MSL Clutch's friction equations between two inertias, a spring-damper load, a sine torque"
+        parameter Real J3 = 1;
+        parameter Real J2 = 0.05;
+        parameter Real J1 = 1;
+        parameter Real c = 160;
+        parameter Real d = 1;
+        parameter Real tau0max = 80;
+        Real phi3(start = 0, fixed = true);
+        Real w3(start = 100, fixed = true);
+        Real phiRel(start = 0, fixed = true, stateSelect = StateSelect.prefer);
+        Real wRel(start = -10, fixed = true, stateSelect = StateSelect.prefer);
+        Real phi1(start = 0, fixed = true);
+        Real w1(start = 90, fixed = true);
+        Real a3;
+        Real aRel;
+        Real sa;
+        Real tau;
+        Real tauSpring;
+        Boolean startForward(start = false, fixed = true);
+        Boolean startBackward(start = false, fixed = true);
+        Boolean locked(start = false, fixed = true);
+        Integer mode(start = 3, fixed = true);
+      equation
+        der(phi3) = w3;
+        der(w3) = a3;
+        der(phiRel) = wRel;
+        der(wRel) = aRel;
+        der(phi1) = w1;
+        J3 * a3 = 200 * sin(100 * time) + tau;
+        J2 * (a3 + aRel) = -tau - tauSpring;
+        tauSpring = c * (phi3 + phiRel - phi1) + d * (w3 + wRel - w1);
+        J1 * der(w1) = tauSpring;
+        startForward = pre(mode) == 0 and (sa > tau0max or pre(startForward) and sa > tau0max)
+                       or pre(mode) == -1 and wRel > 1e10 or initial() and wRel > 0;
+        startBackward = pre(mode) == 0 and (sa < -tau0max or pre(startBackward) and sa < -tau0max)
+                        or pre(mode) == 1 and wRel < -1e10 or initial() and wRel < 0;
+        locked = not (pre(mode) == 1 or startForward or pre(mode) == -1 or startBackward);
+        aRel = if locked then 0 else if startForward then sa - tau0max else if startBackward then sa + tau0max
+               else if pre(mode) == 1 then sa - tau0max else sa + tau0max;
+        tau = if locked then sa else if startForward then tau0max else if startBackward then -tau0max
+              else if pre(mode) == 1 then tau0max else -tau0max;
+        mode = if (pre(mode) == 1 or startForward) and wRel > 0 then 1
+               else if (pre(mode) == -1 or startBackward) and wRel < 0 then -1 else 0;
+      end ClutchSticking;
+      """
+    local (s, a, _) = _bothWaysOf(program, "ClutchSticking", ["w3", "w1"]; reltol = 1e-6)
+    @test a ≈ [94.73865, 95.29922] rtol = 1e-5
+    @test s ≈ a rtol = 1e-5
+  end
+
   @testset "Rotated constant currents through an inductance" begin
     #= MSL's SMPM_CurrentSource and SMR_CurrentSource: dqToThreePhase's rotator turns the constant references
        u = {id, iq} by the rotor angle, the result prescribes the stator currents. The plan's structure reads u as
