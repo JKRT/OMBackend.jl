@@ -1990,21 +1990,22 @@ function _tearCascade(v::Int, known::BitVector, used::BitVector, open::Vector{In
 end
 
 """
-    _hasKink(x, reads) -> Bool
+    _piecewiseInUnknowns(x, reads) -> Bool
 
-Whether `x` has a kink or a jump in the unknowns of an algebraic loop (`reads(r)`: the access `r` may be one, as for
-`_affineIn`): a relation under `noEvent`, `abs`, `min`, `max`, `sign`, `floor`, `ceil` or `trunc` of what reads one,
-an if-expression whose condition reads one. A relation with events and an event-generating function hold their values
-in the loop's solve (`_affineIn`): an ideal thyristor's `if off[i]` is none.
+Whether `x` is piecewise in the unknowns of an algebraic loop, with a kink or a jump between its pieces (`reads(r)`:
+the access `r` may be one, as for `_affineIn`): a relation under `noEvent`, `abs`, `min`, `max`, `sign`, `floor`,
+`ceil` or `trunc` of what reads one, an if-expression whose condition reads one. A relation with events and an
+event-generating function hold their values in the loop's solve (`_affineIn`): an ideal thyristor's `if off[i]` is
+not piecewise in the loop's unknowns.
 """
-function _hasKink(x::IR, reads::F)::Bool where {F <: Function}
+function _piecewiseInUnknowns(x::IR, reads::F)::Bool where {F <: Function}
   x isa Op || return false
   if x.op in (:<, :<=, :>, :>=, :abs, :min, :max, :sign, :floor, :ceil, :trunc)
     any(a::IR -> _affineIn(a, reads)[2], x.args) && return true
   elseif x.op == :if
     _affineIn(x.args[1], reads)[2] && return true
   end
-  return any(a::IR -> _hasKink(a, reads), x.args)
+  return any(a::IR -> _piecewiseInUnknowns(a, reads), x.args)
 end
 
 """
@@ -2078,12 +2079,14 @@ nonzero at the instance, the largest coefficient among the elements of its varia
 not one it reads through two references). Torn twice, greedily and comparing `TEAR_LOOKAHEAD` candidates by their
 cascades (MSL EngineV6's loops in 52 iteration variables instead of 100); the one with fewer iteration variables is
 kept, the greedy one on a tie (the cascade can pick more: MSL ThreeSprings 4 instead of 3, one a spring length
-guessed 0). A block with a kink in its unknowns (`_hasKink`) is torn greedily only: which unknowns are torn decides
-how the kinks move with the iteration variables and the block's inputs. MSL DifferentialAmplifier's op-amp limiter,
-torn by the cascade in two currents (4 greedily), reached its input from the sources with a gain of 1e9: each step's
-guess, the last solution, was saturated at the next time, and Newton jumped between the supplies. A kink in a mode
-held through the solve is none: MSL ThyristorBridge2mPulse_DC_Drive's thyristors (`if off[i]`), 6 iteration
-variables by cascades, 12 greedily, whose events at the start did not settle. The instances left are the residuals. Batches by level (an instance after those it reads), then (class, access).
+guessed 0). A block piecewise in its unknowns (`_piecewiseInUnknowns`) is torn greedily only: which unknowns are
+torn decides how the bounds between the pieces move with the iteration variables and the block's inputs. MSL
+DifferentialAmplifier's op-amp limiter, torn by the cascade in two currents (4 greedily), reached its input from the
+sources with a gain of 1e9: each step's guess, the last solution, was saturated at the next time, and Newton jumped
+between the supplies. A branch on a mode held through the solve is not piecewise in the unknowns: MSL
+ThyristorBridge2mPulse_DC_Drive's thyristors (`if off[i]`), 6 iteration variables by cascades, 12 greedily, whose
+events at the start did not settle. The instances left are the residuals. Batches by level (an instance after those
+it reads), then (class, access).
 """
 function _tearBlock(g::Gen, el::InstanceTable, block::Vector{Int}, matchRow::Vector{Int})::TornBlock
   local n::Int = length(block)
@@ -2112,7 +2115,8 @@ function _tearBlock(g::Gen, el::InstanceTable, block::Vector{Int}, matchRow::Vec
   local (order::Vector{Tuple{Int, Int, Int}}, tears::Vector{Int}, used::BitVector) = _tearOrder(reads, readers, solves, 1)
   local unknowns::Set{Tuple{String, Bool}} = _unknownVariables(g, Int[matchRow[r] for r in block])
   local readsUnknown::Function = (r::Ref) -> (r.name, r.der) in unknowns
-  if TEAR_LOOKAHEAD[] > 1 && !any(ci::Int -> _hasKink(g.classes[ci].lhs, readsUnknown) || _hasKink(g.classes[ci].rhs, readsUnknown),
+  if TEAR_LOOKAHEAD[] > 1 && !any(ci::Int -> _piecewiseInUnknowns(g.classes[ci].lhs, readsUnknown) ||
+                                             _piecewiseInUnknowns(g.classes[ci].rhs, readsUnknown),
                                   Set{Int}(el.class[r] for r in block))
     local cascaded::Tuple{Vector{Tuple{Int, Int, Int}}, Vector{Int}, BitVector} = _tearOrder(reads, readers, solves, TEAR_LOOKAHEAD[])
     length(cascaded[2]) < length(tears) && ((order, tears, used) = cascaded)
