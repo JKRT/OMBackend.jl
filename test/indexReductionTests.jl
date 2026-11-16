@@ -50,6 +50,26 @@ function _irArraySimulate(name::String, names::Vector{String}, stop::Float64; ke
   return Float64[OMBackend.getVariableValues(sol, n)[end] for n in names]
 end
 
+#= A test's own models written beside it, `Modelica"""..."""` (OMParser 1.0), as in arrayPathTests.jl =#
+const var"@Modelica_str" = OMFrontend.OMParser.var"@Modelica_str"
+
+"The OMJLIR model of the model `name` of the Modelica text `program` before index reduction (as `_irUnreduced`)."
+function _irUnreducedOf(program, name::String)::_IRM.Model
+  local (fm, cache) = OMFrontend.instantiateSCodeToFM(name, OMFrontend.translateToSCode(program))
+  local model = OMBackend.lowerFlatModel(fm; functions = OMFrontend.cacheToFunctionList(cache))
+  return OMBackend.Passes.runPasses!(model; through = first(last(OMBackend.Passes.PIPELINE)))
+end
+
+"The values of `names` at the end of a simulation of the model `name` of `program` to `stop`, scalarized or with its arrays kept."
+function _irSimulateOf(program, name::String, names::Vector{String}, stop::Float64; kept::Bool)::Vector{Float64}
+  local (fm, cache) = OMFrontend.instantiateSCodeToFM(name, OMFrontend.translateToSCode(program); scalarize = !kept)
+  OMBackend.translate(fm; functionList = OMFrontend.cacheToFunctionList(cache), scalarized = !kept)
+  local sol::OMBackend.DifferentialEquations.SciMLBase.AbstractODESolution =
+    OMBackend.simulateModel(OMBackend.canonicalName(name); tspan = (0.0, stop), reltol = 1e-10, abstol = 1e-10)
+  @test sol.retcode == ReturnCode.Success
+  return Float64[OMBackend.getVariableValues(sol, n)[end] for n in names]
+end
+
 "explain of `IndexReduction.<name>`."
 function _irExplain(name::String)::_IRd.Explanation
   local (fm, functions) = _irFlat(name)
@@ -124,6 +144,38 @@ end
     @test antiderivative == Dict(:v => :x, :a => :v)
     @test _IRd.baseVariable(antiderivative, :a) === :x && _IRd.baseVariable(antiderivative, :y) === :y
     @test _IRd.derivativeChain(chain, :x) == [:v, :a] && isempty(_IRd.derivativeChain(chain, :y))
+  end
+
+  @testset "an alias's fixed start merged onto its representative (omc's RemoveSimpleEquations)" begin
+    #= y = x and w = -z, y and w fixed, x and z the states and representatives: they take the fixed starts (z
+       negated), y and w no longer fixed (MSL ThreeSprings' body1.r_0, fixed and avoid, read through the state
+       body1.frame_a.r_0); undoAliases! restores the attributes. Both routes start at x = 2, z = -3 =#
+    local program = Modelica"""
+      model FixedStartOnAlias "fixed starts on algebraic aliases of states"
+        Real x;
+        Real y(start = 2.0, fixed = true);
+        Real z;
+        Real w(start = 3.0, fixed = true);
+      equation
+        y = x;
+        w = -z;
+        der(x) = -x;
+        der(z) = -z;
+      end FixedStartOnAlias;
+      """
+    local model = _irUnreducedOf(program, "FixedStartOnAlias")
+    local partition = only(model.continuous)
+    local before = Dict{Symbol, _IRM.VariableAttributes}(n => model.variables[n].attributes for n in (:x, :y, :z, :w))
+    local undo = _IRd.substituteAliases!(model, partition)
+    @test _IRd.fixedStart(model.variables[:x]) && _IRd.fixedStart(model.variables[:z])
+    @test !_IRd.fixedStart(model.variables[:y]) && !_IRd.fixedStart(model.variables[:w])
+    @test model.variables[:x].attributes.start === before[:y].start
+    @test model.variables[:z].attributes.start == _IRd.negatedStart(before[:w].start)
+    _IRd.undoAliases!(model, partition, undo)
+    @test all(n -> model.variables[n].attributes === before[n], (:x, :y, :z, :w))
+    for kept in (false, true)
+      @test _irSimulateOf(program, "FixedStartOnAlias", ["x", "z"], 1.0; kept = kept) ≈ [2.0, -3.0] ./ exp(1) atol = 1e-8
+    end
   end
 
   @testset "the choice of states" begin

@@ -226,17 +226,19 @@ arrays whose elements are aliases of another array's, index by index with one si
 view `view`: a connection's `frame_a.R.T = frame_b.R.T` of rolled components), read through one representative array
 in the partition's equations and initial equations, so that index reduction differentiates neither the alias
 equations nor their derivatives. The representative of a set as in `substituteAliases!` (a state with a fixed start,
-a state, StateSelect, a start, the declaration order); an array is left where an element of it is (`aliasBlocked`:
+a state, StateSelect, a start, the declaration order), the substituted arrays' start values merged onto it
+(`mergeAliasStarts!`); an array is left where an element of it is (`aliasBlocked`:
 written by a when or an algorithm, read through a derivative by a when, read whole; an input), where it is read by a
 slice or within a whole record (`arrayAliasBlocked`), or where its derivatives go further than the representative's;
-a set with two states of fixed starts too. The alias equations stay as written (each array is still computed); the
+a set with two fixed starts too. The alias equations stay as written (each array is still computed); the
 states substituted become algebraic, their derivative arrays removed. Returns what to restore (`undoAliases!`).
 """
 function substituteArrayAliases!(model::IR.Model, view::Scalarized)::AliasUndo
   local variables::IR.VariableSet = model.variables
   local partition::IR.Partition = model.continuous[1]
   local E::Elements = view.elements
-  local none::AliasUndo = AliasUndo(partition.equations, partition.initialEquations, Pair{Symbol, IR.VariableKind}[], IR.Variable[], 0)
+  local none::AliasUndo = AliasUndo(partition.equations, partition.initialEquations, Pair{Symbol, IR.VariableKind}[], IR.Variable[], 0,
+                                    Pair{Symbol, IR.VariableAttributes}[])
   local readBlocked::Union{Nothing, Set{Symbol}} = arrayAliasBlocked(model, E)
   readBlocked === nothing && return none
   local blocked::Set{Symbol} = Set{Symbol}(first(get(E.array, n, (n, Int[])))
@@ -271,10 +273,13 @@ function substituteArrayAliases!(model::IR.Model, view::Scalarized)::AliasUndo
   local replacements::Dict{Symbol, AliasSign} = Dict{Symbol, AliasSign}()
   local substituted::Vector{Symbol} = Symbol[]
   local states::Vector{Symbol} = Symbol[]
+  local changedAttributes::Vector{Pair{Symbol, IR.VariableAttributes}} = Pair{Symbol, IR.VariableAttributes}[]
   for (root, set) in members
-    (root in sets.conflicting || count(m -> fixedState(m.name), set) > 1) && continue
+    #= a set of two fixed starts (of states or not) is left as written =#
+    (root in sets.conflicting || count(m -> fixedStart(variables[m.name]), set) > 1) && continue
     local best::AliasSign = argmax(m -> (priority(m.name), -position[m.name]), set)
     local bestChain::Vector{Symbol} = derivativeChain(variables, best.name)
+    local merged::Vector{AliasSign} = AliasSign[]
     for m in set
       m.name == best.name && continue
       local chain::Vector{Symbol} = derivativeChain(variables, m.name)
@@ -284,14 +289,18 @@ function substituteArrayAliases!(model::IR.Model, view::Scalarized)::AliasUndo
       replacements[m.name] = AliasSign(best.name, n)
       foreach(((k, d),) -> replacements[d] = AliasSign(bestChain[k], n), enumerate(chain))
       push!(substituted, m.name)
+      push!(merged, AliasSign(m.name, n))
       isempty(chain) || push!(states, m.name)
     end
+    isempty(merged) ||
+      mergeAliasStarts!(variables, best.name, sort!(merged; by = m::AliasSign -> (-priority(m.name), position[m.name])),
+                        changedAttributes)
   end
   isempty(substituted) && return none
   local undo::AliasUndo = AliasUndo(partition.equations, partition.initialEquations,
                                     Pair{Symbol, IR.VariableKind}[n => variables[n].kind for n in states],
                                     IR.Variable[variables[d] for n in states for d in derivativeChain(variables, n)],
-                                    sum(n -> prod(get(E.sizes, n, Int[])), substituted))
+                                    sum(n -> prod(get(E.sizes, n, Int[])), substituted), changedAttributes)
   #= a reference to a member: the representative's by the same subscripts (an element, a slice of the leading
      dimensions, the whole array) =#
   local substitute = (@nospecialize(x::IR.Expression)) -> begin
