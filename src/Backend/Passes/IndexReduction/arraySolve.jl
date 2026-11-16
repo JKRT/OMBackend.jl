@@ -257,7 +257,10 @@ values put in (`withTemplateValues`).
 function solvedInArrays(model::IR.Model;
                         known::Dict{Symbol, IR.Expression} = Dict{Symbol, IR.Expression}())::Tuple{IR.Model, Vector{Symbol}}
   envSwitch("OMBACKEND_SOLVE_DERIVATIVES") || return (model, Symbol[])
-  local view::Scalarized = scalarizeArrays(model)
+  #= the element equations of the equations a split keeps (`ScalarCache`): the views of the split rounds share them;
+     the view after the solve is new (the solve puts the derivatives into its view's) =#
+  local cache::ScalarCache = ScalarCache()
+  local view::Scalarized = scalarizeArrays(model; cache)
   #= the coefficients that read only parameters as expressions: the array form's differ per element =#
   local solution::Union{Nothing, DerivativeSolution} =
     derivativeSolution(view.model, view.model.continuous[1]; known, literalCoefficients = false)
@@ -282,7 +285,7 @@ function solvedInArrays(model::IR.Model;
     catch err
       (err isa NotHandled && needsSplit(err)) || rethrow()
       splitArrays!(model, view, err.arrays, err.equations)
-      view = scalarizeArrays(model)
+      view = scalarizeArrays(model; cache)
       stale = true
     end
   end
