@@ -2632,6 +2632,18 @@ end
     #= a size along another dimension, or of what is no literal, stays =#
     @test R.foldTree(I.SIZE(a, I.INTEGER(2))) isa I.SIZE
     @test R.foldTree(I.SIZE(real(:a), I.INTEGER(1))) isa I.SIZE
+    #= an array literal subscripted by Integer literals: its element (`literalElement`; the derivative of a constant
+       rotation matrix written out per element in array form, `{{0.0, 0.0}, {0.0, 0.0}}[1, 2] * w`, then `0 * w`),
+       fewer subscripts an inner literal; a subscript out of range, or not a literal, stays =#
+    local matrixType = I.T_ARRAY(I.T_REAL(), I.Dimension[I.DIM_SIZE(2), I.DIM_SIZE(2)])
+    local matrix = I.ARRAY(I.Expression[a, b], matrixType)
+    local at = (e::I.Expression, k::Vector{I.Expression}) -> I.SUBSCRIPTED(e, I.Subscript[I.INDEX(x) for x in k], I.T_REAL())
+    @test R.foldTree(at(matrix, I.Expression[I.INTEGER(2), I.INTEGER(1)])) == real(:c)
+    @test R.foldTree(at(matrix, I.Expression[I.INTEGER(1)])) == a
+    local zeroMatrix = I.ARRAY(I.Expression[I.ARRAY(I.Expression[I.REAL(0.0), I.REAL(0.0)], vector) for _ in 1:2], matrixType)
+    @test R.foldTree(I.BINARY(at(zeroMatrix, I.Expression[I.INTEGER(1), I.INTEGER(2)]), I.MUL, real(:w), I.T_REAL())) == I.REAL(0.0)
+    @test R.foldTree(at(matrix, I.Expression[I.INTEGER(3), I.INTEGER(1)])) isa I.SUBSCRIPTED
+    @test R.foldTree(at(matrix, I.Expression[real(:i)])) isa I.SUBSCRIPTED
   end
 
   @testset "actualStream without events" begin

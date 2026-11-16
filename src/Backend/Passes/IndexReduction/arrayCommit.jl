@@ -1091,6 +1091,12 @@ function reduceIndexArrays!(model::IR.Model; arrays::Bool = true)::Bool
   exposeArrayLinearConstraints!(model, view) && (view = scalarizeArrays(model; cache))
   local partition::IR.Partition = view.model.continuous[1]
   local written::Plan = plan(view.model, partition; indexOne = true, initialDerivatives = true)
+  #= the arrays of aliases read through representatives (`arrayAliasPlan`), the plan made again where it differentiates
+     anything: MSL EngineV6 differentiates 4974 element rows instead of 7132, translated and first simulated 5 s faster =#
+  if !isempty(written.differentiated) && envSwitch("OMBACKEND_ALIAS_SUBSTITUTION")
+    (view, written) = arrayAliasPlan(model, view, written, cache)
+    partition = view.model.continuous[1]
+  end
   #= the array form of the plan as written first: a plan it does not take is refused before the simulation code's
      values are computed for the plan again (`knownPlan`). Arrays whose elements it treats differently (slicing) are
      split into their elements, until it takes it. The element view stays (the splits keep the model's meaning), so

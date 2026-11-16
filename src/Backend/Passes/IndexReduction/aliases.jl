@@ -241,36 +241,8 @@ function substituteAliases!(model::IR.Model, partition::IR.Partition)::AliasUndo
     return v !== nothing && v.kind isa Union{IR.PARAMETER, IR.CONSTANT} && v.ty isa IR.T_REAL
   end
   local antiderivative::Dict{Symbol, Symbol} = antiderivatives(variables)
-  #= the variables that must keep their equations: written by whens (reinit) or algorithms, read whole, inputs =#
-  local blocked = Set{Symbol}()
-  local resolve = Resolver(Symbol[v.name for v in variables])
-  local scanWhole = (@nospecialize(e::IR.Expression)) -> begin
-    IR.foreachExp(e) do @nospecialize(x::IR.Expression)
-      x isa IR.CREF || return nothing
-      local n = x.cref.name
-      (haskey(variables, n) || !haskey(resolve.under, n)) && return nothing
-      union!(blocked, resolve.under[n])
-      nothing
-    end
-  end
-  for eq in vcat(partition.equations, partition.initialEquations)
-    if eq isa IR.ALGORITHM
-      foreach(c -> union!(blocked, resolve(c.name)), eq.outputs)
-    elseif eq isa IR.WHEN_EQUATION
-      IR.foreachRootExp(eq) do @nospecialize(e::IR.Expression)
-        IR.foreachExp(e) do @nospecialize(x::IR.Expression)
-          (x isa IR.CREF && haskey(antiderivative, x.cref.name)) || return nothing
-          push!(blocked, baseVariable(antiderivative, x.cref.name))
-          nothing
-        end
-        nothing
-      end
-      for b in eq.branches, s in b.body
-        s isa IR.REINIT && push!(blocked, s.state.name)
-      end
-    end
-    IR.foreachRootExp(scanWhole, eq)
-  end
+  #= the variables that must keep their equations (inputs are no candidates) =#
+  local blocked::Set{Symbol} = aliasBlocked(variables, partition)
   #= the sets =#
   local sets = AliasSets()
   for eq in partition.equations
@@ -354,6 +326,47 @@ function substituteAliases!(model::IR.Model, partition::IR.Partition)::AliasUndo
   end
   filter!(v -> !(v.name in removed), variables)
   return undo
+end
+
+"""
+    aliasBlocked(variables, partition) -> Set{Symbol}
+
+The variables of the partition whose equations alias substitution leaves as written (`substituteAliases!`): written
+by a when-equation (`reinit`) or an algorithm, read as part of a whole record or array (`frame_a.R` passed to a
+function: a name of no variable, the variables under it), or read through a derivative by a when-equation.
+"""
+function aliasBlocked(variables::IR.VariableSet, partition::IR.Partition)::Set{Symbol}
+  local antiderivative::Dict{Symbol, Symbol} = antiderivatives(variables)
+  local blocked::Set{Symbol} = Set{Symbol}()
+  local resolve::Resolver = Resolver(Symbol[v.name for v in variables])
+  local scanWhole = (@nospecialize(e::IR.Expression)) -> begin
+    IR.foreachExp(e) do @nospecialize(x::IR.Expression)
+      x isa IR.CREF || return nothing
+      local n::Symbol = x.cref.name
+      (haskey(variables, n) || !haskey(resolve.under, n)) && return nothing
+      union!(blocked, resolve.under[n])
+      nothing
+    end
+  end
+  for eq in vcat(partition.equations, partition.initialEquations)
+    if eq isa IR.ALGORITHM
+      foreach(c -> union!(blocked, resolve(c.name)), eq.outputs)
+    elseif eq isa IR.WHEN_EQUATION
+      IR.foreachRootExp(eq) do @nospecialize(e::IR.Expression)
+        IR.foreachExp(e) do @nospecialize(x::IR.Expression)
+          (x isa IR.CREF && haskey(antiderivative, x.cref.name)) || return nothing
+          push!(blocked, baseVariable(antiderivative, x.cref.name))
+          nothing
+        end
+        nothing
+      end
+      for b in eq.branches, s in b.body
+        s isa IR.REINIT && push!(blocked, s.state.name)
+      end
+    end
+    IR.foreachRootExp(scanWhole, eq)
+  end
+  return blocked
 end
 
 "The variable a derivative variable is a derivative of, through its chain (`\$DER.\$DER.x` -> `x`; `antiderivatives`)."
