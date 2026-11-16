@@ -982,6 +982,12 @@ function _localName(l::Expr)::Symbol
   return x
 end
 
+"The declarations of `paramLocals` (the parameter views, `local x = p.<field>`) whose names `code` reads."
+function _usedLocals(paramLocals::Vector{Any}, code::Union{Expr, Symbol})::Vector{Any}
+  local used::Set{Symbol} = _symbolsIn!(Set{Symbol}(), code)
+  return Any[l for l in paramLocals if _localName(l) in used]
+end
+
 """
     _splitStatements(name, args, passed, paramLocals, stmts; fired) -> (defs, stmts)
 
@@ -1011,8 +1017,7 @@ function _splitStatements(name::Symbol, args::Vector{Symbol}, passed::Vector{Sym
   local calls::Vector{Any} = Any[]
   for (k, part) in enumerate(parts)
     local partName::Symbol = Symbol(name, "_chunk", k)
-    local used::Set{Symbol} = _symbolsIn!(Set{Symbol}(), Expr(:block, part...))
-    local views::Vector{Any} = Any[l for l in paramLocals if _localName(l) in used]
+    local views::Vector{Any} = _usedLocals(paramLocals, Expr(:block, part...))
     push!(defs, :(function $partName($(args...), $(passed...))
                     $(views...)
                     local _fired::Bool = false
@@ -1075,6 +1080,23 @@ end
 #= ---------------------------------------------------------------- loop families =#
 
 """
+    _unknownLabel(g, id) -> String
+
+The unknown `id` (a state's derivative up to `g.nStates`, an algebraic element after) by its variable and its element's
+linear index (`der(x)[2]`, `y[5]`), for traces.
+"""
+function _unknownLabel(g::Gen, id::Int)::String
+  local state::Bool = id <= g.nStates
+  local k::Int = state ? id : id - g.nStates
+  for (name::String, info::VarInfo) in g.vars
+    (info.kind == (state ? :state : :alg) && info.offset < k <= info.offset + prod(info.dims; init = 1)) || continue
+    local element::String = isempty(info.dims) ? "" : string("[", k - info.offset, "]")
+    return state ? string("der(", name, ")", element) : string(name, element)
+  end
+  return string(state ? "state#" : "alg#", k)
+end
+
+"""
     _unknownVariables(g, ids) -> Set{Tuple{String, Bool}}
 
 The variables of the unknowns `ids` (a state's index for its derivative, an algebraic variable's after the states), as
@@ -1096,7 +1118,7 @@ function _unknownVariables(g::Gen, ids::AbstractArray{Int})::Set{Tuple{String, B
 end
 
 """
-    _loopFamilyCode(g, f, template, blocks, el, matchRow, a0, relBases, bases) -> Tuple{Vector{Any}, Expr}
+    _loopFamilyCode(g, f, template, blocks, el, matchRow, a0, relBases, bases) -> Tuple{Vector{Any}, Expr, Expr}
 
 The solve of the loop family `f` (`LOOPFAMILY_f!`): its tables (each member's instance columns and unknowns, the first
 guess per unknown: the start values; a run keeps its last solutions as the next guesses in its parameters, `p.loops`)
@@ -1116,11 +1138,12 @@ none) takes its unknowns from it and gives it its residuals (`InitialPass`).
 A family whose residuals are affine in its unknowns (`_affineIn`) is solved by one Jacobian, by differences over the
 unknowns' size (exact for an affine residual), and one LU: one step from the last solution and one more at the
 residuals there; Newton's method as above where that fails. The work arrays are the parameters' (`LoopWork`) in a
-Float64 solve.
+Float64 solve. The residuals are a function of their own (`_loopResidualFunction`, of the third value returned: its
+body).
 """
 function _loopFamilyCode(g::Gen, f::Int, template::Vector{Tuple{Int, Int}}, blocks::Vector{Vector{Int}}, el::InstanceTable,
                          matchRow::Vector{Int}, a0::Vector{Float64}, relBases::Vector{Int},
-                         bases::Vector{Int})::Tuple{Vector{Any}, Expr}
+                         bases::Vector{Int})::Tuple{Vector{Any}, Expr, Expr}
   local k::Int = length(template); local M::Int = length(blocks)
   local nS::Int = g.nStates
   local cols::Matrix{Int} = Matrix{Int}(undef, k, M); local ids::Matrix{Int} = Matrix{Int}(undef, k, M)
@@ -1135,18 +1158,20 @@ function _loopFamilyCode(g::Gen, f::Int, template::Vector{Tuple{Int, Int}}, bloc
   local (C::Symbol, I::Symbol, G::Symbol) = (Symbol("LOOP_COLS_", f), Symbol("LOOP_IDS_", f), Symbol("LOOP_GUESS_", f))
   local B::Symbol = Symbol("LOOP_INITIAL_", f)
   local hasRelations::Bool = any(((ci, _),) -> g.classes[ci].nrel > 0, template)
-  local residuals::Function = function (rv::Symbol, held::Bool = true)
-    local parts::Vector{Any} = Any[]
-    for (j, (ci, _)) in enumerate(template)
-      local c::EqClass = g.classes[ci]
-      g.relBase = relBases[ci]; g.relCount = c.nrel
-      local sets::Vector{Any} = Any[:(_col = $C[$j, _m]); Any[:($(Symbol("s", q)) = $(c.domain)[$q, _col]) for q in 1:c.nslots]]
-      push!(parts, Expr(:let, Expr(:block, sets...), :($rv[$j] = $(jl(g, c.lhs)) - $(jl(g, c.rhs)))))
-    end
-    local block::Expr = Expr(:block, parts...)
-    #= in Newton's iterations the relations hold their values: no crossing written, none changed =#
-    return (held && hasRelations) ? Expr(:let, Expr(:block, :(z = nothing), :(mode = false)), block) : block
+  #= the residuals once, in their own function (`LOOPRES_<f>!`, `_loopResidualFunction`), called where the solve
+     evaluates them: inlined at each of those places they were compiled five times =#
+  local parts::Vector{Any} = Any[]
+  for (j, (ci, _)) in enumerate(template)
+    local c::EqClass = g.classes[ci]
+    g.relBase = relBases[ci]; g.relCount = c.nrel
+    local sets::Vector{Any} = Any[:(_col = $C[$j, _m]); Any[:($(Symbol("s", q)) = $(c.domain)[$q, _col]) for q in 1:c.nslots]]
+    push!(parts, Expr(:let, Expr(:block, sets...), :(_rv[$j] = $(jl(g, c.lhs)) - $(jl(g, c.rhs)))))
   end
+  local residualBody::Expr = Expr(:block, parts...)
+  local R::Symbol = Symbol("LOOPRES_", f, "!")
+  #= in Newton's iterations the relations hold their values: no crossing written, none changed =#
+  local residuals::Function = (rv::Symbol, held::Bool = true) ->
+    (held && hasRelations) ? :($R($rv, du, a, u, p, t, nothing, false, fire, _m)) : :($R($rv, du, a, u, p, t, z, mode, fire, _m))
   local set::Expr = :(for _j in 1:$k
     local _id::Int = $I[_j, _m]
     if _id <= $nS
@@ -1161,7 +1186,9 @@ function _loopFamilyCode(g::Gen, f::Int, template::Vector{Tuple{Int, Int}}, bloc
   local linear::Bool = all(((ci, _),) -> _affineIn(g.classes[ci].lhs, readsUnknown)[1] &&
                                          _affineIn(g.classes[ci].rhs, readsUnknown)[1], template)
   _OMBACKEND.envSwitch("OMBACKEND_ARRAY_TRACE") &&
-    println("[arraycode] loop family ", f, ": ", k, " unknowns, ", M, " members, ", linear ? "linear" : "nonlinear")
+    println("[arraycode] loop family ", f, ": ", k, " unknowns, ", M, " members, ", linear ? "linear" : "nonlinear",
+            " (", join(String[_unknownLabel(g, u) for u in view(ids, :, 1)], ", "), ")",
+            join(String["\n[arraycode]   " * first(g.classes[ci].text, 1200) for (ci, _) in template]))
   #= the step of a linear loop's solve and of each Newton step: its unknowns moved by the LU factors' solve =#
   local solveStep::Expr = :($(_luSolve!)(_dx, _F, _w.pivots, _r))
   local code::Expr = quote
@@ -1315,7 +1342,25 @@ function _loopFamilyCode(g::Gen, f::Int, template::Vector{Tuple{Int, Int}}, bloc
       end
     end
   end
-  return (Any[:(const $C = $cols), :(const $I = $ids), :(const $G = $guess), :(const $B = $bases)], code)
+  return (Any[:(const $C = $cols), :(const $I = $ids), :(const $G = $guess), :(const $B = $bases)], code, residualBody)
+end
+
+"""
+    _loopResidualFunction(f, body, paramLocals) -> Expr
+
+The residuals of the loop family `f` (`body`, from `_loopFamilyCode`: `_rv[j]` the j-th residual of the member `_m`)
+as the function `LOOPRES_<f>!(_rv, du, a, u, p, t, z, mode, fire, _m)`, with the parameter views it reads (of
+`paramLocals`): not inlined, so compiled once for the places of the family's solve that call it (z and mode `nothing`
+and `false` where the relations hold their values: a second specialization).
+"""
+function _loopResidualFunction(f::Int, body::Expr, paramLocals::Vector{Any})::Expr
+  return :(@noinline function $(Symbol("LOOPRES_", f, "!"))(_rv, du, a, u, p, t, z, mode, fire, _m)
+             $(_usedLocals(paramLocals, body)...)
+             @inbounds begin
+               $(body)
+             end
+             return nothing
+           end)
 end
 
 #= ---------------------------------------------------------------- code =#
@@ -1773,6 +1818,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
   local initPlaces::Vector{Tuple{Int, Int, Int}} = fill((0, 0, 0), initialSystem.nLoop)
   local familyTemplates::Vector{Vector{Tuple{Int, Int}}} = copy(loops.families)
   local loopDefs::Vector{Any} = Any[]; local loopBodies::Vector{Any} = Any[]
+  local loopResiduals::Dict{Int, Expr} = Dict{Int, Expr}()
   #= where each algebraic element is a loop's first guess (by its index among the algebraic variables): a start
      rule of an algebraic variable sets them (`:a`, a guess computed at the start) =#
   local guessTargets::Dict{Int, Vector{Any}} = Dict{Int, Vector{Any}}()
@@ -1783,9 +1829,10 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       unknown > g.nStates && push!(get!(() -> Any[], guessTargets, unknown - g.nStates), :(p.loops[$f][$j, $m]))
       bases[m] >= 0 && (initPlaces[bases[m] + j] = (f, j, m))
     end
-    local (defs::Vector{Any}, code::Expr) = _loopFamilyCode(g, f, template, blocks, el, matchRow, a0, relBases, bases)
+    local (defs::Vector{Any}, code::Expr, residualBody::Expr) = _loopFamilyCode(g, f, template, blocks, el, matchRow, a0, relBases, bases)
     append!(loopDefs, defs)
     push!(loopBodies, code)
+    loopResiduals[f] = residualBody
   end
   #= a family's blocks are alike: all large (blockSolve!) or all Newton's =#
   local largeFamily::BitVector = falses(length(familyTemplates))
@@ -1826,7 +1873,8 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     push!(blockLinear, linear)
     _OMBACKEND.envSwitch("OMBACKEND_ARRAY_TRACE") &&
       println("[arraycode] block of ", length(rs), " instances torn: ", length(ids), " iteration variables, ",
-              length(torn.batches), " explicit batches, ", linear ? "linear" : "nonlinear")
+              length(torn.batches), " explicit batches, ", linear ? "linear" : "nonlinear", "\n[arraycode]   ",
+              join(String[_unknownLabel(g, u) for u in ids], ", "))
     local parts::Vector{Any} = Any[:(for _j in 1:$(length(ids))
       local _id::Int = $(ids)[_j]
       if _id <= $(g.nStates)
@@ -2252,12 +2300,13 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     $(loopDefs...)
     $(splitDefs...)
     $([:(function $(Symbol("LOOPFAMILY_", f, "!"))(du, a, u, p, t, z, mode, fire, members)
-           $(paramLocals...)
+           $(_usedLocals(paramLocals, code)...)
            @inbounds begin
              $(code)
            end
            return nothing
          end) for (f, code) in enumerate(loopBodies)]...)
+    $([_loopResidualFunction(f, body, paramLocals) for (f, body) in sort!(collect(loopResiduals); by = first)]...)
     $([:(function $(Symbol("BLOCK_", k, "!"))(res, y, du, a, u, p, t, z, mode, fire)
            $(paramLocals...)
            @inbounds begin
