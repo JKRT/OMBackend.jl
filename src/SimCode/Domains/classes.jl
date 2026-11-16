@@ -1990,15 +1990,92 @@ function _tearCascade(v::Int, known::BitVector, used::BitVector, open::Vector{In
 end
 
 """
+Whether `x` has a kink or a jump in what it reads: a relation (with events or under `noEvent`), an if-expression,
+`abs`, `min`, `max`, `sign`, `floor`, `ceil`, `trunc`.
+"""
+function _hasKink(x::IR)::Bool
+  (x isa Rel || x isa EvFn) && return true
+  x isa Op || return false
+  x.op in (:if, :<, :<=, :>, :>=, :abs, :min, :max, :sign, :floor, :ceil, :trunc) && return true
+  return any(_hasKink, x.args)
+end
+
+"""
+    _tearOrder(reads, readers, solves, lookahead) -> (order, tears, used)
+
+A block's unknowns (by index) in causal order: while an instance has one unknown left that it solves (`solves(e, v,
+access)`), it is solved for it; when none has, an unknown is torn (an iteration variable): the one whose being known
+lets the most instances be solved so, then the most read; with `lookahead > 1`, of the `lookahead` best so, the one
+that solves the most unknowns in turn (`_tearCascade`). Returns the solved (instance, unknown, access) in order, the
+torn unknowns, and the instances solved.
+"""
+function _tearOrder(reads::Vector{Vector{Tuple{Int, Int}}}, readers::Vector{Vector{Int}}, solves::Function,
+                    lookahead::Int)::Tuple{Vector{Tuple{Int, Int, Int}}, Vector{Int}, BitVector}
+  local n::Int = length(reads)
+  local known::BitVector = falses(n); local used::BitVector = falses(n)
+  local open::Vector{Int} = Int[length(reads[e]) for e in 1:n]
+  local order::Vector{Tuple{Int, Int, Int}} = Tuple{Int, Int, Int}[]
+  local tears::Vector{Int} = Int[]
+  local queue::Vector{Int} = Int[e for e in 1:n if open[e] == 1]
+  local learn!::Function = function (v::Int)
+    known[v] = true
+    for e in readers[v]
+      open[e] -= 1
+      (open[e] == 1 && !used[e]) && push!(queue, e)
+    end
+  end
+  while true
+    while !isempty(queue)
+      local e::Int = popfirst!(queue)
+      (used[e] || open[e] != 1) && continue
+      local (v::Int, access::Int) = reads[e][findfirst(x::Tuple{Int, Int} -> !known[x[1]], reads[e])]
+      solves(e, v, access) || continue
+      used[e] = true
+      push!(order, (e, v, access))
+      learn!(v)
+    end
+    all(known) && break
+    local scored::Vector{Tuple{Tuple{Int, Int}, Int}} = Tuple{Tuple{Int, Int}, Int}[]
+    for v in 1:n
+      known[v] && continue
+      local unlocks::Function = function (e::Int)
+        (used[e] || open[e] != 2) && return false
+        local other::Union{Nothing, Int} = findfirst(x::Tuple{Int, Int} -> !known[x[1]] && x[1] != v, reads[e])
+        return other !== nothing && solves(e, reads[e][other]...)
+      end
+      push!(scored, ((count(unlocks, readers[v]), count(e::Int -> !used[e], readers[v])), v))
+    end
+    sort!(scored; by = first, rev = true)
+    local best::Int = scored[1][2]
+    if lookahead > 1
+      local bestCascade::Int = -1
+      for (score, v) in first(scored, lookahead)
+        #= one that unlocks no instance solves none in turn: its cascade is itself =#
+        score[1] == 0 && break
+        local c::Int = _tearCascade(v, known, used, open, reads, readers, solves)
+        c > bestCascade && ((best, bestCascade) = (v, c))
+      end
+    end
+    push!(tears, best)
+    learn!(best)
+  end
+  return (order, tears, used)
+end
+
+"""
     _tearBlock(g, el, block, matchRow) -> TornBlock
 
 A large block torn as omc tears (greedily, each instance solved for the unknown it determines last, not its matched
-one): while an instance has one unknown of the block left that it solves explicitly (`_explicitDivisors`, a divisor
+one; `_tearOrder`): an instance is solved for an unknown it solves explicitly (`_explicitDivisors`, a divisor
 nonzero at the instance, the largest coefficient among the elements of its variable it reads, `_largestCoefficient`;
-not one it reads through two references), it is solved for it; when none has, an unknown is torn (an iteration
-variable): of the `TEAR_LOOKAHEAD` whose being known lets the most instances be solved so, the one that solves the
-most unknowns in turn (`_tearCascade`; MSL EngineV6's loops in fewer iteration variables). The instances left are
-the residuals. Batches by level (an instance after those it reads), then (class, access).
+not one it reads through two references). Torn twice, greedily and comparing `TEAR_LOOKAHEAD` candidates by their
+cascades (MSL EngineV6's loops in 52 iteration variables instead of 100); the one with fewer iteration variables is
+kept, the greedy one on a tie (the cascade can pick more: MSL ThreeSprings 4 instead of 3, one a spring length
+guessed 0). A block with a kink (`_hasKink`) is torn greedily only: which unknowns are torn decides how the kinks
+move with the iteration variables and the block's inputs. MSL DifferentialAmplifier's op-amp limiter, torn by the
+cascade in two currents (4 greedily), reached its input from the sources with a gain of 1e9: each step's guess, the
+last solution, was saturated at the next time, and Newton jumped between the supplies. The instances left are the
+residuals. Batches by level (an instance after those it reads), then (class, access).
 """
 function _tearBlock(g::Gen, el::InstanceTable, block::Vector{Int}, matchRow::Vector{Int})::TornBlock
   local n::Int = length(block)
@@ -2023,51 +2100,11 @@ function _tearBlock(g::Gen, el::InstanceTable, block::Vector{Int}, matchRow::Vec
     local acc::Vector{Ref} = get!(() -> accesses!(accesses!(Ref[], c.lhs), c.rhs), accessesOf, el.class[r])
     return _largestCoefficient(g, c, el.col[r], acc, access, Int[x[2] for x in reads[e] if x[1] != v])
   end
-  local known::BitVector = falses(n); local used::BitVector = falses(n)
-  local open::Vector{Int} = Int[length(reads[e]) for e in 1:n]
-  local order::Vector{Tuple{Int, Int, Int}} = Tuple{Int, Int, Int}[]   #= (instance, unknown, access) in causal order =#
-  local tears::Vector{Int} = Int[]
-  local queue::Vector{Int} = Int[e for e in 1:n if open[e] == 1]
-  local learn!::Function = function (v::Int)
-    known[v] = true
-    for e in readers[v]
-      open[e] -= 1
-      (open[e] == 1 && !used[e]) && push!(queue, e)
-    end
-  end
-  while true
-    while !isempty(queue)
-      local e::Int = popfirst!(queue)
-      (used[e] || open[e] != 1) && continue
-      local (v::Int, access::Int) = reads[e][findfirst(x::Tuple{Int, Int} -> !known[x[1]], reads[e])]
-      solves(e, v, access) || continue
-      used[e] = true
-      push!(order, (e, v, access))
-      learn!(v)
-    end
-    all(known) && break
-    #= the unknown that leaves the most instances with one unknown, then the most read; of the best few so, the one
-       whose being known solves the most unknowns in turn (`cascade`) =#
-    local scored::Vector{Tuple{Tuple{Int, Int}, Int}} = Tuple{Tuple{Int, Int}, Int}[]
-    for v in 1:n
-      known[v] && continue
-      local unlocks::Function = function (e::Int)
-        (used[e] || open[e] != 2) && return false
-        local other::Union{Nothing, Int} = findfirst(x::Tuple{Int, Int} -> !known[x[1]] && x[1] != v, reads[e])
-        return other !== nothing && solves(e, reads[e][other]...)
-      end
-      push!(scored, ((count(unlocks, readers[v]), count(e::Int -> !used[e], readers[v])), v))
-    end
-    sort!(scored; by = first, rev = true)
-    local best::Int = scored[1][2]; local bestCascade::Int = -1
-    for (score, v) in first(scored, TEAR_LOOKAHEAD[])
-      #= one that unlocks no instance solves none in turn: its cascade is itself =#
-      score[1] == 0 && break
-      local c::Int = _tearCascade(v, known, used, open, reads, readers, solves)
-      c > bestCascade && ((best, bestCascade) = (v, c))
-    end
-    push!(tears, best)
-    learn!(best)
+  #= (instance, unknown, access) in causal order, the iteration variables, the instances solved =#
+  local (order::Vector{Tuple{Int, Int, Int}}, tears::Vector{Int}, used::BitVector) = _tearOrder(reads, readers, solves, 1)
+  if TEAR_LOOKAHEAD[] > 1 && !any(ci::Int -> _hasKink(g.classes[ci].lhs) || _hasKink(g.classes[ci].rhs), Set{Int}(el.class[r] for r in block))
+    local cascaded::Tuple{Vector{Tuple{Int, Int, Int}}, Vector{Int}, BitVector} = _tearOrder(reads, readers, solves, TEAR_LOOKAHEAD[])
+    length(cascaded[2]) < length(tears) && ((order, tears, used) = cascaded)
   end
   local residuals::Vector{Int} = Int[e for e in 1:n if !used[e]]
   #= as many as iteration variables: each instance solved determines one unknown, each other unknown is torn =#

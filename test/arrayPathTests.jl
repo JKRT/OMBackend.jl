@@ -2659,6 +2659,24 @@ end
     @test known == falses(3) && used == falses(3) && open == [2, 2, 3]
   end
 
+  @testset "Tearing: greedily and by cascades; a block with a kink greedily" begin
+    #= the instances above torn greedily (`_tearOrder`): v2 unlocks e1 and e2, the most; e1 solves v1, e2 v3, e3 is
+       the residual. By cascades all three reach three unknowns: v2, the first, the same =#
+    local D = OMBackend.SimCode.Domains
+    local reads::Vector{Vector{Tuple{Int, Int}}} = [[(1, 1), (2, 1)], [(2, 1), (3, 1)], [(1, 1), (2, 1), (3, 1)]]
+    local readers::Vector{Vector{Int}} = [[1, 3], [1, 2, 3], [2, 3]]
+    local all3::Function = (e::Int, v::Int, access::Int) -> true
+    local (order, tears, used) = D._tearOrder(reads, readers, all3, 1)
+    @test order == [(1, 1, 1), (2, 3, 1)] && tears == [2] && used == BitVector([true, true, false])
+    @test D._tearOrder(reads, readers, all3, 3)[2] == [2]
+    #= kinks, with which `_tearBlock` tears greedily only (MSL DifferentialAmplifier's op-amp limiter): an
+       if-expression, a relation under noEvent, abs; not a smooth function =#
+    local x::D.Ref = D.Ref("x", D.IR[], false); local y::D.Ref = D.Ref("y", D.IR[], false)
+    @test D._hasKink(D.Op(:if, D.IR[D.Op(:>, D.IR[x, D.Lit(0.0)]), x, y]))
+    @test D._hasKink(D.Op(:+, D.IR[y, D.Op(:abs, D.IR[x])]))
+    @test !D._hasKink(D.Op(:*, D.IR[x, D.Op(:sin, D.IR[y])]))
+  end
+
   @testset "actualStream without events" begin
     #= `smooth(0, m * (if m > 0 then a else b))` (actualStream, both forms): OpenModelica makes no event in it. The
        array code computes flows from interpolated states; at the flow's hysteresis their round-off (1e-10 kg/s)

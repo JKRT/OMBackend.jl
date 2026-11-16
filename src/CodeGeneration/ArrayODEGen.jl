@@ -1874,7 +1874,8 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     _OMBACKEND.envSwitch("OMBACKEND_ARRAY_TRACE") &&
       println("[arraycode] block of ", length(rs), " instances torn: ", length(ids), " iteration variables, ",
               length(torn.batches), " explicit batches, ", linear ? "linear" : "nonlinear", "\n[arraycode]   ",
-              join(String[_unknownLabel(g, u) for u in ids], ", "))
+              join(String[_unknownLabel(g, u) for u in ids], ", "), "\n[arraycode]   residuals: ",
+              join(String[first(g.classes[el.class[rs[i]]].text, 100) for i in torn.residuals], "; "))
     local parts::Vector{Any} = Any[:(for _j in 1:$(length(ids))
       local _id::Int = $(ids)[_j]
       if _id <= $(g.nStates)
