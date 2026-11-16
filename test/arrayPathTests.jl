@@ -485,6 +485,43 @@ end
     @test maximum(abs.(ss .- as)) < 1e-8
   end
 
+  @testset "Time-invariant rows: in invariants! only, per solve; the callbacks' types erased" begin
+    #= n and c read parameters only (SimCode Domains: invariant rows): invariants! computes them once per solve,
+       equations! (the relation's event, the observed values) calls it and holds no copy. MSL EngineV6: such rows were
+       28 % of equations!. =#
+    local rows = Modelica"""
+      model InvariantRows "x = exp(-c t), c = k n[3] = 2 k / 3; y = n[1] = 1/3 while x > 0.5, 2 n[2] = 4/3 after"
+        parameter Real k = 2;
+        parameter Real axis[3] = {1, 2, 2};
+        Real n[3] = axis / sqrt(axis * axis);
+        Real c = k * n[3];
+        Real x(start = 1, fixed = true);
+        Real y;
+      equation
+        der(x) = -c * x;
+        y = if x > 0.5 then n[1] else 2.0 * n[2];
+      end InvariantRows;
+      """
+    local (ss, as, _) = _bothWaysOf(rows, "InvariantRows", ["x", "y", "c", "n[3]"]; reltol = 1e-10, abstol = 1e-12)
+    @test as ≈ [exp(-4 / 3), 4 / 3, 4 / 3, 2 / 3] rtol = 1e-8
+    @test maximum(abs.(ss .- as)) < 1e-8
+    local name::String = OMBackend.canonicalName("InvariantRows")
+    #= n's row once in the module: in invariants!, not in equations! =#
+    @test count("sqrt(", string(OMBackend.COMPILED_MODELS_DEJL[name][1])) == 1
+    #= another solve, another k: its own invariant values (x(1) = exp(-2/3) > 0.5: y stays n[1]) =#
+    local again = OMBackend.resimulateModel(name; tspan = (0.0, 1.0), reltol = 1e-10, abstol = 1e-12,
+                                            parameters = Dict{String, Any}("k" => 1.0))
+    @test _values(again, ["x", "y", "c"]) ≈ [exp(-2 / 3), 1 / 3, 2 / 3] rtol = 1e-8
+    #= the solver's callbacks: conditions and affects behind one wrapper type (`_erasedCallbacks`), nothing of the
+       model in their types, so the solver's callback code is compiled once for every model =#
+    local (_, cbs) = OMBackend.getMTKProblem(name)
+    local callbacks::Vector{Any} = Any[cbs.continuous_callbacks..., cbs.discrete_callbacks...]
+    @test !isempty(callbacks)
+    @test all(c -> c.condition isa OMBackend.CodeGeneration._ErasedCall && c.affect! isa OMBackend.CodeGeneration._ErasedCall,
+              callbacks)
+    @test !any(c -> occursin(name, string(typeof(c))), callbacks)
+  end
+
   @testset "The time derivative's step does not grow with time" begin
     #= tgrad! by central differences over cbrt(eps) |t|: at t = 29 a step of 1.8e-4 s, 5e-4 off on 50 Hz; a stiff
        state driven by it took 5695 steps in the last second against 1905 in the first (MSL Electrical

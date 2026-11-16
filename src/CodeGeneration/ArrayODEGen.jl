@@ -1740,12 +1740,16 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     classSampleBases[ci] = nClassSamples
     nClassSamples += c.nsample * size(c.domain, 2)
   end
-  #= Code: one loop per batch (rhsBody: the rows the state derivatives need, condBody: those the relations need,
-     invariantBody: the time-invariant ones; Schedule). =#
+  #= Code: one loop per batch (body: all rows but the time-invariant ones, which equations! takes from invariants!;
+     rhsBody: the rows the state derivatives need, condBody: those the relations need, invariantBody: the
+     time-invariant ones; Schedule). MSL EngineV6: the invariant rows were 28 % of equations! (120k of 426k nodes),
+     compiled there and in invariants!. =#
   local body = Any[]; local rhsBody = Any[]
   local invariantBody = Any[]; local condBody = Any[]
   local emit! = function (nslots, domain, batch, code)
-    push!(body, nslots == 0 ? Expr(:let, :(_col = 1), code) : _loopCode(nslots, domain, [el.col[r] for r in batch], code))
+    local dynamic = [r for r in batch if !invariant[r]]
+    isempty(dynamic) ||
+      push!(body, nslots == 0 ? Expr(:let, :(_col = 1), code) : _loopCode(nslots, domain, [el.col[r] for r in dynamic], code))
     local fixed = [r for r in batch if invariant[r]]
     isempty(fixed) || push!(invariantBody, nslots == 0 ? Expr(:let, :(_col = 1), copy(code)) : _loopCode(nslots, domain, [el.col[r] for r in fixed], copy(code)))
     local crossing = [r for r in batch if relNeeded[r] && !invariant[r]]
@@ -2409,10 +2413,12 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     end
 
     #= The continuous equations: state derivatives into du, algebraic variables into a;
-       relation crossing functions into z (when given), relation values updated in mode. =#
+       relation crossing functions into z (when given), relation values updated in mode. The time-invariant values
+       first (invariants!: they read parameters and each other only). =#
     function equations!(du, a, u, p, t, z, mode::Bool, fire::Bool = false)
       $(paramLocals...)
       local _fired = false
+      invariants!(a, p)
       @inbounds begin
         $(eqStmts...)
       end
