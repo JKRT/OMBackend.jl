@@ -1952,13 +1952,52 @@ struct TornBlock
 end
 
 """
+The number of candidates for an iteration variable `_tearBlock` compares by their cascades (`_tearCascade`), the best by
+its greedy score first; 1: the greedy choice alone.
+"""
+const TEAR_LOOKAHEAD = Base.RefValue{Int}(4096)
+
+"""
+    _tearCascade(v, known, used, open, reads, readers, solves) -> Int
+
+The number of a torn block's unknowns known once `v` is (`_tearBlock`'s state not changed): `v` and those the
+instances then left with one unknown solve explicitly, in turn.
+"""
+function _tearCascade(v::Int, known::BitVector, used::BitVector, open::Vector{Int}, reads::Vector{Vector{Tuple{Int, Int}}},
+                      readers::Vector{Vector{Int}}, solves::Function)::Int
+  local k::BitVector = copy(known); local u::BitVector = copy(used); local o::Vector{Int} = copy(open)
+  local queue::Vector{Int} = Int[]
+  local learned::Int = 0
+  local next::Int = v
+  while true
+    k[next] = true
+    learned += 1
+    for e in readers[next]
+      o[e] -= 1
+      (o[e] == 1 && !u[e]) && push!(queue, e)
+    end
+    next = 0
+    while !isempty(queue) && next == 0
+      local e::Int = popfirst!(queue)
+      (u[e] || o[e] != 1) && continue
+      local (x::Int, access::Int) = reads[e][findfirst(y::Tuple{Int, Int} -> !k[y[1]], reads[e])]
+      solves(e, x, access) || continue
+      u[e] = true
+      next = x
+    end
+    next == 0 && return learned
+  end
+end
+
+"""
     _tearBlock(g, el, block, matchRow) -> TornBlock
 
 A large block torn as omc tears (greedily, each instance solved for the unknown it determines last, not its matched
 one): while an instance has one unknown of the block left that it solves explicitly (`_explicitDivisors`, a divisor
 nonzero at the instance, the largest coefficient among the elements of its variable it reads, `_largestCoefficient`;
-not one it reads through two references), it is solved for it; when none has, the unknown whose being known lets the
-most instances be solved so is torn (an iteration variable). The instances left are
+not one it reads through two references), it is solved for it; when none has, an unknown is torn (an iteration
+variable): of the `TEAR_LOOKAHEAD` whose being known lets the most instances be solved so, the one that solves the
+most unknowns in turn (`_tearCascade`; MSL EngineV6's loops in fewer iteration variables). The instances left are
 the residuals. Batches by level (an instance after those it reads), then (class, access).
 """
 function _tearBlock(g::Gen, el::InstanceTable, block::Vector{Int}, matchRow::Vector{Int})::TornBlock
@@ -2007,8 +2046,9 @@ function _tearBlock(g::Gen, el::InstanceTable, block::Vector{Int}, matchRow::Vec
       learn!(v)
     end
     all(known) && break
-    #= the unknown that leaves the most instances with one unknown, then the most read =#
-    local best::Int = 0; local bestScore::Tuple{Int, Int} = (-1, -1)
+    #= the unknown that leaves the most instances with one unknown, then the most read; of the best few so, the one
+       whose being known solves the most unknowns in turn (`cascade`) =#
+    local scored::Vector{Tuple{Tuple{Int, Int}, Int}} = Tuple{Tuple{Int, Int}, Int}[]
     for v in 1:n
       known[v] && continue
       local unlocks::Function = function (e::Int)
@@ -2016,8 +2056,15 @@ function _tearBlock(g::Gen, el::InstanceTable, block::Vector{Int}, matchRow::Vec
         local other::Union{Nothing, Int} = findfirst(x::Tuple{Int, Int} -> !known[x[1]] && x[1] != v, reads[e])
         return other !== nothing && solves(e, reads[e][other]...)
       end
-      local score::Tuple{Int, Int} = (count(unlocks, readers[v]), count(e::Int -> !used[e], readers[v]))
-      score > bestScore && ((best, bestScore) = (v, score))
+      push!(scored, ((count(unlocks, readers[v]), count(e::Int -> !used[e], readers[v])), v))
+    end
+    sort!(scored; by = first, rev = true)
+    local best::Int = scored[1][2]; local bestCascade::Int = -1
+    for (score, v) in first(scored, TEAR_LOOKAHEAD[])
+      #= one that unlocks no instance solves none in turn: its cascade is itself =#
+      score[1] == 0 && break
+      local c::Int = _tearCascade(v, known, used, open, reads, readers, solves)
+      c > bestCascade && ((best, bestCascade) = (v, c))
     end
     push!(tears, best)
     learn!(best)

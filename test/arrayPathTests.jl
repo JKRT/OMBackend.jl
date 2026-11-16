@@ -2646,6 +2646,19 @@ end
     @test R.foldTree(at(matrix, I.Expression[real(:i)])) isa I.SUBSCRIPTED
   end
 
+  @testset "Tearing: the cascade of a candidate iteration variable" begin
+    #= instances e1 (v1, v2), e2 (v2, v3), e3 (v1, v2, v3): v1 known, e1 solves v2, then e2 v3: three unknowns
+       (`_tearCascade`, `_tearBlock`'s lookahead); where e1 solves nothing, v1 alone. The state passed in is not
+       changed =#
+    local D = OMBackend.SimCode.Domains
+    local reads::Vector{Vector{Tuple{Int, Int}}} = [[(1, 1), (2, 1)], [(2, 1), (3, 1)], [(1, 1), (2, 1), (3, 1)]]
+    local readers::Vector{Vector{Int}} = [[1, 3], [1, 2, 3], [2, 3]]
+    local known::BitVector = falses(3); local used::BitVector = falses(3); local open::Vector{Int} = [2, 2, 3]
+    @test D._tearCascade(1, known, used, open, reads, readers, (e::Int, v::Int, access::Int) -> true) == 3
+    @test D._tearCascade(1, known, used, open, reads, readers, (e::Int, v::Int, access::Int) -> e != 1) == 1
+    @test known == falses(3) && used == falses(3) && open == [2, 2, 3]
+  end
+
   @testset "actualStream without events" begin
     #= `smooth(0, m * (if m > 0 then a else b))` (actualStream, both forms): OpenModelica makes no event in it. The
        array code computes flows from interpolated states; at the flow's hysteresis their round-off (1e-10 kg/s)
