@@ -344,6 +344,47 @@ end
 _discreteState(p::ArrayModelParameters)::Tuple{Vector{Float64}, Vector{Float64}, Vector{Bool}, Vector{Float64}} =
   (copy(p.d), copy(p.dpre), copy(p.rel), copy(p.evv))
 
+"""
+    _holdDiscretes!(s, p)
+
+What the residuals of the loop of `s` read besides its unknowns, the states, time and the parameters, kept in
+`s.held` at a Jacobian (`_blockJacobian!`): the discrete state of `p` (`_discreteState`), the sample() instances
+active, whether it initializes and homotopy()'s λ. They change only at events and in the initialization, and with
+them the matrix of a linear loop (its relations, an `if` on a discrete value): its kept factors are for it while they
+are the same (`_sameDiscretes`).
+"""
+function _holdDiscretes!(s::BlockSolver, p::ArrayModelParameters)::Nothing
+  local h::Vector{Float64} = s.held
+  empty!(h)
+  append!(h, p.d); append!(h, p.dpre); append!(h, p.rel); append!(h, p.evv)
+  append!(h, p.sampleActive); append!(h, p.initPhase); append!(h, p.homotopy)
+  return nothing
+end
+
+"Whether the values `_holdDiscretes!` kept in `s` are those of `p` now (`isequal`): its kept factors are for them."
+function _sameDiscretes(s::BlockSolver, p::ArrayModelParameters)::Bool
+  local h::Vector{Float64} = s.held
+  length(h) == length(p.d) + length(p.dpre) + length(p.rel) + length(p.evv) + length(p.sampleActive) +
+               length(p.initPhase) + length(p.homotopy) || return false
+  local k::Int = 0
+  (k = _heldMatch(h, k, p.d)) < 0 && return false
+  (k = _heldMatch(h, k, p.dpre)) < 0 && return false
+  (k = _heldMatch(h, k, p.rel)) < 0 && return false
+  (k = _heldMatch(h, k, p.evv)) < 0 && return false
+  (k = _heldMatch(h, k, p.sampleActive)) < 0 && return false
+  (k = _heldMatch(h, k, p.initPhase)) < 0 && return false
+  return _heldMatch(h, k, p.homotopy) >= 0
+end
+
+"The values `v` at `h[k + 1]` on (`_sameDiscretes`): the index of the last, or -1 where one differs."
+function _heldMatch(h::Vector{Float64}, k::Int, v::Vector{T})::Int where {T <: Union{Float64, Bool}}
+  for x::T in v
+    k += 1
+    isequal(h[k], Float64(x)) || return -1
+  end
+  return k
+end
+
 "The state of `p` after its initialization (`ArrayStartState`)."
 _startState(p::ArrayModelParameters)::ArrayStartState =
   ArrayStartState(_discreteState(p), copy(p.wcond), copy(p.wnew), length(p.dlog), copy(p.upre), copy(p.ureinit),

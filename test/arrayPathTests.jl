@@ -409,6 +409,53 @@ end
     @test s.jacobians == 3
   end
 
+  #= a linear block whose matrix changes with its relations: kept factors only for the relations they were made at.
+     The bridge's currents are zero at the start, its loop's solution zero to round-off; the kept factors' solution
+     under each new set of relations set them again from round-off signs, and the start did not settle (MSL
+     SMPM_Braking, its machine's EMFs into a diode bridge) =#
+  @testset "A switched linear block: kept factors for their relations only" begin
+    local bridge = Modelica"""
+      model SwitchedBridge "three EMFs behind inductances into six ideal diodes onto a resistor"
+        parameter Real Ron = 1e-4;
+        parameter Real Goff = 1e-4;
+        parameter Real L = 1e-3;
+        parameter Real Rs = 0.05;
+        parameter Real Rg = 1e6;
+        parameter Real R = 1;
+        parameter Real E = 100;
+        parameter Real w = 314.1592653589793;
+        Real i[3](each start = 0, each fixed = true);
+        Real e[3];
+        Real vs;
+        Real vac[3](each start = 10);
+        Real vp(start = 50);
+        Real s[6](each start = 0.5);
+        Real vd[6];
+        Real id[6];
+        Boolean off[6];
+      equation
+        for k in 1:3 loop
+          e[k] = E * sin(w * time - 2 * 3.141592653589793 * (k - 1) / 3 + 0.3);
+          L * der(i[k]) = e[k] + vs - vac[k] - Rs * i[k];
+          vd[k] = vac[k] - vp;
+          vd[3 + k] = -vac[k];
+          i[k] = id[k] - id[3 + k];
+        end for;
+        sum(i) = -vs / Rg;
+        for k in 1:6 loop
+          off[k] = s[k] < 0;
+          vd[k] = s[k] * (if off[k] then 1 else Ron);
+          id[k] = s[k] * (if off[k] then Goff else 1);
+        end for;
+        id[1] + id[2] + id[3] = vp / R;
+      end SwitchedBridge;
+      """
+    local (s::Vector{Float64}, a::Vector{Float64}, sol) = _bothWaysOf(bridge, "SwitchedBridge", ["i[1]", "vp"];
+                                                                       tspan = (0.0, 0.04))
+    @test only(sol.prob.p.blocks).linear
+    @test maximum(abs.(s .- a) ./ (1.0 .+ abs.(s))) < 1e-4
+  end
+
   @testset "A small linear loop solved directly" begin
     local loop = Modelica"""
       model LinearLoop "i1 = (x + 2 sin(time)) / 7"

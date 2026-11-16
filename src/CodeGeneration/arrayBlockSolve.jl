@@ -89,6 +89,7 @@ call's guess; the start values until a solve succeeded), the largest of its resi
 first) and counters (residual evaluations, Jacobians, failed solves).
 `rankDeficient`: the dense Jacobian was singular and `factors` holds its pseudo-inverse (`_blockJacobian!`).
 `linear`: the residuals are affine in the iteration variables (`_affineIn` of the explicit solutions and residuals).
+`held`: of a linear loop, the discrete state at its last Jacobian (`_holdDiscretes!`), which its kept factors are for.
 """
 mutable struct BlockSolver
   const groups::Vector{Vector{Int}}
@@ -107,6 +108,7 @@ mutable struct BlockSolver
   const xp::Vector{Float64}
   const dx::Vector{Float64}
   const h::Vector{Float64}
+  const held::Vector{Float64}
   solved::Bool
   rsolved::Float64
   residuals::Int
@@ -123,7 +125,7 @@ function Base.deepcopy_internal(s::BlockSolver, dict::IdDict)::BlockSolver
   local c::BlockSolver = BlockSolver(Vector{Int}[copy(g) for g in s.groups], copy(s.J), s.dense, s.linear, copy(s.factors), copy(s.pivots),
                                      nothing, s.dense && s.factored, s.rankDeficient, copy(s.y), copy(s.x), copy(s.r),
                                      copy(s.rp), copy(s.xp),
-                                     copy(s.dx), copy(s.h), s.solved, s.rsolved, s.residuals, s.jacobians,
+                                     copy(s.dx), copy(s.h), copy(s.held), s.solved, s.rsolved, s.residuals, s.jacobians,
                                      s.failures)
   dict[s] = c
   return c
@@ -137,8 +139,14 @@ function BlockSolver(pattern::_SPARSE.SparseMatrixCSC{Float64, Int}, colors::Vec
   local dense::Bool = n <= DENSE_BLOCK_SIZE
   return BlockSolver(groups, copy(pattern), dense, linear, zeros(dense ? n : 0, dense ? n : 0), zeros(_LINALG.BlasInt, dense ? n : 0),
                      nothing, false, false, copy(guess), zeros(n), zeros(n), zeros(n), zeros(n), zeros(n), zeros(n),
-                     false, -1.0, 0, 0, 0)
+                     Float64[], false, -1.0, 0, 0, 0)
 end
+
+"A solve without parameters (the solver's own tests): its residuals read no discrete state (`_holdDiscretes!`)."
+_holdDiscretes!(s::BlockSolver, ::Nothing)::Nothing = nothing
+
+"A solve without parameters: kept factors are for its matrix (`_sameDiscretes`)."
+_sameDiscretes(s::BlockSolver, ::Nothing)::Bool = true
 
 """
     blockSolve!(s, residual!, du, a, u, p, t, z, mode, fire)
@@ -360,9 +368,12 @@ end
 """
     _blockLinear!(s, residual!, args) -> Bool
 
-The solve of a loop whose residuals are affine in its unknowns (`s.linear`) from `s.x`. With kept factors first one
-step with them: where the step after it is within 1e-10 of the values the matrix has not moved (a circuit of constant
-resistances between switchings: two evaluations). Else the Jacobian at the iterate by differences over the unknowns'
+The solve of a loop whose residuals are affine in its unknowns (`s.linear`) from `s.x`. With kept factors made at the
+present discrete state (`_sameDiscretes`) first one step with them: where the step after it is within 1e-10 of the
+values the matrix has not moved (a circuit of constant resistances between switchings: two evaluations). A switching
+changes the matrix, and that second step, of the old factors, measures the old one: MSL SMPM_Braking's diode bridge
+at the start, its currents zero to round-off, took the kept factors' solution under each new set of relations, whose
+round-off signs set the relations again (six relations alternating between two sets). Else the Jacobian at the iterate by differences over the unknowns'
 size (exact for affine residuals, `:coarse`), one step with its factors, and steps of iterative refinement with them
 while they are beyond 1e-10 of the values (at most two). False for a singular Jacobian, residuals not finite or
 refinement that does not get within 1e-10 (the general attempts follow); the last evaluation is at the returned
@@ -374,7 +385,7 @@ function _blockLinear!(s::BlockSolver, residual!::R, args::Tuple)::Bool where {R
   residual!(r, x, args...)
   s.residuals += 1
   all(isfinite, r) || return false
-  if s.factored && !s.rankDeficient
+  if s.factored && !s.rankDeficient && _sameDiscretes(s, args[4])
     _blockStep!(s)
     x .-= dx
     all(isfinite, x) || return false
@@ -515,6 +526,7 @@ function _blockJacobian!(s::BlockSolver, residual!::R, args::Tuple;
   s.jacobians += 1
   s.factored = false
   s.rankDeficient = false
+  s.linear && _holdDiscretes!(s, args[4])
   all(isfinite, J.nzval) || return false
   if s.dense
     fill!(s.factors, 0.0)
