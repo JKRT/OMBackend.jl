@@ -367,6 +367,95 @@ end
     @test a[1] == 1.0e-7
   end
 
+  @testset "Affine in a loop's unknowns (_affineIn)" begin
+    local D::Module = OMBackend.SimCode.Domains
+    local (x::D.Ref, y::D.Ref, k::D.Ref) = (D.Ref("x", D.IR[], false), D.Ref("y", D.IR[], false), D.Ref("k", D.IR[], false))
+    local reads::Function = (r::D.Ref) -> r.name in ("x", "y")
+    @test D._affineIn(D.Op(:+, D.IR[D.Op(:*, D.IR[k, x]), D.Op(:neg, D.IR[y])]), reads) == (true, true)
+    @test D._affineIn(D.Op(:*, D.IR[x, y]), reads) == (false, true)
+    @test D._affineIn(D.Op(:/, D.IR[x, k]), reads) == (true, true)
+    @test D._affineIn(D.Op(:/, D.IR[k, x]), reads) == (false, true)
+    @test D._affineIn(D.Op(:sin, D.IR[k]), reads) == (true, false)
+    @test D._affineIn(D.Op(:sin, D.IR[x]), reads) == (false, true)
+    #= a relation holds its value during a solve: an if on it is affine where its branches are =#
+    @test D._affineIn(D.Op(:if, D.IR[D.Rel(:>, x, D.Lit(0.0), 1), x, D.Op(:neg, D.IR[y])]), reads) == (true, true)
+    #= an unknown as a subscript =#
+    @test D._affineIn(D.Ref("k", D.IR[y], false), reads) == (false, true)
+  end
+
+  @testset "A linear block solved directly: one Jacobian per call" begin
+    local AG::Module = OMBackend.CodeGeneration.ArrayODEGen
+    local SA::Module = OMBackend.CodeGeneration.Symbolics.SparseArrays
+    local S::SA.SparseMatrixCSC{Float64, Int} = SA.sparse(ones(2, 2))
+    local s::AG.BlockSolver = AG.BlockSolver(S, AG.columnColors(S), [0.0, 0.0], true)
+    local A::Base.RefValue{Matrix{Float64}} = Base.RefValue{Matrix{Float64}}(zeros(2, 2))
+    local b::Vector{Float64} = [1.0, 2.0]
+    local residual!(r, y, du, a, u, p, t, z, mode, fire) = (a .= y; r .= A[] * y .- b; nothing)
+    local (du::Vector{Float64}, a::Vector{Float64}) = (zeros(2), zeros(2))
+    #= a matrix that moves between calls (a mechanism's, with its angles) =#
+    for M in ([2.0 1.0; 1.0 3.0], [2.5 1.0; 0.5 3.0], [1.0e-3 1.0; 1.0 2.0])
+      A[] = M
+      local before::Int = s.residuals
+      AG.blockSolve!(s, residual!, du, a, Float64[], nothing, 0.0, nothing, false, false)
+      @test a ≈ M \ b rtol = 1e-12
+      #= the residuals at the guess, at the kept factors' step, two colors, at the step =#
+      @test s.residuals - before <= 5
+    end
+    @test s.jacobians == 3
+    #= a matrix that has not moved (a circuit between switchings): the kept factors' step, no Jacobian =#
+    local before::Int = s.residuals
+    AG.blockSolve!(s, residual!, du, a, Float64[], nothing, 0.0, nothing, false, false)
+    @test s.residuals - before == 2
+    @test s.jacobians == 3
+  end
+
+  @testset "A small linear loop solved directly" begin
+    local loop = Modelica"""
+      model LinearLoop "i1 = (x + 2 sin(time)) / 7"
+        Real x(start = 1.0, fixed = true);
+        Real i1;
+        Real i2;
+      equation
+        i1 + 2.0 * i2 = x;
+        3.0 * i1 - i2 = sin(time);
+        der(x) = -i1;
+      end LinearLoop;
+      """
+    local traced::String = withenv("OMBACKEND_ARRAY_TRACE" => "true") do
+      mktemp() do path::String, io::IO
+        redirect_stdio(stdout = io) do
+          _translateProgram(loop, "LinearLoop"; scalarized = false)
+        end
+        flush(io)
+        read(path, String)
+      end
+    end
+    @test occursin("loop family 1: 2 unknowns, 1 members, linear", traced)
+    local (ss, as, _) = _bothWaysOf(loop, "LinearLoop", ["x", "i1"]; reltol = 1e-10, abstol = 1e-12)
+    #= x' + x/7 = -2/7 sin(t): x = 0.72 exp(-t/7) - 0.04 sin(t) + 0.28 cos(t) =#
+    local x1::Float64 = 0.72 * exp(-1 / 7) - 0.04 * sin(1.0) + 0.28 * cos(1.0)
+    @test as ≈ [x1, (x1 + 2 * sin(1.0)) / 7] rtol = 1e-8
+    @test maximum(abs.(ss .- as)) < 1e-8
+  end
+
+  @testset "The time derivative's step does not grow with time" begin
+    #= tgrad! by central differences over cbrt(eps) |t|: at t = 29 a step of 1.8e-4 s, 5e-4 off on 50 Hz; a stiff
+       state driven by it took 5695 steps in the last second against 1905 in the first (MSL Electrical
+       SMEE_Generator: 618938 steps for 30 s, now 1910) =#
+    local hum = Modelica"""
+      model StiffHum "a stiff filter of a 50 Hz source over 30 s"
+        Real x(start = 0.0, fixed = true);
+      equation
+        der(x) = 1000.0 * (sin(314.1592653589793 * time) - x);
+      end StiffHum;
+      """
+    local name::String = _translateProgram(hum, "StiffHum"; scalarized = false)
+    @test _arrayPathTaken(name)
+    local sol = OMBackend.simulateModel(name; tspan = (0.0, 30.0), reltol = 1e-6)
+    @test sol.retcode == ReturnCode.Success
+    @test count(t::Float64 -> t > 29.0, sol.t) < 1.2 * count(t::Float64 -> t < 1.0, sol.t)
+  end
+
   @testset "A time relation an ulp after a sample tick: an event of its own" begin
     #= MSL SawTooth's reset, `time >= (pre(count) + 1) * period`, at 6 * 0.1 = 0.6000000000000001; the tick of
        sample(0.1, 0.1) at 0.1 + 5 * 0.1 = 0.6. The tick took the relation false; its crossing an ulp later was dropped

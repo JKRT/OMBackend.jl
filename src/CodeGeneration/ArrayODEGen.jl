@@ -316,6 +316,8 @@ struct ArrayModelParameters
   homotopy::Vector{Float64}    #= [λ] of homotopy(): 1 (actual) but in the continuation (homotopyStart!) =#
   abuf::Vector{Float64}        #= the algebraic variables of a right-hand side evaluated on Float64 (RHS!): no buffer per call =#
   aleft::Vector{Float64}       #= the algebraic variables before the event's sweep: pre() of one (its left limit) =#
+  tgradAfter::Vector{Float64}  #= tgrad!'s right-hand side after t (Float64 states: no buffer per call) =#
+  tgradBefore::Vector{Float64} #= tgrad!'s right-hand side before t =#
   blocks::Vector{BlockSolver}  #= the large algebraic loops' solvers (blockSolve!), in the order of the schedule =#
   #= per loop family its members' guesses (unknown, member): the run's last solutions =#
   loops::Vector{Matrix{Float64}}
@@ -1758,6 +1760,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
   local blockBodies::Vector{Expr} = Expr[]
   local blockPatterns::Vector{Tuple{Vector{Int}, Vector{Int}}} = Tuple{Vector{Int}, Vector{Int}}[]
   local blockGuesses::Vector{Vector{Float64}} = Vector{Float64}[]
+  local blockLinear::Vector{Bool} = Bool[]
   local largeBlock!::Function = function (b::Int)
     local rs::Vector{Int} = loops.blocks[b]
     local torn::TornBlock = schedule.torn[b]::TornBlock
@@ -1767,9 +1770,18 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
     for (j::Int, u::Int) in enumerate(ids)
       u > g.nStates && push!(get!(() -> Any[], guessTargets, u - g.nStates), :(p.blocks[$(length(blockGuesses))].y[$j]))
     end
+    #= affine in its unknowns (all of them: the iteration variables and the explicitly solved ones), by the unknowns'
+       variables: the explicit solutions and the residuals each affine (`_affineIn`), so the residuals are affine in the
+       iteration variables =#
+    local reads::Set{Tuple{String, Bool}} = _unknownVariables(g, Int[matchRow[r] for r in rs])
+    local readsUnknown::Function = (r::Ref) -> (r.name, r.der) in reads
+    local linear::Bool = all(((key, _),) -> _affineIn(last(solutions[key]::Tuple{Ref, IR}), readsUnknown)[1], torn.batches) &&
+                         all(i::Int -> _affineIn(g.classes[el.class[rs[i]]].lhs, readsUnknown)[1] &&
+                                       _affineIn(g.classes[el.class[rs[i]]].rhs, readsUnknown)[1], torn.residuals)
+    push!(blockLinear, linear)
     _OMBACKEND.envSwitch("OMBACKEND_ARRAY_TRACE") &&
       println("[arraycode] block of ", length(rs), " instances torn: ", length(ids), " iteration variables, ",
-              length(torn.batches), " explicit batches")
+              length(torn.batches), " explicit batches, ", linear ? "linear" : "nonlinear")
     local parts::Vector{Any} = Any[:(for _j in 1:$(length(ids))
       local _id::Int = $(ids)[_j]
       if _id <= $(g.nStates)
@@ -2241,6 +2253,8 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
                                                                                   for ((I, J), gs) in zip(blockPatterns, blockGuesses)]...)]
     const BLOCK_COLORS = Vector{Int}[$(columnColors)(S) for S in BLOCK_PATTERNS]
     const BLOCK_GUESSES = $(blockGuesses)
+    #= whether each is affine in its unknowns (`_affineIn`: a direct solve) =#
+    const BLOCK_LINEAR = $(blockLinear)
     #= the loop families' first guesses; none of a family of large blocks (BLOCK_GUESSES) =#
     const LOOP_GUESSES = Matrix{Float64}[$([get(largeFamily, f, false) ? :(zeros(0, 0)) : Symbol("LOOP_GUESS_", f)
                                             for f in eachindex(loopBodies)]...)]
@@ -2883,7 +2897,8 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       local tend::Float64 = abs(p.tend[1])
       local h::Float64 = cbrt(eps(Float64)) * max(min(abs(Float64(t)), 1.0e-3 * tend), 1.0e-9 * tend, floatmin(Float64))
       local (tAfter::Float64, tBefore::Float64) = (Float64(t) + h, Float64(t) - h)
-      local after = similar(dT); local before = similar(dT)
+      local after::Vector{eltype(dT)} = eltype(dT) === Float64 ? p.tgradAfter : similar(dT)
+      local before::Vector{eltype(dT)} = eltype(dT) === Float64 ? p.tgradBefore : similar(dT)
       try
         RHS!(after, u, p, tAfter)
         RHS!(before, u, p, tBefore)
@@ -2913,7 +2928,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       local q = $(paramsType)(p.values, rel, d, copy(d), copy(p.wcond), copy(p.sampleActive),
                               [false], [false], copy(p.upre), copy(p.ureinit), copy(p.wnew), p.dlog, evv, copy(p.hyst), copy(p.tend),
                               copy(p.homotopy),
-                              zeros($nAlg), copy(p.aleft), p.blocks, $(_rootsAt)(p, t, right), p.loopWork, p.pass, p.state,
+                              zeros($nAlg), copy(p.aleft), p.tgradAfter, p.tgradBefore, p.blocks, $(_rootsAt)(p, t, right), p.loopWork, p.pass, p.state,
                               p.model)
       POSITIONS_OBJECTS && k > 0 && replayObjects!(u, q, times[k])
       equations!(similar(u), a, u, q, t, nothing, false)
@@ -3314,8 +3329,8 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
                            zeros(Bool, N_RELATIONS), copy(D0), copy(D0), zeros(Bool, N_WHENS),
                            zeros(Bool, N_SAMPLES), [false], [false], copy(U0), copy(U0),
                            zeros(Bool, N_WHENS), Tuple{Float64, Vector{Float64}}[], zeros(N_RELATIONS), [0.0], [Float64(tspan[2])],
-                           [1.0], zeros($nAlg), zeros($nAlg),
-                           $(BlockSolver)[$(BlockSolver)(BLOCK_PATTERNS[k], BLOCK_COLORS[k], BLOCK_GUESSES[k]) for k in eachindex(BLOCK_PATTERNS)],
+                           [1.0], zeros($nAlg), zeros($nAlg), zeros(length(U0)), zeros(length(U0)),
+                           $(BlockSolver)[$(BlockSolver)(BLOCK_PATTERNS[k], BLOCK_COLORS[k], BLOCK_GUESSES[k], BLOCK_LINEAR[k]) for k in eachindex(BLOCK_PATTERNS)],
                            Matrix{Float64}[copy(G) for G in LOOP_GUESSES],
                            $(LoopWork){Float64}[$(LoopWork){Float64}(size(G, 1)) for G in LOOP_GUESSES],
                            $(InitialPass)(false, zeros(N_INIT_LOOPS), zeros(N_INIT_LOOPS)),
