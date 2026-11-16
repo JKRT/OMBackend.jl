@@ -540,6 +540,28 @@ end
     @test maximum(abs.(sr .- ar)) < 1e-6
   end
 
+  @testset "A model without continuous unknowns: its parameters in the solution" begin
+    #= no equation reads J or k: on array code they were not in the parameter layout and not in the solution (MSL
+       readRealParameterModel: J, phi_rel0, w_rel0 read from a file, "not in the solution"); the scalar route keeps
+       them where the model has no continuous equations (`eliminateDeadParameters`) =#
+    local unread = Modelica"""
+      model UnreadParameters
+        parameter Real J = 2;
+        parameter Real k = 3 * J;
+        discrete Integer n(start = 0, fixed = true);
+      equation
+        when initial() then
+          n = 1;
+        end when;
+      end UnreadParameters;
+      """
+    local name::String = _translateProgram(unread, "UnreadParameters"; scalarized = false)
+    @test _arrayPathTaken(name)
+    local sol = OMBackend.simulateModel(name; tspan = (0.0, 1.0))
+    @test sol.retcode == ReturnCode.Success
+    @test _values(sol, ["J", "k"]) == [2.0, 6.0]
+  end
+
   @testset "Rolled components the plan treats differently: taken as declared" begin
     #= three inertias rolled into arrays, a gear between the first two: one of them is no state, and the plan split
        most of the rolled arrays ("slicing that splits most of the arrays"); the array form refused the model, and the
@@ -2459,7 +2481,9 @@ end
         end for;
       end ReversingStreams;
       """
-    local (ss, as, _) = _bothWaysOf(streams, "ReversingStreams", ["x[1]", "x[2]"]; reltol = 1e-8, abstol = 1e-10)
+    #= reltol 1e-9: the array route crosses the 6 kinks in t without events (smooth(0, ...)); at reltol 1e-8 its error
+       there depends on the step path, 2e-8 to 1.1e-6 against an exact reference (4.3e-10 at reltol 1e-9) =#
+    local (ss, as, _) = _bothWaysOf(streams, "ReversingStreams", ["x[1]", "x[2]"]; reltol = 1e-9, abstol = 1e-11)
     @test OMBackend.CodeGeneration.ArrayODEGen.LAST_STATS[].relations == 0
     @test maximum(abs.(ss .- as)) < 1e-6
   end

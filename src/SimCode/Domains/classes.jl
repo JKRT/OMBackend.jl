@@ -2446,6 +2446,39 @@ function _affine(x::IR, key::String)::Union{Nothing, Tuple{IR, IR}}
   return nothing
 end
 
+"""
+    _affineIn(x, reads) -> Tuple{Bool, Bool}
+
+Whether `x` is affine in the unknowns of an algebraic loop, and whether it reads one (`reads(r)`: the access `r` may be
+one). Affine through +, -, negation, noEvent and homotopy of affine arguments, a product of which one factor reads
+an unknown, a quotient whose numerator does, and an if-expression whose condition does not. A relation and an
+event-generating function hold their values in a loop's solve (`_relationAt` with `mode` false), so they read none. An
+access whose subscript reads an unknown is not affine, nor is any other operation on one.
+"""
+function _affineIn(x::IR, reads::F)::Tuple{Bool, Bool} where {F <: Function}
+  if x isa Ref
+    any(s::IR -> _affineIn(s, reads)[2], x.subs) && return (false, true)
+    return (true, reads(x))
+  end
+  x isa Op || return (true, false)
+  local parts::Vector{Tuple{Bool, Bool}} = Tuple{Bool, Bool}[_affineIn(a, reads) for a in x.args]
+  any(last, parts) || return (true, false)
+  local n::Int = length(parts)
+  if x.op in (:+, :-, :neg, :noEvent, :homotopy)
+    return (all(first, parts), true)
+  elseif x.op == :*
+    return (all(first, parts) && count(last, parts) == 1, true)
+  elseif x.op == :/
+    return (n == 2 && parts[1][1] && !parts[2][2], true)
+  elseif x.op == :if
+    return (n == 3 && !parts[1][2] && parts[2][1] && parts[3][1], true)
+  elseif x.op == :probed
+    #= a relation's value with its abs() argument's probe, evaluated for its crossing only =#
+    return (parts[1][1], true)
+  end
+  return (false, true)
+end
+
 _isLit(x::IR, v::Float64)::Bool = x isa Lit && x.v isa Real && x.v == v
 
 _add(a::IR, b::IR)::IR = _isLit(a, 0.0) ? b : _isLit(b, 0.0) ? a : Op(:+, IR[a, b])

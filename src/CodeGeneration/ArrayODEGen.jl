@@ -89,7 +89,7 @@ import ...SimCode.Domains: DomainSystem, InstanceTable, EqClass, EvFn, Gen, IR, 
   Ref, Rel, SAssert, SAssign, SBreak, SCall, SFor, SIf, SPreStart, SWhen, SWhile, Slot, Stmt, TimeIR, TornBlock, VarInfo,
   WhenClass,
   AlgClass, DelaySite,
-  _blockFamilies, _callOfParameters, _condElements, _initAlgAssigned, _parameterAlgorithms, _paramValue!,
+  _affineIn, _blockFamilies, _callOfParameters, _condElements, _initAlgAssigned, _parameterAlgorithms, _paramValue!,
   _parametersOnly, _relationSlots, _relationInstances,
   _isTimeRelation, _timeRelationSlots, _continuous,
   domainSystem, ns, Schedule, causalSchedule!, ParameterBinding, parameterBindings, _bindingDeps, InitialSystem
@@ -207,6 +207,96 @@ function _passBlock!(s::BlockSolver, residual!::R, pass::InitialPass, base::Int,
   return nothing
 end
 
+"""
+    LoopWork{T}(k)
+
+The work arrays of a loop family's solve (`LOOPFAMILY_f!`) of `k` unknowns: the iterate, the residuals there and at a
+perturbed point, the step, an attempt's start, the Jacobian, its LU factors (`_luFactor!`) and their pivots. One per
+family in the parameters for solves on Float64 (`ArrayModelParameters.loopWork`), so that a right-hand side allocates
+none; a solve on another number type (a solver's dual numbers) makes its own.
+"""
+struct LoopWork{T}
+  x::Vector{T}
+  r::Vector{T}
+  r2::Vector{T}
+  dx::Vector{T}
+  xs::Vector{T}
+  J::Matrix{T}
+  F::Matrix{T}
+  pivots::Vector{Int}
+end
+
+LoopWork{T}(k::Int) where {T} = LoopWork{T}(zeros(T, k), zeros(T, k), zeros(T, k), zeros(T, k), zeros(T, k), zeros(T, k, k),
+                                             zeros(T, k, k), zeros(Int, k))
+
+"""
+    _luFactor!(F, pivots) -> Bool
+
+`F` replaced by its LU factors with partial pivoting (LAPACK getrf's layout: L below the diagonal with a unit
+diagonal, U on and above it; row `j` exchanged with `pivots[j]`), for the small loops of a loop family on any number
+type; false for an exactly zero pivot (a singular matrix, as `issuccess` of `lu`).
+"""
+function _luFactor!(F::Matrix{T}, pivots::Vector{Int})::Bool where {T}
+  local n::Int = size(F, 1)
+  for j::Int in 1:n
+    local q::Int = j
+    local best::T = abs(F[j, j])
+    for i::Int in (j + 1):n
+      local v::T = abs(F[i, j])
+      if v > best
+        best = v
+        q = i
+      end
+    end
+    pivots[j] = q
+    iszero(best) && return false
+    if q != j
+      for c::Int in 1:n
+        local swap::T = F[j, c]
+        F[j, c] = F[q, c]
+        F[q, c] = swap
+      end
+    end
+    local pivot::T = F[j, j]
+    for i::Int in (j + 1):n
+      local l::T = F[i, j] / pivot
+      F[i, j] = l
+      for c::Int in (j + 1):n
+        F[i, c] -= l * F[j, c]
+      end
+    end
+  end
+  return true
+end
+
+"""
+    _luSolve!(x, F, pivots, b) -> x
+
+`x` the solution of A x = b for the LU factors `F` of A with their `pivots` (`_luFactor!`).
+"""
+function _luSolve!(x::Vector{T}, F::Matrix{T}, pivots::Vector{Int}, b::Vector{T})::Vector{T} where {T}
+  local n::Int = length(x)
+  copyto!(x, b)
+  for j::Int in 1:n
+    local q::Int = pivots[j]
+    if q != j
+      local swap::T = x[j]
+      x[j] = x[q]
+      x[q] = swap
+    end
+  end
+  for i::Int in 2:n, c::Int in 1:(i - 1)
+    x[i] -= F[i, c] * x[c]
+  end
+  for i::Int in n:-1:1
+    for c::Int in (i + 1):n
+      x[i] -= F[i, c] * x[c]
+    end
+    x[i] /= F[i, i]
+  end
+  return x
+end
+
 struct ArrayModelParameters
   values::Vector{Float64}
   rel::Vector{Bool}
@@ -229,7 +319,8 @@ struct ArrayModelParameters
   blocks::Vector{BlockSolver}  #= the large algebraic loops' solvers (blockSolve!), in the order of the schedule =#
   #= per loop family its members' guesses (unknown, member): the run's last solutions =#
   loops::Vector{Matrix{Float64}}
-  pass::InitialPass            #= the loops the initial solve holds (`initialize`) =#
+  loopWork::Vector{LoopWork{Float64}}   #= per loop family its solve's work arrays (Float64 solves) =#
+  pass::InitialPass           #= the loops the initial solve holds (`initialize`) =#
   state::ArrayRuntimeState     #= the run's state (samples, memo, warnings, asserts, terminate) =#
   model::Module
 end
@@ -941,6 +1032,27 @@ end
 #= ---------------------------------------------------------------- loop families =#
 
 """
+    _unknownVariables(g, ids) -> Set{Tuple{String, Bool}}
+
+The variables of the unknowns `ids` (a state's index for its derivative, an algebraic variable's after the states), as
+(name, der) of the accesses that read them: every element of an array that holds one counts (`_affineIn` then errs
+toward a nonlinear loop).
+"""
+function _unknownVariables(g::Gen, ids::AbstractArray{Int})::Set{Tuple{String, Bool}}
+  local found::Set{Tuple{String, Bool}} = Set{Tuple{String, Bool}}()
+  local nS::Int = g.nStates
+  for (name::String, info::VarInfo) in g.vars
+    local n::Int = prod(info.dims; init = 1)
+    if info.kind == :state
+      any(u::Int -> u <= nS && info.offset < u <= info.offset + n, ids) && push!(found, (name, true))
+    elseif info.kind == :alg
+      any(u::Int -> u > nS && info.offset < u - nS <= info.offset + n, ids) && push!(found, (name, false))
+    end
+  end
+  return found
+end
+
+"""
     _loopFamilyCode(g, f, template, blocks, el, matchRow, a0, relBases, bases) -> Tuple{Vector{Any}, Expr}
 
 The solve of the loop family `f` (`LOOPFAMILY_f!`): its tables (each member's instance columns and unknowns, the first
@@ -958,6 +1070,10 @@ and, at an event, the relations, whose change the event iteration sweeps again (
 FluxTubes hysteresis, `\$DER.ifEq_tmp1 = if core.Hstat < -650.0 then ...`; a comparator in an op-amp's loop.
 In the initial solve (`p.pass.on`) a member the initial system holds (`bases`: its unknowns' offset there, -1 for
 none) takes its unknowns from it and gives it its residuals (`InitialPass`).
+A family whose residuals are affine in its unknowns (`_affineIn`) is solved by one Jacobian, by differences over the
+unknowns' size (exact for an affine residual), and one LU: one step from the last solution and one more at the
+residuals there; Newton's method as above where that fails. The work arrays are the parameters' (`LoopWork`) in a
+Float64 solve.
 """
 function _loopFamilyCode(g::Gen, f::Int, template::Vector{Tuple{Int, Int}}, blocks::Vector{Vector{Int}}, el::InstanceTable,
                          matchRow::Vector{Int}, a0::Vector{Float64}, relBases::Vector{Int},
@@ -996,11 +1112,22 @@ function _loopFamilyCode(g::Gen, f::Int, template::Vector{Tuple{Int, Int}}, bloc
       a[_id - $nS] = _x[_j]
     end
   end)
+  #= affine in its unknowns (`_affineIn`, by the unknowns' variables): solved by one Jacobian =#
+  local reads::Set{Tuple{String, Bool}} = _unknownVariables(g, ids)
+  local readsUnknown::Function = (r::Ref) -> (r.name, r.der) in reads
+  local linear::Bool = all(((ci, _),) -> _affineIn(g.classes[ci].lhs, readsUnknown)[1] &&
+                                         _affineIn(g.classes[ci].rhs, readsUnknown)[1], template)
+  _OMBACKEND.envSwitch("OMBACKEND_ARRAY_TRACE") &&
+    println("[arraycode] loop family ", f, ": ", k, " unknowns, ", M, " members, ", linear ? "linear" : "nonlinear")
+  #= the step of a linear loop's solve and of each Newton step: its unknowns moved by the LU factors' solve =#
+  local solveStep::Expr = :($(_luSolve!)(_dx, _F, _w.pivots, _r))
   local code::Expr = quote
-    local _x::AbstractVector = similar(a, $k); local _r::AbstractVector = similar(a, $k)
-    local _r2::AbstractVector = similar(a, $k); local _J::AbstractMatrix = similar(a, $k, $k)
+    #= the work arrays: the parameters' on Float64 (no allocation in a right-hand side), else of the number type =#
+    local _w::$(LoopWork){eltype(a)} = eltype(a) === Float64 ? p.loopWork[$f] : $(LoopWork){eltype(a)}($k)
+    local _x::Vector{eltype(a)} = _w.x; local _r::Vector{eltype(a)} = _w.r; local _r2::Vector{eltype(a)} = _w.r2
+    local _dx::Vector{eltype(a)} = _w.dx; local _xs::Vector{eltype(a)} = _w.xs
+    local _J::Matrix{eltype(a)} = _w.J; local _F::Matrix{eltype(a)} = _w.F
     local _G::Matrix{Float64} = p.loops[$f]
-    local _xs::AbstractVector = similar(a, $k)
     for _m in members
       $(any(>=(0), bases) ? quote
           if p.pass.on && $B[_m] >= 0
@@ -1017,22 +1144,19 @@ function _loopFamilyCode(g::Gen, f::Int, template::Vector{Tuple{Int, Int}}, bloc
           end
         end : nothing)
       local _converged::Bool = false
-      #= from the last solution; where that does not converge, again with the step damped (halved until the residuals
-         decrease), then so from the start values. A piecewise equation's Newton step from a solution on another piece
-         can cycle between two points that are no solutions (MSL IdealizedOpAmpLimited: from the saturated output,
-         reached in an event's sweep, back to the linear range; the last iterate went into the equations as the
-         solution), an exponential's can overflow (a Zener diode's) =#
-      for _attempt in 1:3
-        for _j in 1:$k
-          _attempt == 2 && (_xs[_j] = _x[_j])
-          _x[_j] = _attempt == 3 ? $G[_j, _m] : _G[_j, _m]
-        end
-        for _it in 1:50
+      $(linear ? quote
+          #= affine in its unknowns: the Jacobian by differences over the unknowns' size (exact for an affine
+             residual), one step from the last solution, and the step at the residuals there once more (the round-off
+             of a badly conditioned loop); the Newton attempts below where it is singular or the second step not
+             within 1e-8 =#
+          for _j in 1:$k
+            _x[_j] = _G[_j, _m]
+          end
           $set
           $(residuals(:_r))
           for _j in 1:$k
-            local _xj::Real = _x[_j]
-            local _h::Real = 1.4901161193847656e-8 * max(1.0, abs(_xj))
+            local _xj::eltype(a) = _x[_j]
+            local _h::eltype(a) = max(one(_xj), abs(_xj))
             _x[_j] = _xj + _h
             $set
             $(residuals(:_r2))
@@ -1041,28 +1165,67 @@ function _loopFamilyCode(g::Gen, f::Int, template::Vector{Tuple{Int, Int}}, bloc
             end
             _x[_j] = _xj
           end
-          #= residuals or a Jacobian not finite, or a singular one (a trial point of the solver where the equations
+          if all(isfinite, _r) && all(isfinite, _J) && $(_luFactor!)(copyto!(_F, _J), _w.pivots)
+            $solveStep
+            for _j in 1:$k
+              _x[_j] -= _dx[_j]
+            end
+            $set
+            $(residuals(:_r))
+            $solveStep
+            local _refined::eltype(a) = zero(eltype(a))
+            for _j in 1:$k
+              _x[_j] -= _dx[_j]
+              _refined = max(_refined, abs(_dx[_j]) / (1.0 + abs(_x[_j])))
+            end
+            _converged = all(isfinite, _x) && _refined <= 1.0e-8
+          end
+        end : nothing)
+      #= from the last solution; where that does not converge, again with the step damped (halved until the residuals
+         decrease), then so from the start values. A piecewise equation's Newton step from a solution on another piece
+         can cycle between two points that are no solutions (MSL IdealizedOpAmpLimited: from the saturated output,
+         reached in an event's sweep, back to the linear range; the last iterate went into the equations as the
+         solution), an exponential's can overflow (a Zener diode's) =#
+      for _attempt in 1:3
+        _converged && break
+        for _j in 1:$k
+          _attempt == 2 && (_xs[_j] = _x[_j])
+          _x[_j] = _attempt == 3 ? $G[_j, _m] : _G[_j, _m]
+        end
+        for _it in 1:50
+          $set
+          $(residuals(:_r))
+          for _j in 1:$k
+            local _xj::eltype(a) = _x[_j]
+            local _h::eltype(a) = 1.4901161193847656e-8 * max(one(_xj), abs(_xj))
+            _x[_j] = _xj + _h
+            $set
+            $(residuals(:_r2))
+            for _i in 1:$k
+              _J[_i, _j] = (_r2[_i] - _r[_i]) / _h
+            end
+            _x[_j] = _xj
+          end
+          #= residuals or a Jacobian not finite, or a singular Jacobian (a trial point of the solver where the equations
              overflow, or a junction's derivative underflows: MSL DifferenceAmplifier's transistors): the unknowns NaN,
              so the step is rejected =#
           if !(all(isfinite, _r) && all(isfinite, _J))
             fill!(_x, NaN)
             break
           end
-          local _F = LinearAlgebra.lu(_J; check = false)
-          local _dx::AbstractVector = _r2
-          if LinearAlgebra.issuccess(_F)
-            _dx = _F \ _r
+          if $(_luFactor!)(copyto!(_F, _J), _w.pivots)
+            $solveStep
           elseif _attempt > 1 && eltype(a) === Float64
             #= singular where two unknowns whose product the equations take are both zero (`v = R_actual * i` at
                the starts, MSL's resistor with a heat port): the least-squares step of the smallest norm =#
-            _dx = LinearAlgebra.pinv(_J; rtol = $(RANK_TOLERANCE)) * _r
+            copyto!(_dx, LinearAlgebra.pinv(_J; rtol = $(RANK_TOLERANCE)) * _r)
           else
             fill!(_x, NaN)
             break
           end
           local _scale::Float64 = 1.0
           if _attempt > 1
-            local _norm::Real = sum(abs2, _r)
+            local _norm::eltype(a) = sum(abs2, _r)
             for _j in 1:$k
               _r2[_j] = _x[_j]
             end
@@ -1080,7 +1243,7 @@ function _loopFamilyCode(g::Gen, f::Int, template::Vector{Tuple{Int, Int}}, bloc
             end
           end
           #= converged by the whole step of Newton's method, damped or not =#
-          local _step::Real = 0.0
+          local _step::eltype(a) = zero(eltype(a))
           for _j in 1:$k
             _x[_j] -= _scale * _dx[_j]
             _step = max(_step, abs(_dx[_j]) / (1.0 + abs(_x[_j])))
@@ -1895,6 +2058,15 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
   end
   local (delayBody::Vector{Any}, nDelays::Int) = _delayRecords(g)
   local usedParams = collect(keys(g.paramSyms))
+  #= a model without continuous unknowns (its one state the `\$dummy` it is given to be integrated): its parameters
+     are its result, as the scalar route keeps them (`eliminateDeadParameters`): every parameter with a value in the
+     layout, those no equation reads too (MSL readRealParameterModel: J, phi_rel0, w_rel0 read from a file, which its
+     reference compares); no locals of them =#
+  if stateNamesOrdered == String["\$dummy"] && isempty(algNamesOrdered)
+    for (nm::String, info::VarInfo) in g.vars
+      (info.kind == :param && info.var.value !== nothing) && _paramValue!(g, nm)
+    end
+  end
   local (paramOrder, rules, bindingKinds) = _parameterRules(g)
   local objectDefs::Vector{Any} = _objectDefinitions(g, modelName)
   #= Layout of the flat parameter vector: (symbol, offset, length, dims), Julia (column-major)
@@ -2701,21 +2873,27 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
 
     #= The right-hand side's derivative in time (Rosenbrock methods): central differences of the step the solver's own
        take away from t = 0 (relative to |t|), near t = 0 a billionth of the run: the solver's step 6e-6 there spans all
-       of MSL DifferenceAmplifier's sources (a damped 0.2 GHz sine, ramps of 1 ns), and its steps shrank to 1e-25. An
-       error in the right-hand side is recorded as the step-rejecting RHS's (`StepRejectingRHS`). =#
+       of MSL DifferenceAmplifier's sources (a damped 0.2 GHz sine, ramps of 1 ns), and its steps shrank to 1e-25. At
+       most a thousandth of the run times that: a step relative to |t| grew with the run, and its truncation error
+       with its square (MSL Machines SMEE_Generator at t = 22 s: a step of 1.3e-4 s, 3e-4 off the 50 Hz sources'
+       derivative; Rosenbrock's steps shrank from 5e-3 to 1.5e-4 s over the run, 619000 for 30 s). Divided by the
+       difference of the two times as represented. An error in the right-hand side is recorded as the step-rejecting
+       RHS's (`StepRejectingRHS`). =#
     function tgrad!(dT, u, p, t)
-      local h::Float64 = cbrt(eps(Float64)) * max(abs(Float64(t)), 1.0e-9 * abs(p.tend[1]), floatmin(Float64))
+      local tend::Float64 = abs(p.tend[1])
+      local h::Float64 = cbrt(eps(Float64)) * max(min(abs(Float64(t)), 1.0e-3 * tend), 1.0e-9 * tend, floatmin(Float64))
+      local (tAfter::Float64, tBefore::Float64) = (Float64(t) + h, Float64(t) - h)
       local after = similar(dT); local before = similar(dT)
       try
-        RHS!(after, u, p, t + h)
-        RHS!(before, u, p, t - h)
+        RHS!(after, u, p, tAfter)
+        RHS!(before, u, p, tBefore)
       catch err
         err isa OMBackend.CodeGeneration._RHS_STEP_ERRORS || rethrow()
         OMBackend.CodeGeneration.LAST_RHS_ERROR[] = err
         fill!(dT, NaN)
         return nothing
       end
-      dT .= (after .- before) ./ (2h)
+      dT .= (after .- before) ./ (tAfter - tBefore)
       return nothing
     end
 
@@ -2735,7 +2913,8 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       local q = $(paramsType)(p.values, rel, d, copy(d), copy(p.wcond), copy(p.sampleActive),
                               [false], [false], copy(p.upre), copy(p.ureinit), copy(p.wnew), p.dlog, evv, copy(p.hyst), copy(p.tend),
                               copy(p.homotopy),
-                              zeros($nAlg), copy(p.aleft), p.blocks, $(_rootsAt)(p, t, right), p.pass, p.state, p.model)
+                              zeros($nAlg), copy(p.aleft), p.blocks, $(_rootsAt)(p, t, right), p.loopWork, p.pass, p.state,
+                              p.model)
       POSITIONS_OBJECTS && k > 0 && replayObjects!(u, q, times[k])
       equations!(similar(u), a, u, q, t, nothing, false)
       return a
@@ -3138,6 +3317,7 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
                            [1.0], zeros($nAlg), zeros($nAlg),
                            $(BlockSolver)[$(BlockSolver)(BLOCK_PATTERNS[k], BLOCK_COLORS[k], BLOCK_GUESSES[k]) for k in eachindex(BLOCK_PATTERNS)],
                            Matrix{Float64}[copy(G) for G in LOOP_GUESSES],
+                           $(LoopWork){Float64}[$(LoopWork){Float64}(size(G, 1)) for G in LOOP_GUESSES],
                            $(InitialPass)(false, zeros(N_INIT_LOOPS), zeros(N_INIT_LOOPS)),
                            $(ArrayRuntimeState)(N_SAMPLES, strings, N_DELAYS), @__MODULE__)
     end
