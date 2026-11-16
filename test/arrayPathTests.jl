@@ -2669,12 +2669,19 @@ end
     local (order, tears, used) = D._tearOrder(reads, readers, all3, 1)
     @test order == [(1, 1, 1), (2, 3, 1)] && tears == [2] && used == BitVector([true, true, false])
     @test D._tearOrder(reads, readers, all3, 3)[2] == [2]
-    #= kinks, with which `_tearBlock` tears greedily only (MSL DifferentialAmplifier's op-amp limiter): an
-       if-expression, a relation under noEvent, abs; not a smooth function =#
+    #= kinks in the unknowns (x), with which `_tearBlock` tears greedily only (MSL DifferentialAmplifier's op-amp
+       limiter): an if-expression whose condition reads x under noEvent, abs of x. None: a smooth function, an
+       if-expression on a mode held through the solve (a thyristor's `off`), a relation with events (held), abs of
+       what is no unknown =#
     local x::D.Ref = D.Ref("x", D.IR[], false); local y::D.Ref = D.Ref("y", D.IR[], false)
-    @test D._hasKink(D.Op(:if, D.IR[D.Op(:>, D.IR[x, D.Lit(0.0)]), x, y]))
-    @test D._hasKink(D.Op(:+, D.IR[y, D.Op(:abs, D.IR[x])]))
-    @test !D._hasKink(D.Op(:*, D.IR[x, D.Op(:sin, D.IR[y])]))
+    local off::D.Ref = D.Ref("off", D.IR[], false)
+    local readsX::Function = (r::D.Ref) -> r.name == "x"
+    @test D._hasKink(D.Op(:if, D.IR[D.Op(:>, D.IR[x, D.Lit(0.0)]), x, y]), readsX)
+    @test D._hasKink(D.Op(:+, D.IR[y, D.Op(:abs, D.IR[x])]), readsX)
+    @test !D._hasKink(D.Op(:*, D.IR[x, D.Op(:sin, D.IR[y])]), readsX)
+    @test !D._hasKink(D.Op(:if, D.IR[off, D.Op(:*, D.IR[x, D.Lit(1.0e-5)]), x]), readsX)
+    @test !D._hasKink(D.Op(:if, D.IR[D.Rel(:<, x, D.Lit(0.0), 1), x, y]), readsX)
+    @test !D._hasKink(D.Op(:abs, D.IR[y]), readsX)
   end
 
   @testset "actualStream without events" begin

@@ -89,7 +89,7 @@ import ...SimCode.Domains: DomainSystem, InstanceTable, EqClass, EvFn, Gen, IR, 
   Ref, Rel, SAssert, SAssign, SBreak, SCall, SFor, SIf, SPreStart, SWhen, SWhile, Slot, Stmt, TimeIR, TornBlock, VarInfo,
   WhenClass,
   AlgClass, DelaySite,
-  _affineIn, _blockFamilies, _callOfParameters, _condElements, _initAlgAssigned, _parameterAlgorithms, _paramValue!,
+  _affineIn, _unknownVariables, _blockFamilies, _callOfParameters, _condElements, _initAlgAssigned, _parameterAlgorithms, _paramValue!,
   _parametersOnly, _relationSlots, _relationInstances,
   _isTimeRelation, _timeRelationSlots, _continuous,
   domainSystem, ns, Schedule, causalSchedule!, ParameterBinding, parameterBindings, _bindingDeps, InitialSystem
@@ -1094,27 +1094,6 @@ function _unknownLabel(g::Gen, id::Int)::String
     return state ? string("der(", name, ")", element) : string(name, element)
   end
   return string(state ? "state#" : "alg#", k)
-end
-
-"""
-    _unknownVariables(g, ids) -> Set{Tuple{String, Bool}}
-
-The variables of the unknowns `ids` (a state's index for its derivative, an algebraic variable's after the states), as
-(name, der) of the accesses that read them: every element of an array that holds one counts (`_affineIn` then errs
-toward a nonlinear loop).
-"""
-function _unknownVariables(g::Gen, ids::AbstractArray{Int})::Set{Tuple{String, Bool}}
-  local found::Set{Tuple{String, Bool}} = Set{Tuple{String, Bool}}()
-  local nS::Int = g.nStates
-  for (name::String, info::VarInfo) in g.vars
-    local n::Int = prod(info.dims; init = 1)
-    if info.kind == :state
-      any(u::Int -> u <= nS && info.offset < u <= info.offset + n, ids) && push!(found, (name, true))
-    elseif info.kind == :alg
-      any(u::Int -> u > nS && info.offset < u - nS <= info.offset + n, ids) && push!(found, (name, false))
-    end
-  end
-  return found
 end
 
 """
