@@ -3494,7 +3494,8 @@ function _emitModule(g::Gen, modelName::String, functionDefs::Vector{Any}, u0::V
       $(usesTerminal ? :(push!(cbs, DiscreteCallback((u, t, integrator) -> false, integrator -> nothing;
                                                      finalize = (c, u, t, integrator) -> _terminalEvent!(integrator),
                                                      save_positions = (false, false)))) : nothing)
-      local cb = isempty(cbs) ? nothing : OMBackend.CodeGeneration._joinCallbacks(cbs...)
+      #= one callback type for every model (`_erasedCallbacks`): the solver's callback functions compiled once =#
+      local cb = isempty(cbs) ? nothing : OMBackend.CodeGeneration._erasedCallbacks(cbs)
       $(hasTerminate ? quote
           #= a terminate() at the initialization: the problem ends at its start =#
           p.state.terminated === nothing || return (ODEProblem(f, u0, (tspan[1], tspan[1]), p), cb)
