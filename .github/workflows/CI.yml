@@ -267,3 +267,97 @@ jobs:
           name: coverage-merged
           path: lcov.info
           retention-days: 30
+
+  # The omc route (OMBackendOMCompilerExt): omc's frontend through OMCompiler.jl, lowered to OMJLIR
+  # (test/omcRouteTests.jl). A job of its own: it needs omc, the other jobs do not. omc is the Rust nightly of
+  # build.openmodelica.org (OpenModelica's .CI/Jenkinsfile.rust-nightly, master); the OpenModelica release packages have
+  # no libOpenModelicaCompiler. OMCompiler.jl is not registered: OpenModelica master's copy, developed.
+  omc-route:
+    name: omc route - Julia 1.13 - ubuntu-latest - ${{ github.event_name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      # the Linux test shards' depot cache: restored, never saved here
+      DEPOT_CACHE_NAME: ombackend-cpu-targets;os=ubuntu-latest;arch=x64;version=1.13
+      OMC_NIGHTLY: https://build.openmodelica.org/omc/rust/latest/OpenModelica-CLI-latest-x86_64-linux.tar.gz
+    steps:
+      # as the test job, so the cached package images load
+      - name: CPU target of package images (x64)
+        shell: bash
+        run: echo "JULIA_CPU_TARGET=generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)" >> "$GITHUB_ENV"
+
+      - name: Checkout OMBackend.jl
+        uses: actions/checkout@v4
+        with:
+          path: OMBackend.jl
+
+      - name: Checkout sibling OM*.jl packages
+        uses: JKRT/OM.jl/.github/actions/checkout-siblings@master
+        with:
+          packages: OMRuntimeExternalC
+
+      - name: Checkout OMCompiler.jl (OpenModelica master)
+        uses: actions/checkout@v4
+        with:
+          repository: OpenModelica/OpenModelica
+          path: OpenModelica
+          sparse-checkout: OMCompiler/Compiler/OpenModelica.rs/OMCompiler.jl
+
+      - name: Install omc (Rust nightly)
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/openmodelica"
+          curl -fsSL --retry 3 "$OMC_NIGHTLY" | tar -xz -C "$RUNNER_TEMP/openmodelica"
+          lib=$(find "$RUNNER_TEMP/openmodelica" -path '*/lib/*/omc/libOpenModelicaCompiler.so' | head -1)
+          [ -n "$lib" ] || { echo "no lib/*/omc/libOpenModelicaCompiler.so in $OMC_NIGHTLY" >&2; exit 1; }
+          omhome=$(dirname "$(dirname "$(dirname "$(dirname "$lib")")")")
+          echo "OPENMODELICAHOME=$omhome" >> "$GITHUB_ENV"
+          "$omhome/bin/omc" --version
+
+      - name: Set up Julia 1.13
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.13'
+          arch: x64
+
+      - name: Depot cache paths
+        id: depot
+        shell: bash
+        run: |
+          {
+            echo "paths<<EOF"
+            printf "%s\n" "$HOME/.julia/artifacts" "$HOME/.julia/packages" "$HOME/.julia/registries" \
+                          "$HOME/.julia/compiled" "$HOME/.julia/scratchspaces" "$HOME/.julia/logs"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "key=${DEPOT_CACHE_NAME};os=${{ runner.os }};" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Julia depot from master
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.depot.outputs.paths }}
+          key: ${{ steps.depot.outputs.key }}
+          restore-keys: ${{ steps.depot.outputs.key }}
+
+      - name: Add OpenModelica Julia registry
+        shell: julia --color=yes {0}
+        run: |
+          import Pkg
+          Pkg.Registry.add("General")
+          Pkg.Registry.add(Pkg.RegistrySpec(url = "https://github.com/OpenModelica/OpenModelicaRegistry.git"))
+          Pkg.Registry.update()
+
+      # an environment of its own: OMCompiler in OMBackend's project would make the weak dependency a dependency
+      - name: Route environment
+        shell: julia --color=yes --project=omcroute {0}
+        run: |
+          import Pkg
+          Pkg.develop([Pkg.PackageSpec(path = p) for p in
+                       ("OMRuntimeExternalC.jl", "OMBackend.jl",
+                        "OpenModelica/OMCompiler/Compiler/OpenModelica.rs/OMCompiler.jl")])
+          Pkg.add("Test")
+          Pkg.instantiate()
+
+      - name: Run the omc route tests
+        shell: bash
+        run: julia --color=yes --project=omcroute --depwarn=yes OMBackend.jl/test/omcRouteTests.jl
