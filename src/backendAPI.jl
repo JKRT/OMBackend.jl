@@ -1469,3 +1469,5 @@ An observedFilter's patterns as strings.
 """
 _observedFilterStrings(f::Vector{Regex})::Vector{String} = String[p.pattern for p in f]
 _observedFilterStrings(f::Vector{String})::Vector{String} = f
+
+# TEMP (fork CI test, ci-times-test-pr): a source change, so the pull request recompiles OMBackend as a real one does
