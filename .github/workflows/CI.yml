@@ -56,7 +56,7 @@ jobs:
       # A pull request precompiles OMBackend without its workloads; test/precompileWorkloadTests.jl still runs them.
       # OMBackend's image took 11-20 min in 037408a's run (three CPU targets, coverage); locally the workloads are 63
       # of its 73 s. Master keeps them, as users get them.
-      OMBACKEND_NO_PRECOMPILE_WORKLOAD: ${{ github.event_name == 'pull_request' }}
+      OMBACKEND_NO_PRECOMPILE_WORKLOAD: false
       # where master leaves its resolved versions for pull requests (the depot's logs directory: the cache saves it)
       CI_MANIFEST: ombackend-ci-Manifest.toml
     strategy:
